@@ -70,7 +70,7 @@ jobs:
 
       - name: Commit the tables if they changed
         run: |
-          git add src/tuned docs/results
+          git add src/tuned docs/results README.md docs/tuning.md
           if git diff --cached --quiet; then
             echo "The tables are already up to date."
             exit 0

@@ -59,4 +59,5 @@ cc -std=c99 main.c -I/opt/homebrew/include -L/opt/homebrew/lib -lmetal_linalg -o
 | `metal_linalg_{qr,eigh,svd}_policy_get()`, `_set(&p)`, `_source()` | the routing policies; see [tuning](tuning.md) |
 
 Each call is routed exactly as in C++: to the fastest Metal kernel for its
-shape and batch, or to LAPACK on the CPU, by the policy measured for this Mac.
+shape and batch or, for eigh and the SVD, to LAPACK on the CPU, by the policy
+measured for this Mac. QR has no CPU path yet and always runs on the GPU.
