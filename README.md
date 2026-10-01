@@ -62,6 +62,7 @@ policy measured on the device it runs on. MLX's own `linalg::eigh` and
   - [Repository layout](#repository-layout)
   - [Further documentation](#further-documentation)
 - [Contributing](#contributing)
+- [License](#license)
 
 ## Overview
 
@@ -525,3 +526,7 @@ The most useful contribution is measuring your Mac: one command,
 `python3 tuning/run.py`, then a pull request with the results folder.
 [CONTRIBUTING.md](CONTRIBUTING.md) walks through both, including how to make
 the pull request, and covers bug reports and code changes too.
+
+## License
+
+MIT; see [LICENSE](LICENSE).

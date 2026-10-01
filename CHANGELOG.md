@@ -1,5 +1,9 @@
 # Changes
 
+## 2.0.1 (2026-10-01)
+
+- metal-linalg is licensed under the MIT licence ([LICENSE](LICENSE)).
+
 ## 2.0.0 (2026-10-01)
 
 The project is renamed from `qr-apple-silicon` to **metal-linalg**, since it
