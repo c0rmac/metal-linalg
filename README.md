@@ -132,10 +132,11 @@ Every threshold can also be overridden with an environment variable or
 
 The formula lives in its own tap,
 [c0rmac/homebrew-metal-linalg](https://github.com/c0rmac/homebrew-metal-linalg).
-Tap it, then install:
+Tap it, trust it, then install:
 
 ```bash
 brew tap c0rmac/metal-linalg
+brew trust c0rmac/metal-linalg        # Homebrew 7 and later ask this of any third-party tap
 brew install metal-linalg
 ```
 

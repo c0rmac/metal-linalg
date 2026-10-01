@@ -70,7 +70,7 @@ now covers three decompositions, and is packaged as a library.
   `metal_linalg::metal_linalg`. As a subproject (`add_subdirectory`,
   `FetchContent`) it builds static and installs nothing.
 - A Homebrew formula, in its own tap, [c0rmac/homebrew-metal-linalg](https://github.com/c0rmac/homebrew-metal-linalg):
-  `brew tap c0rmac/metal-linalg`, then `brew install metal-linalg`.
+  `brew tap c0rmac/metal-linalg`, `brew trust c0rmac/metal-linalg`, then `brew install metal-linalg`.
 - **Releases are automatic**: every update to `main` that changes the library
   publishes the next version (a tag, a GitHub release with its source tarball)
   and points the Homebrew formula at it. See CONTRIBUTING.md, "Releases".
