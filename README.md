@@ -27,26 +27,36 @@ policy measured on the device it runs on. MLX's own `linalg::eigh` and
 > Mac's time) and produces a results folder to send as a pull request. Each
 > run improves the library for everyone with that Mac, and runs from several
 > people with the same Mac are combined. Contributions are what keep the
-> library up to date as Apple ships new chips: [how to contribute](#contributing).
+> library up to date as Apple ships new chips: [how to contribute](CONTRIBUTING.md).
 
 ## Contents
 
-- [Overview](#overview): [what it provides](#what-it-provides) ·
-  [where the GPU wins](#where-the-gpu-wins) · [how calls are routed](#how-calls-are-routed)
-- [Getting started](#getting-started): [requirements](#requirements) ·
-  [install with Homebrew](#install-with-homebrew) · [build from source](#build-from-source) ·
-  [quick start](#quick-start)
-- [Using it](#using-it): [in a CMake project](#in-a-cmake-project) ·
-  [from Python](#from-python) · [from C](#from-c) · [from Swift](#from-swift) ·
-  [from Objective-C](#from-objective-c)
-- [Examples](#examples): [orthonormal bases with QR](#orthonormal-bases-with-qr) ·
-  [principal components with eigh](#principal-components-with-eigh) ·
-  [nearest orthogonal matrix with the SVD](#nearest-orthogonal-matrix-with-the-svd) ·
-  [seeing and changing the routing](#seeing-and-changing-the-routing)
-- [Reference](#reference): [API at a glance](#api-at-a-glance) ·
-  [tests and benchmarks](#tests-and-benchmarks) · [repository layout](#repository-layout) ·
-  [further documentation](#further-documentation)
-- [Contributing](#contributing): [measure your Mac](#measure-your-mac)
+- [Overview](#overview)
+  - [What it provides](#what-it-provides)
+  - [Where the GPU wins](#where-the-gpu-wins)
+  - [How calls are routed](#how-calls-are-routed)
+- [Getting started](#getting-started)
+  - [Requirements](#requirements)
+  - [Install with Homebrew](#install-with-homebrew)
+  - [Build from source](#build-from-source)
+  - [Quick start](#quick-start)
+- [Using it](#using-it)
+  - [In a CMake project](#in-a-cmake-project)
+  - [From Python](#from-python)
+  - [From C](#from-c)
+  - [From Swift](#from-swift)
+  - [From Objective-C](#from-objective-c)
+- [Examples](#examples)
+  - [Orthonormal bases with QR](#orthonormal-bases-with-qr)
+  - [Principal components with eigh](#principal-components-with-eigh)
+  - [Nearest orthogonal matrix with the SVD](#nearest-orthogonal-matrix-with-the-svd)
+  - [Seeing and changing the routing](#seeing-and-changing-the-routing)
+- [Reference](#reference)
+  - [API at a glance](#api-at-a-glance)
+  - [Tests and benchmarks](#tests-and-benchmarks)
+  - [Repository layout](#repository-layout)
+  - [Further documentation](#further-documentation)
+- [Contributing](#contributing)
 
 ## Overview
 
@@ -419,7 +429,8 @@ The Python and Swift packages have their own tests; see their guides.
   [SVD](docs/svd.md): algorithms, kernels, routing, accuracy, performance
 - Other languages: [C](docs/c-api.md), [Swift](docs/swift.md),
   [Objective-C](docs/objective-c.md), [Python](python/README.md)
-- [Measuring your Mac](docs/tuning.md), [how the measurements work](docs/tuning-details.md),
+- [Contributing](CONTRIBUTING.md): measuring your Mac and sending the results;
+  [the measurement reference](docs/tuning.md), [how the measurements work](docs/tuning-details.md)
   and [how to read a measurement report](docs/reading-reports.md)
 - Studies: QR routing on an [M1](docs/studies/qr-routing-apple-m1.md),
   eigensolver routing on an [M1](docs/studies/eigh-routing-apple-m1.md), all
@@ -431,18 +442,7 @@ The Python and Swift packages have their own tests; see their guides.
 
 ## Contributing
 
-### Measure your Mac
-
-Is your Mac missing from [the routing table](#how-calls-are-routed), or would
-you like to add to its measurements? One command measures all three
-decompositions (about 40 minutes) and saves a uniquely named submission to
-send as a pull request:
-
-```sh
-python3 tuning/run.py
-```
-
-When it is merged, a GitHub Action recombines every run for that kind of Mac
-and updates the library's table. [docs/tuning.md](docs/tuning.md) walks
-through it, and [docs/reading-reports.md](docs/reading-reports.md) explains
-the report it writes.
+The most useful contribution is measuring your Mac: one command,
+`python3 tuning/run.py`, then a pull request with the results folder.
+[CONTRIBUTING.md](CONTRIBUTING.md) walks through both, including how to make
+the pull request, and covers bug reports and code changes too.

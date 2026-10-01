@@ -48,6 +48,8 @@ now covers three decompositions, and is packaged as a library.
 - Every measurement run records the exact Mac (e.g. "MacBook Pro (16-inch, M5
   Pro)"), and its power and thermal state after each part of the run; a
   device's combined summary compares the runs by machine, to find outliers.
+- [CONTRIBUTING.md](CONTRIBUTING.md): measuring a Mac and sending the results as a
+  pull request (with the GitHub CLI, with git alone, or as a zip on an issue).
 - [docs/reading-reports.md](docs/reading-reports.md) explains every number in
   a measurement report, with worked examples from the M5 Pro run.
 - `<metal_linalg/device.h>`: `device_name()`, `gpu_core_count()`.

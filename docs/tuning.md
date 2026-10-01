@@ -11,39 +11,11 @@ contribute: each run is saved under its own ID, and the runs are combined.
 | Apple M1 | 8 | measured | measured | — | 1 |
 | Apple M5 Pro | 20 | measured | measured | measured | 1 |
 
-## 1. Install the tools (once)
-
-```bash
-xcode-select --install          # Apple's compilers, if you don't have Xcode
-brew install mlx cmake
-git clone https://github.com/c0rmac/metal-linalg.git
-cd metal-linalg
-```
-
-## 2. Measure
-
-Plug the Mac in, quit other apps, then:
-
-```bash
-python3 tuning/run.py
-```
-
-It checks the Mac is ready (on power, not busy, Low Power Mode off) and stops
-with a message if not. Then it builds the tools, runs the correctness tests,
-and measures QR, the eigensolver and the SVD, one after another. Leave the Mac
-alone until it says it has finished.
-
-## 3. Send the results
-
-The results are in a new folder, `docs/results/<your Mac>/<ID>/`, and the
-command finishes by printing what to type to send them as a pull request. If
-you'd rather not use git, zip that folder and attach it to a
-[new issue](https://github.com/c0rmac/metal-linalg/issues/new).
-
-That's all. On the pull request, an automatic check validates your folder and
-shows how the library's settings for your Mac would change. Once it is
-merged, the settings are recomputed from every run for that Mac, yours
-included, and the library is updated automatically.
+**How to measure and send the results** is in
+[CONTRIBUTING.md](../CONTRIBUTING.md#measure-your-mac): one command,
+`python3 tuning/run.py`, then a pull request. This page is the reference
+behind it: what a run records, what to do if it stops with a problem, and
+how the runs become the library's settings.
 
 ## What is recorded
 

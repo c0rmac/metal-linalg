@@ -309,9 +309,10 @@ Thank you! To contribute these results, open a pull request that adds the folder
   git add {rel}
   git commit -m "Results: {d['name']}, {d['gpu_cores']} GPU cores ({info['id']})"
   git push -u origin HEAD
-  gh pr create --fill
+  gh pr create --fill --repo {REPO_URL.split("github.com/")[1]}
 
-or zip {rel} and attach it to a new issue at {REPO_URL}/issues/new
+CONTRIBUTING.md shows the same with git alone. Or zip {rel} and attach it to
+a new issue at {REPO_URL}/issues/new
 
 Once it is merged, the library's settings for this Mac are recomputed from every
 run submitted for it, and updated automatically.""")
