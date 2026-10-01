@@ -24,7 +24,11 @@ namespace ml = metal_linalg;
 namespace {
 
 const char* name(ml::QrBackend b) {
-    return b == ml::QrBackend::unblocked ? "unblocked" : "streaming_reduced";
+    switch (b) {
+        case ml::QrBackend::unblocked: return "unblocked";
+        case ml::QrBackend::cpu:       return "cpu";
+        default:                       return "streaming_reduced";
+    }
 }
 const char* name(ml::EighBackend b) {
     switch (b) {
@@ -47,6 +51,7 @@ const char* name(ml::SvdBackend b) {
 // Policies cross as dicts of their fields. FIELDS lists them once, for both
 // directions; an unknown key on the way in is an error, not silently ignored.
 #define QR_FIELDS(X) X(m_crossover_small_batch) X(m_crossover_large_batch) X(batch_threshold) \
+                     X(gpu_max_k) X(gpu_min_batch_times_k) X(gpu_min_batch)                   \
                      X(gpu_cores) X(concurrent_matrices)
 #define EIGH_FIELDS(X) X(simd_max_n) X(block_min_n) X(block_min_n_batched) X(block_min_batch) \
                        X(gpu_max_n) X(gpu_min_batch_times_n) X(gpu_min_batch) X(gpu_cores)

@@ -93,7 +93,7 @@ class Routing(unittest.TestCase):
             self.assertTrue(source.split(":")[0] in ("tuned", "default", "env", "user"), source)
 
     def test_backend_names(self):
-        self.assertIn(ml.qr_backend(64, 64, 100), {"unblocked", "streaming_reduced"})
+        self.assertIn(ml.qr_backend(64, 64, 100), {"cpu", "unblocked", "streaming_reduced"})
         self.assertIn(ml.eigh_backend(32, 4096), {"cpu", "simd", "threadgroup", "block"})
         self.assertIn(ml.svd_backend(1024, 64, 64),
                       {"cpu", "jacobi", "block_jacobi", "qr_jacobi", "qr_block_jacobi"})

@@ -42,7 +42,11 @@ void require(bool ok, const char* what) {
 bool present(const void* p, uint64_t count) { return p != nullptr || count == 0; }
 
 const char* name(QrBackend b) {
-    return b == QrBackend::streaming_reduced ? "streaming_reduced" : "unblocked";
+    switch (b) {
+        case QrBackend::streaming_reduced: return "streaming_reduced";
+        case QrBackend::cpu:               return "cpu";
+        default:                           return "unblocked";
+    }
 }
 
 const char* name(EighBackend b) {
@@ -116,6 +120,7 @@ const char* metal_linalg_svd_backend(uint32_t rows, uint32_t cols, uint32_t batc
 metal_linalg_qr_policy metal_linalg_qr_policy_get(void) {
     const QrPolicy p = qr_policy();
     return {p.m_crossover_small_batch, p.m_crossover_large_batch, p.batch_threshold,
+            p.gpu_max_k, p.gpu_min_batch_times_k, p.gpu_min_batch,
             p.gpu_cores, p.concurrent_matrices};
 }
 
@@ -138,6 +143,9 @@ void metal_linalg_qr_policy_set(const metal_linalg_qr_policy* c) {
     p.m_crossover_small_batch = c->m_crossover_small_batch;
     p.m_crossover_large_batch = c->m_crossover_large_batch;
     p.batch_threshold         = c->batch_threshold;
+    p.gpu_max_k               = c->gpu_max_k;
+    p.gpu_min_batch_times_k   = c->gpu_min_batch_times_k;
+    p.gpu_min_batch           = c->gpu_min_batch;
     set_qr_policy(p);
 }
 

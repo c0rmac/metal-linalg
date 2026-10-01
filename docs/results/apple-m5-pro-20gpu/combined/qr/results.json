@@ -7,6 +7,7 @@
     "threadgroup_memory": 32768
   },
   "n_points": 143,
+  "routing": null,
   "coverage": {
     "tall": 44,
     "wide": 30,
@@ -661,7 +662,7 @@
     "geomean": 1.0121,
     "worst": 1.327
   },
-  "ktuned_entry": "{\"Apple M5 Pro\", 20, 512, 512, 16},",
+  "ktuned_entry": "{\"Apple M5 Pro\", 20, 512, 512, 16,   kQrNoLimit, 0, 1},",
   "submissions": [
     "20260930-27b6c2",
     "20261001-c76e82"

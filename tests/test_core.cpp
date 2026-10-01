@@ -334,7 +334,23 @@ int main() {
     check_qr("qr_streaming_amx_complete", cd::qr_streaming_amx_complete, 2, 70, 40, 10);
     check_qr("qr_streaming_amx_complete", cd::qr_streaming_amx_complete, 1, 60, 60, 11);
     check_qr("qr_streaming_amx_complete", cd::qr_streaming_amx_complete, 1, 64, 64, 12);
+    check_qr("qr_cpu (LAPACK)", cd::qr_cpu, 3, 20, 12, 14);
+    check_qr("qr_cpu (LAPACK)", cd::qr_cpu, 2, 12, 20, 15);
+    check_qr("qr_cpu (LAPACK)", cd::qr_cpu, 1, 1, 1, 16);
+    check_qr("qr_cpu (LAPACK)", cd::qr_cpu, 2, 16, 16, 17, 1e-6f);
+    check_qr("qr_cpu (LAPACK)", cd::qr_cpu, 1, 300, 40, 18);
     check_qr("core::qr", core::qr, 4, 30, 30, 13);
+    {   // A NaN gives NaN for its matrix alone.
+        const std::string label = "qr_cpu (LAPACK) NaN in 1 of 3, 10x6";
+        std::vector<float> a = random_matrices(3, 10, 6, 79);
+        a[60 + 7] = NAN;
+        std::vector<float> q(3 * 10 * 6), r(3 * 6 * 6);
+        cd::qr_cpu({a.data(), 3, 10, 6}, q.data(), r.data());
+        report(label, "matrix 1 not NaN", all_nan(q.data() + 60, 60) && all_nan(r.data() + 36, 36));
+        report(label, "NaN leaked into matrices 0, 2",
+               all_finite(q.data(), 60) && all_finite(q.data() + 120, 60) &&
+               all_finite(r.data(), 36) && all_finite(r.data() + 72, 36));
+    }
 
     std::printf("\n[ eigh ]\n");
     auto with_mode = [](EighOptions::Mode mode) {

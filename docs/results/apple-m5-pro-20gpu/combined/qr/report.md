@@ -26,7 +26,7 @@ The optimum is flat from **480 to 512** rows (every threshold within 0.3% of the
 Paste into `kTuned[]` in `src/qr.mm`:
 
 ```c
-    {"Apple M5 Pro", 20, 512, 512, 16},
+    {"Apple M5 Pro", 20, 512, 512, 16,   kQrNoLimit, 0, 1},
 ```
 
 ### Cost of missing the band
@@ -50,6 +50,10 @@ Paste into `kTuned[]` in `src/qr.mm`:
 | 1024 | 1.0541x | +4.11% |  |
 
 The penalty is usually asymmetric. Erring low costs little; erring high degrades specifically on tall inputs. Adding GPU cores makes the grid-parallel backend relatively stronger and pushes the true crossover down, so an untuned device is safer low than high.
+
+## GPU or CPU
+
+No CPU timings in these runs (they predate QR's CPU path), so the row sends every call to the GPU, as before.
 
 ## Regret by threshold
 

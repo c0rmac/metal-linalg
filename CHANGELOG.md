@@ -1,5 +1,20 @@
 # Changes
 
+## 2.1.0 (2026-10-02)
+
+- **QR has a CPU path**, like the eigensolver and the SVD: LAPACK's `sgeqrf`
+  and `sorgqr`, for lone and small-batch calls that do not pay for a GPU
+  launch (on an M5 Pro, 4 matrices of 64×64 take 0.13 ms on the CPU against
+  1.04 ms on the GPU). `QrPolicy` gains the GPU-or-CPU boundary
+  (`gpu_max_k`, `gpu_min_batch_times_k`, `gpu_min_batch`), with the
+  `QR_GPU_*` and `QR_DEVICE` environment overrides; `QrBackend::cpu`,
+  `qr_gpu_backend()`, `qr_uses_gpu()` and `detail::qr_cpu` are new, and the C,
+  Python and Swift APIs follow. The QR sweep times the CPU and the tuner fits
+  the boundary; a device measured before this keeps sending every QR call to
+  the GPU until it is measured again. See [docs/qr.md](docs/qr.md).
+- The QR guide documents the backends' sign conventions for R's diagonal,
+  which differ, and how to normalise them.
+
 ## 2.0.1 (2026-10-01)
 
 - metal-linalg is licensed under the MIT licence ([LICENSE](LICENSE)).

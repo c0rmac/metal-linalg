@@ -32,7 +32,8 @@ OPS = [("qr", "tune_qr.py", "src/qr.mm"), ("eigh", "tune_eigh.py", "src/eigh.mm"
 
 # The fields of each row after the device name and core count, as in kTuned[].
 FIELDS = {
-    "qr": ["m_crossover_small_batch", "m_crossover_large_batch", "batch_threshold"],
+    "qr": ["m_crossover_small_batch", "m_crossover_large_batch", "batch_threshold",
+           "gpu_max_k", "gpu_min_batch_times_k", "gpu_min_batch"],
     "eigh": ["simd_max_n", "block_min_n", "block_min_n_batched", "block_min_batch",
              "gpu_max_n", "gpu_min_batch_times_n", "gpu_min_batch"],
     "svd": ["qr_min_rows", "qr_min_k", "block_min_k", "block_min_k_batched", "block_min_batch",

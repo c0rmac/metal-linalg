@@ -103,7 +103,7 @@ def gpu_core_count():
 
 def qr_backend(m, n, batch=1):
     """Which backend :func:`qr` uses for ``batch`` matrices of ``m x n``:
-    ``"unblocked"`` or ``"streaming_reduced"``."""
+    ``"cpu"``, ``"unblocked"`` or ``"streaming_reduced"``."""
     return _core.qr_backend(m, n, batch)
 
 

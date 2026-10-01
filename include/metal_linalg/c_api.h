@@ -67,7 +67,7 @@ const char* metal_linalg_device_name(void);
 uint32_t    metal_linalg_gpu_core_count(void);
 
 /* The backend a call of that shape uses under the policy in effect, by name:
- *   QR    "unblocked", "streaming_reduced"
+ *   QR    "cpu", "unblocked", "streaming_reduced"
  *   eigh  "cpu", "simd", "threadgroup", "block"
  *   SVD   "cpu", "jacobi", "block_jacobi", "qr_jacobi", "qr_block_jacobi"
  * The strings are static. */
@@ -86,6 +86,9 @@ typedef struct metal_linalg_qr_policy {
     uint32_t m_crossover_small_batch;
     uint32_t m_crossover_large_batch;
     uint32_t batch_threshold;
+    uint32_t gpu_max_k;
+    uint32_t gpu_min_batch_times_k;
+    uint32_t gpu_min_batch;
     uint32_t gpu_cores;
     uint32_t concurrent_matrices;
 } metal_linalg_qr_policy;

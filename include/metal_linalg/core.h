@@ -16,11 +16,28 @@ namespace metal_linalg {
     // -------------------------------------------------------------------------
     // Routing policy
     // -------------------------------------------------------------------------
-    // Two GPU backends, a single-threadgroup kernel for small matrices and a
-    // grid-parallel one for large, and which is faster depends on the GPU, so
-    // the crossover is a per-device policy measured by tuning/tune_qr.py; see
-    // docs/tuning.md.
+    // As for eigh and the SVD, the decision has two parts, both measured per
+    // device by tuning/tune_qr.py (see docs/tuning.md). GPU or CPU: the
+    // Metal kernels need enough work to pay for a launch, and LAPACK on the
+    // CPU (sgeqrf, sorgqr) is quick for a lone or small batch. Then, on the
+    // GPU, which of the two kernels: a single-threadgroup one for short
+    // matrices and a grid-parallel one for long. With k = min(M, N):
+    //
+    //   GPU or CPU   GPU iff k <= gpu_max_k, batch * k >= gpu_min_batch_times_k
+    //                and batch >= gpu_min_batch
+    //   kernel       grid-parallel iff M >= m_crossover_*, else single-threadgroup
+    //
+    // The sign of R's diagonal is the one each backend produces: LAPACK's
+    // Householder convention for the CPU and the single-threadgroup kernel,
+    // non-negative (and, for square input, det(Q) = +1) for the grid-parallel
+    // one. A caller that needs one convention normalises it: flip column i of
+    // Q and row i of R wherever R[i][i] < 0.
+
+    // gpu_max_k value meaning "no upper limit on k".
+    constexpr unsigned kQrNoLimit = 0xFFFFFFFFu;
+
     struct QrPolicy {
+        // --- which GPU kernel ---
         // Matrices with at least this many ROWS use the grid-parallel backend.
         // Rows, not max(M, N): qr_unblocked sweeps M serially inside a single
         // threadgroup, while N parallelises across that threadgroup's threads.
@@ -33,6 +50,19 @@ namespace metal_linalg {
         unsigned m_crossover_large_batch = 384;  // batch >= batch_threshold
         unsigned batch_threshold         = 16;
 
+        // --- GPU or CPU ---
+        // GPU iff k <= gpu_max_k, batch * k >= gpu_min_batch_times_k and
+        // batch >= gpu_min_batch, with k = min(M, N). gpu_max_k = 0 means
+        // never, kQrNoLimit no cap; gpu_min_batch_times_k = 0 with
+        // gpu_min_batch = 1 means always the GPU, which is what a device
+        // measured before QR had a CPU path gets. The defaults, for an
+        // untuned device, send lone and small-batch calls to the CPU, the
+        // safe direction: LAPACK is never slow, while a GPU launch for one
+        // small matrix is.
+        unsigned gpu_max_k             = kQrNoLimit;
+        unsigned gpu_min_batch_times_k = 1024;
+        unsigned gpu_min_batch         = 1;
+
         // Device properties this was resolved against. Informational: they are
         // detected, not assumed, and are what a retune should be keyed on.
         unsigned gpu_cores = 0;           // 0 if it could not be detected
@@ -40,17 +70,27 @@ namespace metal_linalg {
     };
 
     // The policy in effect, resolved once on first use; where it came from
-    // ("user", "env:QR_M_CROSSOVER", "tuned:<device>" or
+    // ("user", "env:<variables>", "tuned:<device>" or
     // "default:untuned-device (<device>)"); and a way to replace it, which
     // takes precedence over the environment and the tuned table.
     QrPolicy    qr_policy();
     const char* qr_policy_source();
     void        set_qr_policy(const QrPolicy& p);
 
-    enum class QrBackend { unblocked, streaming_reduced };
+    // `cpu` is last so that the values the GPU backends had before it existed
+    // are unchanged.
+    enum class QrBackend { unblocked, streaming_reduced, cpu };
 
     // What a QR call does with a problem under the policy in effect.
+    // QR_DEVICE=gpu or QR_DEVICE=cpu forces the first part of the decision.
     QrBackend qr_backend(unsigned m, unsigned n, unsigned batch);
+
+    // The GPU kernel the policy picks, regardless of the CPU routing. This is
+    // what a forced-GPU call runs.
+    QrBackend qr_gpu_backend(unsigned m, unsigned n, unsigned batch);
+
+    // True iff qr_backend(m, n, batch) is a GPU backend.
+    bool qr_uses_gpu(unsigned m, unsigned n, unsigned batch);
 
     // =========================================================================
     // Symmetric eigendecomposition
@@ -364,6 +404,10 @@ namespace metal_linalg {
             // deleted, since it is the only backend that forms the complete
             // orthogonal factor.
             void qr_streaming_amx_complete(const Matrices& a, float* q, float* r);
+
+            // LAPACK on the CPU (sgeqrf, sorgqr), one matrix at a time. A
+            // matrix holding a NaN or an infinity gives NaN for its Q and R.
+            void qr_cpu(const Matrices& a, float* q, float* r);
 
             // One team (threadgroup or simdgroup) per matrix. Honours opt.mode
             // only between simd and threadgroup; `block` falls back to

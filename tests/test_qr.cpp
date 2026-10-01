@@ -156,15 +156,26 @@ int main() {
     run("batch 2 x 512x256", detail::qr_streaming_amx_reduced, random_matrix(2, 512, 256, 16));
     run("600x600 (unaligned)", detail::qr_streaming_amx_reduced, random_matrix(1, 600, 600, 17));
 
+    std::printf("\n[ backend: qr_cpu (LAPACK) ]\n");
+    run("1x1",             detail::qr_cpu, random_matrix(1, 1, 1, 90));
+    run("8x8",             detail::qr_cpu, random_matrix(1, 8, 8, 91));
+    run("64x64",           detail::qr_cpu, random_matrix(1, 64, 64, 92));
+    run("64x32 (tall)",    detail::qr_cpu, random_matrix(1, 64, 32, 93));
+    run("32x64 (wide)",    detail::qr_cpu, random_matrix(1, 32, 64, 94));
+    run("512x512",         detail::qr_cpu, random_matrix(1, 512, 512, 95));
+    run("2048x64 (tall)",  detail::qr_cpu, random_matrix(1, 2048, 64, 96));
+    run("batch 32 x 8x8",  detail::qr_cpu, random_matrix(32, 8, 8, 97));
+    run("batch 4 x 100x60",detail::qr_cpu, random_matrix(4, 100, 60, 98));
+
     // -------------------------------------------------------------------------
-    // Through the public dispatcher, one shape per branch of src/qr.mm.
+    // Through the public dispatcher, wherever this device's policy sends them.
     // -------------------------------------------------------------------------
     std::printf("\n[ dispatcher: metal_linalg::qr_accelerated ]\n");
-    run("micro square    -> complete",  qr_accelerated, random_matrix(1, 8, 8, 20));
-    run("small batched   -> unblocked", qr_accelerated, random_matrix(32, 64, 64, 21));
-    run("small unbatched -> unblocked", qr_accelerated, random_matrix(1, 64, 64, 22));
-    run("mid unbatched   -> reduced",   qr_accelerated, random_matrix(1, 128, 128, 23));
-    run("large           -> reduced",   qr_accelerated, random_matrix(1, 1024, 512, 24));
+    run("micro square 8x8",          qr_accelerated, random_matrix(1, 8, 8, 20));
+    run("small batched 32 x 64x64",  qr_accelerated, random_matrix(32, 64, 64, 21));
+    run("small unbatched 64x64",     qr_accelerated, random_matrix(1, 64, 64, 22));
+    run("mid unbatched 128x128",     qr_accelerated, random_matrix(1, 128, 128, 23));
+    run("large 1024x512",            qr_accelerated, random_matrix(1, 1024, 512, 24));
 
     // -------------------------------------------------------------------------
     // Edge cases.
@@ -206,6 +217,8 @@ int main() {
         transpose(random_matrix(1, 64, 600, 32)));
     run("transposed view 8x8 -> complete", detail::qr_streaming_amx_complete,
         transpose(random_matrix(1, 8, 8, 33)));
+    run("transposed view 40x20 -> cpu", detail::qr_cpu,
+        transpose(random_matrix(1, 20, 40, 36)));
     run("transposed batch 3 x 40x20", qr_accelerated,
         transpose(random_matrix(3, 20, 40, 34), {0, 2, 1}));
 
@@ -244,6 +257,7 @@ int main() {
             scaled(std::string("unblocked 64x64 ") + tag,  detail::qr_unblocked, 1, 64, 64, sc, 50);
             scaled(std::string("reduced 512x64 ") + tag,   detail::qr_streaming_amx_reduced, 1, 512, 64, sc, 51);
             scaled(std::string("complete 8x8 ") + tag,     detail::qr_streaming_amx_complete, 1, 8, 8, sc, 52);
+            scaled(std::string("cpu 64x64 ") + tag,        detail::qr_cpu, 1, 64, 64, sc, 55);
         }
         scaled("batch 6 x 40x20 x 1e-6 (dispatcher)", qr_accelerated, 6, 40, 20, 1e-6f, 53);
 
@@ -293,6 +307,7 @@ int main() {
         tight("rank 3 of 8x8 (complete)",                detail::qr_streaming_amx_complete, low_rank(8, 8, 3, 0.0f, 83));
         tight("rank 5 + 1e-5 noise, 600x16 (reduced)",   detail::qr_streaming_amx_reduced, low_rank(600, 16, 5, 1e-5f, 86));
         tight("rank 5 + 1e-4 noise, 64x16 (unblocked)",  detail::qr_unblocked, low_rank(64, 16, 5, 1e-4f, 89));
+        tight("rank 5 of 600x16 (cpu)",                  detail::qr_cpu, low_rank(600, 16, 5, 0.0f, 92));
     }
 
     // -------------------------------------------------------------------------
@@ -304,18 +319,24 @@ int main() {
     {
         const QrPolicy p = qr_policy();
         std::printf("  source=%s  m_crossover=%u (batch<%u) / %u (batch>=%u)"
+                    "  GPU iff k<=%u, batch*k>=%u, batch>=%u"
                     "  gpu_cores=%u  concurrent_matrices=%u\n",
                     qr_policy_source(), p.m_crossover_small_batch,
                     p.batch_threshold, p.m_crossover_large_batch, p.batch_threshold,
+                    p.gpu_max_k, p.gpu_min_batch_times_k, p.gpu_min_batch,
                     p.gpu_cores, p.concurrent_matrices);
         if (p.gpu_cores == 0)
             std::printf("  note: GPU core count undetected; crossover is the untuned default\n");
 
         const QrPolicy original = p;
 
-        // Force every shape onto the grid-parallel backend, then onto the
-        // single-threadgroup one, so both are covered on any hardware.
+        // Force every shape onto the GPU, then onto the grid-parallel kernel,
+        // then onto the single-threadgroup one, so both are covered on any
+        // hardware whatever its CPU routing.
         QrPolicy forced = original;
+        forced.gpu_max_k = kQrNoLimit;
+        forced.gpu_min_batch_times_k = 0;
+        forced.gpu_min_batch = 1;
         forced.m_crossover_small_batch = forced.m_crossover_large_batch = 1;
         set_qr_policy(forced);
         if (qr_backend(64, 64, 1) != QrBackend::streaming_reduced) fail("qr_backend", "crossover 1 -> unblocked");
@@ -329,6 +350,30 @@ int main() {
         else { std::printf("  ok    qr_backend: crossover 2^30 -> unblocked at 4096x64\n"); ++g_checks; }
         run("forced -> unblocked 512x512", qr_accelerated, random_matrix(1, 512, 512, 42));
         run("forced -> unblocked 600x128", qr_accelerated, random_matrix(1, 600, 128, 43));
+
+        // GPU or CPU: never the GPU, then only from a batch * k threshold.
+        forced = original;
+        forced.gpu_max_k = 0;
+        set_qr_policy(forced);
+        if (qr_backend(4096, 512, 64) != QrBackend::cpu) fail("qr_backend", "gpu_max_k 0 -> GPU");
+        else { std::printf("  ok    qr_backend: gpu_max_k 0 -> cpu at 64 x 4096x512\n"); ++g_checks; }
+        if (qr_gpu_backend(4096, 512, 64) == QrBackend::cpu) fail("qr_gpu_backend", "returned cpu");
+        else { std::printf("  ok    qr_gpu_backend ignores the CPU routing\n"); ++g_checks; }
+        run("forced -> cpu       64x64",     qr_accelerated, random_matrix(1, 64, 64, 44));
+        run("forced -> cpu       40x20 b3",  qr_accelerated, random_matrix(3, 40, 20, 45));
+
+        forced.gpu_max_k = kQrNoLimit;
+        forced.gpu_min_batch_times_k = 1000;
+        forced.gpu_min_batch = 1;
+        set_qr_policy(forced);
+        const bool lone_cpu = qr_backend(64, 64, 1) == QrBackend::cpu;            // 1 * 64  < 1000
+        const bool batch_gpu = qr_backend(64, 64, 16) != QrBackend::cpu;          // 16 * 64 >= 1000
+        if (!lone_cpu || !batch_gpu) fail("qr_backend", "batch * k threshold not applied");
+        else { std::printf("  ok    qr_backend: batch*k >= 1000 -> GPU at 16 x 64x64, CPU at 1 x 64x64\n"); ++g_checks; }
+        forced.gpu_min_batch = 32;
+        set_qr_policy(forced);
+        if (qr_backend(64, 64, 16) != QrBackend::cpu) fail("qr_backend", "gpu_min_batch not applied");
+        else { std::printf("  ok    qr_backend: gpu_min_batch 32 -> CPU at 16 x 64x64\n"); ++g_checks; }
 
         set_qr_policy(original);
         if (qr_policy().m_crossover_small_batch != original.m_crossover_small_batch) {

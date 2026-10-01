@@ -257,6 +257,8 @@ in the policy source.
 | variable | effect |
 |---|---|
 | `QR_M_CROSSOVER` | QR: rows at which the grid-parallel backend takes over |
+| `QR_GPU_MAX_K`, `QR_GPU_MIN_BATCH_TIMES_K`, `QR_GPU_MIN_BATCH` | QR: the GPU/CPU boundary |
+| `QR_DEVICE=gpu` or `cpu` | QR: bypass the GPU/CPU boundary |
 | `EIGH_SIMD_MAX_N`, `EIGH_BLOCK_MIN_N` | eigensolver: the GPU backend split |
 | `EIGH_BLOCK_MIN_N_BATCHED`, `EIGH_BLOCK_MIN_BATCH` | eigensolver: batch-dependent block crossover, 0 for off |
 | `EIGH_GPU_MAX_N`, `EIGH_GPU_MIN_BATCH_TIMES_N`, `EIGH_GPU_MIN_BATCH` | eigensolver: the GPU/CPU boundary |

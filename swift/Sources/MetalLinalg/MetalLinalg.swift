@@ -151,7 +151,7 @@ public var deviceName: String { String(cString: metal_linalg_device_name()) }
 /// Its GPU core count; 0 if it could not be read.
 public var gpuCoreCount: Int { Int(metal_linalg_gpu_core_count()) }
 
-/// The backend a call of that shape uses: "unblocked" or "streaming_reduced".
+/// The backend a call of that shape uses: "cpu", "unblocked" or "streaming_reduced".
 public func qrBackend(rows: Int, cols: Int, batch: Int = 1) -> String {
     String(cString: metal_linalg_qr_backend(UInt32(clamping: rows), UInt32(clamping: cols), UInt32(clamping: batch)))
 }

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Measure this GPU's dispatch crossover band and write up the result.
+"""Measure QR's routing on this Mac -- GPU or CPU, and which GPU kernel -- and
+write up the result.
 
     cmake --build build --target sweep_qr
     python3 tuning/tune_qr.py build/sweep_qr
@@ -54,8 +55,18 @@ from collections import defaultdict
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import submissions as sub   # noqa: E402
 
-BACKENDS = ("unblocked", "reduced")
+GPU_BACKENDS = ("unblocked", "reduced")
+BACKENDS = GPU_BACKENDS + ("cpu",)       # what a sweep times; "cpu" is LAPACK
 REGIONS = ("square", "tall", "wide", "near-square")
+NO_LIMIT = 0xFFFFFFFF
+INF = float("inf")
+
+# Small matrices in large batches, where the GPU-or-CPU boundary sits for most
+# of the range. They are left out of the kernel crossover, which no threshold
+# in THRESHOLDS can change for them, so that analysis stays comparable with
+# runs made before QR had a CPU path.
+SMALL_DIMS = (8, 16, 32)
+SMALL_BATCHES = (1, 4, 16, 64, 256, 1024)
 
 # Candidate thresholds. A threshold only changes behaviour when it crosses a
 # measured M, so values between two measured M's are equivalent by construction.
@@ -102,6 +113,7 @@ def shape_grid(full=False):
 
     pts = []
     pts += [(b, d, d) for d in square_dims for b in batches_sq]
+    pts += [(b, d, d) for d in SMALL_DIMS for b in SMALL_BATCHES]
     pts += [(b, M, N) for M in SURFACE_M for N in SURFACE_N for b in SURFACE_BATCHES]
     for (M, N) in tall:
         pts += [(b, M, N) for b in batches_rect]
@@ -168,7 +180,9 @@ def load(paths):
     Several raw.csv files from one submission merge by min-of-passes, so a
     sweep can be topped up with extra shapes rather than remeasured."""
     best, repeats, subs = sub.combine(paths, lambda r: (int(r["batch"]), int(r["M"]), int(r["N"])))
-    best = {k: v for k, v in best.items() if all(x in v for x in BACKENDS)}
+    # Both GPU kernels are needed; the CPU timing is there only in runs made
+    # since QR had a CPU path.
+    best = {k: v for k, v in best.items() if all(x in v for x in GPU_BACKENDS)}
     return best, repeats, subs
 
 # ---------------------------------------------------------------------------
@@ -262,6 +276,78 @@ def narrow_n(t1, tn, t2):
     return lambda b, M, N: "reduced" if (M >= t1 or (N <= tn and M >= t2)) else "unblocked"
 
 
+def for_crossover(key):
+    """Whether a shape takes part in the kernel crossover analysis."""
+    _, M, N = key
+    return not (M == N and M in SMALL_DIMS)
+
+
+def routed(params, chosen):
+    """The full rule: GPU or CPU by (gpu_max_k, gpu_min_batch_times_k,
+    gpu_min_batch), then the kernel crossover, as qr_backend does."""
+    gm, mb, mbatch = params
+    kernel = flat_rule(chosen)
+
+    def rule(b, M, N):
+        k = min(M, N)
+        if k > gm or b * k < mb or b < mbatch:
+            return "cpu"
+        return kernel(b, M, N)
+    return rule
+
+
+def fit_cpu_routing(best, chosen, tol=0.005):
+    """GPU or CPU, fitted on every shape with a CPU timing. Inside the region
+    within `tol` of the best geometric-mean regret, the candidate with the
+    smallest worst case is taken. None if no shape has a CPU timing."""
+    pts = {k: v for k, v in best.items() if "cpu" in v}
+    if not pts:
+        return None
+    ks = sorted({min(M, N) for (_, M, N) in pts})
+    bks = sorted({b * min(M, N) for (b, M, N) in pts})
+    batches = sorted({b for (b, _, _) in pts})
+    candidates = [(gm, mb, mbatch)
+                  for gm in ks + [INF]
+                  for mb in [0] + bks
+                  for mbatch in [1] + [b for b in batches if 1 < b <= 64]]
+
+    def fit(points):
+        scored = {c: evaluate(routed(c, chosen), points) for c in candidates}
+        g = min(e["geomean"] for e in scored.values())
+        near = {c: e for c, e in scored.items() if e["geomean"] <= g * (1 + tol)}
+        pick = min(near, key=lambda c: (near[c]["worst"], near[c]["geomean"], c))
+        return pick, scored[pick]
+
+    params, e = fit(pts)
+    gpu_always = evaluate(routed((INF, 0, 1), chosen), pts)
+    cpu_always = evaluate(lambda b, M, N: "cpu", pts)
+
+    # Held out: fitted on half the shapes, scored on the other half against
+    # the GPU-only routing that devices measured before the CPU path got.
+    keys = sorted(pts)
+    tr = {k: pts[k] for i, k in enumerate(keys) if i % 2 == 0}
+    te = {k: pts[k] for i, k in enumerate(keys) if i % 2 == 1}
+    p_tr, _ = fit(tr)
+    held = evaluate(routed(p_tr, chosen), te)
+    held_gpu = evaluate(routed((INF, 0, 1), chosen), te)
+
+    gm, mb, mbatch = params
+    cpu_wins = sorted([b, M, N] for (b, M, N), t in pts.items() if min(t, key=t.get) == "cpu")
+    stat = lambda x: {"geomean": round(x["geomean"], 4), "worst": round(x["worst"], 3),
+                      "over_tie": x["over_tie"], "n": x["n"]}
+    return {
+        "gpu_max_k": NO_LIMIT if gm >= INF else gm,
+        "gpu_min_batch_times_k": mb,
+        "gpu_min_batch": mbatch,
+        "chosen": stat(e),
+        "gpu_always": stat(gpu_always),
+        "cpu_always": stat(cpu_always),
+        "held_out": {"fitted": [NO_LIMIT if p_tr[0] >= INF else p_tr[0], p_tr[1], p_tr[2]],
+                     "routing": stat(held), "gpu_always": stat(held_gpu)},
+        "cpu_fastest": cpu_wins,
+    }
+
+
 def noise_floor(repeats):
     """Pass-to-pass ratio, bucketed by runtime. Fast shapes are dominated by
     submission jitter and cannot settle a small difference."""
@@ -292,7 +378,10 @@ def noise_floor(repeats):
     }
 
 
-def analyse(best, repeats, device):
+def analyse(best_all, repeats, device):
+    # The kernel crossover is a choice between the two GPU kernels, so it is
+    # made on their timings alone; the CPU comes in afterwards, in the routing.
+    best = {k: {g: v[g] for g in GPU_BACKENDS} for k, v in best_all.items() if for_crossover(k)}
     by_region = {r: {k: v for k, v in best.items() if region(k[1], k[2]) == r}
                  for r in REGIONS}
 
@@ -420,12 +509,20 @@ def analyse(best, repeats, device):
     })
 
     counts = defaultdict(int)
-    for k in best:
+    for k in best_all:
         counts[region(k[1], k[2])] += 1
+
+    routing = fit_cpu_routing(best_all, chosen)
+    if routing is None:     # measured before QR had a CPU path: always the GPU
+        gm_s, mb, mbatch = "kQrNoLimit", 0, 1
+    else:
+        gm_s = ("kQrNoLimit" if routing["gpu_max_k"] >= NO_LIMIT else str(routing["gpu_max_k"]))
+        mb, mbatch = routing["gpu_min_batch_times_k"], routing["gpu_min_batch"]
 
     return {
         "device": device,
-        "n_points": len(best),
+        "n_points": len(best_all),
+        "routing": routing,
         "coverage": dict(counts),
         "noise": noise_floor(repeats),
         "threshold_curves": curves,
@@ -439,7 +536,7 @@ def analyse(best, repeats, device):
         "baseline_held_out": {"geomean": round(base_te["geomean"], 4),
                               "worst": round(base_te["worst"], 3)},
         "ktuned_entry": (f'{{"{device["name"]}", {device["gpu_cores"]}, '
-                         f'{chosen}, {chosen}, 16}},'),
+                         f'{chosen}, {chosen}, 16,   {gm_s}, {mb}, {mbatch}}},'),
     }
 
 
@@ -568,6 +665,40 @@ def write_report(res, path):
       "grid-parallel backend relatively stronger and pushes the true crossover "
       "down, so an untuned device is safer low than high.")
     A("")
+
+    A("## GPU or CPU")
+    A("")
+    rt = res.get("routing")
+    if not rt:
+        A("No CPU timings in these runs (they predate QR's CPU path), so the row "
+          "sends every call to the GPU, as before.")
+        A("")
+    else:
+        gm = "no limit" if rt["gpu_max_k"] >= NO_LIMIT else rt["gpu_max_k"]
+        A(f"```\nGPU iff k <= {gm}, batch * k >= {rt['gpu_min_batch_times_k']} "
+          f"and batch >= {rt['gpu_min_batch']}   (k = min(M, N))\notherwise LAPACK on the CPU\n```")
+        A("")
+        A("Fitted on every shape with a CPU timing; inside the region within 0.5% of "
+          "the best geometric-mean regret, the candidate with the smallest worst case.")
+        A("")
+        A("| routing | geomean regret | worst | >10% off |")
+        A("|---|---|---|---|")
+        for lab, key in (("chosen", "chosen"), ("always the GPU (before the CPU path)", "gpu_always"),
+                         ("always the CPU", "cpu_always")):
+            e = rt[key]
+            A(f"| {lab} | {e['geomean']:.4f}x | {e['worst']:.2f}x | {e['over_tie']}/{e['n']} |")
+        h = rt["held_out"]
+        A("")
+        A(f"Held out (fitted on half the shapes, scored on the other half): "
+          f"{h['routing']['geomean']:.4f}x geomean, {h['routing']['worst']:.2f}x worst, "
+          f"against {h['gpu_always']['geomean']:.4f}x and {h['gpu_always']['worst']:.2f}x "
+          f"for always the GPU.")
+        A("")
+        if rt["cpu_fastest"]:
+            A(f"The CPU was the fastest backend at {len(rt['cpu_fastest'])} of "
+              f"{rt['chosen']['n']} shapes, e.g. "
+              + ", ".join(f"{b} x {M}x{N}" for b, M, N in rt["cpu_fastest"][:8]) + ".")
+            A("")
 
     A("## Regret by threshold")
     A("")
@@ -756,6 +887,12 @@ def main():
     print()
     print(f"  band {b['lo']}..{b['hi']}   ship M >= {b['chosen']}   "
           f"({b['best_geomean']:.4f}x geomean regret)")
+    rt = res.get("routing")
+    if rt:
+        gm = "no limit" if rt["gpu_max_k"] >= NO_LIMIT else rt["gpu_max_k"]
+        print(f"  CPU routing: GPU iff k <= {gm}, batch*k >= {rt['gpu_min_batch_times_k']}, "
+              f"batch >= {rt['gpu_min_batch']}   ({rt['chosen']['geomean']:.4f}x vs "
+              f"{rt['gpu_always']['geomean']:.4f}x always GPU, worst {rt['chosen']['worst']:.2f}x)")
     print(f"  kTuned entry:  {res['ktuned_entry']}")
     print(f"  -> {a.out}/report.md, {a.out}/results.json, {a.out}/raw.csv")
 

@@ -2,6 +2,7 @@
 
 #include <metal_linalg/core.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <string>
 
@@ -28,6 +29,12 @@ struct TunedEntry {
     unsigned    m_small_batch;
     unsigned    m_large_batch;
     unsigned    batch_threshold;
+    // GPU or CPU. A row from before QR had a CPU path has none of these, so
+    // they read as zero; gpu_min_batch = 0 is never a measured value, and
+    // marks such a row as "always the GPU", which is what was measured.
+    unsigned    gpu_max_k;
+    unsigned    gpu_min_batch_times_k;
+    unsigned    gpu_min_batch;
 };
 
 // The rows are generated from every run submitted for a device (docs/results/)
@@ -36,13 +43,25 @@ struct TunedEntry {
 // docs/studies/. The last row keeps the array non-empty and matches nothing.
 constexpr TunedEntry kTuned[] = {
 #include "tuned/qr.inc"
-    {"", 0, 0, 0, 0},
+    {"", 0, 0, 0, 0, 0, 0, 0},
 };
 
 struct ResolvedPolicy {
     QrPolicy    policy;
     std::string source;
 };
+
+// A non-negative integer from the environment; zero is a valid value
+// (QR_GPU_MAX_K=0 means never the GPU).
+bool env_value(const char* name, unsigned& out) {
+    const char* s = std::getenv(name);
+    if (!s || !*s) return false;
+    char* end = nullptr;
+    const long long v = std::strtoll(s, &end, 10);
+    if (end == s || v < 0) return false;
+    out = v > 0xFFFFFFFFll ? kQrNoLimit : (unsigned)v;
+    return true;
+}
 
 ResolvedPolicy resolve() {
     ResolvedPolicy r;
@@ -67,6 +86,15 @@ ResolvedPolicy resolve() {
                 r.policy.m_crossover_small_batch = e.m_small_batch;
                 r.policy.m_crossover_large_batch = e.m_large_batch;
                 r.policy.batch_threshold         = e.batch_threshold;
+                if (e.gpu_min_batch == 0) {          // measured before the CPU path
+                    r.policy.gpu_max_k             = kQrNoLimit;
+                    r.policy.gpu_min_batch_times_k = 0;
+                    r.policy.gpu_min_batch         = 1;
+                } else {
+                    r.policy.gpu_max_k             = e.gpu_max_k;
+                    r.policy.gpu_min_batch_times_k = e.gpu_min_batch_times_k;
+                    r.policy.gpu_min_batch         = e.gpu_min_batch;
+                }
                 r.source = "tuned:" + name;
                 break;
             }
@@ -84,21 +112,28 @@ ResolvedPolicy resolve() {
             r.policy.m_crossover_small_batch = 384;
             r.policy.m_crossover_large_batch = 384;
             r.policy.batch_threshold         = 16;
+            // GPU or CPU: the QrPolicy defaults.
             r.source = "default:untuned-device" + (name.empty() ? "" : " (" + name + ")");
         }
     }
 
-    // Environment override, for retuning without a rebuild.
-    // Environment override collapses both regimes to one flat threshold, which
-    // is what someone bisecting a crossover by hand actually wants.
-    if (const char* env = std::getenv("QR_M_CROSSOVER")) {
-        const long v = std::strtol(env, nullptr, 10);
-        if (v > 0) {
-            r.policy.m_crossover_small_batch = (unsigned)v;
-            r.policy.m_crossover_large_batch = (unsigned)v;
-            r.source = "env:QR_M_CROSSOVER";
-        }
+    // Environment overrides, for retuning without a rebuild. QR_M_CROSSOVER
+    // collapses both regimes to one flat threshold, which is what someone
+    // bisecting a crossover by hand actually wants.
+    std::string env;
+    unsigned crossover = 0;
+    if (env_value("QR_M_CROSSOVER", crossover) && crossover > 0) {
+        r.policy.m_crossover_small_batch = crossover;
+        r.policy.m_crossover_large_batch = crossover;
+        env = "QR_M_CROSSOVER";
     }
+    auto over = [&](const char* name, unsigned& field) {
+        if (env_value(name, field)) env += (env.empty() ? "" : ",") + std::string(name);
+    };
+    over("QR_GPU_MAX_K",             r.policy.gpu_max_k);
+    over("QR_GPU_MIN_BATCH_TIMES_K", r.policy.gpu_min_batch_times_k);
+    over("QR_GPU_MIN_BATCH",         r.policy.gpu_min_batch);
+    if (!env.empty()) r.source = "env:" + env;
     return r;
 }
 
@@ -134,7 +169,7 @@ void set_qr_policy(const QrPolicy& p) {
 // regret, and 1.25x vs 1.54x worst case). The machinery is kept because the
 // split may be justified on other hardware -- see tuning/tune_qr.py, which
 // only emits it when it clears the noise floor.
-QrBackend qr_backend(unsigned m, unsigned n, unsigned batch) {
+QrBackend qr_gpu_backend(unsigned m, unsigned n, unsigned batch) {
     (void)n;
     const QrPolicy& p = state().policy;
     const unsigned crossover = batch < p.batch_threshold ? p.m_crossover_small_batch
@@ -142,11 +177,29 @@ QrBackend qr_backend(unsigned m, unsigned n, unsigned batch) {
     return m >= crossover ? QrBackend::streaming_reduced : QrBackend::unblocked;
 }
 
+// GPU or CPU, as for eigh and the SVD: the GPU needs enough work to pay for a
+// launch, and a lone or small-batch call is quicker in LAPACK.
+bool qr_uses_gpu(unsigned m, unsigned n, unsigned batch) {
+    if (const char* e = std::getenv("QR_DEVICE")) {
+        const std::string s = e;
+        if (s == "gpu") return true;
+        if (s == "cpu") return false;
+    }
+    const QrPolicy& p = state().policy;
+    const unsigned k = std::min(m, n);
+    return k <= p.gpu_max_k && (unsigned long long)batch * k >= p.gpu_min_batch_times_k &&
+           batch >= p.gpu_min_batch;
+}
+
+QrBackend qr_backend(unsigned m, unsigned n, unsigned batch) {
+    return qr_uses_gpu(m, n, batch) ? qr_gpu_backend(m, n, batch) : QrBackend::cpu;
+}
+
 void core::qr(const Matrices& a, float* q, float* r) {
-    if (qr_backend(a.rows, a.cols, a.batch) == QrBackend::streaming_reduced) {
-        core::detail::qr_streaming_amx_reduced(a, q, r);
-    } else {
-        core::detail::qr_unblocked(a, q, r);
+    switch (qr_backend(a.rows, a.cols, a.batch)) {
+        case QrBackend::cpu:               core::detail::qr_cpu(a, q, r); break;
+        case QrBackend::streaming_reduced: core::detail::qr_streaming_amx_reduced(a, q, r); break;
+        default:                           core::detail::qr_unblocked(a, q, r); break;
     }
 }
 

@@ -119,14 +119,16 @@ int main(int argc, char** argv) {
         const QrPolicy p = qr_policy();
         std::printf("{\"device\": \"%s\", \"gpu_cores\": %u, \"source\": \"%s\", "
                     "\"m_crossover_small_batch\": %u, \"m_crossover_large_batch\": %u, "
-                    "\"batch_threshold\": %u, \"concurrent_matrices\": %u}\n",
+                    "\"batch_threshold\": %u, \"gpu_max_k\": %u, \"gpu_min_batch_times_k\": %u, "
+                    "\"gpu_min_batch\": %u, \"concurrent_matrices\": %u}\n",
                     device_name(), p.gpu_cores, qr_policy_source(),
                     p.m_crossover_small_batch, p.m_crossover_large_batch, p.batch_threshold,
+                    p.gpu_max_k, p.gpu_min_batch_times_k, p.gpu_min_batch,
                     p.concurrent_matrices);
         return 0;
     }
     if (argc != 5) {
-        std::fprintf(stderr, "usage: %s <batch> <M> <N> <unblocked|reduced|complete>\n"
+        std::fprintf(stderr, "usage: %s <batch> <M> <N> <unblocked|reduced|complete|cpu>\n"
                              "       %s --policy\n", argv[0], argv[0]);
         return 2;
     }
@@ -139,6 +141,7 @@ int main(int argc, char** argv) {
     if      (which == "unblocked") qr = detail::qr_unblocked;
     else if (which == "reduced")   qr = detail::qr_streaming_amx_reduced;
     else if (which == "complete")  qr = detail::qr_streaming_amx_complete;
+    else if (which == "cpu")       qr = detail::qr_cpu;          // LAPACK, the CPU route
     else { std::fprintf(stderr, "unknown backend: %s\n", argv[4]); return 2; }
 
     set_default_device(Device::gpu);

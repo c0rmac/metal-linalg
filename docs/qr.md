@@ -8,10 +8,10 @@
 auto [Q, R] = metal_linalg::qr_accelerated(a);
 ```
 
-The function operates on the default MLX device; set it to the GPU before
-calling. Unlike the eigensolver and the SVD there is no CPU path: every call
-runs one of the two GPU backends, and `qr_backend(m, n, batch)` reports which.
-For example:
+As for the eigensolver and the SVD, each call is routed by a policy measured on
+the Mac it runs on: to LAPACK on the CPU when the batch is too small to pay for
+a GPU launch, otherwise to one of two GPU kernels. `qr_backend(m, n, batch)`
+reports which (`cpu`, `unblocked` or `streaming_reduced`). For example:
 
 ```cpp
 #include <metal_linalg/qr.h>
@@ -166,7 +166,9 @@ $Y$ and $T$ are loaded into threadgroup memory (L1 cache) once per tile and reus
 
 ## How it works
 
-Two Metal backends handle different regimes, with a dispatcher that selects between them at runtime (a third is retained but unused):
+Two Metal backends and a CPU path handle different regimes, with a dispatcher that selects between them at runtime (a third Metal backend is retained but unused):
+
+**CPU (`qr_cpu`)** — LAPACK's `sgeqrf` and `sorgqr` (Accelerate), one matrix at a time, after transposing each matrix into the column-major layout LAPACK reads. For a lone matrix or a small batch, where a GPU launch costs more than the factorisation: on an M5 Pro, 4 matrices of 64×64 take 0.13 ms here against 1.04 ms on the GPU.
 
 **`qr_unblocked`** — Standard Householder QR in a single kernel dispatch. Used for smaller matrices where the overhead of multi-pass streaming is not worth it.
 
@@ -188,6 +190,16 @@ covered by regression tests now (`[ magnitude ]` and
 `[ nearly dependent columns ]` in `tests/test_qr.cpp`).
 
 ### Dispatch logic
+
+Two decisions, as for the eigensolver and the SVD. First GPU or CPU, with
+`k = min(M, N)`:
+
+```
+GPU iff  k <= gpu_max_k,  batch * k >= gpu_min_batch_times_k  and  batch >= gpu_min_batch,  else CPU
+```
+
+The GPU needs enough work to pay for a launch, so lone and small-batch calls go
+to LAPACK. Then, on the GPU, which kernel:
 
 ```
 M >= m_crossover  ->  qr_streaming_amx_reduced      (384 on an M1, 512 on an M5 Pro)
@@ -230,6 +242,17 @@ threshold once it was validated honestly.
 7-12% noise floor) while allocating the full `M x M` Q, so it is kept and tested
 but unused.
 
+### Signs
+
+A QR factorisation is unique only up to the signs of R's diagonal (with the
+matching columns of Q), and the backends do not all choose the same ones. The
+CPU path and `qr_unblocked` use LAPACK's Householder convention, so about half
+of R's diagonal is negative; `qr_streaming_amx_reduced` makes the diagonal
+non-negative and, for square input, flips the last column of Q so that
+det(Q) = +1. Every result satisfies `Q R = A`; a caller that needs one
+convention, for example to sample Haar-distributed rotations, normalises it:
+flip column `i` of Q and row `i` of R wherever `R[i][i] < 0`.
+
 ### Tuning
 
 **The crossover is hardware-specific.** `384` was measured on an 8-core Apple
@@ -240,11 +263,15 @@ two push in opposite directions across GPU generations: more cores favour the
 grid-parallel backend, a faster core favours the single-threadgroup one, and on
 the M5 Pro the second effect won.
 
-| GPU | cores | `m_crossover` | status |
-|---|---|---|---|
-| Apple M1 | 8 | 384 | measured — see [`studies/qr-routing-apple-m1.md`](studies/qr-routing-apple-m1.md) |
-| Apple M5 Pro | 20 | 512 | measured — see [`studies/routing-apple-m5-pro.md`](studies/routing-apple-m5-pro.md) |
-| anything else | — | 384 | **untuned default** |
+| GPU | cores | `m_crossover` | GPU or CPU | status |
+|---|---|---|---|---|
+| Apple M1 | 8 | 384 | always the GPU (measured before the CPU path) | measured — see [`studies/qr-routing-apple-m1.md`](studies/qr-routing-apple-m1.md) |
+| Apple M5 Pro | 20 | 512 | always the GPU (measured before the CPU path) | measured — see [`studies/routing-apple-m5-pro.md`](studies/routing-apple-m5-pro.md) |
+| anything else | — | 384 | GPU iff `batch * k >= 1024` | **untuned default** |
+
+The GPU-or-CPU boundary is measured by every run made since QR had a CPU path;
+a device's row sends every call to the GPU until such a run has been submitted
+for it.
 
 `qr_policy_source()` reports `default:untuned-device (<name>)` on any GPU
 without a table entry, so an untuned device is visible rather than silent.
@@ -257,12 +284,15 @@ cores), and warns if `M` is no longer the best feature on that hardware, which
 would be a structural change rather than a moved threshold. The committed runs
 are under [`results/`](results/), one folder per device.
 
-To override the threshold without rebuilding, set `QR_M_CROSSOVER`, or call
-`set_qr_policy()`:
+To override the policy without rebuilding, set `QR_M_CROSSOVER` (the kernel
+crossover), `QR_GPU_MAX_K`, `QR_GPU_MIN_BATCH_TIMES_K` and `QR_GPU_MIN_BATCH`
+(the GPU-or-CPU boundary), or `QR_DEVICE=gpu` or `cpu` to force one side; or
+call `set_qr_policy()`:
 
 ```cpp
 auto p = metal_linalg::qr_policy();
 p.m_crossover_small_batch = p.m_crossover_large_batch = 320;
+p.gpu_min_batch_times_k = 0;          // every call on the GPU
 metal_linalg::set_qr_policy(p);
 ```
 
@@ -277,7 +307,7 @@ cmake --build build --target test_qr
 ./build/test_qr          # or: ctest --test-dir build
 ```
 
-`tests/test_qr.cpp` checks each backend directly as well as through the dispatcher, verifying output shapes, reconstruction (`Q*R == A`), orthogonality (`Q^T*Q == I`) and upper-triangularity of `R`, across input magnitudes from 1e-30 to 1e+37 and for nearly dependent columns.
+`tests/test_qr.cpp` checks each backend, the CPU path included, directly as well as through the dispatcher and the routing policy, verifying output shapes, reconstruction (`Q*R == A`), orthogonality (`Q^T*Q == I`) and upper-triangularity of `R`, across input magnitudes from 1e-30 to 1e+37 and for nearly dependent columns.
 
 
 ## Benchmark
