@@ -9,13 +9,24 @@
 QR decomposition, symmetric eigendecomposition and singular value
 decomposition for batches of matrices on Apple GPUs, for
 [MLX](https://github.com/ml-explore/mlx). A C++ library, installed with
-Homebrew or built from source inside your own project.
+Homebrew or built from source inside your own project, with Python bindings
+for `mlx.core` arrays.
 
 Each solver has several Metal kernels, one per regime (small matrices in large
 batches, large matrices spread over the whole GPU, long thin matrices), and
 every call is routed to the fastest of them, or to MLX's CPU path, by a policy
 measured on the device it runs on. MLX's own `linalg::eigh` and `linalg::svd`
 run only on the CPU.
+
+> **Contributions welcome: measure your Mac.** The routing is only as good as
+> the measurements behind it, and every new chip needs its own. So far an M1
+> and an M5 Pro have been measured; every other Mac runs a cautious default
+> that misses much of what its GPU can do. If you have an Apple Silicon Mac,
+> one command measures it (`python3 tuning/run.py`, about 40 minutes of the
+> Mac's time) and produces a results folder to send as a pull request. Each
+> run improves the library for everyone with that Mac, and runs from several
+> people with the same Mac are combined. Contributions are what keep the
+> library up to date as Apple ships new chips: [how to contribute](docs/tuning.md).
 
 ## What it provides
 
@@ -213,6 +224,31 @@ FetchContent_MakeAvailable(metal_linalg)
 target_link_libraries(my_app PRIVATE metal_linalg::metal_linalg)
 ```
 
+## Using it from Python
+
+```python
+import mlx.core as mx
+import metal_linalg as ml
+
+a = mx.random.normal((1000, 64, 32))
+Q, R = ml.qr(a)
+U, S, Vt = ml.svd(a)
+w, V = ml.eigh(a.swapaxes(-1, -2) @ a)
+ml.eigh_backend(512, 1)      # 'cpu': which backend a shape gets on this Mac
+```
+
+The package is compiled against the MLX you have installed, so it shares
+MLX's arrays without copying:
+
+```bash
+pip install mlx scikit-build-core "nanobind==2.15.0"
+pip install --no-build-isolation git+https://github.com/c0rmac/metal-linalg.git
+```
+
+The nanobind version has to match the one your MLX was built with, and the
+build checks it. [python/README.md](python/README.md) has the details,
+including Homebrew's Python.
+
 ## Where the GPU wins
 
 For batches. On an Apple M5 Pro, the best GPU kernel against the CPU:
@@ -292,6 +328,7 @@ device's values.
 | path | contents |
 |---|---|
 | `include/metal_linalg/` | the public headers |
+| `python/` | the Python package: bindings, the `metal_linalg` module, its tests |
 | `src/` | host code: routing policies, the Metal runtime, one driver per backend |
 | `shaders/` | the Metal kernels; `prebuilt/` holds their compiled metallibs |
 | `examples/` | small self-checking programs, one per use case |

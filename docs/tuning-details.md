@@ -44,12 +44,20 @@ same pair `kTuned[]` is keyed on, so a binned part with fewer cores is its own
 device. `<id>` is the UTC date and six random hex digits, e.g.
 `20260930-27b6c2`, unique without any coordination between contributors.
 
-`submission.json` records the chip, its CPU core counts per performance level,
-its memory, the macOS, MLX and metal-linalg versions, the measurement epoch,
-the load average, power source and Low Power Mode at the start and end, the
-minutes each step took, and for each decomposition whether it is trustworthy
-and its fitted row. It records nothing that identifies the person or the
-machine.
+`submission.json` records:
+
+| field | contents |
+|---|---|
+| `device` | the chip and GPU core count, as Metal reports them; the key for `kTuned[]` |
+| `machine` | the exact model: product name ("MacBook Pro (16-inch, M5 Pro)"), model identifier (`Mac17,8`) and built-in display resolution. One chip ships in machines that cool it differently, a 14-inch and a 16-inch MacBook Pro for instance, and only this tells them apart |
+| `cpu`, `memory_gb` | CPU cores per performance level, memory |
+| `macos`, `macos_build`, `mlx`, `metal_linalg`, `epoch` | the software it ran |
+| `conditions` | at the start and after each decomposition: load average, CPU count, power source, charger and its wattage, battery charge, power mode, Low Power Mode, and macOS's thermal and performance warnings |
+| `results` | per decomposition: trustworthy or not and why, the fitted row, and the probe point's drift over the sweep |
+| `minutes` | how long each decomposition took |
+
+It records nothing that identifies the person or the particular Mac: no
+serial numbers, hardware UUIDs, hostnames or user names.
 
 The M1's runs predate this layout and are kept as `apple-m1-8gpu/legacy/`
 (QR and eigh only).
@@ -83,6 +91,18 @@ measures run-to-run noise rather than the spread between machines.
 earlier timings no longer describe the library, bump it: older runs then stop
 counting, and a device falls back to the untuned default until it is measured
 again.
+
+**Diagnosing disagreement.** The combined `summary.md` for each device ends
+with a table of its runs: each run's machine, memory, macOS and conditions,
+and for each decomposition whether the settings that run fitted on its own
+match the combined ones, naming every setting that differs. The Action's
+summary shows the same table on every results pull request. Runs from one
+model that consistently disagree with another model of the same chip point to
+a real difference between the machines rather than noise: a 14-inch MacBook
+Pro that throttles where the 16-inch does not, for instance. The tables are
+keyed on the chip and GPU core count only, so such machines share a row
+today; if the difference is real, the key would have to include the model
+identifier, which the library can read at run time (`sysctl hw.model`).
 
 **The Action** (`.github/workflows/tuned-policies.yml`) runs on every pull
 request and every push to `main` that touches `docs/results/` or `tuning/`,

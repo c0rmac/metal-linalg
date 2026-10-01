@@ -47,9 +47,13 @@ included, and the library is updated automatically.
 
 ## What is recorded
 
-The chip, its CPU and GPU core counts and memory, the macOS and MLX versions,
-the load average and power source during the run, and the timings. Nothing
-that identifies you or the machine: no names, hostnames or serial numbers.
+The exact model of Mac (for example "MacBook Pro (16-inch, M5 Pro)", since the
+same chip runs at different speeds in machines that cool it differently), its
+chip, CPU and GPU core counts, memory and built-in display, the macOS and MLX
+versions, and, at the start and after each part of the run, the load average,
+the power source and charger, the power mode and any thermal warnings. And the
+timings. Nothing that identifies you or your particular Mac: no names,
+hostnames or serial numbers.
 
 ## If something goes wrong
 

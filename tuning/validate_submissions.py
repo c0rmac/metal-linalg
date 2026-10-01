@@ -83,6 +83,9 @@ def check_submission(device, sid, errors):
         errors.append(f"{rel}: submission.json lacks the device name and GPU core count")
     elif sub.device_slug(dev["name"], dev["gpu_cores"]) != device:
         errors.append(f"{rel}: device folder should be {sub.device_slug(dev['name'], dev['gpu_cores'])}")
+    if sid != "legacy" and not (info.get("machine") or {}).get("model_identifier"):
+        errors.append(f"{rel}: submission.json lacks the machine model; run it again with the "
+                      f"current tuning/run.py")
     if info.get("quick"):
         errors.append(f"{rel}: a smoke test (--quick) is not a submission")
     if info.get("status") not in (None, "complete"):

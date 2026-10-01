@@ -42,7 +42,7 @@ struct Cache {
         MetalRuntime::shared(METAL_LINALG_SHADER(QR_Streaming_AMX_Complete), "qr_streaming_amx_complete");
 
     std::map<std::pair<uint, uint>, Pipelines>        pipelines;   // keyed by (M_pad, N_pad)
-    std::map<std::tuple<uint, uint, uint>, Workspace> workspaces;  // keyed by (batch, M_pad, N_pad)
+    std::map<std::tuple<uint, uint, uint>, Workspace> workspaces;  // keyed by (batch, M, N)
 
     Pipelines get_pipelines(uint M_pad, uint N_pad) {
         auto key = std::make_pair(M_pad, N_pad);
@@ -68,7 +68,9 @@ struct Cache {
     }
 
     Workspace get_workspace(uint batch, uint M_pad, uint N_pad, uint M, uint N, uint K) {
-        auto key = std::make_tuple(batch, M_pad, N_pad);
+        // The exact shape, not the padded one: the output buffers are sized
+        // by M and N, so two shapes that pad alike cannot share them.
+        auto key = std::make_tuple(batch, M, N);
         if (auto it = workspaces.find(key); it != workspaces.end()) {
             return it->second;
         }

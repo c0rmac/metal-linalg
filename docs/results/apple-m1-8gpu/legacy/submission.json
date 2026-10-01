@@ -6,6 +6,11 @@
   "gpu_cores": 8,
   "slug": "apple-m1-8gpu"
  },
+ "machine": {
+  "product_name": "MacBook Pro (13-inch, M1, 2020)",
+  "model_identifier": "MacBookPro17,1",
+  "built_in_display": "2560 x 1600"
+ },
  "cpu": {
   "cores": 8,
   "per_level": [
@@ -13,11 +18,11 @@
    4
   ]
  },
- "memory_gb": null,
+ "memory_gb": 16,
  "macos": null,
  "mlx": null,
  "metal_linalg": null,
- "note": "The studies behind the M1 rows (docs/studies/qr-routing-apple-m1.md, eigh-routing-apple-m1.md), run separately before submissions existed and before the harnesses recorded machine state. No SVD: the M1's SVD timings were taken on a busy machine.",
+ "note": "The studies behind the M1 rows (docs/studies/qr-routing-apple-m1.md, eigh-routing-apple-m1.md), run separately before submissions existed and before the harnesses recorded machine state. No SVD: the M1's SVD timings were taken on a busy machine. The machine was reported by its owner: a MacBook Pro (13-inch, M1, 2020) with 16 GB of memory and, from memory, 512 GB of storage; the identifier and display are that model's published specification.",
  "quick": false,
  "conditions": null,
  "results": {

@@ -64,7 +64,10 @@ def summary(per_device):
         L.append(f"| {d} | {len(res['subs'])} | " + " | ".join(cells) + " |")
     skipped = [f"- {d} {op}: skipped {s}" for d, res in per_device.items()
                for op, e in res["ops"].items() for s in e["skipped"]]
-    return "\n".join(L + ([""] + skipped if skipped else [])) + "\n"
+    runs = []
+    for d, res in per_device.items():
+        runs += ["", f"### {d}: runs", "", res["runs_table"].rstrip("\n")]
+    return "\n".join(L + ([""] + skipped if skipped else []) + runs) + "\n"
 
 
 def snapshot(paths):

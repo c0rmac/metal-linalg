@@ -1,0 +1,38 @@
+# The Python package, metal_linalg. It is compiled against the MLX of the
+# environment it is installed into, so install it without build isolation;
+# see python/README.md.
+
+[build-system]
+requires = ["scikit-build-core>=0.10", "nanobind>=2"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "metal-linalg"
+version = "2.0.0"
+description = "QR, symmetric eigendecomposition and SVD for batches of matrices on Apple GPUs, for MLX"
+readme = "python/README.md"
+requires-python = ">=3.10"
+dependencies = ["mlx"]
+classifiers = [
+    "Operating System :: MacOS",
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Mathematics",
+]
+
+[project.urls]
+Homepage = "https://github.com/c0rmac/metal-linalg"
+
+[tool.scikit-build]
+minimum-version = "0.10"
+cmake.version = ">=3.25"
+cmake.build-type = "Release"
+wheel.packages = ["python/metal_linalg"]
+sdist.exclude = ["build*", "docs/results", "benchmarks", "tuning"]
+
+[tool.scikit-build.cmake.define]
+METAL_LINALG_BUILD_PYTHON = "ON"
+METAL_LINALG_BUILD_TESTS = "OFF"
+METAL_LINALG_BUILD_EXAMPLES = "OFF"
+METAL_LINALG_SHARED = "OFF"
+METAL_LINALG_INSTALL = "OFF"

@@ -20,9 +20,11 @@ See docs/tuning.md.
 """
 
 import argparse
+import base64
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -133,12 +135,61 @@ def spec(build_dir):
     return {
         "device": {"name": pol["device"], "gpu_cores": pol["gpu_cores"],
                    "slug": sub.device_slug(pol["device"], pol["gpu_cores"])},
+        "machine": machine(),
         "cpu": {"cores": sysctl("hw.ncpu"), "per_level": [n for n in levels if n]},
         "memory_gb": round(mem / 2**30) if mem else None,
         "macos": macos.strip() if rc == 0 else None,
+        "macos_build": capture(["sw_vers", "-buildVersion"])[1].strip() or None,
         "mlx": mlx,
         "metal_linalg": (commit.strip() + ("+changes" if dirty.strip() else "")) if rc3 == 0 else None,
     }
+
+
+def system_profiler(kind):
+    rc, out = capture(["system_profiler", kind, "-json"])
+    try:
+        return json.loads(out).get(kind, []) if rc == 0 else []
+    except ValueError:
+        return []
+
+
+def machine():
+    """The exact Mac, e.g. "MacBook Pro (16-inch, M5 Pro)", Mac17,8: one chip
+    ships in machines that cool it very differently, and the chip name alone
+    cannot tell them apart. Only model-level facts; never serial numbers."""
+    rc, ident = capture(["sysctl", "-n", "hw.model"])
+    rc2, tree = capture(["ioreg", "-arc", "IOPlatformDevice", "-k", "product-name"])
+    product = None
+    if rc2 == 0:
+        m = re.search(r"<key>product-name</key>\s*<data>\s*([A-Za-z0-9+/=\s]+?)\s*</data>", tree)
+        if m:
+            product = base64.b64decode(m.group(1)).decode("utf-8", "replace").strip("\0 ")
+    display = None
+    for gpu in system_profiler("SPDisplaysDataType"):
+        for d in gpu.get("spdisplays_ndrvs", []):
+            if d.get("spdisplays_connection_type") == "spdisplays_internal":
+                display = d.get("_spdisplays_pixels")
+    return {"product_name": product, "model_identifier": ident.strip() if rc == 0 else None,
+            "built_in_display": display}
+
+
+def conditions():
+    """The machine state (load, power, Low Power Mode) plus what bears on
+    throttling: the charger, the battery, macOS's power mode and its thermal
+    and performance warnings."""
+    st = te.machine_state()
+    rc, pm = capture(["pmset", "-g"])
+    m = re.search(r"^\s*powermode\s+(\d)", pm, re.M)
+    st["power_mode"] = {"0": "automatic", "1": "low power", "2": "high power"}.get(m.group(1)) if m else None
+    rc, therm = capture(["pmset", "-g", "therm"])
+    st["thermal"] = [l.strip() for l in therm.splitlines() if l.strip()] if rc == 0 else None
+    for e in system_profiler("SPPowerDataType"):
+        if "sppower_ac_charger_watts" in e:
+            st["charger_watts"] = int(e["sppower_ac_charger_watts"])
+            st["charger"] = e.get("sppower_ac_charger_name")
+        if "sppower_battery_charge_info" in e:
+            st["battery_percent"] = e["sppower_battery_charge_info"].get("sppower_battery_state_of_charge")
+    return st
 
 
 def run_sweep(op, harness, binary, options, out_dir, log_path):
@@ -159,18 +210,21 @@ def result_of(op, out_dir):
         return {"trustworthy": False, "row": None, "why": "no results"}
     r = json.load(open(path))
     row = r.get("ktuned_entry") or r.get("tuned_row")
+    drift = (r.get("drift") or {}).get("ratio")
     if op == "qr":   # judged by its noise floor
         ok = r["noise"]["overall"]["median"] <= 1.10
         why = None if ok else "run-to-run noise above 10%"
     else:
         ok = bool(r.get("trustworthy"))
         why = None if ok else "; ".join(r.get("warnings", [])[:1])
-    return {"trustworthy": ok, "row": row, "why": why}
+    return {"trustworthy": ok, "row": row, "why": why, "probe_drift": drift}
 
 
 def write_summary(path, info):
     d = info["device"]
+    mach = info.get("machine") or {}
     L = [f"# {d['name']}, {d['gpu_cores']} GPU cores — submission {info['id']}", "",
+         f"{mach.get('product_name') or 'unknown model'} ({mach.get('model_identifier')}), "
          f"{info['cpu']['cores']} CPU cores, {info['memory_gb']} GB, macOS {info['macos']}, "
          f"MLX {info['mlx']}, metal-linalg {info['metal_linalg']}. "
          f"{'Smoke test (--quick), not a submission. ' if info['quick'] else ''}"
@@ -194,7 +248,7 @@ def main():
     if sys.platform != "darwin" or platform.machine() != "arm64":
         fail("metal-linalg measures Apple Silicon Macs; this is not one.")
     cmake, prefix = find_tools()
-    start_state = check_machine(args.anyway)
+    check_machine(args.anyway)
 
     build_dir = os.path.join(ROOT, "build-tuning")
     build(cmake, prefix, build_dir)
@@ -210,7 +264,7 @@ def main():
     out = os.path.join(base, slug, info["id"])
     os.makedirs(out)
     info = {"id": info.pop("id"), "date": info.pop("date"), **info}
-    info.update({"status": "running", "conditions": {"start": start_state}, "results": {}, "minutes": {}})
+    info.update({"status": "running", "conditions": {"start": conditions()}, "results": {}, "minutes": {}})
     json.dump(info, open(os.path.join(out, "submission.json"), "w"), indent=1)
 
     total = "15" if args.quick else "40"
@@ -224,11 +278,11 @@ def main():
                        os.path.join(out, op), os.path.join(out, f"{op}.log"))
         info["minutes"][op] = round((time.time() - t0) / 60, 1)
         info["results"][op] = result_of(op, os.path.join(out, op))
+        info["conditions"][f"after_{op}"] = conditions()
         if rc != 0:
             info["results"][op].update(trustworthy=False, why=f"the harness exited with status {rc}")
         json.dump(info, open(os.path.join(out, "submission.json"), "w"), indent=1)
 
-    info["conditions"]["end"] = te.machine_state()
     info["status"] = "complete"
     json.dump(info, open(os.path.join(out, "submission.json"), "w"), indent=1)
     write_summary(os.path.join(out, "summary.md"), info)

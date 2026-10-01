@@ -6,6 +6,11 @@
   "gpu_cores": 20,
   "slug": "apple-m5-pro-20gpu"
  },
+ "machine": {
+  "product_name": "MacBook Pro (16-inch, M5 Pro)",
+  "model_identifier": "Mac17,8",
+  "built_in_display": "3456 x 2234"
+ },
  "cpu": {
   "cores": 18,
   "per_level": [
@@ -17,7 +22,7 @@
  "macos": "26.6",
  "mlx": "0.32.1",
  "metal_linalg": null,
- "note": "Measured before the 2.0 commit (b4cd681) with the same kernels; the QR, eigh and SVD sweeps were run one after another by hand, as tuning/run.py now does.",
+ "note": "Measured before the 2.0 commit (b4cd681) with the same kernels; the QR, eigh and SVD sweeps were run one after another by hand, as tuning/run.py now does. The machine and its 140 W charger were read from the Mac it ran on; the power and thermal state during the run were not recorded, as tuning/run.py now does.",
  "quick": false,
  "conditions": {
   "start": {

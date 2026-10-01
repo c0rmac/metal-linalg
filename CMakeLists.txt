@@ -15,8 +15,24 @@ option(METAL_LINALG_SHARED      "Build libmetal_linalg as a shared library" ${PR
 option(METAL_LINALG_INSTALL     "Generate install and CMake package rules" ${PROJECT_IS_TOP_LEVEL})
 option(METAL_LINALG_BUILD_TESTS "Build the tests, benchmarks and tuning harnesses" ${PROJECT_IS_TOP_LEVEL})
 option(METAL_LINALG_BUILD_EXAMPLES "Build the examples (run as tests)" ${METAL_LINALG_BUILD_TESTS})
+option(METAL_LINALG_BUILD_PYTHON "Build the Python extension (pyproject.toml turns this on)" OFF)
 option(METAL_LINALG_USE_PREBUILT_SHADERS
        "Use shaders/prebuilt/*.metallib instead of compiling the .metal sources" OFF)
+
+# The Python extension must use the very MLX the `mlx` Python package loads, so
+# look where that package says first: a pip-installed mlx carries its own, and
+# for Homebrew's the search falls through to the Homebrew prefix.
+if (METAL_LINALG_BUILD_PYTHON)
+    find_package(Python 3.10 REQUIRED COMPONENTS Interpreter Development.Module)
+    execute_process(COMMAND "${Python_EXECUTABLE}" -m mlx --cmake-dir
+                    OUTPUT_VARIABLE _mlx_py_root OUTPUT_STRIP_TRAILING_WHITESPACE
+                    RESULT_VARIABLE _mlx_py_rc ERROR_QUIET)
+    if (NOT _mlx_py_rc EQUAL 0)
+        message(FATAL_ERROR "metal-linalg: mlx is not installed for ${Python_EXECUTABLE}. "
+                            "See python/README.md.")
+    endif ()
+    list(PREPEND CMAKE_PREFIX_PATH "${_mlx_py_root}")
+endif ()
 
 find_package(MLX REQUIRED)
 include(GNUInstallDirs)
@@ -259,4 +275,15 @@ if (METAL_LINALG_BUILD_EXAMPLES)
         target_link_libraries(example_${_ex} PRIVATE metal_linalg)
         add_test(NAME example_${_ex} COMMAND example_${_ex})
     endforeach ()
+    add_executable(example_objc_quickstart examples/objc_quickstart.mm)
+    target_link_libraries(example_objc_quickstart PRIVATE metal_linalg "-framework Foundation")
+    add_test(NAME example_objc_quickstart COMMAND example_objc_quickstart)
+endif ()
+
+# =============================================================================
+# Python extension: metal_linalg._core (see python/README.md)
+# =============================================================================
+
+if (METAL_LINALG_BUILD_PYTHON)
+    add_subdirectory(python)
 endif ()

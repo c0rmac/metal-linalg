@@ -28,6 +28,18 @@ now covers three decompositions, and is packaged as a library.
   this replaces the fixed rule of 1.0 with a crossover on the row count alone,
   measured over square, tall, wide and near-square shapes
   ([study](docs/studies/qr-routing-apple-m1.md)).
+- **Python package** `metal_linalg` (`python/`, `pyproject.toml`): `qr`, `eigh`,
+  `eigvalsh`, `svd`, `svdvals` on `mlx.core` arrays, the routing queries and
+  policies. Compiled against the installed MLX and sharing its arrays without
+  copying; see [python/README.md](python/README.md).
+- **Objective-C++**: a guide, [docs/objective-c.md](docs/objective-c.md), and
+  `examples/objc_quickstart.mm`, including a pattern for calling the library
+  from Swift through an Objective-C++ class.
+- Every measurement run records the exact Mac (e.g. "MacBook Pro (16-inch, M5
+  Pro)"), and its power and thermal state after each part of the run; a
+  device's combined summary compares the runs by machine, to find outliers.
+- [docs/reading-reports.md](docs/reading-reports.md) explains every number in
+  a measurement report, with worked examples from the M5 Pro run.
 - `<metal_linalg/device.h>`: `device_name()`, `gpu_core_count()`.
 - `<metal_linalg/metal_linalg.h>`, which includes everything.
 - `qr_backend(m, n, batch)`, like `eigh_backend` and `svd_backend`.
