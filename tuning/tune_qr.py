@@ -245,7 +245,7 @@ def evaluate(rule, pts, tie=0.10):
             bad += 1
     if not reg:
         return None
-    return {"geomean": math.exp(sum(map(math.log, reg)) / len(reg)),
+    return {"geomean": math.exp(math.fsum(map(math.log, reg)) / len(reg)),
             "worst": worst, "worst_shape": worst_pt,
             "over_tie": bad, "n": len(reg), "total": th / to}
 

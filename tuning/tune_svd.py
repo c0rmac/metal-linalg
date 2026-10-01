@@ -307,7 +307,7 @@ def evaluate(choice_fn, times):
         tc += r * best
         tb += best
     n = len(logs)
-    return {"geomean": math.exp(sum(logs) / n) if n else 1.0, "worst": worst, "over10": over10,
+    return {"geomean": math.exp(math.fsum(logs) / n) if n else 1.0, "worst": worst, "over10": over10,
             "total_ratio": tc / tb if tb else 1.0, "estimated_picks": est_picks, "n": n,
             "_per_point": per}
 
@@ -396,7 +396,7 @@ def bootstrap(base_fn, ref_fn, test, iters=2000, seed=11):
     n = len(keys)
     dl = [math.log(lb[k][1]) - math.log(lr[k][1]) for k in keys]
     rng = random.Random(seed)
-    gains = sorted(sum(dl[rng.randrange(n)] for _ in range(n)) / n for _ in range(iters))
+    gains = sorted(math.fsum(dl[rng.randrange(n)] for _ in range(n)) / n for _ in range(iters))
     return {"p_better": sum(g > 0 for g in gains) / iters,
             "gain_median": math.exp(gains[iters // 2]) - 1.0,
             "gain_p05": math.exp(gains[int(0.05 * iters)]) - 1.0}
