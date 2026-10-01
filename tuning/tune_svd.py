@@ -850,6 +850,7 @@ def main():
     res["raw"] = raw_paths
     res["submissions"] = subs
     res["calibration"] = calibration
+    res = te.sub.portable(res)
     json.dump(res, open(os.path.join(args.out, "results.json"), "w"), indent=1)
     write_report(res, os.path.join(args.out, "report.md"))
 

@@ -712,6 +712,7 @@ def main():
             sys.exit(f"no usable measurements in {a.reanalyse}")
         res = analyse(best, repeats, device_info(a.binary, a.reanalyse))
         res["submissions"] = subs
+        res = sub.portable(res)
         with open(os.path.join(a.out, "results.json"), "w") as fh:
             json.dump(res, fh, indent=2)
         write_report(res, os.path.join(a.out, "report.md"))
@@ -746,6 +747,7 @@ def main():
 
     res = analyse(best, repeats, _from_policy(pol))
     res["submissions"] = subs
+    res = sub.portable(res)
     with open(os.path.join(a.out, "results.json"), "w") as fh:
         json.dump(res, fh, indent=2)
     write_report(res, os.path.join(a.out, "report.md"))

@@ -22,13 +22,13 @@
    "cpu": 4.922958
   },
   "ratio": {
-   "jacobi": 0.9292322839546127,
-   "block": 0.9816026892922697,
-   "qr": 0.9975308238301811,
-   "qrblock": 0.9811057990953457,
-   "cpu": 0.9989093675285335
+   "jacobi": 0.929232283955,
+   "block": 0.981602689292,
+   "qr": 0.99753082383,
+   "qrblock": 0.981105799095,
+   "cpu": 0.998909367529
   },
-  "worst": 1.076157186171164,
+  "worst": 1.07615718617,
   "ok": true
  },
  "machine": {
@@ -239,18 +239,18 @@
   "n_points": 263,
   "n_candidates": 588,
   "current": {
-   "geomean": 1.1261945391432848,
-   "worst": 3.8039665336791826,
+   "geomean": 1.12619453914,
+   "worst": 3.80396653368,
    "over10": 54,
-   "total_ratio": 1.6571244281125264,
+   "total_ratio": 1.65712442811,
    "estimated_picks": 3,
    "n": 263
   },
   "chosen": {
-   "geomean": 1.0415560306521174,
-   "worst": 1.9783457975220449,
+   "geomean": 1.04155603065,
+   "worst": 1.97834579752,
    "over10": 30,
-   "total_ratio": 1.1283330149899777,
+   "total_ratio": 1.12833301499,
    "estimated_picks": 1,
    "n": 263
   },
@@ -281,238 +281,238 @@
    "qr_min_rows": [
     {
      "value": 16,
-     "geomean": 1.1215535777146215,
-     "worst": 3.088203386632706,
+     "geomean": 1.12155357771,
+     "worst": 3.08820338663,
      "over10": 81
     },
     {
      "value": 32,
-     "geomean": 1.1215535777146215,
-     "worst": 3.088203386632706,
+     "geomean": 1.12155357771,
+     "worst": 3.08820338663,
      "over10": 81
     },
     {
      "value": 64,
-     "geomean": 1.1215535777146215,
-     "worst": 3.088203386632706,
+     "geomean": 1.12155357771,
+     "worst": 3.08820338663,
      "over10": 81
     },
     {
      "value": 128,
-     "geomean": 1.1048030200016112,
-     "worst": 2.3556208670095518,
+     "geomean": 1.10480302,
+     "worst": 2.35562086701,
      "over10": 75
     },
     {
      "value": 256,
-     "geomean": 1.0872687236861251,
-     "worst": 1.9908175717613268,
+     "geomean": 1.08726872369,
+     "worst": 1.99081757176,
      "over10": 65
     },
     {
      "value": 512,
-     "geomean": 1.0824595530626573,
-     "worst": 2.2908050839131104,
+     "geomean": 1.08245955306,
+     "worst": 2.29080508391,
      "over10": 56
     },
     {
      "value": 1024,
-     "geomean": 1.0873458648963104,
-     "worst": 2.2908050839131104,
+     "geomean": 1.0873458649,
+     "worst": 2.29080508391,
      "over10": 51
     },
     {
      "value": 2048,
-     "geomean": 1.1559690372189053,
-     "worst": 5.313119281041038,
+     "geomean": 1.15596903722,
+     "worst": 5.31311928104,
      "over10": 60
     },
     {
      "value": null,
-     "geomean": 1.2326100958125512,
-     "worst": 5.8285167319725195,
+     "geomean": 1.23261009581,
+     "worst": 5.82851673197,
      "over10": 74
     }
    ],
    "qr_min_k": [
     {
      "value": 8,
-     "geomean": 1.1027756724197453,
-     "worst": 3.866045558375985,
+     "geomean": 1.10277567242,
+     "worst": 3.86604555838,
      "over10": 63
     },
     {
      "value": 16,
-     "geomean": 1.1027756724197453,
-     "worst": 3.866045558375985,
+     "geomean": 1.10277567242,
+     "worst": 3.86604555838,
      "over10": 63
     },
     {
      "value": 32,
-     "geomean": 1.0824595530626573,
-     "worst": 2.2908050839131104,
+     "geomean": 1.08245955306,
+     "worst": 2.29080508391,
      "over10": 56
     },
     {
      "value": 64,
-     "geomean": 1.084244747883706,
-     "worst": 3.8039665336791826,
+     "geomean": 1.08424474788,
+     "worst": 3.80396653368,
      "over10": 50
     },
     {
      "value": 128,
-     "geomean": 1.157656244876909,
-     "worst": 5.8285167319725195,
+     "geomean": 1.15765624488,
+     "worst": 5.82851673197,
      "over10": 58
     },
     {
      "value": 256,
-     "geomean": 1.2024493827315457,
-     "worst": 5.8285167319725195,
+     "geomean": 1.20244938273,
+     "worst": 5.82851673197,
      "over10": 66
     }
    ],
    "block_min": [
     {
      "value": 32,
-     "geomean": 1.240433441770463,
-     "worst": 7.138680805938494,
+     "geomean": 1.24043344177,
+     "worst": 7.13868080594,
      "over10": 85
     },
     {
      "value": 48,
-     "geomean": 1.1300905176283458,
-     "worst": 3.9469455722271256,
+     "geomean": 1.13009051763,
+     "worst": 3.94694557223,
      "over10": 69
     },
     {
      "value": 64,
-     "geomean": 1.1076323652273716,
-     "worst": 3.1146640809078066,
+     "geomean": 1.10763236523,
+     "worst": 3.11466408091,
      "over10": 62
     },
     {
      "value": 96,
-     "geomean": 1.05987726953237,
-     "worst": 1.9783457975220449,
+     "geomean": 1.05987726953,
+     "worst": 1.97834579752,
      "over10": 47
     },
     {
      "value": 128,
-     "geomean": 1.051935046531285,
-     "worst": 1.9783457975220449,
+     "geomean": 1.05193504653,
+     "worst": 1.97834579752,
      "over10": 44
     },
     {
      "value": 192,
-     "geomean": 1.0415560306521174,
-     "worst": 1.9783457975220449,
+     "geomean": 1.04155603065,
+     "worst": 1.97834579752,
      "over10": 30
     },
     {
      "value": 256,
-     "geomean": 1.0460696133007088,
-     "worst": 1.9783457975220449,
+     "geomean": 1.0460696133,
+     "worst": 1.97834579752,
      "over10": 33
     },
     {
      "value": 384,
-     "geomean": 1.0837793697683005,
-     "worst": 2.6737967387563804,
+     "geomean": 1.08377936977,
+     "worst": 2.67379673876,
      "over10": 43
     },
     {
      "value": 512,
-     "geomean": 1.1019339027750374,
-     "worst": 5.012850585452808,
+     "geomean": 1.10193390278,
+     "worst": 5.01285058545,
      "over10": 46
     },
     {
      "value": 768,
-     "geomean": 1.1260965250587427,
-     "worst": 8.104001114283726,
+     "geomean": 1.12609652506,
+     "worst": 8.10400111428,
      "over10": 49
     },
     {
      "value": 1024,
-     "geomean": 1.1571507785301876,
-     "worst": 15.857181982878041,
+     "geomean": 1.15715077853,
+     "worst": 15.8571819829,
      "over10": 52
     },
     {
      "value": null,
-     "geomean": 1.1832351485155748,
-     "worst": 25.02354919547901,
+     "geomean": 1.18323514852,
+     "worst": 25.0235491955,
      "over10": 54
     }
    ],
    "block_lo": [
     {
      "value": 32,
-     "geomean": 1.0682739219242006,
-     "worst": 3.2378686238268384,
+     "geomean": 1.06827392192,
+     "worst": 3.23786862383,
      "over10": 38
     },
     {
      "value": 48,
-     "geomean": 1.0479383656518066,
-     "worst": 2.22840615507753,
+     "geomean": 1.04793836565,
+     "worst": 2.22840615508,
      "over10": 34
     },
     {
      "value": 64,
-     "geomean": 1.0415560306521174,
-     "worst": 1.9783457975220449,
+     "geomean": 1.04155603065,
+     "worst": 1.97834579752,
      "over10": 30
     },
     {
      "value": 96,
-     "geomean": 1.0637479525594948,
-     "worst": 2.2908050839131104,
+     "geomean": 1.06374795256,
+     "worst": 2.29080508391,
      "over10": 39
     },
     {
      "value": 128,
-     "geomean": 1.073180644535912,
-     "worst": 2.2908050839131104,
+     "geomean": 1.07318064454,
+     "worst": 2.29080508391,
      "over10": 42
     }
    ],
    "batch_hi": [
     {
      "value": 4,
-     "geomean": 1.0835776262755332,
-     "worst": 2.969965154000491,
+     "geomean": 1.08357762628,
+     "worst": 2.969965154,
      "over10": 51
     },
     {
      "value": 16,
-     "geomean": 1.0602893215698364,
-     "worst": 2.252796551237056,
+     "geomean": 1.06028932157,
+     "worst": 2.25279655124,
      "over10": 41
     },
     {
      "value": 64,
-     "geomean": 1.0415560306521174,
-     "worst": 1.9783457975220449,
+     "geomean": 1.04155603065,
+     "worst": 1.97834579752,
      "over10": 30
     },
     {
      "value": 256,
-     "geomean": 1.04957073704001,
-     "worst": 2.189961579472945,
+     "geomean": 1.04957073704,
+     "worst": 2.18996157947,
      "over10": 32
     },
     {
      "value": 1024,
-     "geomean": 1.0722133662935136,
-     "worst": 2.4239341595265445,
+     "geomean": 1.07221336629,
+     "worst": 2.42393415953,
      "over10": 42
     },
     {
      "value": 4096,
-     "geomean": 1.0986456497150856,
-     "worst": 2.453239977325252,
+     "geomean": 1.09864564972,
+     "worst": 2.45323997733,
      "over10": 53
     }
    ]
@@ -529,18 +529,18 @@
      1000000000
     ],
     "train": {
-     "geomean": 1.049002310666756,
-     "worst": 2.57626342261801,
+     "geomean": 1.04900231067,
+     "worst": 2.57626342262,
      "over10": 19,
-     "total_ratio": 1.0559587821236793,
+     "total_ratio": 1.05595878212,
      "estimated_picks": 0,
      "n": 150
     },
     "test": {
-     "geomean": 1.1363126733932,
-     "worst": 3.8039665336791826,
+     "geomean": 1.13631267339,
+     "worst": 3.80396653368,
      "over10": 31,
-     "total_ratio": 1.3913295748770451,
+     "total_ratio": 1.39132957488,
      "estimated_picks": 1,
      "n": 113
     }
@@ -552,25 +552,25 @@
      "batch_hi": 256
     },
     "train": {
-     "geomean": 1.0232816087882601,
-     "worst": 1.6254232807563036,
+     "geomean": 1.02328160879,
+     "worst": 1.62542328076,
      "over10": 14,
-     "total_ratio": 1.007988272903789,
+     "total_ratio": 1.0079882729,
      "estimated_picks": 0,
      "n": 150
     },
     "test": {
-     "geomean": 1.0449137872970398,
-     "worst": 1.6100842079004896,
+     "geomean": 1.0449137873,
+     "worst": 1.6100842079,
      "over10": 17,
-     "total_ratio": 1.2320042012132981,
+     "total_ratio": 1.23200420121,
      "estimated_picks": 1,
      "n": 113
     },
     "bootstrap": {
      "p_better": 1.0,
-     "gain_median": 0.08696962398642438,
-     "gain_p05": 0.04619071110472239
+     "gain_median": 0.0869696239864,
+     "gain_p05": 0.0461907111047
     },
     "justified": true
    }
@@ -594,18 +594,18 @@
  "stage2": {
   "n_candidates": 462,
   "current": {
-   "geomean": 1.5455074680721952,
-   "worst": 9.096736214090788,
+   "geomean": 1.54550746807,
+   "worst": 9.09673621409,
    "over10": 95,
-   "total_ratio": 8.33141090537302,
+   "total_ratio": 8.33141090537,
    "estimated_picks": 18,
    "n": 263
   },
   "chosen": {
-   "geomean": 1.0417703098195836,
-   "worst": 2.0315108453917916,
+   "geomean": 1.04177030982,
+   "worst": 2.03151084539,
    "over10": 31,
-   "total_ratio": 1.1300787464119575,
+   "total_ratio": 1.13007874641,
    "estimated_picks": 1,
    "n": 263
   },
@@ -634,174 +634,174 @@
    "gpu_max_k": [
     {
      "value": 8,
-     "geomean": 2.6437542961409535,
-     "worst": 12.283853818056645,
+     "geomean": 2.64375429614,
+     "worst": 12.2838538181,
      "over10": 153
     },
     {
      "value": 16,
-     "geomean": 2.24231421279169,
-     "worst": 11.01075311372095,
+     "geomean": 2.24231421279,
+     "worst": 11.0107531137,
      "over10": 129
     },
     {
      "value": 32,
-     "geomean": 1.8884352953885588,
-     "worst": 10.742853879922105,
+     "geomean": 1.88843529539,
+     "worst": 10.7428538799,
      "over10": 114
     },
     {
      "value": 48,
-     "geomean": 1.8386629821699676,
-     "worst": 10.742853879922105,
+     "geomean": 1.83866298217,
+     "worst": 10.7428538799,
      "over10": 109
     },
     {
      "value": 64,
-     "geomean": 1.504892723520706,
-     "worst": 9.096736214090788,
+     "geomean": 1.50489272352,
+     "worst": 9.09673621409,
      "over10": 87
     },
     {
      "value": 96,
-     "geomean": 1.461042647656478,
-     "worst": 9.096736214090788,
+     "geomean": 1.46104264766,
+     "worst": 9.09673621409,
      "over10": 82
     },
     {
      "value": 128,
-     "geomean": 1.2286576159428702,
-     "worst": 5.886481648412422,
+     "geomean": 1.22865761594,
+     "worst": 5.88648164841,
      "over10": 57
     },
     {
      "value": 192,
-     "geomean": 1.2040210969592247,
-     "worst": 5.886481648412422,
+     "geomean": 1.20402109696,
+     "worst": 5.88648164841,
      "over10": 54
     },
     {
      "value": 256,
-     "geomean": 1.1005976101025374,
-     "worst": 2.0315108453917916,
+     "geomean": 1.1005976101,
+     "worst": 2.03151084539,
      "over10": 40
     },
     {
      "value": 384,
-     "geomean": 1.0770214944300185,
-     "worst": 2.0315108453917916,
+     "geomean": 1.07702149443,
+     "worst": 2.03151084539,
      "over10": 37
     },
     {
      "value": 512,
-     "geomean": 1.063243343330974,
-     "worst": 2.0315108453917916,
+     "geomean": 1.06324334333,
+     "worst": 2.03151084539,
      "over10": 34
     },
     {
      "value": 768,
-     "geomean": 1.0522245919941329,
-     "worst": 2.0315108453917916,
+     "geomean": 1.05222459199,
+     "worst": 2.03151084539,
      "over10": 32
     },
     {
      "value": 1024,
-     "geomean": 1.0417703098195836,
-     "worst": 2.0315108453917916,
+     "geomean": 1.04177030982,
+     "worst": 2.03151084539,
      "over10": 31
     },
     {
      "value": null,
-     "geomean": 1.0417703098195836,
-     "worst": 2.0315108453917916,
+     "geomean": 1.04177030982,
+     "worst": 2.03151084539,
      "over10": 31
     }
    ],
    "min_bk": [
     {
      "value": 0,
-     "geomean": 1.1757263768270416,
-     "worst": 7.134922376433156,
+     "geomean": 1.17572637683,
+     "worst": 7.13492237643,
      "over10": 63
     },
     {
      "value": 64,
-     "geomean": 1.1324019450375367,
-     "worst": 5.57699129129812,
+     "geomean": 1.13240194504,
+     "worst": 5.5769912913,
      "over10": 56
     },
     {
      "value": 128,
-     "geomean": 1.0953644520882189,
-     "worst": 3.9010406080046005,
+     "geomean": 1.09536445209,
+     "worst": 3.901040608,
      "over10": 49
     },
     {
      "value": 256,
-     "geomean": 1.0551490120496847,
-     "worst": 3.0857853842229472,
+     "geomean": 1.05514901205,
+     "worst": 3.08578538422,
      "over10": 37
     },
     {
      "value": 512,
-     "geomean": 1.0417703098195836,
-     "worst": 2.0315108453917916,
+     "geomean": 1.04177030982,
+     "worst": 2.03151084539,
      "over10": 31
     },
     {
      "value": 1024,
-     "geomean": 1.0727832837981204,
-     "worst": 4.385087621386316,
+     "geomean": 1.0727832838,
+     "worst": 4.38508762139,
      "over10": 40
     },
     {
      "value": 2048,
-     "geomean": 1.145355971105653,
-     "worst": 6.155123894950192,
+     "geomean": 1.14535597111,
+     "worst": 6.15512389495,
      "over10": 55
     },
     {
      "value": 4096,
-     "geomean": 1.2712845632157703,
-     "worst": 6.631612022150152,
+     "geomean": 1.27128456322,
+     "worst": 6.63161202215,
      "over10": 75
     },
     {
      "value": 8192,
-     "geomean": 1.4313649664699797,
-     "worst": 8.349634232714747,
+     "geomean": 1.43136496647,
+     "worst": 8.34963423271,
      "over10": 92
     },
     {
      "value": 16384,
-     "geomean": 1.650178164539959,
-     "worst": 11.696034805307809,
+     "geomean": 1.65017816454,
+     "worst": 11.6960348053,
      "over10": 111
     },
     {
      "value": null,
-     "geomean": 3.1416898327069656,
-     "worst": 17.688487154339864,
+     "geomean": 3.14168983271,
+     "worst": 17.6884871543,
      "over10": 179
     }
    ],
    "min_batch": [
     {
      "value": 1,
-     "geomean": 1.0484112299543282,
-     "worst": 2.0315108453917916,
+     "geomean": 1.04841122995,
+     "worst": 2.03151084539,
      "over10": 34
     },
     {
      "value": 4,
-     "geomean": 1.0417703098195836,
-     "worst": 2.0315108453917916,
+     "geomean": 1.04177030982,
+     "worst": 2.03151084539,
      "over10": 31
     },
     {
      "value": 16,
-     "geomean": 1.0648510571817353,
-     "worst": 2.2861635020748716,
+     "geomean": 1.06485105718,
+     "worst": 2.28616350207,
      "over10": 37
     }
    ]
@@ -816,18 +816,18 @@
      4
     ],
     "train": {
-     "geomean": 1.0458404313015226,
-     "worst": 1.9783457975220449,
+     "geomean": 1.0458404313,
+     "worst": 1.97834579752,
      "over10": 19,
-     "total_ratio": 1.0137079035269347,
+     "total_ratio": 1.01370790353,
      "estimated_picks": 0,
      "n": 150
     },
     "test": {
-     "geomean": 1.0676336450689605,
-     "worst": 3.0857853842229472,
+     "geomean": 1.06763364507,
+     "worst": 3.08578538422,
      "over10": 18,
-     "total_ratio": 1.246137625422264,
+     "total_ratio": 1.24613762542,
      "estimated_picks": 1,
      "n": 113
     }
@@ -852,25 +852,25 @@
      }
     },
     "train": {
-     "geomean": 1.0339940219501842,
-     "worst": 1.9783457975220449,
+     "geomean": 1.03399402195,
+     "worst": 1.97834579752,
      "over10": 14,
-     "total_ratio": 1.0132575136758013,
+     "total_ratio": 1.01325751368,
      "estimated_picks": 0,
      "n": 150
     },
     "test": {
-     "geomean": 1.059066484742807,
-     "worst": 2.2599784722282994,
+     "geomean": 1.05906648474,
+     "worst": 2.25997847223,
      "over10": 17,
-     "total_ratio": 1.248793555991872,
+     "total_ratio": 1.24879355599,
      "estimated_picks": 1,
      "n": 113
     },
     "bootstrap": {
      "p_better": 0.6775,
-     "gain_median": 0.00747164626066632,
-     "gain_p05": -0.01685727734484077
+     "gain_median": 0.00747164626067,
+     "gain_p05": -0.0168572773448
     },
     "justified": false
    }
@@ -888,18 +888,18 @@
  ],
  "rules": {
   "current": {
-   "geomean": 1.6000297372180063,
-   "worst": 9.096736214090788,
+   "geomean": 1.60002973722,
+   "worst": 9.09673621409,
    "over10": 104,
-   "total_ratio": 8.395407194226578,
+   "total_ratio": 8.39540719423,
    "estimated_picks": 18,
    "n": 263
   },
   "chosen": {
-   "geomean": 1.0417703098195836,
-   "worst": 2.0315108453917916,
+   "geomean": 1.04177030982,
+   "worst": 2.03151084539,
    "over10": 31,
-   "total_ratio": 1.1300787464119575,
+   "total_ratio": 1.13007874641,
    "estimated_picks": 1,
    "n": 263
   }
@@ -917,7 +917,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.09802462089073322
+   "gpu_speedup": 0.0980246208907
   },
   {
    "M": 4,
@@ -931,7 +931,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.14015569437770303
+   "gpu_speedup": 0.140155694378
   },
   {
    "M": 4,
@@ -945,7 +945,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.31029565406840004
+   "gpu_speedup": 0.310295654068
   },
   {
    "M": 4,
@@ -959,7 +959,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.5893280788177341
+   "gpu_speedup": 0.589328078818
   },
   {
    "M": 4,
@@ -973,7 +973,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 2.2599784722282994
+   "gpu_speedup": 2.25997847223
   },
   {
    "M": 4,
@@ -987,7 +987,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 7.95953370444569
+   "gpu_speedup": 7.95953370445
   },
   {
    "M": 4,
@@ -1001,7 +1001,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 6.652767489344021
+   "gpu_speedup": 6.65276748934
   },
   {
    "M": 8,
@@ -1015,7 +1015,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.17008450704225353
+   "gpu_speedup": 0.170084507042
   },
   {
    "M": 8,
@@ -1029,7 +1029,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.21438796348202133
+   "gpu_speedup": 0.214387963482
   },
   {
    "M": 8,
@@ -1043,7 +1043,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.2838216010944161
+   "gpu_speedup": 0.283821601094
   },
   {
    "M": 8,
@@ -1057,7 +1057,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 1.5143697598661374
+   "gpu_speedup": 1.51436975987
   },
   {
    "M": 8,
@@ -1071,7 +1071,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 4.435264301769951
+   "gpu_speedup": 4.43526430177
   },
   {
    "M": 8,
@@ -1085,7 +1085,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 3.8170829170829177
+   "gpu_speedup": 3.81708291708
   },
   {
    "M": 8,
@@ -1099,7 +1099,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 13.198613916825185
+   "gpu_speedup": 13.1986139168
   },
   {
    "M": 16,
@@ -1114,7 +1114,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.2379227053140097
+   "gpu_speedup": 0.237922705314
   },
   {
    "M": 16,
@@ -1129,7 +1129,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.22290206335576448
+   "gpu_speedup": 0.222902063356
   },
   {
    "M": 16,
@@ -1144,7 +1144,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.5537389718527288
+   "gpu_speedup": 0.553738971853
   },
   {
    "M": 16,
@@ -1159,7 +1159,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 2.4038085522400747
+   "gpu_speedup": 2.40380855224
   },
   {
    "M": 16,
@@ -1174,7 +1174,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 5.443048938934603
+   "gpu_speedup": 5.44304893893
   },
   {
    "M": 16,
@@ -1189,7 +1189,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 4.634887773003218
+   "gpu_speedup": 4.634887773
   },
   {
    "M": 16,
@@ -1204,7 +1204,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 12.475424316991608
+   "gpu_speedup": 12.475424317
   },
   {
    "M": 32,
@@ -1219,7 +1219,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.1400976353928299
+   "gpu_speedup": 0.140097635393
   },
   {
    "M": 32,
@@ -1234,7 +1234,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.3649218997625575
+   "gpu_speedup": 0.364921899763
   },
   {
    "M": 32,
@@ -1249,7 +1249,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.5064277366575769
+   "gpu_speedup": 0.506427736658
   },
   {
    "M": 32,
@@ -1264,7 +1264,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 1.062266221192056
+   "gpu_speedup": 1.06226622119
   },
   {
    "M": 32,
@@ -1279,7 +1279,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 2.155580428525744
+   "gpu_speedup": 2.15558042853
   },
   {
    "M": 32,
@@ -1294,7 +1294,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 11.696034805307809
+   "gpu_speedup": 11.6960348053
   },
   {
    "M": 32,
@@ -1309,7 +1309,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 17.688487154339864
+   "gpu_speedup": 17.6884871543
   },
   {
    "M": 64,
@@ -1324,7 +1324,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.2585591884016554
+   "gpu_speedup": 0.258559188402
   },
   {
    "M": 64,
@@ -1339,7 +1339,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.18739734085057266
+   "gpu_speedup": 0.187397340851
   },
   {
    "M": 64,
@@ -1354,7 +1354,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.45113286698673577
+   "gpu_speedup": 0.451132866987
   },
   {
    "M": 64,
@@ -1369,7 +1369,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 2.326534767559231
+   "gpu_speedup": 2.32653476756
   },
   {
    "M": 64,
@@ -1384,7 +1384,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 4.385259631490787
+   "gpu_speedup": 4.38525963149
   },
   {
    "M": 64,
@@ -1399,7 +1399,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 9.186972794028708
+   "gpu_speedup": 9.18697279403
   },
   {
    "M": 64,
@@ -1414,7 +1414,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 15.803607134610361
+   "gpu_speedup": 15.8036071346
   },
   {
    "M": 128,
@@ -1429,7 +1429,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.12049595687331538
+   "gpu_speedup": 0.120495956873
   },
   {
    "M": 128,
@@ -1444,7 +1444,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.36933266293323164
+   "gpu_speedup": 0.369332662933
   },
   {
    "M": 128,
@@ -1459,7 +1459,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.2563418586179508
+   "gpu_speedup": 0.256341858618
   },
   {
    "M": 128,
@@ -1474,7 +1474,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 2.5190140818071334
+   "gpu_speedup": 2.51901408181
   },
   {
    "M": 128,
@@ -1489,7 +1489,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 5.356156468735803
+   "gpu_speedup": 5.35615646874
   },
   {
    "M": 128,
@@ -1504,7 +1504,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 9.25500270238515
+   "gpu_speedup": 9.25500270239
   },
   {
    "M": 128,
@@ -1519,7 +1519,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 11.358200487007387
+   "gpu_speedup": 11.358200487
   },
   {
    "M": 256,
@@ -1534,7 +1534,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.11349451086269087
+   "gpu_speedup": 0.113494510863
   },
   {
    "M": 256,
@@ -1549,7 +1549,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.30430316855569756
+   "gpu_speedup": 0.304303168556
   },
   {
    "M": 256,
@@ -1564,7 +1564,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.3441875610550309
+   "gpu_speedup": 0.344187561055
   },
   {
    "M": 256,
@@ -1579,7 +1579,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 3.1435646258503405
+   "gpu_speedup": 3.14356462585
   },
   {
    "M": 256,
@@ -1594,7 +1594,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 5.380706781279847
+   "gpu_speedup": 5.38070678128
   },
   {
    "M": 256,
@@ -1609,7 +1609,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 8.571225710014948
+   "gpu_speedup": 8.57122571001
   },
   {
    "M": 256,
@@ -1624,7 +1624,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 11.596461794802467
+   "gpu_speedup": 11.5964617948
   },
   {
    "M": 16,
@@ -1638,7 +1638,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.1331992015968064
+   "gpu_speedup": 0.133199201597
   },
   {
    "M": 16,
@@ -1652,7 +1652,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.17930815161219957
+   "gpu_speedup": 0.179308151612
   },
   {
    "M": 16,
@@ -1666,7 +1666,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.324066607195956
+   "gpu_speedup": 0.324066607196
   },
   {
    "M": 16,
@@ -1680,7 +1680,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 2.8656498377463198
+   "gpu_speedup": 2.86564983775
   },
   {
    "M": 16,
@@ -1694,7 +1694,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 2.7535470794177264
+   "gpu_speedup": 2.75354707942
   },
   {
    "M": 16,
@@ -1708,7 +1708,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 8.675524081548604
+   "gpu_speedup": 8.67552408155
   },
   {
    "M": 16,
@@ -1722,7 +1722,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 10.51402115037943
+   "gpu_speedup": 10.5140211504
   },
   {
    "M": 32,
@@ -1737,7 +1737,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.24174949494949494
+   "gpu_speedup": 0.241749494949
   },
   {
    "M": 32,
@@ -1752,7 +1752,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.51411493531171
+   "gpu_speedup": 0.514114935312
   },
   {
    "M": 32,
@@ -1767,7 +1767,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.7334505442024911
+   "gpu_speedup": 0.733450544202
   },
   {
    "M": 32,
@@ -1782,7 +1782,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 3.7736378844573704
+   "gpu_speedup": 3.77363788446
   },
   {
    "M": 32,
@@ -1797,7 +1797,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 6.674382937681745
+   "gpu_speedup": 6.67438293768
   },
   {
    "M": 32,
@@ -1812,7 +1812,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 11.924975216497693
+   "gpu_speedup": 11.9249752165
   },
   {
    "M": 32,
@@ -1827,7 +1827,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 12.283853818056645
+   "gpu_speedup": 12.2838538181
   },
   {
    "M": 64,
@@ -1842,7 +1842,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.2581378284581061
+   "gpu_speedup": 0.258137828458
   },
   {
    "M": 64,
@@ -1857,7 +1857,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.2557825894829872
+   "gpu_speedup": 0.255782589483
   },
   {
    "M": 64,
@@ -1872,7 +1872,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.7308842375053396
+   "gpu_speedup": 0.730884237505
   },
   {
    "M": 64,
@@ -1887,7 +1887,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 3.7998445322793146
+   "gpu_speedup": 3.79984453228
   },
   {
    "M": 64,
@@ -1902,7 +1902,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 7.117794809284117
+   "gpu_speedup": 7.11779480928
   },
   {
    "M": 64,
@@ -1917,7 +1917,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 10.73104817812576
+   "gpu_speedup": 10.7310481781
   },
   {
    "M": 64,
@@ -1932,7 +1932,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 11.996395060914292
+   "gpu_speedup": 11.9963950609
   },
   {
    "M": 128,
@@ -1947,7 +1947,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.15471834752521643
+   "gpu_speedup": 0.154718347525
   },
   {
    "M": 128,
@@ -1962,7 +1962,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.466927475886006
+   "gpu_speedup": 0.466927475886
   },
   {
    "M": 128,
@@ -1977,7 +1977,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.5868226399106226
+   "gpu_speedup": 0.586822639911
   },
   {
    "M": 128,
@@ -1992,7 +1992,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 4.624540287529254
+   "gpu_speedup": 4.62454028753
   },
   {
    "M": 128,
@@ -2007,7 +2007,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 4.74785639240515
+   "gpu_speedup": 4.74785639241
   },
   {
    "M": 128,
@@ -2022,7 +2022,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 10.188332282204547
+   "gpu_speedup": 10.1883322822
   },
   {
    "M": 128,
@@ -2037,7 +2037,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 11.358782003559067
+   "gpu_speedup": 11.3587820036
   },
   {
    "M": 256,
@@ -2052,7 +2052,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.08399007349318076
+   "gpu_speedup": 0.0839900734932
   },
   {
    "M": 256,
@@ -2067,7 +2067,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.20560828684095558
+   "gpu_speedup": 0.205608286841
   },
   {
    "M": 256,
@@ -2082,7 +2082,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.5101852731591449
+   "gpu_speedup": 0.510185273159
   },
   {
    "M": 256,
@@ -2097,7 +2097,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 1.8559370418283745
+   "gpu_speedup": 1.85593704183
   },
   {
    "M": 256,
@@ -2112,7 +2112,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 7.065897373100977
+   "gpu_speedup": 7.0658973731
   },
   {
    "M": 256,
@@ -2127,7 +2127,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 7.519823620509456
+   "gpu_speedup": 7.51982362051
   },
   {
    "M": 256,
@@ -2142,7 +2142,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 9.958834147265428
+   "gpu_speedup": 9.95883414727
   },
   {
    "M": 512,
@@ -2157,7 +2157,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.270458318256772
+   "gpu_speedup": 0.270458318257
   },
   {
    "M": 512,
@@ -2172,7 +2172,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.22655126692703514
+   "gpu_speedup": 0.226551266927
   },
   {
    "M": 512,
@@ -2187,7 +2187,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.7420697906281157
+   "gpu_speedup": 0.742069790628
   },
   {
    "M": 512,
@@ -2202,7 +2202,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 2.4379182501967342
+   "gpu_speedup": 2.4379182502
   },
   {
    "M": 512,
@@ -2217,7 +2217,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 4.818563381559255
+   "gpu_speedup": 4.81856338156
   },
   {
    "M": 512,
@@ -2232,7 +2232,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 4.739912283107372
+   "gpu_speedup": 4.73991228311
   },
   {
    "M": 512,
@@ -2247,7 +2247,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 5.03700820838574
+   "gpu_speedup": 5.03700820839
   },
   {
    "M": 32,
@@ -2262,7 +2262,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.22033510074231175
+   "gpu_speedup": 0.220335100742
   },
   {
    "M": 32,
@@ -2277,7 +2277,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.6703735705209657
+   "gpu_speedup": 0.670373570521
   },
   {
    "M": 32,
@@ -2292,7 +2292,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.7735774811785421
+   "gpu_speedup": 0.773577481179
   },
   {
    "M": 32,
@@ -2307,7 +2307,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 3.8176660954789337
+   "gpu_speedup": 3.81766609548
   },
   {
    "M": 32,
@@ -2322,7 +2322,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 6.065132185882069
+   "gpu_speedup": 6.06513218588
   },
   {
    "M": 32,
@@ -2337,7 +2337,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 7.2512762489932285
+   "gpu_speedup": 7.25127624899
   },
   {
    "M": 32,
@@ -2352,7 +2352,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 9.41178573266412
+   "gpu_speedup": 9.41178573266
   },
   {
    "M": 64,
@@ -2369,7 +2369,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.2737578971025229
+   "gpu_speedup": 0.273757897103
   },
   {
    "M": 64,
@@ -2386,7 +2386,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.5992813911647378
+   "gpu_speedup": 0.599281391165
   },
   {
    "M": 64,
@@ -2403,7 +2403,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 1.465701098201496
+   "gpu_speedup": 1.4657010982
   },
   {
    "M": 64,
@@ -2420,7 +2420,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 4.768921663821332
+   "gpu_speedup": 4.76892166382
   },
   {
    "M": 64,
@@ -2437,7 +2437,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 7.011674495946788
+   "gpu_speedup": 7.01167449595
   },
   {
    "M": 64,
@@ -2454,7 +2454,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 8.83395927782836
+   "gpu_speedup": 8.83395927783
   },
   {
    "M": 64,
@@ -2471,7 +2471,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 11.01075311372095
+   "gpu_speedup": 11.0107531137
   },
   {
    "M": 128,
@@ -2488,7 +2488,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.24867401420524124
+   "gpu_speedup": 0.248674014205
   },
   {
    "M": 128,
@@ -2505,7 +2505,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.3025252814738997
+   "gpu_speedup": 0.302525281474
   },
   {
    "M": 128,
@@ -2522,7 +2522,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 1.14821935253636
+   "gpu_speedup": 1.14821935254
   },
   {
    "M": 128,
@@ -2539,7 +2539,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 4.921328671328672
+   "gpu_speedup": 4.92132867133
   },
   {
    "M": 128,
@@ -2556,7 +2556,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 7.131981491295395
+   "gpu_speedup": 7.1319814913
   },
   {
    "M": 128,
@@ -2573,7 +2573,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 8.48122934717796
+   "gpu_speedup": 8.48122934718
   },
   {
    "M": 128,
@@ -2590,7 +2590,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 9.888113720256348
+   "gpu_speedup": 9.88811372026
   },
   {
    "M": 256,
@@ -2607,7 +2607,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.14104455591619947
+   "gpu_speedup": 0.141044555916
   },
   {
    "M": 256,
@@ -2624,7 +2624,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.772939321220432
+   "gpu_speedup": 0.77293932122
   },
   {
    "M": 256,
@@ -2641,7 +2641,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 1.572177264450601
+   "gpu_speedup": 1.57217726445
   },
   {
    "M": 256,
@@ -2658,7 +2658,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 6.049874501881887
+   "gpu_speedup": 6.04987450188
   },
   {
    "M": 256,
@@ -2675,7 +2675,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 6.026342586109078
+   "gpu_speedup": 6.02634258611
   },
   {
    "M": 256,
@@ -2692,7 +2692,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 8.717192708642582
+   "gpu_speedup": 8.71719270864
   },
   {
    "M": 256,
@@ -2709,7 +2709,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 10.363833154013413
+   "gpu_speedup": 10.363833154
   },
   {
    "M": 512,
@@ -2726,7 +2726,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "qr",
-   "gpu_speedup": 0.22747712915928098
+   "gpu_speedup": 0.227477129159
   },
   {
    "M": 512,
@@ -2743,7 +2743,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "qr",
-   "gpu_speedup": 0.8008885738358843
+   "gpu_speedup": 0.800888573836
   },
   {
    "M": 512,
@@ -2760,7 +2760,7 @@
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 2.7818403596160857
+   "gpu_speedup": 2.78184035962
   },
   {
    "M": 512,
@@ -2777,7 +2777,7 @@
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 5.13472317162741
+   "gpu_speedup": 5.13472317163
   },
   {
    "M": 512,
@@ -2794,7 +2794,7 @@
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 5.634682180920434
+   "gpu_speedup": 5.63468218092
   },
   {
    "M": 512,
@@ -2811,7 +2811,7 @@
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 8.243865656440626
+   "gpu_speedup": 8.24386565644
   },
   {
    "M": 512,
@@ -2828,7 +2828,7 @@
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 9.140237387099475
+   "gpu_speedup": 9.1402373871
   },
   {
    "M": 1024,
@@ -2845,7 +2845,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "qr",
-   "gpu_speedup": 0.352063001751644
+   "gpu_speedup": 0.352063001752
   },
   {
    "M": 1024,
@@ -2862,7 +2862,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "qr",
-   "gpu_speedup": 1.2677595303618376
+   "gpu_speedup": 1.26775953036
   },
   {
    "M": 1024,
@@ -2879,7 +2879,7 @@
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 4.385087621386316
+   "gpu_speedup": 4.38508762139
   },
   {
    "M": 1024,
@@ -2896,7 +2896,7 @@
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 4.003758949551811
+   "gpu_speedup": 4.00375894955
   },
   {
    "M": 1024,
@@ -2913,7 +2913,7 @@
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 6.063071270953424
+   "gpu_speedup": 6.06307127095
   },
   {
    "M": 1024,
@@ -2930,7 +2930,7 @@
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 8.734014237909356
+   "gpu_speedup": 8.73401423791
   },
   {
    "M": 1024,
@@ -2947,7 +2947,7 @@
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 8.866185031697126
+   "gpu_speedup": 8.8661850317
   },
   {
    "M": 48,
@@ -2962,7 +2962,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.15598043603214565
+   "gpu_speedup": 0.155980436032
   },
   {
    "M": 48,
@@ -2977,7 +2977,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.47825068047466346
+   "gpu_speedup": 0.478250680475
   },
   {
    "M": 48,
@@ -2992,7 +2992,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 2.079385701676964
+   "gpu_speedup": 2.07938570168
   },
   {
    "M": 48,
@@ -3007,7 +3007,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 3.7290900944175163
+   "gpu_speedup": 3.72909009442
   },
   {
    "M": 48,
@@ -3022,7 +3022,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 4.97464808205957
+   "gpu_speedup": 4.97464808206
   },
   {
    "M": 48,
@@ -3037,7 +3037,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 5.260580216921203
+   "gpu_speedup": 5.26058021692
   },
   {
    "M": 48,
@@ -3052,7 +3052,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 5.5393634142854475
+   "gpu_speedup": 5.53936341429
   },
   {
    "M": 64,
@@ -3067,7 +3067,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.2110037996698015
+   "gpu_speedup": 0.21100379967
   },
   {
    "M": 64,
@@ -3082,7 +3082,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.6846306306620391
+   "gpu_speedup": 0.684630630662
   },
   {
    "M": 64,
@@ -3097,7 +3097,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 1.5351660609244921
+   "gpu_speedup": 1.53516606092
   },
   {
    "M": 64,
@@ -3112,7 +3112,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 3.5914771555427336
+   "gpu_speedup": 3.59147715554
   },
   {
    "M": 64,
@@ -3127,7 +3127,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 4.745110046714079
+   "gpu_speedup": 4.74511004671
   },
   {
    "M": 64,
@@ -3142,7 +3142,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 6.065533719264247
+   "gpu_speedup": 6.06553371926
   },
   {
    "M": 64,
@@ -3157,7 +3157,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 6.458204981287454
+   "gpu_speedup": 6.45820498129
   },
   {
    "M": 128,
@@ -3174,7 +3174,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.30433409271730116
+   "gpu_speedup": 0.304334092717
   },
   {
    "M": 128,
@@ -3191,7 +3191,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.9820622544342389
+   "gpu_speedup": 0.982062254434
   },
   {
    "M": 128,
@@ -3208,7 +3208,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 2.433271240335496
+   "gpu_speedup": 2.43327124034
   },
   {
    "M": 128,
@@ -3225,7 +3225,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 5.082481118060042
+   "gpu_speedup": 5.08248111806
   },
   {
    "M": 128,
@@ -3242,7 +3242,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 7.4020080578116
+   "gpu_speedup": 7.40200805781
   },
   {
    "M": 128,
@@ -3259,7 +3259,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 8.834224960271849
+   "gpu_speedup": 8.83422496027
   },
   {
    "M": 128,
@@ -3276,7 +3276,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 9.282731175833991
+   "gpu_speedup": 9.28273117583
   },
   {
    "M": 256,
@@ -3293,7 +3293,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.336697972439217
+   "gpu_speedup": 0.336697972439
   },
   {
    "M": 256,
@@ -3310,7 +3310,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 1.1341431684828165
+   "gpu_speedup": 1.13414316848
   },
   {
    "M": 256,
@@ -3327,7 +3327,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 2.8353468069706587
+   "gpu_speedup": 2.83534680697
   },
   {
    "M": 256,
@@ -3344,7 +3344,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 5.0442882499814585
+   "gpu_speedup": 5.04428824998
   },
   {
    "M": 256,
@@ -3361,7 +3361,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 8.18254142387144
+   "gpu_speedup": 8.18254142387
   },
   {
    "M": 256,
@@ -3378,7 +3378,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 9.282200622684845
+   "gpu_speedup": 9.28220062268
   },
   {
    "M": 256,
@@ -3395,7 +3395,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 9.736640264323182
+   "gpu_speedup": 9.73664026432
   },
   {
    "M": 512,
@@ -3412,7 +3412,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "qr",
-   "gpu_speedup": 0.32157224465751516
+   "gpu_speedup": 0.321572244658
   },
   {
    "M": 512,
@@ -3429,7 +3429,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "qr",
-   "gpu_speedup": 1.1711590071605689
+   "gpu_speedup": 1.17115900716
   },
   {
    "M": 512,
@@ -3446,7 +3446,7 @@
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 4.275064831817573
+   "gpu_speedup": 4.27506483182
   },
   {
    "M": 512,
@@ -3463,7 +3463,7 @@
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 5.17404002800741
+   "gpu_speedup": 5.17404002801
   },
   {
    "M": 512,
@@ -3480,7 +3480,7 @@
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 7.681647563507964
+   "gpu_speedup": 7.68164756351
   },
   {
    "M": 512,
@@ -3497,7 +3497,7 @@
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 9.064091471234352
+   "gpu_speedup": 9.06409147123
   },
   {
    "M": 512,
@@ -3514,7 +3514,7 @@
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 9.010992188157774
+   "gpu_speedup": 9.01099218816
   },
   {
    "M": 1024,
@@ -3531,7 +3531,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "qr",
-   "gpu_speedup": 0.3945870284148232
+   "gpu_speedup": 0.394587028415
   },
   {
    "M": 1024,
@@ -3548,7 +3548,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "qr",
-   "gpu_speedup": 1.3946505237905251
+   "gpu_speedup": 1.39465052379
   },
   {
    "M": 1024,
@@ -3565,7 +3565,7 @@
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 4.28971410767697
+   "gpu_speedup": 4.28971410768
   },
   {
    "M": 1024,
@@ -3582,7 +3582,7 @@
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 6.72170437683889
+   "gpu_speedup": 6.72170437684
   },
   {
    "M": 1024,
@@ -3599,7 +3599,7 @@
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 8.835808799050168
+   "gpu_speedup": 8.83580879905
   },
   {
    "M": 1024,
@@ -3616,7 +3616,7 @@
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 9.829721297655464
+   "gpu_speedup": 9.82972129766
   },
   {
    "M": 1024,
@@ -3647,7 +3647,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "qr",
-   "gpu_speedup": 0.5949041166130273
+   "gpu_speedup": 0.594904116613
   },
   {
    "M": 2048,
@@ -3664,7 +3664,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "qr",
-   "gpu_speedup": 2.0315108453917916
+   "gpu_speedup": 2.03151084539
   },
   {
    "M": 2048,
@@ -3681,7 +3681,7 @@
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 6.155123894950192
+   "gpu_speedup": 6.15512389495
   },
   {
    "M": 2048,
@@ -3698,7 +3698,7 @@
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 8.349634232714747
+   "gpu_speedup": 8.34963423271
   },
   {
    "M": 2048,
@@ -3715,7 +3715,7 @@
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 10.120277048846933
+   "gpu_speedup": 10.1202770488
   },
   {
    "M": 2048,
@@ -3732,7 +3732,7 @@
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 10.742853879922105
+   "gpu_speedup": 10.7428538799
   },
   {
    "M": 2048,
@@ -3761,7 +3761,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.20393208145993122
+   "gpu_speedup": 0.20393208146
   },
   {
    "M": 96,
@@ -3776,7 +3776,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.7520895608197852
+   "gpu_speedup": 0.75208956082
   },
   {
    "M": 96,
@@ -3791,7 +3791,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 2.6602459232277207
+   "gpu_speedup": 2.66024592323
   },
   {
    "M": 96,
@@ -3806,7 +3806,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 3.2931237515087064
+   "gpu_speedup": 3.29312375151
   },
   {
    "M": 96,
@@ -3821,7 +3821,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 5.122723510056512
+   "gpu_speedup": 5.12272351006
   },
   {
    "M": 96,
@@ -3836,7 +3836,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 5.20543557982178
+   "gpu_speedup": 5.20543557982
   },
   {
    "M": 96,
@@ -3865,7 +3865,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.1806597277901673
+   "gpu_speedup": 0.18065972779
   },
   {
    "M": 128,
@@ -3880,7 +3880,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.6786595626551266
+   "gpu_speedup": 0.678659562655
   },
   {
    "M": 128,
@@ -3895,7 +3895,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 2.6115420498203
+   "gpu_speedup": 2.61154204982
   },
   {
    "M": 128,
@@ -3910,7 +3910,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 3.56333747440042
+   "gpu_speedup": 3.5633374744
   },
   {
    "M": 128,
@@ -3925,7 +3925,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 4.427243567667727
+   "gpu_speedup": 4.42724356767
   },
   {
    "M": 128,
@@ -3940,7 +3940,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 4.532603779749617
+   "gpu_speedup": 4.53260377975
   },
   {
    "M": 128,
@@ -3971,7 +3971,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.25702423668964636
+   "gpu_speedup": 0.25702423669
   },
   {
    "M": 256,
@@ -3988,7 +3988,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.9523580448864752
+   "gpu_speedup": 0.952358044886
   },
   {
    "M": 256,
@@ -4005,7 +4005,7 @@
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 3.5151792822334045
+   "gpu_speedup": 3.51517928223
   },
   {
    "M": 256,
@@ -4022,7 +4022,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 5.682734193037937
+   "gpu_speedup": 5.68273419304
   },
   {
    "M": 256,
@@ -4039,7 +4039,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 6.320946682151445
+   "gpu_speedup": 6.32094668215
   },
   {
    "M": 256,
@@ -4056,7 +4056,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 6.647175315917545
+   "gpu_speedup": 6.64717531592
   },
   {
    "M": 256,
@@ -4086,7 +4086,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "qr",
-   "gpu_speedup": 0.320906721723379
+   "gpu_speedup": 0.320906721723
   },
   {
    "M": 512,
@@ -4103,7 +4103,7 @@
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 1.183308827634983
+   "gpu_speedup": 1.18330882763
   },
   {
    "M": 512,
@@ -4120,7 +4120,7 @@
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 4.0680746978104985
+   "gpu_speedup": 4.06807469781
   },
   {
    "M": 512,
@@ -4137,7 +4137,7 @@
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 6.129642465225993
+   "gpu_speedup": 6.12964246523
   },
   {
    "M": 512,
@@ -4154,7 +4154,7 @@
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 7.136214853584331
+   "gpu_speedup": 7.13621485358
   },
   {
    "M": 512,
@@ -4200,7 +4200,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "qr",
-   "gpu_speedup": 0.4548106743346075
+   "gpu_speedup": 0.454810674335
   },
   {
    "M": 1024,
@@ -4217,7 +4217,7 @@
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 1.650642663895921
+   "gpu_speedup": 1.6506426639
   },
   {
    "M": 1024,
@@ -4234,7 +4234,7 @@
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 5.528079106899259
+   "gpu_speedup": 5.5280791069
   },
   {
    "M": 1024,
@@ -4251,7 +4251,7 @@
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 7.308405220596046
+   "gpu_speedup": 7.3084052206
   },
   {
    "M": 1024,
@@ -4268,7 +4268,7 @@
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 8.41662901891536
+   "gpu_speedup": 8.41662901892
   },
   {
    "M": 1024,
@@ -4312,7 +4312,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "qr",
-   "gpu_speedup": 0.5949486166007905
+   "gpu_speedup": 0.594948616601
   },
   {
    "M": 2048,
@@ -4329,7 +4329,7 @@
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 2.139835806400059
+   "gpu_speedup": 2.1398358064
   },
   {
    "M": 2048,
@@ -4346,7 +4346,7 @@
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 6.631612022150152
+   "gpu_speedup": 6.63161202215
   },
   {
    "M": 2048,
@@ -4363,7 +4363,7 @@
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 8.173037639713225
+   "gpu_speedup": 8.17303763971
   },
   {
    "M": 2048,
@@ -4380,7 +4380,7 @@
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 9.096736214090788
+   "gpu_speedup": 9.09673621409
   },
   {
    "M": 2048,
@@ -4409,7 +4409,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "block",
-   "gpu_speedup": 0.20284774582421589
+   "gpu_speedup": 0.202847745824
   },
   {
    "M": 192,
@@ -4424,7 +4424,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 0.7538728160565358
+   "gpu_speedup": 0.753872816057
   },
   {
    "M": 192,
@@ -4439,7 +4439,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 2.2454215664374013
+   "gpu_speedup": 2.24542156644
   },
   {
    "M": 192,
@@ -4454,7 +4454,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 3.2370628656960134
+   "gpu_speedup": 3.2370628657
   },
   {
    "M": 192,
@@ -4469,7 +4469,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 3.2279046580833435
+   "gpu_speedup": 3.22790465808
   },
   {
    "M": 192,
@@ -4498,7 +4498,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "block",
-   "gpu_speedup": 0.2957778658805814
+   "gpu_speedup": 0.295777865881
   },
   {
    "M": 256,
@@ -4513,7 +4513,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 1.0744138622181125
+   "gpu_speedup": 1.07441386222
   },
   {
    "M": 256,
@@ -4528,7 +4528,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 2.492806190913402
+   "gpu_speedup": 2.49280619091
   },
   {
    "M": 256,
@@ -4543,7 +4543,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 2.987813540248831
+   "gpu_speedup": 2.98781354025
   },
   {
    "M": 256,
@@ -4574,7 +4574,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 0.48558657630899893
+   "gpu_speedup": 0.485586576309
   },
   {
    "M": 512,
@@ -4591,7 +4591,7 @@
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 1.700571067961763
+   "gpu_speedup": 1.70057106796
   },
   {
    "M": 512,
@@ -4608,7 +4608,7 @@
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 3.7513730371945027
+   "gpu_speedup": 3.75137303719
   },
   {
    "M": 512,
@@ -4625,7 +4625,7 @@
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 4.3620374620752065
+   "gpu_speedup": 4.36203746208
   },
   {
    "M": 512,
@@ -4658,7 +4658,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 0.5384175848443501
+   "gpu_speedup": 0.538417584844
   },
   {
    "M": 1024,
@@ -4675,7 +4675,7 @@
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 1.753781621447678
+   "gpu_speedup": 1.75378162145
   },
   {
    "M": 1024,
@@ -4692,7 +4692,7 @@
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 4.485756323303796
+   "gpu_speedup": 4.4857563233
   },
   {
    "M": 1024,
@@ -4709,7 +4709,7 @@
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 5.197427248187009
+   "gpu_speedup": 5.19742724819
   },
   {
    "M": 1024,
@@ -4740,7 +4740,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 0.6555143500916515
+   "gpu_speedup": 0.655514350092
   },
   {
    "M": 2048,
@@ -4757,7 +4757,7 @@
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 2.2861635020748716
+   "gpu_speedup": 2.28616350207
   },
   {
    "M": 2048,
@@ -4774,7 +4774,7 @@
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 5.375133547451639
+   "gpu_speedup": 5.37513354745
   },
   {
    "M": 2048,
@@ -4791,7 +4791,7 @@
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 5.886481648412422
+   "gpu_speedup": 5.88648164841
   },
   {
    "M": 2048,
@@ -4820,7 +4820,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "block",
-   "gpu_speedup": 0.33742227774634614
+   "gpu_speedup": 0.337422277746
   },
   {
    "M": 384,
@@ -4835,7 +4835,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 1.066813495296817
+   "gpu_speedup": 1.0668134953
   },
   {
    "M": 384,
@@ -4850,7 +4850,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 1.8418243515748969
+   "gpu_speedup": 1.84182435157
   },
   {
    "M": 384,
@@ -4892,7 +4892,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "block",
-   "gpu_speedup": 0.5140317106576595
+   "gpu_speedup": 0.514031710658
   },
   {
    "M": 512,
@@ -4907,7 +4907,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 1.3714739278008667
+   "gpu_speedup": 1.3714739278
   },
   {
    "M": 512,
@@ -4922,7 +4922,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 1.6762275624746519
+   "gpu_speedup": 1.67622756247
   },
   {
    "M": 512,
@@ -4951,7 +4951,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "block",
-   "gpu_speedup": 0.5272553404078285
+   "gpu_speedup": 0.527255340408
   },
   {
    "M": 768,
@@ -4966,7 +4966,7 @@
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 1.2022718091351814
+   "gpu_speedup": 1.20227180914
   },
   {
    "M": 768,
@@ -4995,7 +4995,7 @@
    },
    "rule": "cpu",
    "rule_gpu": "block",
-   "gpu_speedup": 0.6937310012081128
+   "gpu_speedup": 0.693731001208
   },
   {
    "M": 1024,
@@ -5024,52 +5024,52 @@
  "noise": {
   "overall": {
    "n": 950,
-   "median": 1.009717568783749,
-   "p90": 1.2073328598468283,
-   "max": 3.8543313780498174
+   "median": 1.00971756878,
+   "p90": 1.20733285985,
+   "max": 3.85433137805
   },
   "by_runtime": [
    {
     "bucket": "<1 ms",
     "n": 156,
-    "median": 1.0790044444444444,
-    "p90": 2.454289041101932,
-    "max": 3.8543313780498174
+    "median": 1.07900444444,
+    "p90": 2.4542890411,
+    "max": 3.85433137805
    },
    {
     "bucket": "1-3 ms",
     "n": 160,
-    "median": 1.0200784986138551,
-    "p90": 1.3530638492202878,
-    "max": 1.9273010623490643
+    "median": 1.02007849861,
+    "p90": 1.35306384922,
+    "max": 1.92730106235
    },
    {
     "bucket": "3-10 ms",
     "n": 209,
-    "median": 1.0062842933265668,
-    "p90": 1.024183995471361,
-    "max": 1.3707075464711544
+    "median": 1.00628429333,
+    "p90": 1.02418399547,
+    "max": 1.37070754647
    },
    {
     "bucket": "10-30 ms",
     "n": 121,
-    "median": 1.0074067582320385,
-    "p90": 1.0294540506692724,
-    "max": 1.2029875873602127
+    "median": 1.00740675823,
+    "p90": 1.02945405067,
+    "max": 1.20298758736
    },
    {
     "bucket": "30-100 ms",
     "n": 125,
-    "median": 1.0070709002953129,
-    "p90": 1.0244255555578101,
-    "max": 1.0895035132479216
+    "median": 1.0070709003,
+    "p90": 1.02442555556,
+    "max": 1.08950351325
    },
    {
     "bucket": ">100 ms",
     "n": 179,
-    "median": 1.0063182460226243,
-    "p90": 1.0228023760570286,
-    "max": 1.4026695480979479
+    "median": 1.00631824602,
+    "p90": 1.02280237606,
+    "max": 1.4026695481
    }
   ]
  },
@@ -5095,11 +5095,11 @@
    }
   },
   "scale": {
-   "jacobi": 0.1550010526387276,
-   "block": 0.29893483912759544,
-   "qr": 0.2648822244654214,
-   "qrblock": 0.32635095394936553,
-   "cpu": 0.6665039738696165
+   "jacobi": 0.155001052639,
+   "block": 0.298934839128,
+   "qr": 0.264882224465,
+   "qrblock": 0.326350953949,
+   "cpu": 0.66650397387
   }
  }
 }

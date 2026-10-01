@@ -1133,6 +1133,7 @@ def main():
     res["raw"] = raw_paths
     res["submissions"] = subs
     res["calibration"] = calibration
+    res = sub.portable(res)
     with open(os.path.join(args.out, "results.json"), "w") as fh:
         json.dump(res, fh, indent=1)
     write_report(res, os.path.join(args.out, "report.md"))

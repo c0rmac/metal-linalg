@@ -82,3 +82,21 @@ def device_slug(name, gpu_cores):
 def new_id():
     """UTC date and 24 random bits: unique per run, and sorts by date."""
     return time.strftime("%Y%m%d", time.gmtime()) + "-" + secrets.token_hex(3)
+
+
+def portable(x):
+    """`x` with every float rounded to 12 significant digits, for writing.
+
+    The statistics go through math.log and math.exp, which macOS's and
+    glibc's maths libraries may round differently in the last bit, so the
+    same runs analysed here and by the GitHub Action (Linux) would differ in
+    the 16th digit and the Action would commit the difference. Twelve digits
+    is far below anything the measurements resolve.
+    """
+    if isinstance(x, float):
+        return float(f"{x:.12g}")
+    if isinstance(x, dict):
+        return {k: portable(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return type(x)(portable(v) for v in x)
+    return x
