@@ -1,0 +1,661 @@
+{
+  "device": {
+    "name": "Apple M5 Pro",
+    "gpu_cores": 20,
+    "concurrent_matrices": 120,
+    "source": "tuned:Apple M5 Pro",
+    "threadgroup_memory": 32768
+  },
+  "n_points": 143,
+  "coverage": {
+    "tall": 44,
+    "wide": 30,
+    "near-square": 29,
+    "square": 40
+  },
+  "noise": {
+    "overall": {
+      "n": 286,
+      "median": 1.0081586681,
+      "p90": 1.07124616199,
+      "max": 2.72058485037
+    },
+    "by_runtime": [
+      {
+        "bucket": "<1 ms",
+        "n": 85,
+        "median": 1.03310840095,
+        "p90": 1.49319118198,
+        "max": 2.72058485037
+      },
+      {
+        "bucket": "1-3 ms",
+        "n": 95,
+        "median": 1.00492146414,
+        "p90": 1.02421135972,
+        "max": 1.04846933812
+      },
+      {
+        "bucket": "3-10 ms",
+        "n": 78,
+        "median": 1.00422853627,
+        "p90": 1.02545467375,
+        "max": 1.10912725604
+      },
+      {
+        "bucket": "10-30 ms",
+        "n": 22,
+        "median": 1.00545139969,
+        "p90": 1.01453778839,
+        "max": 1.02445406807
+      },
+      {
+        "bucket": "30-100 ms",
+        "n": 6,
+        "median": 1.00889704321,
+        "p90": 1.01536906654,
+        "max": 1.03693229829
+      }
+    ]
+  },
+  "threshold_curves": {
+    "thresholds": [
+      128,
+      192,
+      256,
+      288,
+      320,
+      352,
+      384,
+      416,
+      448,
+      480,
+      512,
+      576,
+      640,
+      768,
+      1024
+    ],
+    "pooled": [
+      1.1667,
+      1.1157,
+      1.0994,
+      1.0542,
+      1.0542,
+      1.038,
+      1.038,
+      1.0278,
+      1.0278,
+      1.0202,
+      1.0202,
+      1.0285,
+      1.0285,
+      1.0597,
+      1.0656
+    ],
+    "pooled_worst": [
+      2.161,
+      1.811,
+      1.667,
+      1.608,
+      1.608,
+      1.608,
+      1.608,
+      1.608,
+      1.608,
+      1.608,
+      1.608,
+      1.872,
+      1.872,
+      2.299,
+      2.299
+    ],
+    "square": [
+      1.2749,
+      1.2013,
+      1.1396,
+      1.0901,
+      1.0901,
+      1.0547,
+      1.0547,
+      1.0282,
+      1.0282,
+      1.0114,
+      1.0114,
+      1.0009,
+      1.0009,
+      1.0081,
+      1.028
+    ],
+    "tall": [
+      1.0508,
+      1.0369,
+      1.0369,
+      1.0159,
+      1.0159,
+      1.0159,
+      1.0159,
+      1.0353,
+      1.0353,
+      1.0353,
+      1.0353,
+      1.0819,
+      1.0819,
+      1.1804,
+      1.1804
+    ],
+    "wide": [
+      1.0849,
+      1.038,
+      1.038,
+      1.016,
+      1.016,
+      1.016,
+      1.016,
+      1.016,
+      1.016,
+      1.016,
+      1.016,
+      1.016,
+      1.016,
+      1.016,
+      1.016
+    ],
+    "near-square": [
+      1.3042,
+      1.2134,
+      1.2134,
+      1.1062,
+      1.1062,
+      1.0725,
+      1.0725,
+      1.0285,
+      1.0285,
+      1.0139,
+      1.0139,
+      1.0016,
+      1.0016,
+      1.0071,
+      1.0071
+    ]
+  },
+  "band": {
+    "lo": 480,
+    "hi": 512,
+    "chosen": 512,
+    "best_geomean": 1.0202,
+    "tolerance": 0.003
+  },
+  "cost_of_missing": [
+    {
+      "threshold": 128,
+      "geomean": 1.1667,
+      "excess_pct": 14.36,
+      "in_band": false
+    },
+    {
+      "threshold": 192,
+      "geomean": 1.1157,
+      "excess_pct": 9.36,
+      "in_band": false
+    },
+    {
+      "threshold": 256,
+      "geomean": 1.0994,
+      "excess_pct": 7.76,
+      "in_band": false
+    },
+    {
+      "threshold": 288,
+      "geomean": 1.0542,
+      "excess_pct": 3.33,
+      "in_band": false
+    },
+    {
+      "threshold": 320,
+      "geomean": 1.0542,
+      "excess_pct": 3.33,
+      "in_band": false
+    },
+    {
+      "threshold": 352,
+      "geomean": 1.038,
+      "excess_pct": 1.74,
+      "in_band": false
+    },
+    {
+      "threshold": 384,
+      "geomean": 1.038,
+      "excess_pct": 1.74,
+      "in_band": false
+    },
+    {
+      "threshold": 416,
+      "geomean": 1.0278,
+      "excess_pct": 0.74,
+      "in_band": false
+    },
+    {
+      "threshold": 448,
+      "geomean": 1.0278,
+      "excess_pct": 0.74,
+      "in_band": false
+    },
+    {
+      "threshold": 480,
+      "geomean": 1.0202,
+      "excess_pct": 0.0,
+      "in_band": true
+    },
+    {
+      "threshold": 512,
+      "geomean": 1.0202,
+      "excess_pct": 0.0,
+      "in_band": true
+    },
+    {
+      "threshold": 576,
+      "geomean": 1.0285,
+      "excess_pct": 0.81,
+      "in_band": false
+    },
+    {
+      "threshold": 640,
+      "geomean": 1.0285,
+      "excess_pct": 0.81,
+      "in_band": false
+    },
+    {
+      "threshold": 768,
+      "geomean": 1.0597,
+      "excess_pct": 3.87,
+      "in_band": false
+    },
+    {
+      "threshold": 1024,
+      "geomean": 1.0656,
+      "excess_pct": 4.45,
+      "in_band": false
+    }
+  ],
+  "surface": {
+    "1": [
+      {
+        "M": 128,
+        "N": 32,
+        "ratio": 1.376
+      },
+      {
+        "M": 128,
+        "N": 64,
+        "ratio": 1.731
+      },
+      {
+        "M": 128,
+        "N": 128,
+        "ratio": 1.816
+      },
+      {
+        "M": 128,
+        "N": 256,
+        "ratio": 1.756
+      },
+      {
+        "M": 128,
+        "N": 512,
+        "ratio": 1.69
+      },
+      {
+        "M": 256,
+        "N": 32,
+        "ratio": 0.993
+      },
+      {
+        "M": 256,
+        "N": 64,
+        "ratio": 1.194
+      },
+      {
+        "M": 256,
+        "N": 128,
+        "ratio": 1.553
+      },
+      {
+        "M": 256,
+        "N": 256,
+        "ratio": 1.667
+      },
+      {
+        "M": 256,
+        "N": 512,
+        "ratio": 1.477
+      },
+      {
+        "M": 384,
+        "N": 32,
+        "ratio": 0.691
+      },
+      {
+        "M": 384,
+        "N": 64,
+        "ratio": 0.994
+      },
+      {
+        "M": 384,
+        "N": 128,
+        "ratio": 1.244
+      },
+      {
+        "M": 384,
+        "N": 256,
+        "ratio": 1.299
+      },
+      {
+        "M": 384,
+        "N": 512,
+        "ratio": 1.217
+      },
+      {
+        "M": 512,
+        "N": 32,
+        "ratio": 0.534
+      },
+      {
+        "M": 512,
+        "N": 64,
+        "ratio": 0.788
+      },
+      {
+        "M": 512,
+        "N": 128,
+        "ratio": 1.068
+      },
+      {
+        "M": 512,
+        "N": 256,
+        "ratio": 1.04
+      },
+      {
+        "M": 512,
+        "N": 512,
+        "ratio": 1.074
+      },
+      {
+        "M": 640,
+        "N": 32,
+        "ratio": 0.464
+      },
+      {
+        "M": 640,
+        "N": 64,
+        "ratio": 0.628
+      },
+      {
+        "M": 640,
+        "N": 128,
+        "ratio": 0.853
+      },
+      {
+        "M": 640,
+        "N": 256,
+        "ratio": 0.831
+      },
+      {
+        "M": 640,
+        "N": 512,
+        "ratio": 0.815
+      }
+    ],
+    "16": [
+      {
+        "M": 128,
+        "N": 32,
+        "ratio": 1.31
+      },
+      {
+        "M": 128,
+        "N": 64,
+        "ratio": 1.724
+      },
+      {
+        "M": 128,
+        "N": 128,
+        "ratio": 1.635
+      },
+      {
+        "M": 128,
+        "N": 256,
+        "ratio": 1.548
+      },
+      {
+        "M": 128,
+        "N": 512,
+        "ratio": 1.416
+      },
+      {
+        "M": 256,
+        "N": 32,
+        "ratio": 0.882
+      },
+      {
+        "M": 256,
+        "N": 64,
+        "ratio": 1.193
+      },
+      {
+        "M": 256,
+        "N": 128,
+        "ratio": 1.439
+      },
+      {
+        "M": 256,
+        "N": 256,
+        "ratio": 1.503
+      },
+      {
+        "M": 256,
+        "N": 512,
+        "ratio": 1.32
+      },
+      {
+        "M": 384,
+        "N": 32,
+        "ratio": 0.66
+      },
+      {
+        "M": 384,
+        "N": 64,
+        "ratio": 0.941
+      },
+      {
+        "M": 384,
+        "N": 128,
+        "ratio": 1.202
+      },
+      {
+        "M": 384,
+        "N": 256,
+        "ratio": 1.295
+      },
+      {
+        "M": 384,
+        "N": 512,
+        "ratio": 1.273
+      },
+      {
+        "M": 512,
+        "N": 32,
+        "ratio": 0.582
+      },
+      {
+        "M": 512,
+        "N": 64,
+        "ratio": 0.768
+      },
+      {
+        "M": 512,
+        "N": 128,
+        "ratio": 1.011
+      },
+      {
+        "M": 512,
+        "N": 256,
+        "ratio": 1.121
+      },
+      {
+        "M": 512,
+        "N": 512,
+        "ratio": 1.192
+      },
+      {
+        "M": 640,
+        "N": 32,
+        "ratio": 0.435
+      },
+      {
+        "M": 640,
+        "N": 64,
+        "ratio": 0.584
+      },
+      {
+        "M": 640,
+        "N": 128,
+        "ratio": 0.761
+      },
+      {
+        "M": 640,
+        "N": 256,
+        "ratio": 0.904
+      },
+      {
+        "M": 640,
+        "N": 512,
+        "ratio": 1.046
+      }
+    ]
+  },
+  "rules": [
+    {
+      "geomean": 1.1942,
+      "worst": 2.122,
+      "worst_shape": [
+        1,
+        16,
+        256
+      ],
+      "over_tie": 62,
+      "n": 143,
+      "total": 1.0744,
+      "label": "original 5-rule heuristic",
+      "per_region": {
+        "square": 1.1441,
+        "tall": 1.0479,
+        "wide": 1.5211,
+        "near-square": 1.2027
+      }
+    },
+    {
+      "geomean": 1.0806,
+      "worst": 2.092,
+      "worst_shape": [
+        1,
+        64,
+        2048
+      ],
+      "over_tie": 27,
+      "n": 143,
+      "total": 1.0396,
+      "label": "max(M,N) >= 512",
+      "per_region": {
+        "square": 1.0114,
+        "tall": 1.0353,
+        "wide": 1.2883,
+        "near-square": 1.0533
+      }
+    },
+    {
+      "geomean": 1.2722,
+      "worst": 6.422,
+      "worst_shape": [
+        4,
+        2048,
+        64
+      ],
+      "over_tie": 75,
+      "n": 143,
+      "total": 1.2145,
+      "label": "K = min(M,N) >= 128",
+      "per_region": {
+        "square": 1.2749,
+        "tall": 1.4276,
+        "wide": 1.0849,
+        "near-square": 1.2559
+      }
+    },
+    {
+      "geomean": 1.0202,
+      "worst": 1.608,
+      "worst_shape": [
+        1,
+        32,
+        512
+      ],
+      "over_tie": 7,
+      "n": 143,
+      "total": 1.0171,
+      "label": "M >= 512  (chosen)",
+      "per_region": {
+        "square": 1.0114,
+        "tall": 1.0353,
+        "wide": 1.016,
+        "near-square": 1.0139
+      }
+    }
+  ],
+  "features": [
+    {
+      "feature": "M (rows)",
+      "best_threshold": 480,
+      "geomean": 1.0202,
+      "worst": 1.608
+    },
+    {
+      "feature": "max(M, N)",
+      "best_threshold": 576,
+      "geomean": 1.0678,
+      "worst": 2.092
+    },
+    {
+      "feature": "K = min(M, N)",
+      "best_threshold": 576,
+      "geomean": 1.1375,
+      "worst": 6.422
+    }
+  ],
+  "refinements": [
+    {
+      "name": "batch-dependent split",
+      "form": "M >= (480 if batch < 32 else 416)",
+      "train_geomean": 1.0233,
+      "test_geomean": 1.0188,
+      "test_worst": 1.515,
+      "justified": false
+    },
+    {
+      "name": "narrow-N special case",
+      "form": "M >= 416 or (N <= 32 and M >= 128)",
+      "train_geomean": 1.0224,
+      "test_geomean": 1.0298,
+      "test_worst": 1.376,
+      "justified": false
+    }
+  ],
+  "baseline_held_out": {
+    "geomean": 1.017,
+    "worst": 1.515
+  },
+  "ktuned_entry": "{\"Apple M5 Pro\", 20, 512, 512, 16},",
+  "submissions": [
+    "20261001-c76e82"
+  ]
+}

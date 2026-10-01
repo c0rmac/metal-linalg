@@ -1,0 +1,29 @@
+  grid coverage: near-square 29, square 40, tall 44, wide 30
+  143 shapes x 2 backends x 2 passes = 572 timed runs
+    25/572  elapsed 0.1m  eta 1.7m
+    50/572  elapsed 0.2m  eta 1.8m
+    75/572  elapsed 0.2m  eta 1.6m
+    100/572  elapsed 0.3m  eta 1.5m
+    125/572  elapsed 0.4m  eta 1.3m
+    150/572  elapsed 0.5m  eta 1.3m
+    175/572  elapsed 0.5m  eta 1.2m
+    200/572  elapsed 0.6m  eta 1.1m
+    225/572  elapsed 0.7m  eta 1.0m
+    250/572  elapsed 0.7m  eta 1.0m
+    275/572  elapsed 0.8m  eta 0.9m
+    300/572  elapsed 0.9m  eta 0.8m
+    325/572  elapsed 0.9m  eta 0.7m
+    350/572  elapsed 1.0m  eta 0.6m
+    375/572  elapsed 1.0m  eta 0.5m
+    400/572  elapsed 1.1m  eta 0.5m
+    425/572  elapsed 1.2m  eta 0.4m
+    450/572  elapsed 1.2m  eta 0.3m
+    475/572  elapsed 1.3m  eta 0.3m
+    500/572  elapsed 1.3m  eta 0.2m
+    525/572  elapsed 1.4m  eta 0.1m
+    550/572  elapsed 1.5m  eta 0.1m
+    572/572  elapsed 1.5m  eta 0.0m
+
+  band 480..512   ship M >= 512   (1.0202x geomean regret)
+  kTuned entry:  {"Apple M5 Pro", 20, 512, 512, 16},
+  -> /Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261001-c76e82/qr/report.md, /Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261001-c76e82/qr/results.json, /Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261001-c76e82/qr/raw.csv

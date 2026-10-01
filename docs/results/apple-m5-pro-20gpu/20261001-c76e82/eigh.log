@@ -1,0 +1,35 @@
+device: Apple M5 Pro (20 GPU cores), policy from tuned:Apple M5 Pro
+cost model scale: tg x1.00, simd x1.00, block x0.14, cpu x0.92
+sweep -> /Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261001-c76e82/eigh/raw.csv
+  197 points, 563 backend timings per pass x 2 passes; rough estimate 20 min
+    20/394  elapsed 0.5m  eta 9.6m
+    40/394  elapsed 1.0m  eta 8.5m
+    60/394  elapsed 1.6m  eta 8.7m
+    80/394  elapsed 2.2m  eta 8.5m
+    100/394  elapsed 2.8m  eta 8.2m
+    120/394  elapsed 3.7m  eta 8.5m
+    140/394  elapsed 4.3m  eta 7.9m
+    160/394  elapsed 4.6m  eta 6.7m
+    180/394  elapsed 5.2m  eta 6.2m
+    200/394  elapsed 5.9m  eta 5.8m
+    220/394  elapsed 6.5m  eta 5.2m
+    240/394  elapsed 7.0m  eta 4.5m
+    260/394  elapsed 7.6m  eta 3.9m
+    280/394  elapsed 8.3m  eta 3.4m
+    300/394  elapsed 8.5m  eta 2.7m
+    320/394  elapsed 9.0m  eta 2.1m
+    340/394  elapsed 9.4m  eta 1.5m
+    360/394  elapsed 10.1m  eta 1.0m
+    380/394  elapsed 10.8m  eta 0.4m
+    394/394  elapsed 11.2m  eta 0.0m
+
+197 points on Apple M5 Pro (20 GPU cores)
+GPU split:   simd_max_n=0 block_min_n=96 block_min_n_batched=none block_min_batch=none   (1.0190x vs best GPU backend, worst 1.55x)
+CPU routing: gpu_max_n=1024 gpu_min_batch_times_n=512 gpu_min_batch=16   (1.0235x vs best of all, worst 1.72x)
+in effect (tuned:Apple M5 Pro): 1.0235x, worst 1.72x
+
+kTuned[] row:  {"Apple M5 Pro", 20,   0, 96, 0, 0,   1024, 512, 16},
+warning: chosen rule loses more than 25% at N=768 batch=16 (block, 1.72x), N=2 batch=256 (tg, 1.70x), N=64 batch=1024 (tg, 1.55x), N=64 batch=4096 (tg, 1.55x), N=64 batch=2048 (tg, 1.52x), N=4 batch=128 (tg, 1.51x), N=64 batch=512 (tg, 1.48x), N=96 batch=16 (block, 1.32x) ...
+warning: GPU split loses more than 25% against the best GPU backend at N=64 batch=1024 (tg, 1.55x), N=64 batch=4096 (tg, 1.55x), N=64 batch=2048 (tg, 1.52x), N=64 batch=512 (tg, 1.48x), N=96 batch=16 (block, 1.32x), N=96 batch=8 (block, 1.32x), N=64 batch=256 (tg, 1.31x), N=96 batch=4 (block, 1.31x) ...
+warning: the GPU is still ahead of the CPU at the largest N measured (1024): gpu_max_n is a lower bound, rerun with --max-n 1024 to find the cap
+wrote /Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261001-c76e82/eigh/results.json and report.md
