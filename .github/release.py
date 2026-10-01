@@ -36,8 +36,12 @@ PROJECT_VERSION = re.compile(r"(project\(\s*\w+\s+VERSION\s+)(\d+\.\d+\.\d+)")
 
 
 def git(*args, cwd=None):
-    return subprocess.run(["git", *args], check=True, capture_output=True, text=True,
-                          cwd=cwd).stdout.strip()
+    r = subprocess.run(["git", *args], capture_output=True, text=True, cwd=cwd)
+    if r.returncode != 0:
+        token = os.environ.get("HOMEBREW_TAP_TOKEN", "")
+        hide = (lambda t: t.replace(token, "***")) if token else (lambda t: t)
+        sys.exit(f"release.py: git {hide(' '.join(args))} failed:\n{hide((r.stderr or r.stdout).strip())}")
+    return r.stdout.strip()
 
 
 def parse(v):
