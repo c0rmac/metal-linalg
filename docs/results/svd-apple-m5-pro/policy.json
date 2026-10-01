@@ -1,0 +1,76 @@
+{
+ "policy": {
+  "device": "Apple M5 Pro",
+  "gpu_cores": 20,
+  "source": "default:untuned-device (Apple M5 Pro)",
+  "qr_min_rows": 512,
+  "qr_min_k": 64,
+  "block_min_k": 192,
+  "block_min_k_batched": 0,
+  "block_min_batch": 0,
+  "gpu_max_k": 64,
+  "gpu_min_batch_times_k": 1024
+ },
+ "calibration": {
+  "probe": {
+   "batch": 64,
+   "M": 128,
+   "N": 32,
+   "ms": {
+    "jacobi": 1.606792,
+    "block": 2.724583,
+    "qr": 1.957333,
+    "qrblock": 3.440209,
+    "cpu": 4.928333
+   }
+  },
+  "scale": {
+   "jacobi": 0.1550010526387276,
+   "block": 0.29893483912759544,
+   "qr": 0.2648822244654214,
+   "qrblock": 0.32635095394936553,
+   "cpu": 0.6665039738696165
+  }
+ },
+ "machine": {
+  "start": {
+   "load_1m": 1.6123046875,
+   "cpus": 18,
+   "power": "mains",
+   "low_power_mode": null,
+   "busy_processes": 0
+  },
+  "end": {
+   "load_1m": 1.6591796875,
+   "cpus": 18,
+   "power": "mains",
+   "low_power_mode": null,
+   "busy_processes": 0
+  }
+ },
+ "drift": {
+  "before_ms": {
+   "jacobi": 1.606792,
+   "block": 2.724583,
+   "qr": 1.957333,
+   "qrblock": 3.440209,
+   "cpu": 4.928333
+  },
+  "after_ms": {
+   "jacobi": 1.493083,
+   "block": 2.674458,
+   "qr": 1.9525,
+   "qrblock": 3.375209,
+   "cpu": 4.922958
+  },
+  "ratio": {
+   "jacobi": 0.9292322839546127,
+   "block": 0.9816026892922697,
+   "qr": 0.9975308238301811,
+   "qrblock": 0.9811057990953457,
+   "cpu": 0.9989093675285335
+  },
+  "worst": 1.076157186171164,
+  "ok": true
+ }
+}

@@ -1,0 +1,1 @@
+{"policy": {"device": "Apple M1", "gpu_cores": 8, "source": "tuned:Apple M1", "simd_max_n": 8, "block_min_n": 96, "block_min_n_batched": 0, "block_min_batch": 0, "gpu_max_n": 64, "gpu_min_batch_times_n": 1024}, "calibration": null}

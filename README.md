@@ -1,248 +1,195 @@
-# qr-apple-silicon
+# metal-linalg
 
-Hardware-accelerated QR decomposition for Apple Silicon, built on top of [MLX](https://github.com/ml-explore/mlx) and Metal, by leveraging the GPU to maximise performance.
+> **Formerly `qr-apple-silicon`.** The project was renamed in version 2.0,
+> when it grew from QR to QR, symmetric eigendecomposition and SVD. Links to
+> `github.com/c0rmac/qr-apple-silicon` redirect here; to update an existing
+> clone, run `git remote set-url origin https://github.com/c0rmac/metal-linalg.git`.
+> The changes from 1.x are listed in [CHANGELOG.md](CHANGELOG.md).
 
-Exposes a single function, `custom_math::qr_accelerated`, that accepts a batched MLX array and returns Q and R — automatically routing to the most efficient Metal kernel for the given matrix dimensions and batch size. See [benchmark results](BENCHMARK.md) for GPU vs CPU timings across a range of matrix shapes and batch sizes.
+QR decomposition, symmetric eigendecomposition and singular value
+decomposition for batches of matrices on Apple GPUs, for
+[MLX](https://github.com/ml-explore/mlx). A C++ library, installed with
+Homebrew or built from source inside your own project.
 
-
-## API
-
-This library depends on the MLX C++ library. On macOS:
-
-```sh
-brew install mlx
-```
-
-```cpp
-#include "qr.h"
-
-// a: MLX array of shape [M, N] or [B, M, N] (float32 or auto-cast)
-// Returns: {Q, R} where Q is [M, K] and R is [K, N], K = min(M, N)
-auto [Q, R] = custom_math::qr_accelerated(a);
-```
-
-The function operates on the default MLX device. Set it to GPU before calling:
+Each solver has several Metal kernels, one per regime (small matrices in large
+batches, large matrices spread over the whole GPU, long thin matrices), and
+every call is routed to the fastest of them, or to MLX's CPU path, by a policy
+measured on the device it runs on. MLX's own `linalg::eigh` and `linalg::svd`
+run only on the CPU.
 
 ```cpp
-#include "qr.h"
-#include <mlx/mlx.h>
+#include <metal_linalg/metal_linalg.h>
 
-using namespace mlx::core;
-
-// Build a random 4 x 4 matrix
-std::vector<float> data = {
-     1,  2,  3,  4,
-     5,  6,  7,  8,
-     9, 10, 11, 12,
-    13, 14, 15, 16
-};
-array A(data.begin(), {4, 4}, float32);
-
-set_default_device(Device::gpu);
-auto [Q, R] = custom_math::qr_accelerated(A);
-eval({Q, R});
-
-// Q: [4, 4] orthogonal matrix
-// R: [4, 4] upper-triangular matrix
-// A ≈ Q * R
+auto [Q, R]     = metal_linalg::qr_accelerated(a);     // a: mlx::core::array [..., M, N]
+auto [w, V]     = metal_linalg::eigh_accelerated(s);   // s symmetric [..., N, N]
+auto [U, S, Vt] = metal_linalg::svd_accelerated(a);    // thin factors
 ```
 
-## The QR Decomposition explained
-
-Given a matrix $A \in \mathbb{R}^{M \times N}$, the QR decomposition factors it as:
-
-$$A = QR$$
-
-where $K = \min(M, N)$.
-
-**Q** $\in \mathbb{R}^{M \times K}$ is a matrix with orthonormal columns. That is, for any two columns $q_i$ and $q_j$:
-
-$$q_i^T q_j = \delta_{ij} = \begin{cases} 1 & \text{if } i = j \\ 0 & \text{if } i \neq j \end{cases}$$
-
-which can be stated compactly as $Q^T Q = I_K$. The columns of $Q$ form an orthonormal basis for the column space of $A$.
-
-**R** $\in \mathbb{R}^{K \times N}$ is upper triangular. Every entry strictly below the main diagonal is zero:
-
-$$R_{ij} = 0 \quad \text{for all } i > j$$
-
-This is the *thin* (or *reduced*) QR decomposition. The full decomposition extends $Q$ to a square $M \times M$ orthogonal matrix, but the thin form is sufficient to reconstruct $A$ and is more compact when $M > N$.
-
-For example, given:
-
-```
-A = [[ 1,  2,  3 ],
-     [ 4,  5,  6 ],
-     [ 7,  8,  9 ]]
-```
-
-the thin QR decomposition yields:
-
-```
-Q = [[-0.123,  0.904,  0.408 ],        R = [[-8.124, -9.601, -11.078 ],
-     [-0.492,  0.301, -0.816 ],              [  0.0,   0.905,   1.809 ],
-     [-0.862, -0.301,  0.408 ]]              [  0.0,   0.0,     0.0   ]]
-```
-
-One can verify $QR = A$ and $Q^T Q = I_3$.
-
-The decomposition is fundamental to solving linear least-squares problems, performing Gram-Schmidt orthogonalisation, and as the core step in the QR algorithm for computing eigenvalues.
-
-### References
-
-- G. H. Golub and C. F. Van Loan, [*Matrix Computations*](https://jhupbooks.press.jhu.edu/title/matrix-computations), 4th ed. Johns Hopkins University Press, 2013. §5.1 — Householder reflections and QR factorisation.
-- R. Schreiber and C. Van Loan, ["A storage-efficient WY representation for products of Householder transformations"](https://epubs.siam.org/doi/10.1137/0910005), *SIAM Journal on Scientific and Statistical Computing*, vol. 10, no. 1, pp. 53–57, 1989 — the Compact WY representation used for block updates.
-
-### The Householder Reflection
-
-Both shaders build $Q$ and $R$ by successively applying **Householder reflections**. A Householder reflector is an orthogonal matrix of the form:
-
-$$H = I - \tau v v^T, \quad \tau \in \mathbb{R}, \quad v \in \mathbb{R}^M$$
-
-chosen so that $H x = \mu e_k$ — i.e. it zeros out every entry of a column vector $x$ below position $k$, leaving a single scalar $\mu$ on the diagonal. The sign of $\mu$ is chosen to avoid catastrophic cancellation:
-
-$$\mu = -\text{sign}(\alpha)\|x\|_2$$
-
-where $\alpha = x_k$ is the pivot element. The reflector vector $v$ is then:
-
-$$v_k = 1, \quad v_i = \frac{x_i}{\alpha - \mu} \text{ for } i > k, \quad \tau = \frac{\mu - \alpha}{\mu}$$
-
-Applying $K = \min(M, N)$ reflectors in sequence drives $A$ to upper triangular form:
-
-$$H_K \cdots H_2 H_1 A = R \implies A = H_1 H_2 \cdots H_K R = QR$$
-
-Since each $H_i$ is orthogonal, their product $Q = H_1 H_2 \cdots H_K$ is also orthogonal. Rather than forming this product one reflector at a time, both shaders use the **Compact WY representation** to batch the updates.
-
-### The Compact WY Representation
-
-For a block of $b$ consecutive Householder reflectors, the product can be written as:
-
-$$H_1 H_2 \cdots H_b = I - Y T Y^T$$
-
-where $Y \in \mathbb{R}^{M \times b}$ has the $b$ reflector vectors as its columns, and $T \in \mathbb{R}^{b \times b}$ is an upper triangular matrix constructed recursively:
-
-$$T_{jj} = \tau_j, \quad T_{ij} = -\tau_j \sum_{m=i}^{j-1} T_{im} (y_m^T y_j) \quad \text{for } i < j$$
-
-This lets a full block update be expressed as a pair of matrix multiplications:
-
-$$A \leftarrow A - Y \bigl( T^T (Y^T A) \bigr)$$
-
-which maps directly onto the AMX matrix coprocessor's 8×8 `simdgroup_matrix` tiles.
-
-### Algorithm: `qr_unblocked` (single-kernel, block size $b = 16$)
-
-This kernel processes the entire matrix in one GPU dispatch. It operates on matrices stored in **column-major** format to align with AMX load/store strides, and pads dimensions to multiples of 32 (rows) and 16 (columns) to eliminate in-kernel boundary branching.
-
-For each block of $b = 16$ columns starting at column $s$:
-
-**Step 1 — Panel factorisation.** For each column $k = 0, \ldots, b-1$ within the block:
-
-1. All 1024 threads cooperatively compute $\|x_\text{tail}\|^2$ via a two-phase threadgroup reduction (intra-SIMD via `simd_sum`, then inter-SIMD via shared memory).
-2. Thread 0 computes $\mu$, $\tau$, and the scale $1/(\alpha - \mu)$ and broadcasts them through threadgroup memory.
-3. Each thread normalises its portion of the tail: $A[r, k] \leftarrow A[r, k] / (\alpha - \mu)$ for $r > k$.
-4. The reflector is applied to the remaining $b - k - 1$ columns of the panel: for each $j > k$, $a_j \leftarrow a_j - \tau (v_k^T a_j) v_k$, with the dot product accumulated via threadgroup reduction.
-
-**Step 2 — Form T.** The $b \times b$ upper triangular matrix $T$ is built in threadgroup memory using the recursive formula above.
-
-**Step 3 — Trailing matrix update.** Each SIMD group owns a set of 8-column tiles of the trailing submatrix $A[{:}, s+b{:}]$. Using AMX 8×8 tiles, it computes:
-
-$$Z = Y^T A_\text{trail}, \quad Z \leftarrow T Z, \quad A_\text{trail} \leftarrow A_\text{trail} - Y Z$$
-
-**Step 4 — Q accumulation.** The same WY update is applied to $Q$ (initialised to $I$):
-
-$$Q \leftarrow Q - Y \bigl( T (Y^T Q) \bigr)$$
-
-**Step 5 — Restore diagonal.** The stored $\mu$ values are written back to the diagonal of $A$ (overwriting the temporary $v_k = 1$ sentinel placed there during factorisation).
-
-### Algorithm: `qr_streaming_amx` (multi-kernel, block size $b = 32$)
-
-For large matrices ($M$ or $N \geq 512$), a single-kernel dispatch causes Q-accumulation to bottleneck on a single shader multiprocessor. The streaming variant splits the computation across **four separate kernel dispatches** per block, allowing the GPU scheduler to assign the trailing update across all available cores in parallel.
-
-The block size is widened to $b = 32$ to match the SIMD group width, maximising AMX tile utilisation and reducing the number of host-side dispatch iterations.
-
-**Kernel 0 — Preprocess.** The input is transposed from row-major to column-major and padded with identity blocks. $Q$ is initialised to $I_{M \times M}$.
-
-**Kernel 1 — Panel factorisation.** Dispatched with 1 threadgroup per matrix. For each column $k$ in the current block, 1024 threads cooperatively compute $\tau_k$ and the normalised reflector vector, then apply it to the remaining $b - k - 1$ panel columns. The $\tau$ values and diagonal elements of $R$ are written to global memory for use by subsequent kernels.
-
-**Kernel 2 — T-matrix construction.** Dispatched with 1 threadgroup per matrix. Reads the reflector columns from $A$ and $\tau$ from global memory and builds $T \in \mathbb{R}^{32 \times 32}$ in threadgroup memory using the recursive Compact WY formula. The completed $T$ is written to global memory negated (i.e. $-T$ is stored), so that Kernel 3 can use `simdgroup_multiply_accumulate` (which adds) rather than needing a subtract path.
-
-**Kernel 3 — Grid-parallel trailing update.** Dispatched with one threadgroup per 32-column tile of the trailing submatrix. Each threadgroup independently computes:
-
-$$\text{Phase 1:} \quad Z^T = A_\text{trail}^T \cdot Y$$
-
-$$\text{Phase 2:} \quad Z_\text{final}^T = Z^T \cdot T$$
-
-$$\text{Phase 3:} \quad A_\text{trail} \leftarrow A_\text{trail} + Y \cdot Z_\text{final}^T$$
-
-$Y$ and $T$ are loaded into threadgroup memory (L1 cache) once per tile and reused across all AMX sweeps. The same kernel is reused for Q-accumulation by setting a flag that redirects the target pointer from $A$ to $Q$.
-
-**Kernel 4 — Haar fix.** Ensures the output $Q$ is a uniform sample from the Haar measure on $O(M)$ and that $R$ has non-negative diagonal. For each column $k$ where $R_{kk} < 0$, the signs of column $k$ in both $Q$ and $R$ are flipped. If the resulting $\det(Q) < 0$, the final column is negated to enforce $\det(Q) = +1$, placing $Q$ in $SO(M)$.
-
-## How it works
-
-Two Metal kernels handle different regimes, with a dispatcher that selects between them at runtime:
-
-**`qr_unblocked`** — Standard Householder QR in a single kernel dispatch. Used for smaller matrices where the overhead of multi-pass streaming is not worth it.
-
-**`qr_streaming_amx`** — Multi-pass panel factorisation with grid-parallel trailing matrix updates, designed to saturate the GPU for large matrices. Factorises column panels of width 32, computes the T-matrix for each WY representation, then launches a grid of threadgroups for the trailing update.
-
-### Dispatch logic
-
-| Condition | Kernel |
-|---|---|
-| `max(M, N) >= 512` | `qr_streaming_amx` |
-| `max(M, N) < 512` and `batch >= 16` | `qr_unblocked` |
-| `max(M, N) >= 128` and `batch < 16` | `qr_streaming_amx` |
-| `max(M, N) < 128` and `batch < 16` | `qr_unblocked` |
-
-The crossover points reflect two competing costs: single-SM Q-accumulation becomes a bottleneck above ~512, while multi-kernel launch overhead makes streaming slower than unblocked for small matrices with few batch elements.
-
-Both backends cache compiled `MTLComputePipelineState` objects and recycle GPU memory workspaces on repeated calls with the same shape, so warm invocations avoid both JIT compilation and OS-level buffer allocation.
-
-## Requirements
-
-- Apple Silicon Mac (M1 or later)
-- macOS with Xcode command line tools (`xcrun`, `metal`, `metallib`)
-- [MLX](https://github.com/ml-explore/mlx) installed and findable by CMake
-- CMake 3.25+
-- C++20
+## What it provides
+
+| operation | functions | GPU kernels | CPU path | details |
+|---|---|---|---|---|
+| QR | `qr_accelerated` | Householder in one threadgroup per matrix; grid-parallel blocked Householder | none | [docs/qr.md](docs/qr.md) |
+| symmetric eigendecomposition | `eigh_accelerated`, `eigvalsh_accelerated` | whole-matrix Jacobi; block Jacobi | MLX `eigh` | [docs/eigh.md](docs/eigh.md) |
+| thin SVD | `svd_accelerated`, `svdvals_accelerated` | whole-matrix one-sided Jacobi; block one-sided Jacobi; either after QR for tall input | MLX `svd`, thin | [docs/svd.md](docs/svd.md) |
+
+Input is any batch shape `[..., M, N]`, any real dtype (computed in float32),
+any magnitude from 1e-30 to 1e+37, rank-deficient or not. The eigensolver and
+the SVD return NaN for a non-finite matrix rather than raising, leaving the
+rest of its batch intact. The QR and SVD factors are the thin ones,
+`K = min(M, N)`.
+
+## Where the GPU wins
+
+For batches. On an Apple M5 Pro, the best GPU kernel against the CPU:
+
+| | lone matrix | batch 16 | batch 256 | batch 4096 |
+|---|---|---|---|---|
+| eigh 16×16 | 0.10x | 0.67x | 6.5x | 15.9x |
+| eigh 128×128 | 0.08x | 1.08x | 2.9x | 2.8x |
+| eigh 512×512 | 0.30x | 1.10x | — | — |
+| SVD 32×32 | 0.22x | 0.77x | 6.1x | 9.4x |
+| SVD 2048×64 | 0.59x | 6.2x | 10.1x | GPU only |
+| SVD 512×512 | 0.51x | 1.68x | — | — |
+
+A single matrix is faster on the CPU at every size measured, up to 4096×4096,
+on every device so far, so the routing keeps it there; batches of up to
+1024×1024 go to the GPU. The full tables are in the per-solver docs.
 
 ## Installation
 
-> TODO: exportable library packaging is planned for a future release.
+```bash
+brew install c0rmac/metal-linalg/metal-linalg
+```
 
-## Running the benchmark
+This installs `libmetal_linalg.dylib`, the headers under
+`include/metal_linalg/` and a CMake package. The compiled Metal shaders are
+embedded in the library, so nothing is looked up on disk at run time and
+nothing needs the Metal compiler. The formula lives in its own tap,
+[c0rmac/homebrew-metal-linalg](https://github.com/c0rmac/homebrew-metal-linalg).
 
-Clone the repository and build in release mode:
+From source:
+
+```bash
+git clone https://github.com/c0rmac/metal-linalg.git
+cd metal-linalg
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/opt/homebrew
+cmake --build build -j
+cmake --install build          # or --prefix <dir>
+```
+
+**Requirements:** an Apple Silicon Mac, MLX (`brew install mlx`), CMake 3.25
+or later and a C++20 compiler (Xcode's clang). The Metal shader compiler is
+needed only to change a shader: without it the build uses the compiled
+shaders committed under `shaders/prebuilt/`. From Xcode 26 it is a separate
+download (`xcodebuild -downloadComponent MetalToolchain`); after editing a
+shader with it, `cmake --build build --target update_prebuilt_shaders`
+refreshes `shaders/prebuilt/`.
+
+Build options: `-DMETAL_LINALG_BUILD_TESTS=OFF` skips the tests, benchmarks
+and tuning harnesses; `-DMETAL_LINALG_SHARED=OFF` builds a static library.
+
+## Using it from CMake
+
+Against the installed package:
+
+```cmake
+find_package(MetalLinalg REQUIRED)
+target_link_libraries(my_app PRIVATE metal_linalg::metal_linalg)
+```
+
+Or built from source inside your own project, so that the shaders and routing
+tables are those of the checkout. As a subproject the library is static,
+folded into your binary, and installs nothing of its own:
+
+```cmake
+add_subdirectory(path/to/metal-linalg)          # or:
+include(FetchContent)
+FetchContent_Declare(metal_linalg
+    GIT_REPOSITORY https://github.com/c0rmac/metal-linalg.git GIT_TAG v2.0.0)
+FetchContent_MakeAvailable(metal_linalg)
+
+target_link_libraries(my_app PRIVATE metal_linalg::metal_linalg)
+```
+
+[isomorphism](https://github.com/c0rmac/isomorphism)'s MLX backend uses it
+this way for `qr`, `eigh` and `svd`, or the Homebrew package when configured
+with `-DMETAL_LINALG_USE_INSTALLED=ON`.
+
+## API at a glance
+
+| header | contents |
+|---|---|
+| `<metal_linalg/metal_linalg.h>` | all of the below |
+| `<metal_linalg/qr.h>` | `qr_accelerated`; `QrPolicy`, `qr_policy()`, `set_qr_policy()`, `qr_policy_source()`; `qr_backend(m, n, batch)` |
+| `<metal_linalg/eigh.h>` | `eigh_accelerated`, `eigvalsh_accelerated`; `EighPolicy`, `eigh_policy()`, `set_eigh_policy()`, `eigh_policy_source()`; `eigh_backend(n, batch)`, `eigh_uses_gpu` |
+| `<metal_linalg/svd.h>` | `svd_accelerated`, `svdvals_accelerated`; `SvdPolicy`, `svd_policy()`, `set_svd_policy()`, `svd_policy_source()`; `svd_backend(m, n, batch)`, `svd_uses_gpu` |
+| `<metal_linalg/device.h>` | `device_name()`, `gpu_core_count()`: the GPU the policies were resolved for |
+
+Each header's `metal_linalg::detail` namespace has the individual backends,
+which always run their kernel, with options (tolerances, sweep bounds, launch
+parameters) and a per-matrix `info` word; these are what the tests and tuning
+harnesses use. The functions are written for, and tested with, the GPU as the
+default MLX device: call `mlx::core::set_default_device(Device::gpu)` first.
+
+## Per-device routing
+
+Which kernel is fastest, and where the GPU overtakes the CPU, depends on the
+chip, so each solver's thresholds are a table of measured policies keyed on
+the Metal device name and GPU core count:
+
+| device | QR | eigh | SVD |
+|---|---|---|---|
+| Apple M1, 8 GPU cores | measured | measured | untuned |
+| Apple M5 Pro, 20 GPU cores | measured | measured | measured |
+| anything else | untuned default | untuned default | untuned default |
+
+`qr_policy_source()`, `eigh_policy_source()` and `svd_policy_source()` say
+which applies (`tuned:Apple M5 Pro`, `default:untuned-device (<name>)`,
+`env:...` or `user`). The defaults err toward the CPU, so an untuned device
+misses GPU wins rather than routing work to a kernel that takes seconds.
+Measuring a new device takes about 40 minutes and one command per solver; see
+[docs/tuning.md](docs/tuning.md). Every threshold can also be overridden with
+an environment variable or `set_*_policy()`.
+
+## Tests, benchmarks and tuning
 
 ```sh
-git clone https://github.com/cormaccinnsealach/qr-apple-silicon.git
-cd qr-apple-silicon
-
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --target benchmark_qr
+ctest --test-dir build --output-on-failure    # test_qr, test_eigh, test_svd
+./build/benchmark_qr                          # GPU against the CPU, per solver
+./build/benchmark_eigh
+./build/benchmark_svd
+./build/sweep_svd --policy                    # the device and the policy in effect
+python3 tuning/tune_svd.py build/sweep_svd    # measure this device; see docs/tuning.md
 ```
 
-```sh
-./build/benchmark_qr
-```
+The tests (75 QR, 135 eigh, 197 SVD checks) cover every backend directly and
+through the router, shapes around every kernel boundary, batches, transposed
+views, structured and rank-deficient input, magnitudes from 1e-30 to 1e+37,
+NaN inside a batch (eigh, SVD), and the routing policies without assuming any
+device's values.
 
-The benchmark sweeps every configuration automatically:
+## Layout
 
-| Class | Configs (M × N) | Batch sizes |
-|---|---|---|
-| Small (M < 512) | 64×64, 128×64, 256×128, 512×256 | 100, 500, 1000, 5000, 10000, 15000 |
-| Large (M ≥ 512) | 512×512, 1024×512, 5000×5000 | 1, 8, 16, 32 |
+| path | contents |
+|---|---|
+| `include/metal_linalg/` | the public headers |
+| `src/` | host code: routing policies, the Metal runtime, one driver per backend |
+| `shaders/` | the Metal kernels; `prebuilt/` holds their compiled metallibs |
+| `tests/` | correctness tests |
+| `benchmarks/` | GPU-against-CPU benchmarks |
+| `tuning/` | the per-device sweep binaries and analysis scripts |
+| `docs/` | per-solver guides, the tuning guide, studies and committed results |
 
-Per-config batch limits are set via the `max_batch` field in `SMALL_CONFIGS` at the top of `tests/benchmark_qr.cpp`. Any batch size above this value is skipped for that config and shown as `--` in the table. Set `max_batch = 0` to run a config at all batch sizes.
+## Documentation
 
-```cpp
-// tests/benchmark_qr.cpp
-static const std::vector<BenchConfig> SMALL_CONFIGS = {
-    { 64,  64},
-    {128,  64},
-    {256, 128, 5000},  // skipped for batch > 5000
-    {512, 256, 1000},  // skipped for batch > 1000 — raise or set to 0 if memory allows
-};
-```
-
-Each configuration runs for 5 timed repetitions (2 warmup discarded) and reports GPU time, CPU time (MLX CPU), speedup, and mean Frobenius reconstruction error `||QR - A||_F` for both.
+- [QR](docs/qr.md), [symmetric eigensolver](docs/eigh.md),
+  [SVD](docs/svd.md): algorithms, kernels, routing, accuracy, performance
+- [Tuning on another device](docs/tuning.md)
+- Studies: QR routing on an [M1](docs/studies/qr-routing-apple-m1.md),
+  eigensolver routing on an [M1](docs/studies/eigh-routing-apple-m1.md), all
+  three on an [M5 Pro](docs/studies/routing-apple-m5-pro.md);
+  [eigensolver launch parameters](docs/studies/eigh-launch-parameters-apple-m1.md);
+  [SVD design notes](docs/studies/svd-design-notes.md)
+- Raw timings and generated reports: [docs/results/](docs/results/)
+- [Changes](CHANGELOG.md)

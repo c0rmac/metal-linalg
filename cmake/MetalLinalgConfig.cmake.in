@@ -1,0 +1,7 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+find_dependency(MLX)
+
+include("${CMAKE_CURRENT_LIST_DIR}/MetalLinalgTargets.cmake")
+check_required_components(MetalLinalg)
