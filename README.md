@@ -126,15 +126,21 @@ Every threshold can also be overridden with an environment variable or
 
 ### Install with Homebrew
 
+The formula lives in its own tap,
+[c0rmac/homebrew-metal-linalg](https://github.com/c0rmac/homebrew-metal-linalg).
+Tap it, then install:
+
 ```bash
-brew install c0rmac/metal-linalg/metal-linalg
+brew tap c0rmac/metal-linalg
+brew install --HEAD metal-linalg      # --HEAD until the first release is tagged
 ```
 
-This installs `libmetal_linalg.dylib`, the headers under
+This builds and installs `libmetal_linalg.dylib`, the headers under
 `include/metal_linalg/` and a CMake package. The compiled Metal shaders are
 embedded in the library, so nothing is looked up on disk at run time and
-nothing needs the Metal compiler. The formula lives in its own tap,
-[c0rmac/homebrew-metal-linalg](https://github.com/c0rmac/homebrew-metal-linalg).
+nothing needs the Metal compiler. Updating, uninstalling and depending on it
+from another formula are covered in
+[the tap's README](https://github.com/c0rmac/homebrew-metal-linalg#readme).
 
 ### Build from source
 

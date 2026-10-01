@@ -69,7 +69,9 @@ now covers three decompositions, and is packaged as a library.
 - A CMake package: `find_package(MetalLinalg)` and
   `metal_linalg::metal_linalg`. As a subproject (`add_subdirectory`,
   `FetchContent`) it builds static and installs nothing.
-- A Homebrew formula, in its own tap: `brew install c0rmac/metal-linalg/metal-linalg`.
+- A Homebrew formula, in its own tap, [c0rmac/homebrew-metal-linalg](https://github.com/c0rmac/homebrew-metal-linalg):
+  `brew tap c0rmac/metal-linalg`, then `brew install --HEAD metal-linalg` until the
+  first release is tagged.
 
 ### Breaking changes
 
