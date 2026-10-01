@@ -4,7 +4,7 @@
   "gpu_cores": 20,
   "source": "default:untuned-device (Apple M5 Pro)"
  },
- "n_points": 263,
+ "n_points": 267,
  "single_pass": false,
  "drift": {
   "before_ms": {
@@ -236,23 +236,23 @@
   ]
  },
  "stage1": {
-  "n_points": 263,
+  "n_points": 267,
   "n_candidates": 588,
   "current": {
-   "geomean": 1.12619453914,
-   "worst": 3.80396653368,
-   "over10": 54,
-   "total_ratio": 1.65712442811,
-   "estimated_picks": 3,
-   "n": 263
+   "geomean": 1.12325570955,
+   "worst": 3.69311215294,
+   "over10": 55,
+   "total_ratio": 1.39353000647,
+   "estimated_picks": 1,
+   "n": 267
   },
   "chosen": {
-   "geomean": 1.04155603065,
-   "worst": 1.97834579752,
-   "over10": 30,
-   "total_ratio": 1.12833301499,
-   "estimated_picks": 1,
-   "n": 263
+   "geomean": 1.03496614167,
+   "worst": 1.80336908645,
+   "over10": 29,
+   "total_ratio": 1.02100911455,
+   "estimated_picks": 0,
+   "n": 267
   },
   "chosen_params": [
    512,
@@ -262,7 +262,7 @@
    64
   ],
   "band": {
-   "n_near_optimal": 6,
+   "n_near_optimal": 5,
    "qr_min_rows": [
     256,
     512
@@ -281,245 +281,245 @@
    "qr_min_rows": [
     {
      "value": 16,
-     "geomean": 1.12155357771,
-     "worst": 3.08820338663,
+     "geomean": 1.1124589458,
+     "worst": 2.12957260942,
      "over10": 81
     },
     {
      "value": 32,
-     "geomean": 1.12155357771,
-     "worst": 3.08820338663,
+     "geomean": 1.1124589458,
+     "worst": 2.12957260942,
      "over10": 81
     },
     {
      "value": 64,
-     "geomean": 1.12155357771,
-     "worst": 3.08820338663,
+     "geomean": 1.1124589458,
+     "worst": 2.12957260942,
      "over10": 81
     },
     {
      "value": 128,
-     "geomean": 1.10480302,
-     "worst": 2.35562086701,
-     "over10": 75
+     "geomean": 1.10004830525,
+     "worst": 2.05988197268,
+     "over10": 76
     },
     {
      "value": 256,
-     "geomean": 1.08726872369,
-     "worst": 1.99081757176,
+     "geomean": 1.0846441074,
+     "worst": 2.08352722021,
      "over10": 65
     },
     {
      "value": 512,
-     "geomean": 1.08245955306,
-     "worst": 2.29080508391,
-     "over10": 56
+     "geomean": 1.07543639358,
+     "worst": 2.35637253243,
+     "over10": 55
     },
     {
      "value": 1024,
-     "geomean": 1.0873458649,
-     "worst": 2.29080508391,
+     "geomean": 1.08648100611,
+     "worst": 2.35637253243,
      "over10": 51
     },
     {
      "value": 2048,
-     "geomean": 1.15596903722,
-     "worst": 5.31311928104,
-     "over10": 60
+     "geomean": 1.14817249695,
+     "worst": 5.36313729323,
+     "over10": 61
     },
     {
      "value": null,
-     "geomean": 1.23261009581,
-     "worst": 5.82851673197,
+     "geomean": 1.22361888538,
+     "worst": 5.81229971379,
      "over10": 74
     }
    ],
    "qr_min_k": [
     {
      "value": 8,
-     "geomean": 1.10277567242,
-     "worst": 3.86604555838,
-     "over10": 63
+     "geomean": 1.09549291784,
+     "worst": 3.49557350801,
+     "over10": 62
     },
     {
      "value": 16,
-     "geomean": 1.10277567242,
-     "worst": 3.86604555838,
-     "over10": 63
+     "geomean": 1.09549291784,
+     "worst": 3.49557350801,
+     "over10": 62
     },
     {
      "value": 32,
-     "geomean": 1.08245955306,
-     "worst": 2.29080508391,
-     "over10": 56
+     "geomean": 1.07543639358,
+     "worst": 2.35637253243,
+     "over10": 55
     },
     {
      "value": 64,
-     "geomean": 1.08424474788,
-     "worst": 3.80396653368,
-     "over10": 50
+     "geomean": 1.07840131817,
+     "worst": 3.69311215294,
+     "over10": 49
     },
     {
      "value": 128,
-     "geomean": 1.15765624488,
-     "worst": 5.82851673197,
-     "over10": 58
+     "geomean": 1.15080213078,
+     "worst": 5.81229971379,
+     "over10": 56
     },
     {
      "value": 256,
-     "geomean": 1.20244938273,
-     "worst": 5.82851673197,
-     "over10": 66
+     "geomean": 1.18710310997,
+     "worst": 5.81229971379,
+     "over10": 64
     }
    ],
    "block_min": [
     {
      "value": 32,
-     "geomean": 1.24043344177,
-     "worst": 7.13868080594,
-     "over10": 85
+     "geomean": 1.22079870391,
+     "worst": 7.01437315049,
+     "over10": 83
     },
     {
      "value": 48,
-     "geomean": 1.13009051763,
-     "worst": 3.94694557223,
-     "over10": 69
+     "geomean": 1.11794259178,
+     "worst": 3.67281624611,
+     "over10": 67
     },
     {
      "value": 64,
-     "geomean": 1.10763236523,
-     "worst": 3.11466408091,
-     "over10": 62
+     "geomean": 1.09663878713,
+     "worst": 2.9979055673,
+     "over10": 60
     },
     {
      "value": 96,
-     "geomean": 1.05987726953,
-     "worst": 1.97834579752,
-     "over10": 47
+     "geomean": 1.05086304682,
+     "worst": 1.88428376785,
+     "over10": 45
     },
     {
      "value": 128,
-     "geomean": 1.05193504653,
-     "worst": 1.97834579752,
-     "over10": 44
+     "geomean": 1.04375390648,
+     "worst": 1.80336908645,
+     "over10": 42
     },
     {
      "value": 192,
-     "geomean": 1.04155603065,
-     "worst": 1.97834579752,
-     "over10": 30
+     "geomean": 1.03496614167,
+     "worst": 1.80336908645,
+     "over10": 29
     },
     {
      "value": 256,
-     "geomean": 1.0460696133,
-     "worst": 1.97834579752,
-     "over10": 33
+     "geomean": 1.03969552827,
+     "worst": 1.80336908645,
+     "over10": 32
     },
     {
      "value": 384,
-     "geomean": 1.08377936977,
-     "worst": 2.67379673876,
-     "over10": 43
+     "geomean": 1.07720606466,
+     "worst": 2.71894044401,
+     "over10": 42
     },
     {
      "value": 512,
-     "geomean": 1.10193390278,
-     "worst": 5.01285058545,
-     "over10": 46
+     "geomean": 1.09498646904,
+     "worst": 5.05531398987,
+     "over10": 45
     },
     {
      "value": 768,
-     "geomean": 1.12609652506,
-     "worst": 8.10400111428,
-     "over10": 49
+     "geomean": 1.11857710754,
+     "worst": 8.17092423946,
+     "over10": 48
     },
     {
      "value": 1024,
-     "geomean": 1.15715077853,
-     "worst": 15.8571819829,
-     "over10": 52
+     "geomean": 1.14885583923,
+     "worst": 15.8633347855,
+     "over10": 51
     },
     {
      "value": null,
-     "geomean": 1.18323514852,
-     "worst": 25.0235491955,
+     "geomean": 1.18322765572,
+     "worst": 24.7685151587,
      "over10": 54
     }
    ],
    "block_lo": [
     {
      "value": 32,
-     "geomean": 1.06827392192,
-     "worst": 3.23786862383,
-     "over10": 38
+     "geomean": 1.05665777309,
+     "worst": 2.81345393973,
+     "over10": 37
     },
     {
      "value": 48,
-     "geomean": 1.04793836565,
-     "worst": 2.22840615508,
-     "over10": 34
+     "geomean": 1.04086273921,
+     "worst": 2.0891866947,
+     "over10": 33
     },
     {
      "value": 64,
-     "geomean": 1.04155603065,
-     "worst": 1.97834579752,
-     "over10": 30
+     "geomean": 1.03496614167,
+     "worst": 1.80336908645,
+     "over10": 29
     },
     {
      "value": 96,
-     "geomean": 1.06374795256,
-     "worst": 2.29080508391,
+     "geomean": 1.05916775572,
+     "worst": 2.35637253243,
      "over10": 39
     },
     {
      "value": 128,
-     "geomean": 1.07318064454,
-     "worst": 2.29080508391,
+     "geomean": 1.06853951252,
+     "worst": 2.35637253243,
      "over10": 42
     }
    ],
    "batch_hi": [
     {
      "value": 4,
-     "geomean": 1.08357762628,
-     "worst": 2.969965154,
-     "over10": 51
+     "geomean": 1.07453728096,
+     "worst": 2.76724881333,
+     "over10": 50
     },
     {
      "value": 16,
-     "geomean": 1.06028932157,
-     "worst": 2.25279655124,
-     "over10": 41
+     "geomean": 1.05372095342,
+     "worst": 2.10912299421,
+     "over10": 40
     },
     {
      "value": 64,
-     "geomean": 1.04155603065,
-     "worst": 1.97834579752,
-     "over10": 30
+     "geomean": 1.03496614167,
+     "worst": 1.80336908645,
+     "over10": 29
     },
     {
      "value": 256,
-     "geomean": 1.04957073704,
-     "worst": 2.18996157947,
-     "over10": 32
+     "geomean": 1.04423328432,
+     "worst": 2.26126974398,
+     "over10": 31
     },
     {
      "value": 1024,
-     "geomean": 1.07221336629,
-     "worst": 2.42393415953,
+     "geomean": 1.0669957612,
+     "worst": 2.44525873054,
      "over10": 42
     },
     {
      "value": 4096,
-     "geomean": 1.09864564972,
-     "worst": 2.45323997733,
+     "geomean": 1.0935362095,
+     "worst": 2.46542760381,
      "over10": 53
     }
    ]
   },
   "holdout": {
-   "train_points": 150,
-   "test_points": 113,
+   "train_points": 151,
+   "test_points": 116,
    "base": {
     "params": [
      512,
@@ -529,20 +529,20 @@
      1000000000
     ],
     "train": {
-     "geomean": 1.04900231067,
-     "worst": 2.57626342262,
-     "over10": 19,
-     "total_ratio": 1.05595878212,
+     "geomean": 1.05602166638,
+     "worst": 2.62969122753,
+     "over10": 22,
+     "total_ratio": 1.05031255497,
      "estimated_picks": 0,
-     "n": 150
+     "n": 151
     },
     "test": {
-     "geomean": 1.13631267339,
-     "worst": 3.80396653368,
-     "over10": 31,
-     "total_ratio": 1.39132957488,
-     "estimated_picks": 1,
-     "n": 113
+     "geomean": 1.11341351248,
+     "worst": 3.69311215294,
+     "over10": 27,
+     "total_ratio": 1.14103646372,
+     "estimated_picks": 0,
+     "n": 116
     }
    },
    "batch_block": {
@@ -552,25 +552,25 @@
      "batch_hi": 256
     },
     "train": {
-     "geomean": 1.02328160879,
-     "worst": 1.62542328076,
-     "over10": 14,
-     "total_ratio": 1.0079882729,
+     "geomean": 1.02149524898,
+     "worst": 1.50860199829,
+     "over10": 15,
+     "total_ratio": 1.00906592,
      "estimated_picks": 0,
-     "n": 150
+     "n": 151
     },
     "test": {
-     "geomean": 1.0449137873,
-     "worst": 1.6100842079,
-     "over10": 17,
-     "total_ratio": 1.23200420121,
-     "estimated_picks": 1,
-     "n": 113
+     "geomean": 1.02958630185,
+     "worst": 1.67753602028,
+     "over10": 14,
+     "total_ratio": 1.01969964263,
+     "estimated_picks": 0,
+     "n": 116
     },
     "bootstrap": {
      "p_better": 1.0,
-     "gain_median": 0.0869696239864,
-     "gain_p05": 0.0461907111047
+     "gain_median": 0.0804591922071,
+     "gain_p05": 0.0439770716969
     },
     "justified": true
    }
@@ -594,20 +594,20 @@
  "stage2": {
   "n_candidates": 462,
   "current": {
-   "geomean": 1.54550746807,
-   "worst": 9.09673621409,
-   "over10": 95,
-   "total_ratio": 8.33141090537,
-   "estimated_picks": 18,
-   "n": 263
+   "geomean": 1.56302216086,
+   "worst": 7.00288592688,
+   "over10": 97,
+   "total_ratio": 9.1439973006,
+   "estimated_picks": 22,
+   "n": 267
   },
   "chosen": {
-   "geomean": 1.04177030982,
-   "worst": 2.03151084539,
-   "over10": 31,
-   "total_ratio": 1.13007874641,
-   "estimated_picks": 1,
-   "n": 263
+   "geomean": 1.03174557258,
+   "worst": 1.80336908645,
+   "over10": 27,
+   "total_ratio": 1.02125984605,
+   "estimated_picks": 0,
+   "n": 267
   },
   "chosen_params": [
    1024,
@@ -634,202 +634,202 @@
    "gpu_max_k": [
     {
      "value": 8,
-     "geomean": 2.64375429614,
-     "worst": 12.2838538181,
-     "over10": 153
+     "geomean": 2.62335205831,
+     "worst": 14.3894957093,
+     "over10": 154
     },
     {
      "value": 16,
-     "geomean": 2.24231421279,
-     "worst": 11.0107531137,
-     "over10": 129
+     "geomean": 2.22121708992,
+     "worst": 10.9989751374,
+     "over10": 130
     },
     {
      "value": 32,
-     "geomean": 1.88843529539,
-     "worst": 10.7428538799,
-     "over10": 114
+     "geomean": 1.88706537214,
+     "worst": 8.69541367494,
+     "over10": 115
     },
     {
      "value": 48,
-     "geomean": 1.83866298217,
-     "worst": 10.7428538799,
-     "over10": 109
+     "geomean": 1.83735809041,
+     "worst": 8.69541367494,
+     "over10": 110
     },
     {
      "value": 64,
-     "geomean": 1.50489272352,
-     "worst": 9.09673621409,
-     "over10": 87
+     "geomean": 1.52920060879,
+     "worst": 7.00288592688,
+     "over10": 88
     },
     {
      "value": 96,
-     "geomean": 1.46104264766,
-     "worst": 9.09673621409,
-     "over10": 82
+     "geomean": 1.48308697988,
+     "worst": 7.00288592688,
+     "over10": 83
     },
     {
      "value": 128,
-     "geomean": 1.22865761594,
-     "worst": 5.88648164841,
+     "geomean": 1.25400787193,
+     "worst": 4.8318979673,
      "over10": 57
     },
     {
      "value": 192,
-     "geomean": 1.20402109696,
-     "worst": 5.88648164841,
+     "geomean": 1.22928387119,
+     "worst": 4.8318979673,
      "over10": 54
     },
     {
      "value": 256,
-     "geomean": 1.1005976101,
-     "worst": 2.03151084539,
-     "over10": 40
-    },
-    {
-     "value": 384,
-     "geomean": 1.07702149443,
-     "worst": 2.03151084539,
+     "geomean": 1.09918809884,
+     "worst": 1.81028916271,
      "over10": 37
     },
     {
-     "value": 512,
-     "geomean": 1.06324334333,
-     "worst": 2.03151084539,
+     "value": 384,
+     "geomean": 1.07616216268,
+     "worst": 1.80336908645,
      "over10": 34
     },
     {
+     "value": 512,
+     "geomean": 1.06265356256,
+     "worst": 1.80336908645,
+     "over10": 31
+    },
+    {
      "value": 768,
-     "geomean": 1.05222459199,
-     "worst": 2.03151084539,
-     "over10": 32
+     "geomean": 1.05193823049,
+     "worst": 1.80336908645,
+     "over10": 29
     },
     {
      "value": 1024,
-     "geomean": 1.04177030982,
-     "worst": 2.03151084539,
-     "over10": 31
+     "geomean": 1.03174557258,
+     "worst": 1.80336908645,
+     "over10": 27
     },
     {
      "value": null,
-     "geomean": 1.04177030982,
-     "worst": 2.03151084539,
-     "over10": 31
+     "geomean": 1.03174557258,
+     "worst": 1.80336908645,
+     "over10": 27
     }
    ],
    "min_bk": [
     {
      "value": 0,
-     "geomean": 1.17572637683,
-     "worst": 7.13492237643,
-     "over10": 63
+     "geomean": 1.17553803096,
+     "worst": 9.96909712635,
+     "over10": 62
     },
     {
      "value": 64,
-     "geomean": 1.13240194504,
-     "worst": 5.5769912913,
-     "over10": 56
-    },
-    {
-     "value": 128,
-     "geomean": 1.09536445209,
-     "worst": 3.901040608,
-     "over10": 49
-    },
-    {
-     "value": 256,
-     "geomean": 1.05514901205,
-     "worst": 3.08578538422,
-     "over10": 37
-    },
-    {
-     "value": 512,
-     "geomean": 1.04177030982,
-     "worst": 2.03151084539,
-     "over10": 31
-    },
-    {
-     "value": 1024,
-     "geomean": 1.0727832838,
-     "worst": 4.38508762139,
-     "over10": 40
-    },
-    {
-     "value": 2048,
-     "geomean": 1.14535597111,
-     "worst": 6.15512389495,
+     "geomean": 1.12194945192,
+     "worst": 6.31852355461,
      "over10": 55
     },
     {
+     "value": 128,
+     "geomean": 1.0823195169,
+     "worst": 3.58605390071,
+     "over10": 48
+    },
+    {
+     "value": 256,
+     "geomean": 1.04480028283,
+     "worst": 2.56226509502,
+     "over10": 35
+    },
+    {
+     "value": 512,
+     "geomean": 1.03174557258,
+     "worst": 1.80336908645,
+     "over10": 27
+    },
+    {
+     "value": 1024,
+     "geomean": 1.05601704906,
+     "worst": 3.69536048607,
+     "over10": 37
+    },
+    {
+     "value": 2048,
+     "geomean": 1.12137004402,
+     "worst": 4.76455273594,
+     "over10": 52
+    },
+    {
      "value": 4096,
-     "geomean": 1.27128456322,
-     "worst": 6.63161202215,
-     "over10": 75
+     "geomean": 1.23835532614,
+     "worst": 5.85914021145,
+     "over10": 72
     },
     {
      "value": 8192,
-     "geomean": 1.43136496647,
-     "worst": 8.34963423271,
-     "over10": 92
+     "geomean": 1.38958318874,
+     "worst": 8.07832758637,
+     "over10": 89
     },
     {
      "value": 16384,
-     "geomean": 1.65017816454,
-     "worst": 11.6960348053,
-     "over10": 111
+     "geomean": 1.59911700934,
+     "worst": 11.9579471224,
+     "over10": 108
     },
     {
      "value": null,
-     "geomean": 3.14168983271,
-     "worst": 17.6884871543,
-     "over10": 179
+     "geomean": 3.10389139645,
+     "worst": 17.6920823119,
+     "over10": 181
     }
    ],
    "min_batch": [
     {
      "value": 1,
-     "geomean": 1.04841122995,
-     "worst": 2.03151084539,
-     "over10": 34
+     "geomean": 1.03836708076,
+     "worst": 1.94785157158,
+     "over10": 30
     },
     {
      "value": 4,
-     "geomean": 1.04177030982,
-     "worst": 2.03151084539,
-     "over10": 31
+     "geomean": 1.03174557258,
+     "worst": 1.80336908645,
+     "over10": 27
     },
     {
      "value": 16,
-     "geomean": 1.06485105718,
-     "worst": 2.28616350207,
-     "over10": 37
+     "geomean": 1.05157019453,
+     "worst": 1.94118288536,
+     "over10": 33
     }
    ]
   },
   "holdout": {
-   "train_points": 150,
-   "test_points": 113,
+   "train_points": 151,
+   "test_points": 116,
    "base": {
     "params": [
      1024,
-     256,
+     512,
      4
     ],
     "train": {
-     "geomean": 1.0458404313,
-     "worst": 1.97834579752,
-     "over10": 19,
-     "total_ratio": 1.01370790353,
+     "geomean": 1.03106351157,
+     "worst": 1.80336908645,
+     "over10": 14,
+     "total_ratio": 1.01319275718,
      "estimated_picks": 0,
-     "n": 150
+     "n": 151
     },
     "test": {
-     "geomean": 1.06763364507,
-     "worst": 3.08578538422,
-     "over10": 18,
-     "total_ratio": 1.24613762542,
-     "estimated_picks": 1,
-     "n": 113
+     "geomean": 1.03263410383,
+     "worst": 1.67778380892,
+     "over10": 13,
+     "total_ratio": 1.02958749231,
+     "estimated_picks": 0,
+     "n": 116
     }
    },
    "cpu_table": {
@@ -852,25 +852,25 @@
      }
     },
     "train": {
-     "geomean": 1.03399402195,
-     "worst": 1.97834579752,
-     "over10": 14,
-     "total_ratio": 1.01325751368,
+     "geomean": 1.03119801827,
+     "worst": 1.80336908645,
+     "over10": 13,
+     "total_ratio": 1.01304414233,
      "estimated_picks": 0,
-     "n": 150
+     "n": 151
     },
     "test": {
-     "geomean": 1.05906648474,
-     "worst": 2.25997847223,
-     "over10": 17,
-     "total_ratio": 1.24879355599,
-     "estimated_picks": 1,
-     "n": 113
+     "geomean": 1.04674508427,
+     "worst": 2.13510031868,
+     "over10": 16,
+     "total_ratio": 1.03123636831,
+     "estimated_picks": 0,
+     "n": 116
     },
     "bootstrap": {
-     "p_better": 0.6775,
-     "gain_median": 0.00747164626067,
-     "gain_p05": -0.0168572773448
+     "p_better": 0.0555,
+     "gain_median": -0.0127344880981,
+     "gain_p05": -0.0300328309648
     },
     "justified": false
    }
@@ -888,20 +888,20 @@
  ],
  "rules": {
   "current": {
-   "geomean": 1.60002973722,
-   "worst": 9.09673621409,
-   "over10": 104,
-   "total_ratio": 8.39540719423,
-   "estimated_picks": 18,
-   "n": 263
+   "geomean": 1.6215237598,
+   "worst": 7.00288592688,
+   "over10": 107,
+   "total_ratio": 9.19520321994,
+   "estimated_picks": 22,
+   "n": 267
   },
   "chosen": {
-   "geomean": 1.04177030982,
-   "worst": 2.03151084539,
-   "over10": 31,
-   "total_ratio": 1.13007874641,
-   "estimated_picks": 1,
-   "n": 263
+   "geomean": 1.03174557258,
+   "worst": 1.80336908645,
+   "over10": 27,
+   "total_ratio": 1.02125984605,
+   "estimated_picks": 0,
+   "n": 267
   }
  },
  "surface": [
@@ -912,12 +912,12 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.259292,
-    "cpu": 0.025417
+    "jacobi": 0.2309795,
+    "cpu": 0.0143755
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.0980246208907
+   "gpu_speedup": 0.0622371249397
   },
   {
    "M": 4,
@@ -926,12 +926,12 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.260125,
-    "cpu": 0.036458
+    "jacobi": 0.2346875,
+    "cpu": 0.0235415
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.140155694378
+   "gpu_speedup": 0.100309986684
   },
   {
    "M": 4,
@@ -940,12 +940,12 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.201959,
-    "cpu": 0.062667
+    "jacobi": 0.2083335,
+    "cpu": 0.049688
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.310295654068
+   "gpu_speedup": 0.238502209198
   },
   {
    "M": 4,
@@ -954,12 +954,12 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.25375,
-    "cpu": 0.149542
+    "jacobi": 0.235625,
+    "cpu": 0.1427295
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.589328078818
+   "gpu_speedup": 0.605748541114
   },
   {
    "M": 4,
@@ -968,12 +968,12 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.228542,
-    "cpu": 0.5165
+    "jacobi": 0.2477505,
+    "cpu": 0.528146
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 2.25997847223
+   "gpu_speedup": 2.13176562711
   },
   {
    "M": 4,
@@ -982,12 +982,12 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.248083,
-    "cpu": 1.974625
+    "jacobi": 0.353875,
+    "cpu": 2.014854
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 7.95953370445
+   "gpu_speedup": 5.69368844931
   },
   {
    "M": 4,
@@ -996,12 +996,12 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.174458,
-    "cpu": 7.813396
+    "jacobi": 0.8065415,
+    "cpu": 7.920427
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 6.65276748934
+   "gpu_speedup": 9.82023491662
   },
   {
    "M": 8,
@@ -1010,12 +1010,12 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.19525,
-    "cpu": 0.033209
+    "jacobi": 0.238375,
+    "cpu": 0.020334
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.170084507042
+   "gpu_speedup": 0.0853025694809
   },
   {
    "M": 8,
@@ -1024,12 +1024,12 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.199792,
-    "cpu": 0.042833
+    "jacobi": 0.214146,
+    "cpu": 0.032187
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.214387963482
+   "gpu_speedup": 0.150303998207
   },
   {
    "M": 8,
@@ -1038,12 +1038,12 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.352334,
-    "cpu": 0.1
+    "jacobi": 0.316021,
+    "cpu": 0.088125
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.283821601094
+   "gpu_speedup": 0.278858050573
   },
   {
    "M": 8,
@@ -1052,12 +1052,12 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.224708,
-    "cpu": 0.340291
+    "jacobi": 0.277625,
+    "cpu": 0.325937
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 1.51436975987
+   "gpu_speedup": 1.1740189104
   },
   {
    "M": 8,
@@ -1066,12 +1066,12 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.268708,
-    "cpu": 1.191791
+    "jacobi": 0.264604,
+    "cpu": 1.193666
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 4.43526430177
+   "gpu_speedup": 4.511141177
   },
   {
    "M": 8,
@@ -1080,12 +1080,12 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.25125,
-    "cpu": 4.776125
+    "jacobi": 0.87375,
+    "cpu": 4.705208
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 3.81708291708
+   "gpu_speedup": 5.38507353362
   },
   {
    "M": 8,
@@ -1094,12 +1094,12 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.425167,
-    "cpu": 18.810229
+    "jacobi": 1.401042,
+    "cpu": 18.5741145
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 13.1986139168
+   "gpu_speedup": 13.2573573811
   },
   {
    "M": 16,
@@ -1108,13 +1108,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.207,
-    "qr": 0.93075,
-    "cpu": 0.04925
+    "jacobi": 0.234333,
+    "qr": 0.809646,
+    "cpu": 0.029083
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.237922705314
+   "gpu_speedup": 0.124109707126
   },
   {
    "M": 16,
@@ -1123,13 +1123,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.278333,
-    "qr": 0.86025,
-    "cpu": 0.062041
+    "jacobi": 0.2806245,
+    "qr": 0.725604,
+    "cpu": 0.044833
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.222902063356
+   "gpu_speedup": 0.159761531869
   },
   {
    "M": 16,
@@ -1138,13 +1138,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.250042,
-    "qr": 0.910625,
-    "cpu": 0.138458
+    "jacobi": 0.2626875,
+    "qr": 0.7343335,
+    "cpu": 0.119854
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.553738971853
+   "gpu_speedup": 0.456260766119
   },
   {
    "M": 16,
@@ -1153,13 +1153,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.188208,
-    "qr": 0.887208,
-    "cpu": 0.452416
+    "jacobi": 0.25775,
+    "qr": 0.762708,
+    "cpu": 0.4291455
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 2.40380855224
+   "gpu_speedup": 1.66496799224
   },
   {
    "M": 16,
@@ -1168,13 +1168,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.288625,
-    "qr": 1.071625,
-    "cpu": 1.571
+    "jacobi": 0.4399165,
+    "qr": 0.870958,
+    "cpu": 1.5839795
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 5.44304893893
+   "gpu_speedup": 3.60063671174
   },
   {
    "M": 16,
@@ -1183,13 +1183,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.341834,
-    "qr": 1.619584,
-    "cpu": 6.21925
+    "jacobi": 0.9190625,
+    "qr": 1.382521,
+    "cpu": 6.1706665
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 4.634887773
+   "gpu_speedup": 6.71408799728
   },
   {
    "M": 16,
@@ -1198,13 +1198,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.981125,
-    "qr": 3.464791,
-    "cpu": 24.715375
+    "jacobi": 1.691,
+    "qr": 3.179208,
+    "cpu": 24.5514375
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 12.475424317
+   "gpu_speedup": 14.5188867534
   },
   {
    "M": 32,
@@ -1213,13 +1213,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.32775,
-    "qr": 0.969666,
-    "cpu": 0.045917
+    "jacobi": 0.2909585,
+    "qr": 0.7900205,
+    "cpu": 0.027938
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.140097635393
+   "gpu_speedup": 0.0960205665069
   },
   {
    "M": 32,
@@ -1228,13 +1228,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.179833,
-    "qr": 0.925292,
-    "cpu": 0.065625
+    "jacobi": 0.2286455,
+    "qr": 0.737979,
+    "cpu": 0.0466665
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.364921899763
+   "gpu_speedup": 0.20409979641
   },
   {
    "M": 32,
@@ -1243,13 +1243,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.320875,
-    "qr": 0.838167,
-    "cpu": 0.1625
+    "jacobi": 0.305271,
+    "qr": 0.70025,
+    "cpu": 0.138875
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.506427736658
+   "gpu_speedup": 0.454923657996
   },
   {
    "M": 32,
@@ -1258,13 +1258,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.445667,
-    "qr": 0.868125,
-    "cpu": 0.473417
+    "jacobi": 0.3503125,
+    "qr": 0.7345415,
+    "cpu": 0.4550415
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 1.06226622119
+   "gpu_speedup": 1.2989587868
   },
   {
    "M": 32,
@@ -1273,13 +1273,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.78175,
-    "qr": 1.0835,
-    "cpu": 1.685125
+    "jacobi": 0.558229,
+    "qr": 0.9000835,
+    "cpu": 1.6962915
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 2.15558042853
+   "gpu_speedup": 3.03870185891
   },
   {
    "M": 32,
@@ -1288,13 +1288,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.574625,
-    "qr": 1.651666,
-    "cpu": 6.720834
+    "jacobi": 0.555396,
+    "qr": 1.449375,
+    "cpu": 6.641396
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 11.6960348053
+   "gpu_speedup": 11.9579471224
   },
   {
    "M": 32,
@@ -1303,13 +1303,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.521292,
-    "qr": 3.9135,
-    "cpu": 26.909354
+    "jacobi": 1.506854,
+    "qr": 3.657479,
+    "cpu": 26.659385
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 17.6884871543
+   "gpu_speedup": 17.6920823119
   },
   {
    "M": 64,
@@ -1318,13 +1318,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.195959,
-    "qr": 0.943625,
-    "cpu": 0.050667
+    "jacobi": 0.18275,
+    "qr": 0.73525,
+    "cpu": 0.030896
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.258559188402
+   "gpu_speedup": 0.169061559508
   },
   {
    "M": 64,
@@ -1333,13 +1333,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.360416,
-    "qr": 0.882375,
-    "cpu": 0.067541
+    "jacobi": 0.319041,
+    "qr": 0.7341875,
+    "cpu": 0.049833
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.187397340851
+   "gpu_speedup": 0.156196225563
   },
   {
    "M": 64,
@@ -1348,13 +1348,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.382834,
-    "qr": 0.987375,
-    "cpu": 0.172709
+    "jacobi": 0.351813,
+    "qr": 0.7947915,
+    "cpu": 0.1518755
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.451132866987
+   "gpu_speedup": 0.431693825981
   },
   {
    "M": 64,
@@ -1363,13 +1363,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.230833,
-    "qr": 1.016584,
-    "cpu": 0.537041
+    "jacobi": 0.2923745,
+    "qr": 0.826521,
+    "cpu": 0.5191665
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 2.32653476756
+   "gpu_speedup": 1.77569008241
   },
   {
    "M": 64,
@@ -1378,13 +1378,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.44775,
-    "qr": 1.199125,
-    "cpu": 1.9635
+    "jacobi": 0.5729165,
+    "qr": 1.0110625,
+    "cpu": 1.9165835
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 4.38525963149
+   "gpu_speedup": 3.345310355
   },
   {
    "M": 64,
@@ -1393,13 +1393,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.851541,
-    "qr": 2.1155,
-    "cpu": 7.823084
+    "jacobi": 0.738687,
+    "qr": 1.860396,
+    "cpu": 7.639334
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 9.18697279403
+   "gpu_speedup": 10.3417739855
   },
   {
    "M": 64,
@@ -1408,13 +1408,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.983458,
-    "qr": 5.230458,
-    "cpu": 31.345791
+    "jacobi": 1.9580205,
+    "qr": 5.0754165,
+    "cpu": 30.47326
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 15.8036071346
+   "gpu_speedup": 15.5632997714
   },
   {
    "M": 128,
@@ -1423,13 +1423,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.417375,
-    "qr": 0.997042,
-    "cpu": 0.050292
+    "jacobi": 0.3680415,
+    "qr": 0.7900625,
+    "cpu": 0.0317085
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.120495956873
+   "gpu_speedup": 0.0861546863601
   },
   {
    "M": 128,
@@ -1438,13 +1438,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.230708,
-    "qr": 0.999917,
-    "cpu": 0.085208
+    "jacobi": 0.278812,
+    "qr": 0.808542,
+    "cpu": 0.0657915
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.369332662933
+   "gpu_speedup": 0.235970833393
   },
   {
    "M": 128,
@@ -1453,13 +1453,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.786875,
-    "qr": 1.032209,
-    "cpu": 0.201709
+    "jacobi": 0.508729,
+    "qr": 0.8388125,
+    "cpu": 0.1819585
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.256341858618
+   "gpu_speedup": 0.357672749145
   },
   {
    "M": 128,
@@ -1468,13 +1468,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.260833,
-    "qr": 1.087625,
-    "cpu": 0.657042
+    "jacobi": 0.338187,
+    "qr": 0.904354,
+    "cpu": 0.6360625
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 2.51901408181
+   "gpu_speedup": 1.88080115439
   },
   {
    "M": 128,
@@ -1483,13 +1483,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.453458,
-    "qr": 1.449625,
-    "cpu": 2.428792
+    "jacobi": 0.427646,
+    "qr": 1.2282085,
+    "cpu": 2.377625
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 5.35615646874
+   "gpu_speedup": 5.55979712192
   },
   {
    "M": 128,
@@ -1498,13 +1498,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.063875,
-    "qr": 3.243334,
-    "cpu": 9.846166
+    "jacobi": 1.00775,
+    "qr": 3.0253335,
+    "cpu": 9.5158535
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 9.25500270239
+   "gpu_speedup": 9.44267278591
   },
   {
    "M": 128,
@@ -1513,13 +1513,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 3.479208,
-    "qr": 9.565292,
-    "cpu": 39.517542
+    "jacobi": 3.1429165,
+    "qr": 9.790646,
+    "cpu": 38.0275005
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 11.358200487
+   "gpu_speedup": 12.0994307358
   },
   {
    "M": 256,
@@ -1528,13 +1528,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.458542,
-    "qr": 1.116792,
-    "cpu": 0.052042
+    "jacobi": 0.4307505,
+    "qr": 0.942396,
+    "cpu": 0.034125
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.113494510863
+   "gpu_speedup": 0.0792221947508
   },
   {
    "M": 256,
@@ -1543,13 +1543,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.334916,
-    "qr": 1.123791,
-    "cpu": 0.101916
+    "jacobi": 0.373854,
+    "qr": 0.9388955,
+    "cpu": 0.080208
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.304303168556
+   "gpu_speedup": 0.21454364538
   },
   {
    "M": 256,
@@ -1558,13 +1558,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.76775,
-    "qr": 1.22975,
-    "cpu": 0.26425
+    "jacobi": 0.516625,
+    "qr": 1.074,
+    "cpu": 0.243333
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.344187561055
+   "gpu_speedup": 0.471005081055
   },
   {
    "M": 256,
@@ -1573,13 +1573,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.294,
-    "qr": 1.346334,
-    "cpu": 0.924208
+    "jacobi": 0.4003545,
+    "qr": 1.1729795,
+    "cpu": 0.873354
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 3.14356462585
+   "gpu_speedup": 2.18145168844
   },
   {
    "M": 256,
@@ -1588,13 +1588,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.654375,
-    "qr": 2.600625,
-    "cpu": 3.521
+    "jacobi": 0.5760835,
+    "qr": 2.3807915,
+    "cpu": 3.375354
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 5.38070678128
+   "gpu_speedup": 5.85914021145
   },
   {
    "M": 256,
@@ -1603,13 +1603,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.6725,
-    "qr": 6.788146,
-    "cpu": 14.335375
+    "jacobi": 1.534396,
+    "qr": 6.7118645,
+    "cpu": 13.5754685
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 8.57122571001
+   "gpu_speedup": 8.84743475609
   },
   {
    "M": 256,
@@ -1618,13 +1618,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 5.052166,
-    "qr": 23.551792,
-    "cpu": 58.58725
+    "jacobi": 4.8635625,
+    "qr": 24.0752295,
+    "cpu": 54.681417
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 11.5964617948
+   "gpu_speedup": 11.2430789159
   },
   {
    "M": 16,
@@ -1633,12 +1633,12 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.313125,
-    "cpu": 0.041708
+    "jacobi": 0.39425,
+    "cpu": 0.02975
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.133199201597
+   "gpu_speedup": 0.0754597336715
   },
   {
    "M": 16,
@@ -1647,12 +1647,12 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.490541,
-    "cpu": 0.087958
+    "jacobi": 0.478625,
+    "cpu": 0.0757495
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.179308151612
+   "gpu_speedup": 0.158264821102
   },
   {
    "M": 16,
@@ -1661,12 +1661,12 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.84075,
-    "cpu": 0.272459
+    "jacobi": 0.6657085,
+    "cpu": 0.2598125
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.324066607196
+   "gpu_speedup": 0.390279679469
   },
   {
    "M": 16,
@@ -1675,12 +1675,12 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.340208,
-    "cpu": 0.974917
+    "jacobi": 0.3958955,
+    "cpu": 0.9618335
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 2.86564983775
+   "gpu_speedup": 2.42951359639
   },
   {
    "M": 16,
@@ -1689,12 +1689,12 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.35675,
-    "cpu": 3.735875
+    "jacobi": 0.986229,
+    "cpu": 3.7088545
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 2.75354707942
+   "gpu_speedup": 3.76064230518
   },
   {
    "M": 16,
@@ -1703,12 +1703,12 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.728834,
-    "cpu": 14.998541
+    "jacobi": 1.7299795,
+    "cpu": 14.792625
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 8.67552408155
+   "gpu_speedup": 8.55075161295
   },
   {
    "M": 16,
@@ -1717,12 +1717,12 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 5.701458,
-    "cpu": 59.94525
+    "jacobi": 5.7105205,
+    "cpu": 59.34475
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 10.5140211504
+   "gpu_speedup": 10.3921787865
   },
   {
    "M": 32,
@@ -1731,13 +1731,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.2475,
-    "qr": 0.985709,
-    "cpu": 0.059833
+    "jacobi": 0.3438335,
+    "qr": 0.842521,
+    "cpu": 0.0444165
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.241749494949
+   "gpu_speedup": 0.129180257305
   },
   {
    "M": 32,
@@ -1746,13 +1746,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.242084,
-    "qr": 0.985708,
-    "cpu": 0.124459
+    "jacobi": 0.3459585,
+    "qr": 0.788021,
+    "cpu": 0.111188
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.514114935312
+   "gpu_speedup": 0.321391149516
   },
   {
    "M": 32,
@@ -1761,13 +1761,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.519292,
-    "qr": 1.032416,
-    "cpu": 0.380875
+    "jacobi": 0.5012295,
+    "qr": 0.825291,
+    "cpu": 0.387875
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.733450544202
+   "gpu_speedup": 0.773847109957
   },
   {
    "M": 32,
@@ -1776,13 +1776,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.338334,
-    "qr": 1.115417,
-    "cpu": 1.27675
+    "jacobi": 0.576292,
+    "qr": 0.9412085,
+    "cpu": 1.4180625
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 3.77363788446
+   "gpu_speedup": 2.46066664122
   },
   {
    "M": 32,
@@ -1791,13 +1791,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.758959,
-    "qr": 1.602167,
-    "cpu": 5.065583
+    "jacobi": 0.6848545,
+    "qr": 1.367375,
+    "cpu": 5.532479
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 6.67438293768
+   "gpu_speedup": 8.07832758637
   },
   {
    "M": 32,
@@ -1806,13 +1806,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.693667,
-    "qr": 3.272584,
-    "cpu": 20.196937
+    "jacobi": 1.6991255,
+    "qr": 2.9629585,
+    "cpu": 22.013781
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 11.9249752165
+   "gpu_speedup": 12.9559476331
   },
   {
    "M": 32,
@@ -1821,13 +1821,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 6.536375,
-    "qr": 8.893375,
-    "cpu": 80.291875
+    "jacobi": 6.105229,
+    "qr": 8.7292915,
+    "cpu": 87.8511665
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 12.2838538181
+   "gpu_speedup": 14.3894957093
   },
   {
    "M": 64,
@@ -1836,13 +1836,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.252125,
-    "qr": 1.01825,
-    "cpu": 0.065083
+    "jacobi": 0.3584585,
+    "qr": 0.799396,
+    "cpu": 0.050229
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.258137828458
+   "gpu_speedup": 0.140125007497
   },
   {
    "M": 64,
@@ -1851,13 +1851,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.56575,
-    "qr": 1.0055,
-    "cpu": 0.144709
+    "jacobi": 0.523708,
+    "qr": 0.8190625,
+    "cpu": 0.131792
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.255782589483
+   "gpu_speedup": 0.251651683763
   },
   {
    "M": 64,
@@ -1866,13 +1866,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.58525,
-    "qr": 1.034291,
-    "cpu": 0.42775
+    "jacobi": 0.5546045,
+    "qr": 0.836979,
+    "cpu": 0.4375625
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.730884237505
+   "gpu_speedup": 0.788963125975
   },
   {
    "M": 64,
@@ -1881,13 +1881,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.3795,
-    "qr": 1.188541,
-    "cpu": 1.442041
+    "jacobi": 0.6269165,
+    "qr": 0.980312,
+    "cpu": 1.582104
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 3.79984453228
+   "gpu_speedup": 2.52362794726
   },
   {
    "M": 64,
@@ -1896,13 +1896,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.799042,
-    "qr": 1.769292,
-    "cpu": 5.687417
+    "jacobi": 0.7823335,
+    "qr": 1.5116045,
+    "cpu": 6.217917
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 7.11779480928
+   "gpu_speedup": 7.94791096125
   },
   {
    "M": 64,
@@ -1911,13 +1911,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 2.110958,
-    "qr": 3.888167,
-    "cpu": 22.652792
+    "jacobi": 2.073104,
+    "qr": 3.5395005,
+    "cpu": 24.774094
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 10.7310481781
+   "gpu_speedup": 11.9502417631
   },
   {
    "M": 64,
@@ -1926,13 +1926,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 7.582375,
-    "qr": 11.087854,
-    "cpu": 90.961166
+    "jacobi": 7.201927,
+    "qr": 11.175333,
+    "cpu": 99.0662915
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 11.9963950609
+   "gpu_speedup": 13.7555256392
   },
   {
    "M": 128,
@@ -1941,13 +1941,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.422542,
-    "qr": 1.064834,
-    "cpu": 0.065375
+    "jacobi": 0.47925,
+    "qr": 0.8560215,
+    "cpu": 0.051875
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.154718347525
+   "gpu_speedup": 0.108242044862
   },
   {
    "M": 128,
@@ -1956,13 +1956,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.337667,
-    "qr": 1.048958,
-    "cpu": 0.157666
+    "jacobi": 0.3818125,
+    "qr": 0.8596455,
+    "cpu": 0.1457285
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.466927475886
+   "gpu_speedup": 0.381675560648
   },
   {
    "M": 128,
@@ -1971,13 +1971,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.793042,
-    "qr": 1.08475,
-    "cpu": 0.465375
+    "jacobi": 0.7009375,
+    "qr": 0.8980415,
+    "cpu": 0.4872085
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.586822639911
+   "gpu_speedup": 0.695081230495
   },
   {
    "M": 128,
@@ -1986,13 +1986,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.373875,
-    "qr": 1.305875,
-    "cpu": 1.729
+    "jacobi": 0.384292,
+    "qr": 1.100396,
+    "cpu": 1.8309795
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 4.62454028753
+   "gpu_speedup": 4.76455273594
   },
   {
    "M": 128,
@@ -2001,13 +2001,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.452458,
-    "qr": 2.151667,
-    "cpu": 6.896062
+    "jacobi": 1.194854,
+    "qr": 1.870146,
+    "cpu": 7.318979
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 4.74785639241
+   "gpu_speedup": 6.12541699655
   },
   {
    "M": 128,
@@ -2016,13 +2016,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 2.655875,
-    "qr": 5.174125,
-    "cpu": 27.058937
+    "jacobi": 2.654729,
+    "qr": 4.968771,
+    "cpu": 28.7840515
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 10.1883322822
+   "gpu_speedup": 10.8425573759
   },
   {
    "M": 128,
@@ -2031,13 +2031,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 9.618813,
-    "qr": 16.635667,
-    "cpu": 109.258
+    "jacobi": 9.412615,
+    "qr": 16.719813,
+    "cpu": 115.968729
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 11.3587820036
+   "gpu_speedup": 12.3205643703
   },
   {
    "M": 256,
@@ -2046,13 +2046,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.004583,
-    "qr": 1.20475,
-    "cpu": 0.084375
+    "jacobi": 0.846771,
+    "qr": 0.9967085,
+    "cpu": 0.0653955
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.0839900734932
+   "gpu_speedup": 0.0772292626932
   },
   {
    "M": 256,
@@ -2061,13 +2061,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.876667,
-    "qr": 1.217625,
-    "cpu": 0.18025
+    "jacobi": 0.7958125,
+    "qr": 1.019854,
+    "cpu": 0.1710415
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.205608286841
+   "gpu_speedup": 0.214926882903
   },
   {
    "M": 256,
@@ -2076,13 +2076,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.15775,
-    "qr": 1.318917,
-    "cpu": 0.590667
+    "jacobi": 0.9664585,
+    "qr": 1.1201665,
+    "cpu": 0.607167
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.510185273159
+   "gpu_speedup": 0.62823908114
   },
   {
    "M": 256,
@@ -2091,13 +2091,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.1595,
-    "qr": 1.639209,
-    "cpu": 2.151959
+    "jacobi": 1.2265205,
+    "qr": 1.3996255,
+    "cpu": 2.264667
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 1.85593704183
+   "gpu_speedup": 1.84641593842
   },
   {
    "M": 256,
@@ -2106,13 +2106,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.249458,
-    "qr": 3.58375,
-    "cpu": 8.828542
+    "jacobi": 1.2441665,
+    "qr": 3.2529165,
+    "cpu": 9.124823
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 7.0658973731
+   "gpu_speedup": 7.33408510838
   },
   {
    "M": 256,
@@ -2121,13 +2121,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 4.718916,
-    "qr": 9.604667,
-    "cpu": 35.485416
+    "jacobi": 4.366041,
+    "qr": 9.9425,
+    "cpu": 36.5078955
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 7.51982362051
+   "gpu_speedup": 8.36178485268
   },
   {
    "M": 256,
@@ -2136,13 +2136,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 14.513291,
-    "qr": 34.332791,
-    "cpu": 144.535458
+    "jacobi": 14.513625,
+    "qr": 34.861437,
+    "cpu": 146.9515625
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 9.95883414727
+   "gpu_speedup": 10.1250764368
   },
   {
    "M": 512,
@@ -2151,13 +2151,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.362041,
-    "qr": 1.399667,
-    "cpu": 0.097917
+    "jacobi": 0.3435,
+    "qr": 1.2007295,
+    "cpu": 0.0827085
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.270458318257
+   "gpu_speedup": 0.240781659389
   },
   {
    "M": 512,
@@ -2166,13 +2166,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.107917,
-    "qr": 1.429208,
-    "cpu": 0.251
+    "jacobi": 0.9149165,
+    "qr": 1.2241245,
+    "cpu": 0.2470205
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.226551266927
+   "gpu_speedup": 0.269992398213
   },
   {
    "M": 512,
@@ -2181,13 +2181,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.128375,
-    "qr": 1.560167,
-    "cpu": 0.837333
+    "jacobi": 1.106854,
+    "qr": 1.366396,
+    "cpu": 0.8977705
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.742069790628
+   "gpu_speedup": 0.811101102765
   },
   {
    "M": 512,
@@ -2196,13 +2196,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.311416,
-    "qr": 2.675584,
-    "cpu": 3.197125
+    "jacobi": 0.968625,
+    "qr": 2.4512715,
+    "cpu": 3.391
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 2.4379182502
+   "gpu_speedup": 3.50083881791
   },
   {
    "M": 512,
@@ -2211,13 +2211,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 2.756125,
-    "qr": 6.756208,
-    "cpu": 13.280563
+    "jacobi": 2.6993335,
+    "qr": 6.491854,
+    "cpu": 13.886865
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 4.81856338156
+   "gpu_speedup": 5.14455327584
   },
   {
    "M": 512,
@@ -2226,13 +2226,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 11.486271,
-    "qr": 22.988583,
-    "cpu": 54.443917
+    "jacobi": 11.3413335,
+    "qr": 23.169625,
+    "cpu": 56.2649165
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 4.73991228311
+   "gpu_speedup": 4.96104946566
   },
   {
    "M": 512,
@@ -2241,13 +2241,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 44.088084,
-    "qr": 84.955083,
-    "cpu": 222.072041
+    "jacobi": 45.1179585,
+    "qr": 87.283354,
+    "cpu": 224.572854
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 5.03700820839
+   "gpu_speedup": 4.97746044959
   },
   {
    "M": 32,
@@ -2256,13 +2256,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.353625,
-    "block": 2.524416,
-    "cpu": 0.077916
+    "jacobi": 0.346375,
+    "block": 2.4296035,
+    "cpu": 0.0674785
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.220335100742
+   "gpu_speedup": 0.194813424756
   },
   {
    "M": 32,
@@ -2271,13 +2271,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.3935,
-    "block": 2.499083,
-    "cpu": 0.263792
+    "jacobi": 0.465104,
+    "block": 2.2565205,
+    "cpu": 0.2428335
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.670373570521
+   "gpu_speedup": 0.522105808593
   },
   {
    "M": 32,
@@ -2286,13 +2286,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.189334,
-    "block": 2.804875,
-    "cpu": 0.920042
+    "jacobi": 1.0603965,
+    "block": 2.482792,
+    "cpu": 0.8879585
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.773577481179
+   "gpu_speedup": 0.837383469297
   },
   {
    "M": 32,
@@ -2301,13 +2301,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.890542,
-    "block": 2.883458,
-    "cpu": 3.399792
+    "jacobi": 0.957667,
+    "block": 2.5789375,
+    "cpu": 3.384542
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 3.81766609548
+   "gpu_speedup": 3.53415331216
   },
   {
    "M": 32,
@@ -2316,28 +2316,28 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 2.224292,
-    "block": 3.615416,
-    "cpu": 13.490625
+    "jacobi": 2.189375,
+    "block": 3.3028955,
+    "cpu": 13.412083
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 6.06513218588
+   "gpu_speedup": 6.12598709677
   },
   {
    "M": 32,
    "N": 32,
    "batch": 1024,
-   "best": "jacobi",
-   "best_gpu": "jacobi",
+   "best": "block",
+   "best_gpu": "block",
    "times": {
-    "jacobi": 7.303042,
-    "block": 7.472833,
-    "cpu": 52.956375
+    "jacobi": 7.2645835,
+    "block": 7.042375,
+    "cpu": 53.114771
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 7.25127624899
+   "gpu_speedup": 7.54216737961
   },
   {
    "M": 32,
@@ -2346,13 +2346,13 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 26.896896,
-    "block": 22.814042,
-    "cpu": 214.720875
+    "jacobi": 26.795521,
+    "block": 22.2938545,
+    "cpu": 213.9729375
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 9.41178573266
+   "gpu_speedup": 9.59784399329
   },
   {
    "M": 64,
@@ -2361,15 +2361,15 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.360417,
-    "block": 2.301667,
-    "qr": 1.113041,
-    "qrblock": 2.921833,
-    "cpu": 0.098667
+    "jacobi": 0.4514375,
+    "block": 2.1805,
+    "qr": 0.940937,
+    "qrblock": 2.687333,
+    "cpu": 0.0838125
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.273757897103
+   "gpu_speedup": 0.185656929254
   },
   {
    "M": 64,
@@ -2378,15 +2378,15 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.568042,
-    "block": 2.573708,
-    "qr": 1.209833,
-    "qrblock": 3.18325,
-    "cpu": 0.340417
+    "jacobi": 0.472542,
+    "block": 2.2971665,
+    "qr": 1.0063125,
+    "qrblock": 2.792375,
+    "cpu": 0.3066255
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.599281391165
+   "gpu_speedup": 0.64888517846
   },
   {
    "M": 64,
@@ -2395,15 +2395,15 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.785375,
-    "block": 2.599958,
-    "qr": 1.214125,
-    "qrblock": 3.225583,
-    "cpu": 1.151125
+    "jacobi": 0.964833,
+    "block": 2.332146,
+    "qr": 1.0204585,
+    "qrblock": 2.8315625,
+    "cpu": 1.1169375
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 1.4657010982
+   "gpu_speedup": 1.1576485257
   },
   {
    "M": 64,
@@ -2412,15 +2412,15 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.907333,
-    "block": 2.750875,
-    "qr": 1.802917,
-    "qrblock": 3.454708,
-    "cpu": 4.327
+    "jacobi": 0.8767915,
+    "block": 2.4668125,
+    "qr": 1.6010835,
+    "qrblock": 3.036937,
+    "cpu": 4.3107915
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 4.76892166382
+   "gpu_speedup": 4.91655256694
   },
   {
    "M": 64,
@@ -2429,15 +2429,15 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 2.4055,
-    "block": 3.639709,
-    "qr": 3.639959,
-    "qrblock": 4.728791,
-    "cpu": 16.866583
+    "jacobi": 2.392854,
+    "block": 3.3150625,
+    "qr": 3.3547715,
+    "qrblock": 4.2177705,
+    "cpu": 16.8806455
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 7.01167449595
+   "gpu_speedup": 7.05460738516
   },
   {
    "M": 64,
@@ -2446,15 +2446,15 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 7.979875,
-    "block": 7.648708,
-    "qr": 10.463417,
-    "qrblock": 10.24975,
-    "cpu": 67.568375
+    "jacobi": 7.955083,
+    "block": 7.2821875,
+    "qr": 10.2556665,
+    "qrblock": 9.706854,
+    "cpu": 67.4958335
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 8.83395927783
+   "gpu_speedup": 9.26862065828
   },
   {
    "M": 64,
@@ -2463,15 +2463,15 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 28.100084,
-    "block": 24.888791,
-    "qr": 36.681167,
-    "qrblock": 31.794084,
-    "cpu": 274.044333
+    "jacobi": 27.950396,
+    "block": 24.7150205,
+    "qr": 36.0655835,
+    "qrblock": 31.3497295,
+    "cpu": 271.839896
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 11.0107531137
+   "gpu_speedup": 10.9989751374
   },
   {
    "M": 128,
@@ -2480,15 +2480,15 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.510375,
-    "block": 2.477167,
-    "qr": 1.20225,
-    "qrblock": 2.998583,
-    "cpu": 0.126917
+    "jacobi": 0.498375,
+    "block": 2.28,
+    "qr": 1.011146,
+    "qrblock": 2.724354,
+    "cpu": 0.105542
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.248674014205
+   "gpu_speedup": 0.211772259844
   },
   {
    "M": 128,
@@ -2497,15 +2497,15 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.22125,
-    "block": 2.451875,
-    "qr": 1.255458,
-    "qrblock": 3.042125,
-    "cpu": 0.369459
+    "jacobi": 0.9122295,
+    "block": 2.2611875,
+    "qr": 1.0487495,
+    "qrblock": 2.640292,
+    "cpu": 0.351292
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.302525281474
+   "gpu_speedup": 0.385091690194
   },
   {
    "M": 128,
@@ -2514,15 +2514,15 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.143292,
-    "block": 2.500083,
-    "qr": 1.296292,
-    "qrblock": 3.040208,
-    "cpu": 1.31275
+    "jacobi": 0.9568335,
+    "block": 2.2858745,
+    "qr": 1.101917,
+    "qrblock": 2.669271,
+    "cpu": 1.31425
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 1.14821935254
+   "gpu_speedup": 1.37354095566
   },
   {
    "M": 128,
@@ -2531,15 +2531,15 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.001,
-    "block": 2.619167,
-    "qr": 1.926917,
-    "qrblock": 3.398625,
-    "cpu": 4.92625
+    "jacobi": 1.0028545,
+    "block": 2.392667,
+    "qr": 1.7418545,
+    "qrblock": 2.9951455,
+    "cpu": 4.9890415
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 4.92132867133
+   "gpu_speedup": 4.97484081689
   },
   {
    "M": 128,
@@ -2548,15 +2548,15 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 2.753083,
-    "block": 4.307084,
-    "qr": 4.370917,
-    "qrblock": 5.47175,
-    "cpu": 19.634937
+    "jacobi": 2.7284165,
+    "block": 3.9368335,
+    "qr": 4.054292,
+    "qrblock": 4.910771,
+    "cpu": 19.928979
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 7.1319814913
+   "gpu_speedup": 7.30422902808
   },
   {
    "M": 128,
@@ -2565,15 +2565,15 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 9.384916,
-    "block": 9.720083,
-    "qr": 12.614708,
-    "qrblock": 12.586146,
-    "cpu": 79.595625
+    "jacobi": 9.38326,
+    "block": 9.647677,
+    "qr": 12.78626,
+    "qrblock": 12.4362605,
+    "cpu": 80.675896
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 8.48122934718
+   "gpu_speedup": 8.59785362443
   },
   {
    "M": 128,
@@ -2582,15 +2582,15 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 35.038125,
-    "block": 32.538583,
-    "qr": 44.305125,
-    "qrblock": 39.93375,
-    "cpu": 321.745209
+    "jacobi": 35.0321665,
+    "block": 32.5728745,
+    "qr": 44.4655625,
+    "qrblock": 39.988625,
+    "cpu": 323.5403755
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 9.88811372026
+   "gpu_speedup": 9.93281619957
   },
   {
    "M": 256,
@@ -2599,15 +2599,15 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.270875,
-    "block": 2.680584,
-    "qr": 1.448417,
-    "qrblock": 3.155333,
-    "cpu": 0.17925
+    "jacobi": 0.895875,
+    "block": 2.4698965,
+    "qr": 1.216229,
+    "qrblock": 2.772875,
+    "cpu": 0.145208
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.141044555916
+   "gpu_speedup": 0.16208511232
   },
   {
    "M": 256,
@@ -2616,15 +2616,15 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.72925,
-    "block": 2.723833,
-    "qr": 1.441208,
-    "qrblock": 3.196958,
-    "cpu": 0.563666
+    "jacobi": 0.5994375,
+    "block": 2.446708,
+    "qr": 1.2347705,
+    "qrblock": 2.8257085,
+    "cpu": 0.4847495
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.77293932122
+   "gpu_speedup": 0.808673965176
   },
   {
    "M": 256,
@@ -2633,15 +2633,15 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.280708,
-    "block": 2.777334,
-    "qr": 1.619542,
-    "qrblock": 3.385667,
-    "cpu": 2.0135
+    "jacobi": 0.889104,
+    "block": 2.5245005,
+    "qr": 1.3976045,
+    "qrblock": 2.9858335,
+    "cpu": 1.7885625
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 1.57217726445
+   "gpu_speedup": 2.01164599417
   },
   {
    "M": 256,
@@ -2650,32 +2650,32 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.284083,
-    "block": 3.12425,
-    "qr": 2.556375,
-    "qrblock": 4.024875,
-    "cpu": 7.768541
+    "jacobi": 1.292,
+    "block": 2.849896,
+    "qr": 2.302583,
+    "qrblock": 3.5650835,
+    "cpu": 6.9014995
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 6.04987450188
+   "gpu_speedup": 5.34171787926
   },
   {
    "M": 256,
    "N": 32,
    "batch": 256,
-   "best": "jacobi",
-   "best_gpu": "jacobi",
+   "best": "block",
+   "best_gpu": "block",
    "times": {
-    "jacobi": 5.162667,
-    "block": 5.249959,
-    "qr": 6.014292,
-    "qrblock": 7.146333,
-    "cpu": 31.112
+    "jacobi": 5.137542,
+    "block": 4.855125,
+    "qr": 5.8574585,
+    "qrblock": 6.7891875,
+    "cpu": 27.6415835
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 6.02634258611
+   "gpu_speedup": 5.69327947272
   },
   {
    "M": 256,
@@ -2684,15 +2684,15 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 20.782729,
-    "block": 14.736625,
-    "qr": 20.520125,
-    "qrblock": 20.501604,
-    "cpu": 128.462
+    "jacobi": 21.0317085,
+    "block": 14.5556875,
+    "qr": 20.530552,
+    "qrblock": 20.236021,
+    "cpu": 113.556375
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 8.71719270864
+   "gpu_speedup": 7.80151229545
   },
   {
    "M": 256,
@@ -2701,15 +2701,15 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 80.901791,
-    "block": 48.852167,
-    "qr": 73.348458,
-    "qrblock": 70.581792,
-    "cpu": 506.295708
+    "jacobi": 82.9768955,
+    "block": 49.45625,
+    "qr": 73.6127915,
+    "qrblock": 70.8034375,
+    "cpu": 450.556187
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 10.363833154
+   "gpu_speedup": 9.11019713383
   },
   {
    "M": 512,
@@ -2718,15 +2718,15 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.008708,
-    "block": 3.37575,
-    "qr": 1.521959,
-    "qrblock": 3.265708,
-    "cpu": 0.229458
+    "jacobi": 0.850729,
+    "block": 3.075229,
+    "qr": 1.2905005,
+    "qrblock": 2.877583,
+    "cpu": 0.190979
    },
    "rule": "cpu",
    "rule_gpu": "qr",
-   "gpu_speedup": 0.227477129159
+   "gpu_speedup": 0.224488644445
   },
   {
    "M": 512,
@@ -2735,15 +2735,15 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.964917,
-    "block": 3.217916,
-    "qr": 1.555958,
-    "qrblock": 3.381792,
-    "cpu": 0.772791
+    "jacobi": 0.844792,
+    "block": 2.9888745,
+    "qr": 1.3500415,
+    "qrblock": 2.9792085,
+    "cpu": 0.680958
    },
    "rule": "cpu",
    "rule_gpu": "qr",
-   "gpu_speedup": 0.800888573836
+   "gpu_speedup": 0.806065871836
   },
   {
    "M": 512,
@@ -2752,15 +2752,15 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.028875,
-    "block": 3.3785,
-    "qr": 1.747292,
-    "qrblock": 3.560083,
-    "cpu": 2.862166
+    "jacobi": 0.910229,
+    "block": 3.1153335,
+    "qr": 1.597063,
+    "qrblock": 3.1814375,
+    "cpu": 2.5350415
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 2.78184035962
+   "gpu_speedup": 2.78505903459
   },
   {
    "M": 512,
@@ -2769,15 +2769,15 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 2.200208,
-    "block": 4.361875,
-    "qr": 3.711292,
-    "qrblock": 5.186542,
-    "cpu": 11.297459
+    "jacobi": 2.2009165,
+    "block": 3.9777295,
+    "qr": 3.401417,
+    "qrblock": 4.6775415,
+    "cpu": 10.028834
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 5.13472317163
+   "gpu_speedup": 4.55666264486
   },
   {
    "M": 512,
@@ -2786,15 +2786,15 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 11.564625,
-    "block": 8.185333,
-    "qr": 9.415729,
-    "qrblock": 10.636459,
-    "cpu": 46.12175
+    "jacobi": 11.6207295,
+    "block": 8.109354,
+    "qr": 9.6142705,
+    "qrblock": 10.5902295,
+    "cpu": 40.5763335
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 5.63468218092
+   "gpu_speedup": 5.00364560482
   },
   {
    "M": 512,
@@ -2803,15 +2803,15 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 44.845375,
-    "block": 22.693667,
-    "qr": 32.8925,
-    "qrblock": 33.352875,
-    "cpu": 187.083542
+    "jacobi": 46.4348125,
+    "block": 22.744292,
+    "qr": 33.5933335,
+    "qrblock": 33.9673335,
+    "cpu": 163.899542
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 8.24386565644
+   "gpu_speedup": 7.20618351189
   },
   {
    "M": 512,
@@ -2820,15 +2820,15 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 185.534541,
-    "block": 81.135917,
-    "qr": 126.225833,
-    "qrblock": 123.412333,
-    "cpu": 741.601542
+    "jacobi": 192.064541,
+    "block": 82.8482915,
+    "qr": 131.302229,
+    "qrblock": 126.2615415,
+    "cpu": 652.9902295
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 9.1402373871
+   "gpu_speedup": 7.88175854538
   },
   {
    "M": 1024,
@@ -2837,15 +2837,15 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.975084,
-    "block": 4.631834,
-    "qr": 1.6425,
-    "qrblock": 3.468042,
-    "cpu": 0.343291
+    "jacobi": 0.944667,
+    "block": 4.3557715,
+    "qr": 1.4598125,
+    "qrblock": 3.0061045,
+    "cpu": 0.2680205
    },
    "rule": "cpu",
    "rule_gpu": "qr",
-   "gpu_speedup": 0.352063001752
+   "gpu_speedup": 0.283719554086
   },
   {
    "M": 1024,
@@ -2854,15 +2854,15 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.009458,
-    "block": 4.413,
-    "qr": 1.693875,
-    "qrblock": 3.5495,
-    "cpu": 1.27975
+    "jacobi": 1.009521,
+    "block": 4.2346875,
+    "qr": 1.554375,
+    "qrblock": 3.161729,
+    "cpu": 1.065104
    },
    "rule": "cpu",
    "rule_gpu": "qr",
-   "gpu_speedup": 1.26775953036
+   "gpu_speedup": 1.05505878531
   },
   {
    "M": 1024,
@@ -2871,15 +2871,15 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.119875,
-    "block": 4.849291,
-    "qr": 2.2155,
-    "qrblock": 3.945166,
-    "cpu": 4.91075
+    "jacobi": 1.100417,
+    "block": 4.561208,
+    "qr": 1.984458,
+    "qrblock": 3.557104,
+    "cpu": 4.0664375
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 4.38508762139
+   "gpu_speedup": 3.69536048607
   },
   {
    "M": 1024,
@@ -2888,15 +2888,15 @@
    "best": "qr",
    "best_gpu": "qr",
    "times": {
-    "jacobi": 7.887334,
-    "block": 6.221541,
-    "qr": 4.898709,
-    "qrblock": 6.252875,
-    "cpu": 19.61325
+    "jacobi": 7.8989585,
+    "block": 5.8953955,
+    "qr": 4.708667,
+    "qrblock": 5.914333,
+    "cpu": 16.2307815
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 4.00375894955
+   "gpu_speedup": 3.44700134879
   },
   {
    "M": 1024,
@@ -2905,15 +2905,15 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 34.144667,
-    "block": 13.253562,
-    "qr": 15.310813,
-    "qrblock": 16.241375,
-    "cpu": 80.357291
+    "jacobi": 34.3617085,
+    "block": 13.0668225,
+    "qr": 15.319469,
+    "qrblock": 16.102187,
+    "cpu": 66.358812
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 6.06307127095
+   "gpu_speedup": 5.07841994486
   },
   {
    "M": 1024,
@@ -2922,15 +2922,15 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 137.873375,
-    "block": 37.242125,
-    "qr": 53.566041,
-    "qrblock": 54.129041,
-    "cpu": 325.27325
+    "jacobi": 139.108771,
+    "block": 38.3551665,
+    "qr": 55.4193955,
+    "qrblock": 55.355166,
+    "cpu": 266.462229
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 8.73401423791
+   "gpu_speedup": 6.94723171127
   },
   {
    "M": 1024,
@@ -2939,15 +2939,15 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 553.490125,
-    "block": 145.503416,
-    "qr": 209.442458,
-    "qrblock": 206.624958,
-    "cpu": 1290.060209
+    "jacobi": 557.425729,
+    "block": 150.936583,
+    "qr": 218.717354,
+    "qrblock": 214.6797705,
+    "cpu": 1057.2690005
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 8.8661850317
+   "gpu_speedup": 7.00472330489
   },
   {
    "M": 48,
@@ -2956,13 +2956,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.942958,
-    "block": 3.050334,
-    "cpu": 0.147083
+    "jacobi": 0.843937,
+    "block": 2.7915005,
+    "cpu": 0.130583
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.155980436032
+   "gpu_speedup": 0.15473074412
   },
   {
    "M": 48,
@@ -2971,13 +2971,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.985709,
-    "block": 3.038041,
-    "cpu": 0.471416
+    "jacobi": 0.8994375,
+    "block": 2.7649995,
+    "cpu": 0.4751665
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.478250680475
+   "gpu_speedup": 0.528292960878
   },
   {
    "M": 48,
@@ -2986,13 +2986,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 0.84975,
-    "block": 3.353917,
-    "cpu": 1.766958
+    "jacobi": 0.8445835,
+    "block": 3.102,
+    "cpu": 1.8032705
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 2.07938570168
+   "gpu_speedup": 2.13510031868
   },
   {
    "M": 48,
@@ -3001,13 +3001,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.859083,
-    "block": 4.142792,
-    "cpu": 6.932688
+    "jacobi": 1.8435205,
+    "block": 3.8514585,
+    "cpu": 7.048719
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 3.72909009442
+   "gpu_speedup": 3.82350996368
   },
   {
    "M": 48,
@@ -3016,13 +3016,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 5.569125,
-    "block": 8.407354,
-    "cpu": 27.704437
+    "jacobi": 5.54375,
+    "block": 8.0682815,
+    "cpu": 28.11126
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 4.97464808206
+   "gpu_speedup": 5.07080225479
   },
   {
    "M": 48,
@@ -3031,13 +3031,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 20.995458,
-    "block": 25.635813,
-    "cpu": 110.448291
+    "jacobi": 21.028354,
+    "block": 25.7882815,
+    "cpu": 112.1770205
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 5.26058021692
+   "gpu_speedup": 5.33456020856
   },
   {
    "M": 48,
@@ -3046,13 +3046,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 80.4385,
-    "block": 97.643083,
-    "cpu": 445.578084
+    "jacobi": 79.9794375,
+    "block": 97.764437,
+    "cpu": 451.1186045
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 5.53936341429
+   "gpu_speedup": 5.64043232362
   },
   {
    "M": 64,
@@ -3061,13 +3061,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.089042,
-    "block": 3.392,
-    "cpu": 0.229792
+    "jacobi": 1.06425,
+    "block": 3.190521,
+    "cpu": 0.2126255
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.21100379967
+   "gpu_speedup": 0.199789053324
   },
   {
    "M": 64,
@@ -3076,13 +3076,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.147334,
-    "block": 3.407542,
-    "cpu": 0.7855
+    "jacobi": 1.1288965,
+    "block": 3.1239375,
+    "cpu": 0.768125
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.684630630662
+   "gpu_speedup": 0.680421101492
   },
   {
    "M": 64,
@@ -3091,13 +3091,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.888042,
-    "block": 3.487542,
-    "cpu": 2.898458
+    "jacobi": 1.5229375,
+    "block": 3.2120625,
+    "cpu": 2.9312915
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 1.53516606092
+   "gpu_speedup": 1.92476152173
   },
   {
    "M": 64,
@@ -3106,13 +3106,13 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 3.161292,
-    "block": 4.255583,
-    "cpu": 11.353708
+    "jacobi": 3.180521,
+    "block": 3.994854,
+    "cpu": 11.4907915
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 3.59147715554
+   "gpu_speedup": 3.61286452754
   },
   {
    "M": 64,
@@ -3121,13 +3121,13 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 13.866354,
-    "block": 9.663896,
-    "cpu": 45.85625
+    "jacobi": 13.6004375,
+    "block": 9.258406,
+    "cpu": 46.1499585
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 4.74511004671
+   "gpu_speedup": 4.98465486392
   },
   {
    "M": 64,
@@ -3136,13 +3136,13 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 52.372917,
-    "block": 30.18675,
-    "cpu": 183.09875
+    "jacobi": 52.199396,
+    "block": 30.1529375,
+    "cpu": 184.395625
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 6.06553371926
+   "gpu_speedup": 6.11534531254
   },
   {
    "M": 64,
@@ -3151,13 +3151,13 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 202.40875,
-    "block": 113.660375,
-    "cpu": 734.042
+    "jacobi": 201.5199585,
+    "block": 113.600375,
+    "cpu": 738.6188125
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 6.45820498129
+   "gpu_speedup": 6.50190470322
   },
   {
    "M": 128,
@@ -3166,15 +3166,15 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.177709,
-    "block": 3.242541,
-    "qr": 2.007042,
-    "qrblock": 3.841041,
-    "cpu": 0.358417
+    "jacobi": 1.1437505,
+    "block": 3.019937,
+    "qr": 1.8277915,
+    "qrblock": 3.5124165,
+    "cpu": 0.3131875
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.304334092717
+   "gpu_speedup": 0.273825016907
   },
   {
    "M": 128,
@@ -3183,15 +3183,15 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.245084,
-    "block": 3.192084,
-    "qr": 2.098042,
-    "qrblock": 3.875167,
-    "cpu": 1.22275
+    "jacobi": 1.2333125,
+    "block": 2.9104585,
+    "qr": 1.9179795,
+    "qrblock": 3.4942085,
+    "cpu": 1.1337295
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.982062254434
+   "gpu_speedup": 0.919255663102
   },
   {
    "M": 128,
@@ -3200,15 +3200,15 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.854208,
-    "block": 3.534041,
-    "qr": 2.26925,
-    "qrblock": 4.170042,
-    "cpu": 4.511791
+    "jacobi": 1.55975,
+    "block": 3.2117495,
+    "qr": 2.0544375,
+    "qrblock": 3.7795625,
+    "cpu": 4.3139165
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 2.43327124034
+   "gpu_speedup": 2.76577432281
   },
   {
    "M": 128,
@@ -3217,15 +3217,15 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 3.563458,
-    "block": 4.419708,
-    "qr": 4.727667,
-    "qrblock": 5.47375,
-    "cpu": 18.111208
+    "jacobi": 3.5201665,
+    "block": 4.127229,
+    "qr": 4.395792,
+    "qrblock": 4.9832295,
+    "cpu": 17.237906
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 5.08248111806
+   "gpu_speedup": 4.89690075739
   },
   {
    "M": 128,
@@ -3234,15 +3234,15 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 14.42325,
-    "block": 9.773125,
-    "qr": 16.227104,
-    "qrblock": 11.929209,
-    "cpu": 72.34075
+    "jacobi": 14.395896,
+    "block": 9.49075,
+    "qr": 15.850781,
+    "qrblock": 11.4563545,
+    "cpu": 68.8492295
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 7.40200805781
+   "gpu_speedup": 7.25435076258
   },
   {
    "M": 128,
@@ -3251,15 +3251,15 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 63.521333,
-    "block": 33.431583,
-    "qr": 60.414625,
-    "qrblock": 38.835084,
-    "cpu": 295.342125
+    "jacobi": 67.129125,
+    "block": 33.380583,
+    "qr": 59.703833,
+    "qrblock": 38.0834795,
+    "cpu": 278.631146
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 8.83422496027
+   "gpu_speedup": 8.34710244575
   },
   {
    "M": 128,
@@ -3268,15 +3268,15 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 249.773458,
-    "block": 126.350166,
-    "qr": 235.849417,
-    "qrblock": 144.003625,
-    "cpu": 1172.874625
+    "jacobi": 265.9529165,
+    "block": 127.6455205,
+    "qr": 239.2219585,
+    "qrblock": 143.757708,
+    "cpu": 1109.9306045
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 9.28273117583
+   "gpu_speedup": 8.69541367494
   },
   {
    "M": 256,
@@ -3285,32 +3285,32 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.424125,
-    "block": 3.529209,
-    "qr": 2.142583,
-    "qrblock": 4.023125,
-    "cpu": 0.4795
+    "jacobi": 1.420417,
+    "block": 3.295146,
+    "qr": 1.9704375,
+    "qrblock": 3.66425,
+    "cpu": 0.389979
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.336697972439
+   "gpu_speedup": 0.274552472971
   },
   {
    "M": 256,
    "N": 64,
    "batch": 4,
-   "best": "jacobi",
+   "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 1.49125,
-    "block": 3.584958,
-    "qr": 2.2265,
-    "qrblock": 4.137042,
-    "cpu": 1.691291
+    "jacobi": 1.4715415,
+    "block": 3.2599995,
+    "qr": 2.0469165,
+    "qrblock": 3.7063545,
+    "cpu": 1.391687
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 1.13414316848
+   "gpu_speedup": 0.945734116231
   },
   {
    "M": 256,
@@ -3319,32 +3319,32 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 2.245125,
-    "block": 3.911708,
-    "qr": 2.482042,
-    "qrblock": 4.420125,
-    "cpu": 6.365708
+    "jacobi": 1.924104,
+    "block": 3.6015625,
+    "qr": 2.2768335,
+    "qrblock": 4.0298545,
+    "cpu": 5.4275415
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 2.83534680697
+   "gpu_speedup": 2.8208150391
   },
   {
    "M": 256,
    "N": 64,
    "batch": 64,
-   "best": "jacobi",
-   "best_gpu": "jacobi",
+   "best": "block",
+   "best_gpu": "block",
    "times": {
-    "jacobi": 5.056375,
-    "block": 5.400083,
-    "qr": 5.484125,
-    "qrblock": 6.375625,
-    "cpu": 25.505813
+    "jacobi": 5.05625,
+    "block": 4.9935,
+    "qr": 5.165979,
+    "qrblock": 5.8529375,
+    "cpu": 21.729573
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 5.04428824998
+   "gpu_speedup": 4.35157164314
   },
   {
    "M": 256,
@@ -3353,15 +3353,15 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 25.243771,
-    "block": 12.442584,
-    "qr": 18.844458,
-    "qrblock": 14.996,
-    "cpu": 101.811959
+    "jacobi": 25.550677,
+    "block": 12.4355,
+    "qr": 19.2524895,
+    "qrblock": 14.8801875,
+    "cpu": 86.873
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 8.18254142387
+   "gpu_speedup": 6.98588717784
   },
   {
    "M": 256,
@@ -3370,15 +3370,15 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 97.860459,
-    "block": 44.609083,
-    "qr": 71.078084,
-    "qrblock": 49.385709,
-    "cpu": 414.070458
+    "jacobi": 101.141063,
+    "block": 44.9777705,
+    "qr": 71.035521,
+    "qrblock": 49.761313,
+    "cpu": 350.7734165
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 9.28220062268
+   "gpu_speedup": 7.79881734022
   },
   {
    "M": 256,
@@ -3387,15 +3387,15 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 388.084334,
-    "block": 169.409583,
-    "qr": 277.014208,
-    "qrblock": 191.57825,
-    "cpu": 1649.480167
+    "jacobi": 403.497771,
+    "block": 171.2368335,
+    "qr": 281.276083,
+    "qrblock": 190.1737915,
+    "cpu": 1398.4135415
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 9.73664026432
+   "gpu_speedup": 8.16654637275
   },
   {
    "M": 512,
@@ -3404,32 +3404,32 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 2.064208,
-    "block": 4.343292,
-    "qr": 2.490458,
-    "qrblock": 4.305917,
-    "cpu": 0.663792
+    "jacobi": 2.0563745,
+    "block": 4.1188335,
+    "qr": 2.302354,
+    "qrblock": 3.9656045,
+    "cpu": 0.542417
    },
    "rule": "cpu",
    "rule_gpu": "qr",
-   "gpu_speedup": 0.321572244658
+   "gpu_speedup": 0.263773451772
   },
   {
    "M": 512,
    "N": 64,
    "batch": 4,
-   "best": "jacobi",
+   "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 2.097459,
-    "block": 4.287583,
-    "qr": 2.60325,
-    "qrblock": 4.438291,
-    "cpu": 2.456458
+    "jacobi": 2.0929585,
+    "block": 4.031812,
+    "qr": 2.4291875,
+    "qrblock": 4.082708,
+    "cpu": 2.046125
    },
    "rule": "cpu",
    "rule_gpu": "qr",
-   "gpu_speedup": 1.17115900716
+   "gpu_speedup": 0.977623302134
   },
   {
    "M": 512,
@@ -3438,15 +3438,15 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 2.208792,
-    "block": 4.694,
-    "qr": 3.124834,
-    "qrblock": 4.975959,
-    "cpu": 9.442729
+    "jacobi": 2.2123125,
+    "block": 4.4194585,
+    "qr": 2.887896,
+    "qrblock": 4.5684795,
+    "cpu": 7.8992815
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 4.27506483182
+   "gpu_speedup": 3.57059931633
   },
   {
    "M": 512,
@@ -3455,15 +3455,15 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 11.003021,
-    "block": 7.330917,
-    "qr": 7.462375,
-    "qrblock": 8.399313,
-    "cpu": 37.930458
+    "jacobi": 11.140063,
+    "block": 6.945896,
+    "qr": 7.3011665,
+    "qrblock": 8.0314795,
+    "cpu": 31.5713645
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 5.17404002801
+   "gpu_speedup": 4.54532640569
   },
   {
    "M": 512,
@@ -3472,15 +3472,15 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 36.645417,
-    "block": 20.240021,
-    "qr": 26.627417,
-    "qrblock": 23.320125,
-    "cpu": 155.476708
+    "jacobi": 36.564167,
+    "block": 19.8651565,
+    "qr": 27.09224,
+    "qrblock": 23.03525,
+    "cpu": 128.518083
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 7.68164756351
+   "gpu_speedup": 6.46952280492
   },
   {
    "M": 512,
@@ -3489,15 +3489,15 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 144.532666,
-    "block": 68.462791,
-    "qr": 100.359833,
-    "qrblock": 81.268791,
-    "cpu": 620.553
+    "jacobi": 145.0079165,
+    "block": 68.876541,
+    "qr": 101.402375,
+    "qrblock": 81.6581455,
+    "cpu": 513.0422085
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 9.06409147123
+   "gpu_speedup": 7.44872203295
   },
   {
    "M": 512,
@@ -3506,15 +3506,15 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 562.508375,
-    "block": 273.175,
-    "qr": 392.423417,
-    "qrblock": 314.228959,
-    "cpu": 2461.577791
+    "jacobi": 570.282125,
+    "block": 277.8408545,
+    "qr": 408.3125835,
+    "qrblock": 319.4010835,
+    "cpu": 2040.0471455
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 9.01099218816
+   "gpu_speedup": 7.34250241625
   },
   {
    "M": 1024,
@@ -3523,15 +3523,15 @@
    "best": "cpu",
    "best_gpu": "qr",
    "times": {
-    "jacobi": 4.472625,
-    "block": 5.478542,
-    "qr": 2.852666,
-    "qrblock": 4.429,
-    "cpu": 1.125625
+    "jacobi": 4.4723955,
+    "block": 5.2585625,
+    "qr": 2.695708,
+    "qrblock": 4.11375,
+    "cpu": 0.849729
    },
    "rule": "cpu",
    "rule_gpu": "qr",
-   "gpu_speedup": 0.394587028415
+   "gpu_speedup": 0.315215520375
   },
   {
    "M": 1024,
@@ -3540,15 +3540,15 @@
    "best": "qr",
    "best_gpu": "qr",
    "times": {
-    "jacobi": 5.325708,
-    "block": 5.931209,
-    "qr": 3.102958,
-    "qrblock": 4.947542,
-    "cpu": 4.327542
+    "jacobi": 4.9760625,
+    "block": 5.6631045,
+    "qr": 2.8999585,
+    "qrblock": 4.553521,
+    "cpu": 3.2575
    },
    "rule": "cpu",
    "rule_gpu": "qr",
-   "gpu_speedup": 1.39465052379
+   "gpu_speedup": 1.12329193676
   },
   {
    "M": 1024,
@@ -3557,15 +3557,15 @@
    "best": "qr",
    "best_gpu": "qr",
    "times": {
-    "jacobi": 5.315833,
-    "block": 6.876479,
-    "qr": 4.012,
-    "qrblock": 5.877,
-    "cpu": 17.210333
+    "jacobi": 5.2786875,
+    "block": 6.5437395,
+    "qr": 3.7266875,
+    "qrblock": 5.4195415,
+    "cpu": 12.9151665
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 4.28971410768
+   "gpu_speedup": 3.46558881044
   },
   {
    "M": 1024,
@@ -3574,15 +3574,15 @@
    "best": "qr",
    "best_gpu": "qr",
    "times": {
-    "jacobi": 38.245209,
-    "block": 10.952042,
-    "qr": 10.389416,
-    "qrblock": 11.223125,
-    "cpu": 69.834583
+    "jacobi": 38.5733755,
+    "block": 11.04525,
+    "qr": 10.444541,
+    "qrblock": 11.157,
+    "cpu": 52.1607495
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 6.72170437684
+   "gpu_speedup": 4.99406814526
   },
   {
    "M": 1024,
@@ -3591,15 +3591,15 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 152.847792,
-    "block": 32.248208,
-    "qr": 36.512208,
-    "qrblock": 33.900417,
-    "cpu": 284.939
+    "jacobi": 153.8243545,
+    "block": 32.4195625,
+    "qr": 37.4549585,
+    "qrblock": 34.559896,
+    "cpu": 211.60775
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 8.83580879905
+   "gpu_speedup": 6.5271624193
   },
   {
    "M": 1024,
@@ -3608,25 +3608,27 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 611.368458,
-    "block": 115.067708,
-    "qr": 144.225708,
-    "qrblock": 124.134584,
-    "cpu": 1131.0835
+    "jacobi": 616.060562,
+    "block": 117.039271,
+    "qr": 148.928104,
+    "qrblock": 125.240542,
+    "cpu": 841.2173125
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 9.82972129766
+   "gpu_speedup": 7.18747908555
   },
   {
    "M": 1024,
    "N": 64,
    "batch": 4096,
-   "best": "qrblock",
-   "best_gpu": "qrblock",
+   "best": "block",
+   "best_gpu": "block",
    "times": {
-    "qr": 566.606334,
-    "qrblock": 490.966916
+    "qr": 584.3070835,
+    "qrblock": 500.433354,
+    "jacobi": 2483.425083,
+    "block": 463.054542
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
@@ -3639,15 +3641,15 @@
    "best": "cpu",
    "best_gpu": "qr",
    "times": {
-    "jacobi": 8.513979,
-    "block": 8.122333,
-    "qr": 3.806916,
-    "qrblock": 5.383709,
-    "cpu": 2.26475
+    "jacobi": 8.512333,
+    "block": 7.870354,
+    "qr": 3.636604,
+    "qrblock": 5.060271,
+    "cpu": 1.567729
    },
    "rule": "cpu",
    "rule_gpu": "qr",
-   "gpu_speedup": 0.594904116613
+   "gpu_speedup": 0.43109697949
   },
   {
    "M": 2048,
@@ -3656,15 +3658,15 @@
    "best": "qr",
    "best_gpu": "qr",
    "times": {
-    "jacobi": 8.607312,
-    "block": 8.760708,
-    "qr": 4.327875,
-    "qrblock": 6.1665,
-    "cpu": 8.792125
+    "jacobi": 8.614156,
+    "block": 8.455729,
+    "qr": 4.1126665,
+    "qrblock": 5.7634375,
+    "cpu": 6.0686665
    },
    "rule": "cpu",
    "rule_gpu": "qr",
-   "gpu_speedup": 2.03151084539
+   "gpu_speedup": 1.47560384485
   },
   {
    "M": 2048,
@@ -3673,15 +3675,15 @@
    "best": "qr",
    "best_gpu": "qr",
    "times": {
-    "jacobi": 19.327979,
-    "block": 10.853813,
-    "qr": 5.79725,
-    "qrblock": 7.657563,
-    "cpu": 35.682792
+    "jacobi": 19.4101145,
+    "block": 10.4810525,
+    "qr": 5.6162915,
+    "qrblock": 7.349042,
+    "cpu": 24.444198
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 6.15512389495
+   "gpu_speedup": 4.35237344785
   },
   {
    "M": 2048,
@@ -3690,15 +3692,15 @@
    "best": "qr",
    "best_gpu": "qr",
    "times": {
-    "jacobi": 80.93075,
-    "block": 20.046188,
-    "qr": 17.311417,
-    "qrblock": 18.585209,
-    "cpu": 144.544
+    "jacobi": 82.145229,
+    "block": 19.8208545,
+    "qr": 17.442021,
+    "qrblock": 18.420063,
+    "cpu": 98.8662915
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 8.34963423271
+   "gpu_speedup": 5.66828187513
   },
   {
    "M": 2048,
@@ -3707,15 +3709,15 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 311.364542,
-    "block": 56.556958,
-    "qr": 61.995167,
-    "qrblock": 59.614916,
-    "cpu": 572.372084
+    "jacobi": 317.9619165,
+    "block": 57.0795835,
+    "qr": 62.809,
+    "qrblock": 60.352354,
+    "cpu": 392.5488755
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 10.1202770488
+   "gpu_speedup": 6.87722039002
   },
   {
    "M": 2048,
@@ -3724,15 +3726,15 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 1236.106,
-    "block": 212.079,
-    "qr": 243.203709,
-    "qrblock": 223.628333,
-    "cpu": 2278.333708
+    "jacobi": 1263.5449165,
+    "block": 217.3915625,
+    "qr": 252.216417,
+    "qrblock": 230.571979,
+    "cpu": 1563.367396
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 10.7428538799
+   "gpu_speedup": 7.19148148172
   },
   {
    "M": 2048,
@@ -3741,8 +3743,8 @@
    "best": "qr",
    "best_gpu": "qr",
    "times": {
-    "qr": 966.155958,
-    "qrblock": 1168.939333
+    "qr": 984.2733335,
+    "qrblock": 1136.7105625
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
@@ -3755,13 +3757,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 2.363125,
-    "block": 4.564667,
-    "cpu": 0.481917
+    "jacobi": 2.3554375,
+    "block": 4.263854,
+    "cpu": 0.5103545
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.20393208146
+   "gpu_speedup": 0.216670788336
   },
   {
    "M": 96,
@@ -3770,13 +3772,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 2.382917,
-    "block": 4.571459,
-    "cpu": 1.792167
+    "jacobi": 2.3783755,
+    "block": 4.270917,
+    "cpu": 1.9622295
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.75208956082
+   "gpu_speedup": 0.825029310973
   },
   {
    "M": 96,
@@ -3785,28 +3787,28 @@
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 2.638791,
-    "block": 5.148333,
-    "cpu": 7.019833
+    "jacobi": 2.606229,
+    "block": 4.910875,
+    "cpu": 7.6865105
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 2.66024592323
+   "gpu_speedup": 2.94928438752
   },
   {
    "M": 96,
    "N": 96,
    "batch": 64,
-   "best": "jacobi",
-   "best_gpu": "jacobi",
+   "best": "block",
+   "best_gpu": "block",
    "times": {
-    "jacobi": 8.509771,
-    "block": 8.679458,
-    "cpu": 28.023729
+    "jacobi": 8.5159795,
+    "block": 8.3425625,
+    "cpu": 30.8582185
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 3.29312375151
+   "gpu_speedup": 3.69888969966
   },
   {
    "M": 96,
@@ -3815,13 +3817,13 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 47.785833,
-    "block": 21.919875,
-    "cpu": 112.289459
+    "jacobi": 47.7615415,
+    "block": 22.096896,
+    "cpu": 122.806646
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 5.12272351006
+   "gpu_speedup": 5.55764239466
   },
   {
    "M": 96,
@@ -3830,13 +3832,13 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 187.037417,
-    "block": 86.543334,
-    "cpu": 450.49575
+    "jacobi": 188.046542,
+    "block": 86.293917,
+    "cpu": 492.800604
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 5.20543557982
+   "gpu_speedup": 5.71072239078
   },
   {
    "M": 96,
@@ -3845,8 +3847,8 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 745.371791,
-    "block": 337.743834
+    "jacobi": 749.3212705,
+    "block": 342.876292
    },
    "rule": "block",
    "rule_gpu": "block",
@@ -3859,13 +3861,13 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 4.839208,
-    "block": 5.864334,
-    "cpu": 0.87425
+    "jacobi": 4.8555205,
+    "block": 5.9192505,
+    "cpu": 0.946792
    },
    "rule": "cpu",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.18065972779
+   "gpu_speedup": 0.1949928952
   },
   {
    "M": 128,
@@ -3874,138 +3876,138 @@
    "best": "cpu",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 4.904459,
-    "block": 6.57025,
-    "cpu": 3.328458
+    "jacobi": 4.9089585,
+    "block": 6.3139795,
+    "cpu": 3.6937915
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 0.678659562655
+   "gpu_speedup": 0.752459304759
   },
   {
    "M": 128,
-   "N": 128,
-   "batch": 16,
-   "best": "jacobi",
-   "best_gpu": "jacobi",
-   "times": {
-    "jacobi": 5.043125,
-    "block": 7.633292,
-    "cpu": 13.170333
-   },
-   "rule": "jacobi",
-   "rule_gpu": "jacobi",
-   "gpu_speedup": 2.61154204982
-  },
-  {
-   "M": 128,
-   "N": 128,
-   "batch": 64,
-   "best": "block",
-   "best_gpu": "block",
-   "times": {
-    "jacobi": 32.347375,
-    "block": 14.77075,
-    "cpu": 52.633167
-   },
-   "rule": "block",
-   "rule_gpu": "block",
-   "gpu_speedup": 3.5633374744
-  },
-  {
-   "M": 128,
-   "N": 128,
-   "batch": 256,
-   "best": "block",
-   "best_gpu": "block",
-   "times": {
-    "jacobi": 115.11425,
-    "block": 47.490667,
-    "cpu": 210.25275
-   },
-   "rule": "block",
-   "rule_gpu": "block",
-   "gpu_speedup": 4.42724356767
-  },
-  {
-   "M": 128,
-   "N": 128,
-   "batch": 1024,
-   "best": "block",
-   "best_gpu": "block",
-   "times": {
-    "jacobi": 454.833042,
-    "block": 185.400958,
-    "cpu": 840.349083
-   },
-   "rule": "block",
-   "rule_gpu": "block",
-   "gpu_speedup": 4.53260377975
-  },
-  {
-   "M": 128,
-   "N": 128,
-   "batch": 4096,
-   "best": "block",
-   "best_gpu": "block",
-   "times": {
-    "jacobi": 1819.979125,
-    "block": 737.144042
-   },
-   "rule": "block",
-   "rule_gpu": "block",
-   "gpu_speedup": null
-  },
-  {
-   "M": 256,
-   "N": 128,
-   "batch": 1,
-   "best": "cpu",
-   "best_gpu": "qr",
-   "times": {
-    "jacobi": 5.641334,
-    "block": 6.126792,
-    "qr": 5.568541,
-    "qrblock": 6.927417,
-    "cpu": 1.43125
-   },
-   "rule": "cpu",
-   "rule_gpu": "jacobi",
-   "gpu_speedup": 0.25702423669
-  },
-  {
-   "M": 256,
-   "N": 128,
-   "batch": 4,
-   "best": "cpu",
-   "best_gpu": "jacobi",
-   "times": {
-    "jacobi": 5.731125,
-    "block": 6.160334,
-    "qr": 6.055375,
-    "qrblock": 7.052271,
-    "cpu": 5.458083
-   },
-   "rule": "jacobi",
-   "rule_gpu": "jacobi",
-   "gpu_speedup": 0.952358044886
-  },
-  {
-   "M": 256,
    "N": 128,
    "batch": 16,
    "best": "jacobi",
    "best_gpu": "jacobi",
    "times": {
-    "jacobi": 6.147458,
-    "block": 7.2605,
-    "qr": 6.694875,
-    "qrblock": 8.3375,
-    "cpu": 21.609417
+    "jacobi": 5.034854,
+    "block": 7.382771,
+    "cpu": 14.640437
    },
    "rule": "jacobi",
    "rule_gpu": "jacobi",
-   "gpu_speedup": 3.51517928223
+   "gpu_speedup": 2.90781758518
+  },
+  {
+   "M": 128,
+   "N": 128,
+   "batch": 64,
+   "best": "block",
+   "best_gpu": "block",
+   "times": {
+    "jacobi": 32.716521,
+    "block": 14.468208,
+    "cpu": 58.4927085
+   },
+   "rule": "block",
+   "rule_gpu": "block",
+   "gpu_speedup": 4.04284404122
+  },
+  {
+   "M": 128,
+   "N": 128,
+   "batch": 256,
+   "best": "block",
+   "best_gpu": "block",
+   "times": {
+    "jacobi": 116.763958,
+    "block": 47.751167,
+    "cpu": 231.9114795
+   },
+   "rule": "block",
+   "rule_gpu": "block",
+   "gpu_speedup": 4.85666621509
+  },
+  {
+   "M": 128,
+   "N": 128,
+   "batch": 1024,
+   "best": "block",
+   "best_gpu": "block",
+   "times": {
+    "jacobi": 463.069042,
+    "block": 187.8250415,
+    "cpu": 933.8081875
+   },
+   "rule": "block",
+   "rule_gpu": "block",
+   "gpu_speedup": 4.9716916341
+  },
+  {
+   "M": 128,
+   "N": 128,
+   "batch": 4096,
+   "best": "block",
+   "best_gpu": "block",
+   "times": {
+    "jacobi": 1853.4051665,
+    "block": 744.494229
+   },
+   "rule": "block",
+   "rule_gpu": "block",
+   "gpu_speedup": null
+  },
+  {
+   "M": 256,
+   "N": 128,
+   "batch": 1,
+   "best": "cpu",
+   "best_gpu": "qr",
+   "times": {
+    "jacobi": 5.6394795,
+    "block": 5.8802295,
+    "qr": 5.422479,
+    "qrblock": 6.5583335,
+    "cpu": 1.3881455
+   },
+   "rule": "cpu",
+   "rule_gpu": "jacobi",
+   "gpu_speedup": 0.255998317375
+  },
+  {
+   "M": 256,
+   "N": 128,
+   "batch": 4,
+   "best": "cpu",
+   "best_gpu": "jacobi",
+   "times": {
+    "jacobi": 5.7320835,
+    "block": 5.9225215,
+    "qr": 5.851625,
+    "qrblock": 6.7194275,
+    "cpu": 5.3840625
+   },
+   "rule": "jacobi",
+   "rule_gpu": "jacobi",
+   "gpu_speedup": 0.939285427367
+  },
+  {
+   "M": 256,
+   "N": 128,
+   "batch": 16,
+   "best": "jacobi",
+   "best_gpu": "jacobi",
+   "times": {
+    "jacobi": 6.148375,
+    "block": 6.9332915,
+    "qr": 6.4139165,
+    "qrblock": 7.8075,
+    "cpu": 21.3472395
+   },
+   "rule": "jacobi",
+   "rule_gpu": "jacobi",
+   "gpu_speedup": 3.47201325553
   },
   {
    "M": 256,
@@ -4014,15 +4016,15 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 30.880542,
-    "block": 15.174437,
-    "qr": 34.498417,
-    "qrblock": 16.755083,
-    "cpu": 86.232292
+    "jacobi": 30.816146,
+    "block": 14.9127185,
+    "qr": 34.203542,
+    "qrblock": 16.256198,
+    "cpu": 85.2381875
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 5.68273419304
+   "gpu_speedup": 5.71580476759
   },
   {
    "M": 256,
@@ -4031,15 +4033,15 @@
    "best": "qrblock",
    "best_gpu": "qrblock",
    "times": {
-    "jacobi": 127.184334,
-    "block": 56.418875,
-    "qr": 118.56525,
-    "qrblock": 55.507416,
-    "cpu": 350.859417
+    "jacobi": 126.5248125,
+    "block": 56.395646,
+    "qr": 121.4838545,
+    "qrblock": 55.2609375,
+    "cpu": 344.1554375
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 6.32094668215
+   "gpu_speedup": 6.22782480844
   },
   {
    "M": 256,
@@ -4048,24 +4050,27 @@
    "best": "qrblock",
    "best_gpu": "qrblock",
    "times": {
-    "jacobi": 510.305708,
-    "block": 216.618792,
-    "qr": 478.808333,
-    "qrblock": 210.666125,
-    "cpu": 1400.334666
+    "jacobi": 511.6523335,
+    "block": 218.950542,
+    "qr": 488.4565,
+    "qrblock": 210.310479,
+    "cpu": 1373.4629165
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 6.64717531592
+   "gpu_speedup": 6.53064423147
   },
   {
    "M": 256,
    "N": 128,
    "batch": 4096,
-   "best": "qrblock",
-   "best_gpu": "qrblock",
+   "best": "block",
+   "best_gpu": "block",
    "times": {
-    "qrblock": 852.27425
+    "qrblock": 862.777,
+    "jacobi": 2072.071375,
+    "block": 862.116334,
+    "qr": 2112.56575
    },
    "rule": "block",
    "rule_gpu": "block",
@@ -4078,15 +4083,15 @@
    "best": "cpu",
    "best_gpu": "qr",
    "times": {
-    "jacobi": 10.179208,
-    "block": 6.652667,
-    "qr": 6.417625,
-    "qrblock": 7.622084,
-    "cpu": 2.059459
+    "jacobi": 10.2006455,
+    "block": 6.58274,
+    "qr": 6.2589165,
+    "qrblock": 7.279719,
+    "cpu": 1.848667
    },
    "rule": "cpu",
    "rule_gpu": "qr",
-   "gpu_speedup": 0.320906721723
+   "gpu_speedup": 0.295365339991
   },
   {
    "M": 512,
@@ -4095,15 +4100,15 @@
    "best": "qr",
    "best_gpu": "qr",
    "times": {
-    "jacobi": 10.381167,
-    "block": 7.314375,
-    "qr": 6.716125,
-    "qrblock": 8.033667,
-    "cpu": 7.94725
+    "jacobi": 10.4045,
+    "block": 7.007958,
+    "qr": 6.524521,
+    "qrblock": 7.5233125,
+    "cpu": 7.1929585
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 1.18330882763
+   "gpu_speedup": 1.10245004959
   },
   {
    "M": 512,
@@ -4112,15 +4117,15 @@
    "best": "qr",
    "best_gpu": "qr",
    "times": {
-    "jacobi": 13.857042,
-    "block": 9.292125,
-    "qr": 7.698646,
-    "qrblock": 9.569479,
-    "cpu": 31.318667
+    "jacobi": 13.8073335,
+    "block": 8.9220105,
+    "qr": 7.4341775,
+    "qrblock": 9.108802,
+    "cpu": 28.501136
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 4.06807469781
+   "gpu_speedup": 3.83379815723
   },
   {
    "M": 512,
@@ -4129,15 +4134,15 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 82.494709,
-    "block": 20.759687,
-    "qr": 38.635375,
-    "qrblock": 21.406146,
-    "cpu": 127.249459
+    "jacobi": 82.069146,
+    "block": 20.7123855,
+    "qr": 38.688104,
+    "qrblock": 21.1230315,
+    "cpu": 115.014646
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 6.12964246523
+   "gpu_speedup": 5.55294058234
   },
   {
    "M": 512,
@@ -4146,15 +4151,15 @@
    "best": "qrblock",
    "best_gpu": "qrblock",
    "times": {
-    "jacobi": 312.210208,
-    "block": 81.950334,
-    "qr": 131.906166,
-    "qrblock": 71.330958,
-    "cpu": 509.033042
+    "jacobi": 311.385604,
+    "block": 82.8712085,
+    "qr": 137.176062,
+    "qrblock": 71.9905835,
+    "cpu": 460.1777915
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 7.13621485358
+   "gpu_speedup": 6.39219421662
   },
   {
    "M": 512,
@@ -4163,10 +4168,10 @@
    "best": "qrblock",
    "best_gpu": "qrblock",
    "times": {
-    "jacobi": 1258.893959,
-    "block": 310.957625,
-    "qr": 527.067042,
-    "qrblock": 276.192583
+    "jacobi": 1259.998959,
+    "block": 314.637021,
+    "qr": 536.508,
+    "qrblock": 279.4709375
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
@@ -4179,7 +4184,8 @@
    "best": "qrblock",
    "best_gpu": "qrblock",
    "times": {
-    "qrblock": 1106.236625
+    "qrblock": 1127.002104,
+    "qr": 2350.446458
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
@@ -4192,15 +4198,15 @@
    "best": "cpu",
    "best_gpu": "qr",
    "times": {
-    "jacobi": 18.339791,
-    "block": 9.123625,
-    "qr": 7.12925,
-    "qrblock": 8.316375,
-    "cpu": 3.242459
+    "jacobi": 18.3581665,
+    "block": 8.669875,
+    "qr": 6.9655,
+    "qrblock": 7.988365,
+    "cpu": 2.6910215
    },
    "rule": "cpu",
    "rule_gpu": "qr",
-   "gpu_speedup": 0.454810674335
+   "gpu_speedup": 0.386335726079
   },
   {
    "M": 1024,
@@ -4209,15 +4215,15 @@
    "best": "qr",
    "best_gpu": "qr",
    "times": {
-    "jacobi": 19.393083,
-    "block": 9.526291,
-    "qr": 7.637896,
-    "qrblock": 8.81,
-    "cpu": 12.607437
+    "jacobi": 19.396927,
+    "block": 9.2182495,
+    "qr": 7.425365,
+    "qrblock": 8.451104,
+    "cpu": 10.490646
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 1.6506426639
+   "gpu_speedup": 1.41281216479
   },
   {
    "M": 1024,
@@ -4226,15 +4232,15 @@
    "best": "qr",
    "best_gpu": "qr",
    "times": {
-    "jacobi": 37.935083,
-    "block": 13.616395,
-    "qr": 9.103833,
-    "qrblock": 10.815333,
-    "cpu": 50.326709
+    "jacobi": 37.8475415,
+    "block": 13.2997915,
+    "qr": 8.974458,
+    "qrblock": 10.478708,
+    "cpu": 41.901021
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 5.5280791069
+   "gpu_speedup": 4.66891939324
   },
   {
    "M": 1024,
@@ -4243,15 +4249,15 @@
    "best": "qrblock",
    "best_gpu": "qrblock",
    "times": {
-    "jacobi": 179.512125,
-    "block": 37.919958,
-    "qr": 44.98325,
-    "qrblock": 27.951521,
-    "cpu": 204.281042
+    "jacobi": 181.827104,
+    "block": 37.886208,
+    "qr": 45.279875,
+    "qrblock": 27.768802,
+    "cpu": 169.0706045
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 7.3084052206
+   "gpu_speedup": 6.08850912978
   },
   {
    "M": 1024,
@@ -4260,15 +4266,15 @@
    "best": "qrblock",
    "best_gpu": "qrblock",
    "times": {
-    "jacobi": 697.078667,
-    "block": 130.6215,
-    "qr": 157.380375,
-    "qrblock": 96.555125,
-    "cpu": 812.668667
+    "jacobi": 703.6133125,
+    "block": 134.0879585,
+    "qr": 161.0490835,
+    "qrblock": 98.014396,
+    "cpu": 673.600271
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 8.41662901892
+   "gpu_speedup": 6.87246260233
   },
   {
    "M": 1024,
@@ -4277,8 +4283,10 @@
    "best": "qrblock",
    "best_gpu": "qrblock",
    "times": {
-    "qr": 615.7305,
-    "qrblock": 378.837959
+    "qr": 643.026,
+    "qrblock": 390.8443545,
+    "jacobi": 2859.147,
+    "block": 524.448666
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
@@ -4291,7 +4299,7 @@
    "best": "qrblock",
    "best_gpu": "qrblock",
    "times": {
-    "qrblock": 1523.109542
+    "qrblock": 1784.1812085
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
@@ -4304,15 +4312,15 @@
    "best": "cpu",
    "best_gpu": "qr",
    "times": {
-    "jacobi": 34.385084,
-    "block": 11.757834,
-    "qr": 9.108,
-    "qrblock": 10.3215,
-    "cpu": 5.418792
+    "jacobi": 34.4015,
+    "block": 11.549792,
+    "qr": 8.9519585,
+    "qrblock": 9.9678435,
+    "cpu": 4.273688
    },
    "rule": "cpu",
    "rule_gpu": "qr",
-   "gpu_speedup": 0.594948616601
+   "gpu_speedup": 0.477402570622
   },
   {
    "M": 2048,
@@ -4321,15 +4329,15 @@
    "best": "qr",
    "best_gpu": "qr",
    "times": {
-    "jacobi": 42.290958,
-    "block": 14.544875,
-    "qr": 10.167875,
-    "qrblock": 11.40427,
-    "cpu": 21.757583
+    "jacobi": 42.2338335,
+    "block": 14.281396,
+    "qr": 9.9054165,
+    "qrblock": 10.966885,
+    "cpu": 17.0647915
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 2.1398358064
+   "gpu_speedup": 1.72277374707
   },
   {
    "M": 2048,
@@ -4338,15 +4346,15 @@
    "best": "qr",
    "best_gpu": "qr",
    "times": {
-    "jacobi": 87.25625,
-    "block": 20.849125,
-    "qr": 13.370021,
-    "qrblock": 14.925125,
-    "cpu": 88.664792
+    "jacobi": 87.161104,
+    "block": 20.965063,
+    "qr": 13.6429895,
+    "qrblock": 15.122427,
+    "cpu": 69.0565005
    },
    "rule": "qr",
    "rule_gpu": "qr",
-   "gpu_speedup": 6.63161202215
+   "gpu_speedup": 5.06168391466
   },
   {
    "M": 2048,
@@ -4355,15 +4363,15 @@
    "best": "qrblock",
    "best_gpu": "qrblock",
    "times": {
-    "jacobi": 421.617625,
-    "block": 66.042125,
-    "qr": 59.807625,
-    "qrblock": 43.434417,
-    "cpu": 354.991125
+    "jacobi": 421.8250625,
+    "block": 66.539,
+    "qr": 60.36575,
+    "qrblock": 44.0938125,
+    "cpu": 276.5821665
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 8.17303763971
+   "gpu_speedup": 6.2725845378
   },
   {
    "M": 2048,
@@ -4372,15 +4380,15 @@
    "best": "qrblock",
    "best_gpu": "qrblock",
    "times": {
-    "jacobi": 1690.432958,
-    "block": 226.231417,
-    "qr": 214.632209,
-    "qrblock": 154.485041,
-    "cpu": 1405.309667
+    "jacobi": 1700.0586455,
+    "block": 229.3273125,
+    "qr": 218.5329585,
+    "qrblock": 155.6331875,
+    "cpu": 1089.8814585
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 9.09673621409
+   "gpu_speedup": 7.00288592688
   },
   {
    "M": 2048,
@@ -4389,8 +4397,8 @@
    "best": "qrblock",
    "best_gpu": "qrblock",
    "times": {
-    "qr": 836.031167,
-    "qrblock": 604.296
+    "qr": 873.7678335,
+    "qrblock": 620.2685625
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
@@ -4403,13 +4411,13 @@
    "best": "cpu",
    "best_gpu": "block",
    "times": {
-    "jacobi": 14.861375,
-    "block": 9.724042,
-    "cpu": 1.9725
+    "jacobi": 14.857521,
+    "block": 9.456146,
+    "cpu": 1.9274585
    },
    "rule": "cpu",
    "rule_gpu": "block",
-   "gpu_speedup": 0.202847745824
+   "gpu_speedup": 0.203831296598
   },
   {
    "M": 192,
@@ -4418,13 +4426,13 @@
    "best": "cpu",
    "best_gpu": "block",
    "times": {
-    "jacobi": 15.332021,
-    "block": 10.148042,
-    "cpu": 7.650333
+    "jacobi": 15.3278545,
+    "block": 9.882,
+    "cpu": 7.52425
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 0.753872816057
+   "gpu_speedup": 0.761409633677
   },
   {
    "M": 192,
@@ -4433,13 +4441,13 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 17.936375,
-    "block": 13.281999,
-    "cpu": 29.823687
+    "jacobi": 17.9851875,
+    "block": 12.975218,
+    "cpu": 29.6193955
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 2.24542156644
+   "gpu_speedup": 2.28276669417
   },
   {
    "M": 192,
@@ -4448,13 +4456,13 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 106.8375,
-    "block": 36.745,
-    "cpu": 118.945875
+    "jacobi": 108.0245625,
+    "block": 37.065104,
+    "cpu": 118.4634165
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 3.2370628657
+   "gpu_speedup": 3.19609022276
   },
   {
    "M": 192,
@@ -4463,13 +4471,13 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 394.219334,
-    "block": 147.6895,
-    "cpu": 476.727625
+    "jacobi": 398.4341255,
+    "block": 148.6707705,
+    "cpu": 473.9097915
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 3.22790465808
+   "gpu_speedup": 3.18764603093
   },
   {
    "M": 192,
@@ -4478,8 +4486,8 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 1590.903666,
-    "block": 584.029667
+    "jacobi": 1606.6986035,
+    "block": 590.815896
    },
    "rule": "block",
    "rule_gpu": "block",
@@ -4492,13 +4500,13 @@
    "best": "cpu",
    "best_gpu": "block",
    "times": {
-    "jacobi": 33.937334,
-    "block": 13.489292,
-    "cpu": 3.989834
+    "jacobi": 33.928313,
+    "block": 13.2091775,
+    "cpu": 3.935396
    },
    "rule": "cpu",
    "rule_gpu": "block",
-   "gpu_speedup": 0.295777865881
+   "gpu_speedup": 0.29792892101
   },
   {
    "M": 256,
@@ -4507,13 +4515,13 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 34.692167,
-    "block": 14.604416,
-    "cpu": 15.691187
+    "jacobi": 34.7045,
+    "block": 14.297437,
+    "cpu": 15.4556145
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 1.07441386222
+   "gpu_speedup": 1.08100595233
   },
   {
    "M": 256,
@@ -4522,13 +4530,13 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 65.840959,
-    "block": 24.77825,
-    "cpu": 61.767375
+    "jacobi": 65.8933545,
+    "block": 24.679021,
+    "cpu": 61.0090625
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 2.49280619091
+   "gpu_speedup": 2.47210221589
   },
   {
    "M": 256,
@@ -4537,13 +4545,13 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 279.38725,
-    "block": 83.374583,
-    "cpu": 249.107708
+    "jacobi": 283.192104,
+    "block": 83.2266455,
+    "cpu": 244.819354
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 2.98781354025
+   "gpu_speedup": 2.94159824091
   },
   {
    "M": 256,
@@ -4552,8 +4560,22 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 1067.66225,
-    "block": 339.112458
+    "jacobi": 1090.77425,
+    "block": 344.7915415
+   },
+   "rule": "block",
+   "rule_gpu": "block",
+   "gpu_speedup": null
+  },
+  {
+   "M": 256,
+   "N": 256,
+   "batch": 1024,
+   "best": "block",
+   "best_gpu": "block",
+   "times": {
+    "jacobi": 4466.852583,
+    "block": 1395.082333
    },
    "rule": "block",
    "rule_gpu": "block",
@@ -4566,15 +4588,15 @@
    "best": "cpu",
    "best_gpu": "block",
    "times": {
-    "jacobi": 48.063042,
-    "block": 12.687062,
-    "qr": 33.922625,
-    "qrblock": 14.582291,
-    "cpu": 6.160667
+    "jacobi": 48.078292,
+    "block": 12.438531,
+    "qr": 33.819625,
+    "qrblock": 14.231229,
+    "cpu": 5.7447295
    },
    "rule": "cpu",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 0.485586576309
+   "gpu_speedup": 0.461849514223
   },
   {
    "M": 512,
@@ -4583,15 +4605,15 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 48.241125,
-    "block": 14.286916,
-    "qr": 34.677875,
-    "qrblock": 16.274146,
-    "cpu": 24.295916
+    "jacobi": 48.186104,
+    "block": 14.097479,
+    "qr": 34.4590835,
+    "qrblock": 15.8312295,
+    "cpu": 22.5480415
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 1.70057106796
+   "gpu_speedup": 1.59943784985
   },
   {
    "M": 512,
@@ -4600,15 +4622,15 @@
    "best": "qrblock",
    "best_gpu": "qrblock",
    "times": {
-    "jacobi": 93.481708,
-    "block": 26.721167,
-    "qr": 64.738,
-    "qrblock": 25.643333,
-    "cpu": 96.197708
+    "jacobi": 93.5840205,
+    "block": 26.638073,
+    "qr": 64.505396,
+    "qrblock": 25.336156,
+    "cpu": 89.216687
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 3.75137303719
+   "gpu_speedup": 3.52131897988
   },
   {
    "M": 512,
@@ -4617,15 +4639,15 @@
    "best": "qrblock",
    "best_gpu": "qrblock",
    "times": {
-    "jacobi": 440.023625,
-    "block": 102.289416,
-    "qr": 274.969875,
-    "qrblock": 89.344917,
-    "cpu": 389.725875
+    "jacobi": 444.468771,
+    "block": 103.009708,
+    "qr": 279.080708,
+    "qrblock": 90.2008545,
+    "cpu": 359.8280625
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 4.36203746208
+   "gpu_speedup": 3.98918684856
   },
   {
    "M": 512,
@@ -4634,10 +4656,23 @@
    "best": "qrblock",
    "best_gpu": "qrblock",
    "times": {
-    "jacobi": 1681.941,
-    "block": 402.626875,
-    "qr": 1040.284583,
-    "qrblock": 352.378667
+    "jacobi": 1704.568958,
+    "block": 408.0129585,
+    "qr": 1067.5437915,
+    "qrblock": 356.7845835
+   },
+   "rule": "qrblock",
+   "rule_gpu": "qrblock",
+   "gpu_speedup": null
+  },
+  {
+   "M": 512,
+   "N": 256,
+   "batch": 1024,
+   "best": "qrblock",
+   "best_gpu": "qrblock",
+   "times": {
+    "qrblock": 1547.20425
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
@@ -4650,15 +4685,15 @@
    "best": "cpu",
    "best_gpu": "qrblock",
    "times": {
-    "jacobi": 85.883542,
-    "block": 16.103167,
-    "qr": 34.125625,
-    "qrblock": 15.848875,
-    "cpu": 8.533313
+    "jacobi": 85.9136875,
+    "block": 15.8928125,
+    "qr": 33.9447295,
+    "qrblock": 15.503958,
+    "cpu": 7.470792
    },
    "rule": "cpu",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 0.538417584844
+   "gpu_speedup": 0.48186353446
   },
   {
    "M": 1024,
@@ -4667,15 +4702,15 @@
    "best": "qrblock",
    "best_gpu": "qrblock",
    "times": {
-    "jacobi": 105.859,
-    "block": 20.153666,
-    "qr": 35.260042,
-    "qrblock": 18.645375,
-    "cpu": 32.699916
+    "jacobi": 105.5717915,
+    "block": 19.854833,
+    "qr": 35.0330005,
+    "qrblock": 18.182646,
+    "cpu": 28.9816455
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 1.75378162145
+   "gpu_speedup": 1.59391793142
   },
   {
    "M": 1024,
@@ -4684,15 +4719,15 @@
    "best": "qrblock",
    "best_gpu": "qrblock",
    "times": {
-    "jacobi": 175.50725,
-    "block": 37.0795,
-    "qr": 66.9635,
-    "qrblock": 29.82025,
-    "cpu": 133.766375
+    "jacobi": 175.157333,
+    "block": 37.5294375,
+    "qr": 67.0324375,
+    "qrblock": 30.0000415,
+    "cpu": 116.902583
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 4.4857563233
+   "gpu_speedup": 3.89674737617
   },
   {
    "M": 1024,
@@ -4701,15 +4736,15 @@
    "best": "qrblock",
    "best_gpu": "qrblock",
    "times": {
-    "jacobi": 876.310375,
-    "block": 162.680458,
-    "qr": 278.36,
-    "qrblock": 103.312958,
-    "cpu": 536.961583
+    "jacobi": 880.334021,
+    "block": 165.210708,
+    "qr": 285.6801875,
+    "qrblock": 104.226979,
+    "cpu": 470.7057705
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 5.19742724819
+   "gpu_speedup": 4.51616054707
   },
   {
    "M": 1024,
@@ -4718,8 +4753,23 @@
    "best": "qrblock",
    "best_gpu": "qrblock",
    "times": {
-    "qr": 1070.677417,
-    "qrblock": 407.510291
+    "qr": 1090.9163545,
+    "qrblock": 413.479625,
+    "jacobi": 3550.435916,
+    "block": 641.612292
+   },
+   "rule": "qrblock",
+   "rule_gpu": "qrblock",
+   "gpu_speedup": null
+  },
+  {
+   "M": 1024,
+   "N": 256,
+   "batch": 1024,
+   "best": "qrblock",
+   "best_gpu": "qrblock",
+   "times": {
+    "qrblock": 1825.243209
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
@@ -4732,15 +4782,15 @@
    "best": "cpu",
    "best_gpu": "qrblock",
    "times": {
-    "jacobi": 147.781708,
-    "block": 22.8925,
-    "qr": 36.150709,
-    "qrblock": 19.820187,
-    "cpu": 12.992417
+    "jacobi": 147.837458,
+    "block": 22.6152085,
+    "qr": 36.051521,
+    "qrblock": 19.512198,
+    "cpu": 10.882323
    },
    "rule": "cpu",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 0.655514350092
+   "gpu_speedup": 0.557718971486
   },
   {
    "M": 2048,
@@ -4749,15 +4799,15 @@
    "best": "qrblock",
    "best_gpu": "qrblock",
    "times": {
-    "jacobi": 206.641125,
-    "block": 30.259917,
-    "qr": 38.59775,
-    "qrblock": 22.71225,
-    "cpu": 51.923917
+    "jacobi": 206.5630625,
+    "block": 30.159479,
+    "qr": 38.375229,
+    "qrblock": 22.379396,
+    "cpu": 43.4425005
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 2.28616350207
+   "gpu_speedup": 1.94118288536
   },
   {
    "M": 2048,
@@ -4766,15 +4816,15 @@
    "best": "qrblock",
    "best_gpu": "qrblock",
    "times": {
-    "jacobi": 526.767166,
-    "block": 68.29925,
-    "qr": 76.568792,
-    "qrblock": 38.880375,
-    "cpu": 208.987208
+    "jacobi": 519.2572915,
+    "block": 68.2899165,
+    "qr": 76.5020625,
+    "qrblock": 38.8935,
+    "cpu": 173.7162915
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 5.37513354745
+   "gpu_speedup": 4.46646075822
   },
   {
    "M": 2048,
@@ -4783,15 +4833,15 @@
    "best": "qrblock",
    "best_gpu": "qrblock",
    "times": {
-    "jacobi": 2185.071541,
-    "block": 270.314666,
-    "qr": 313.129875,
-    "qrblock": 141.617666,
-    "cpu": 833.629792
+    "jacobi": 2298.5125205,
+    "block": 272.4573745,
+    "qr": 320.400625,
+    "qrblock": 143.5427705,
+    "cpu": 693.584021
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
-   "gpu_speedup": 5.88648164841
+   "gpu_speedup": 4.8318979673
   },
   {
    "M": 2048,
@@ -4800,8 +4850,8 @@
    "best": "qrblock",
    "best_gpu": "qrblock",
    "times": {
-    "qr": 1194.78125,
-    "qrblock": 555.214041
+    "qr": 1218.0906875,
+    "qrblock": 565.468958
    },
    "rule": "qrblock",
    "rule_gpu": "qrblock",
@@ -4814,13 +4864,13 @@
    "best": "cpu",
    "best_gpu": "block",
    "times": {
-    "jacobi": 112.897125,
-    "block": 22.521542,
-    "cpu": 7.59927
+    "jacobi": 112.9311875,
+    "block": 22.3391045,
+    "cpu": 7.596322
    },
    "rule": "cpu",
    "rule_gpu": "block",
-   "gpu_speedup": 0.337422277746
+   "gpu_speedup": 0.340045949469
   },
   {
    "M": 384,
@@ -4829,13 +4879,13 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 126.56075,
-    "block": 28.805917,
-    "cpu": 30.730541
+    "jacobi": 126.714604,
+    "block": 28.739198,
+    "cpu": 30.59825
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 1.0668134953
+   "gpu_speedup": 1.06468698257
   },
   {
    "M": 384,
@@ -4844,13 +4894,13 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 234.233333,
-    "block": 65.327167,
-    "cpu": 120.321167
+    "jacobi": 234.3080625,
+    "block": 65.997479,
+    "cpu": 119.474521
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 1.84182435157
+   "gpu_speedup": 1.81028916271
   },
   {
    "M": 384,
@@ -4859,8 +4909,8 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 1194.582083,
-    "block": 270.379458
+    "jacobi": 1192.1814165,
+    "block": 273.868604
    },
    "rule": "block",
    "rule_gpu": "block",
@@ -4873,7 +4923,8 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "block": 1119.119167
+    "block": 1130.7492295,
+    "jacobi": 4721.1515
    },
    "rule": "block",
    "rule_gpu": "block",
@@ -4886,13 +4937,13 @@
    "best": "cpu",
    "best_gpu": "block",
    "times": {
-    "jacobi": 261.822042,
-    "block": 32.30775,
-    "cpu": 16.607208
+    "jacobi": 261.9957505,
+    "block": 32.064396,
+    "cpu": 16.4614165
    },
    "rule": "cpu",
    "rule_gpu": "block",
-   "gpu_speedup": 0.514031710658
+   "gpu_speedup": 0.513386140191
   },
   {
    "M": 512,
@@ -4901,13 +4952,13 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 328.309375,
-    "block": 47.912625,
-    "cpu": 65.710916
+    "jacobi": 327.7301875,
+    "block": 48.0219585,
+    "cpu": 65.2186245
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 1.3714739278
+   "gpu_speedup": 1.35810005542
   },
   {
    "M": 512,
@@ -4916,13 +4967,13 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 839.270708,
-    "block": 155.222833,
-    "cpu": 260.188791
+    "jacobi": 818.4857085,
+    "block": 154.061208,
+    "cpu": 258.2295205
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 1.67622756247
+   "gpu_speedup": 1.67614887519
   },
   {
    "M": 512,
@@ -4931,8 +4982,8 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 3957.609541,
-    "block": 623.64875
+    "jacobi": 4029.7391245,
+    "block": 625.913479
    },
    "rule": "block",
    "rule_gpu": "block",
@@ -4945,13 +4996,13 @@
    "best": "cpu",
    "best_gpu": "block",
    "times": {
-    "jacobi": 1025.957042,
-    "block": 64.699834,
-    "cpu": 34.113333
+    "jacobi": 1028.132146,
+    "block": 64.8118545,
+    "cpu": 33.606896
    },
    "rule": "cpu",
    "rule_gpu": "block",
-   "gpu_speedup": 0.527255340408
+   "gpu_speedup": 0.518530078475
   },
   {
    "M": 768,
@@ -4960,13 +5011,13 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 1294.236958,
-    "block": 113.067333,
-    "cpu": 135.937667
+    "jacobi": 1277.807375,
+    "block": 114.1459375,
+    "cpu": 133.941
    },
    "rule": "block",
    "rule_gpu": "block",
-   "gpu_speedup": 1.20227180914
+   "gpu_speedup": 1.17341889631
   },
   {
    "M": 768,
@@ -4975,8 +5026,8 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 3703.11575,
-    "block": 525.170375
+    "jacobi": 3733.594396,
+    "block": 530.189292
    },
    "rule": "block",
    "rule_gpu": "block",
@@ -4989,13 +5040,13 @@
    "best": "cpu",
    "best_gpu": "block",
    "times": {
-    "jacobi": 2854.199584,
-    "block": 114.060542,
-    "cpu": 79.127334
+    "jacobi": 2838.3304585,
+    "block": 114.594292,
+    "cpu": 78.008063
    },
    "rule": "cpu",
    "rule_gpu": "block",
-   "gpu_speedup": 0.693731001208
+   "gpu_speedup": 0.680732535963
   },
   {
    "M": 1024,
@@ -5004,8 +5055,22 @@
    "best": "block",
    "best_gpu": "block",
    "times": {
-    "jacobi": 4075.642791,
-    "block": 290.010042
+    "jacobi": 4081.0124995,
+    "block": 290.474125
+   },
+   "rule": "block",
+   "rule_gpu": "block",
+   "gpu_speedup": null
+  },
+  {
+   "M": 1024,
+   "N": 1024,
+   "batch": 16,
+   "best": "block",
+   "best_gpu": "block",
+   "times": {
+    "jacobi": 9419.710875,
+    "block": 1250.998625
    },
    "rule": "block",
    "rule_gpu": "block",
@@ -5014,61 +5079,60 @@
  ],
  "trustworthy": true,
  "warnings": [
-  "chosen rule loses more than 25% at 2048x64 batch=4 (cpu, 2.03x), 1024x32 batch=16 (qr, 1.98x), 512x32 batch=16 (qr, 1.70x), 512x32 batch=64 (qr, 1.69x), 256x32 batch=4096 (jacobi, 1.66x), 512x32 batch=4096 (qr, 1.56x), 128x128 batch=4 (jacobi, 1.47x), 512x32 batch=1024 (qr, 1.45x) ...",
-  "GPU split loses more than 25% against the best GPU backend at 1024x32 batch=16 (qr, 1.98x), 512x32 batch=16 (qr, 1.70x), 512x32 batch=64 (qr, 1.69x), 1024x32 batch=1 (qr, 1.68x), 1024x32 batch=4 (qr, 1.68x), 256x32 batch=4096 (jacobi, 1.66x), 512x32 batch=4 (qr, 1.61x), 512x32 batch=4096 (qr, 1.56x) ...",
-  "chosen rule picks a backend that was not timed at 1 points; the cost model's guess counts in the geomean and is kept out of the worst case: 256x128 batch=4096 (block, est 3.02x)",
+  "chosen rule loses more than 25% at 1024x32 batch=16 (qr, 1.80x), 512x32 batch=16 (qr, 1.75x), 256x32 batch=4096 (jacobi, 1.68x), 512x32 batch=4096 (qr, 1.58x), 512x32 batch=64 (qr, 1.55x), 512x32 batch=1024 (qr, 1.48x), 2048x64 batch=4 (cpu, 1.48x), 1024x32 batch=4096 (qr, 1.45x) ...",
+  "GPU split loses more than 25% against the best GPU backend at 1024x32 batch=16 (qr, 1.80x), 512x32 batch=16 (qr, 1.75x), 256x32 batch=4096 (jacobi, 1.68x), 512x32 batch=4 (qr, 1.60x), 512x32 batch=4096 (qr, 1.58x), 512x32 batch=64 (qr, 1.55x), 1024x32 batch=1 (qr, 1.55x), 1024x32 batch=4 (qr, 1.54x) ...",
   "the GPU is still ahead of the CPU at the largest k measured (1024): gpu_max_k is a lower bound, rerun with a larger --max-k to find the cap",
   "this device has no entry in kTuned[]: it is running the untuned default; paste the row above into src/svd.mm",
   "the fitted policy differs from the one in effect (default:untuned-device (Apple M5 Pro))"
  ],
  "noise": {
   "overall": {
-   "n": 950,
-   "median": 1.00971756878,
-   "p90": 1.20733285985,
+   "n": 1917,
+   "median": 1.00793595202,
+   "p90": 1.08841315149,
    "max": 3.85433137805
   },
   "by_runtime": [
    {
     "bucket": "<1 ms",
-    "n": 156,
-    "median": 1.07900444444,
-    "p90": 2.4542890411,
+    "n": 359,
+    "median": 1.03861370846,
+    "p90": 1.76846307385,
     "max": 3.85433137805
    },
    {
     "bucket": "1-3 ms",
-    "n": 160,
-    "median": 1.02007849861,
-    "p90": 1.35306384922,
+    "n": 312,
+    "median": 1.01354692777,
+    "p90": 1.228669336,
     "max": 1.92730106235
    },
    {
     "bucket": "3-10 ms",
-    "n": 209,
-    "median": 1.00628429333,
-    "p90": 1.02418399547,
+    "n": 385,
+    "median": 1.00590602121,
+    "p90": 1.02165945686,
     "max": 1.37070754647
    },
    {
     "bucket": "10-30 ms",
-    "n": 121,
-    "median": 1.00740675823,
-    "p90": 1.02945405067,
+    "n": 239,
+    "median": 1.00507803982,
+    "p90": 1.02245262503,
     "max": 1.20298758736
    },
    {
     "bucket": "30-100 ms",
-    "n": 125,
-    "median": 1.0070709003,
-    "p90": 1.02442555556,
-    "max": 1.08950351325
+    "n": 248,
+    "median": 1.00582969932,
+    "p90": 1.02051645158,
+    "max": 1.14588743247
    },
    {
     "bucket": ">100 ms",
-    "n": 179,
-    "median": 1.00631824602,
-    "p90": 1.02280237606,
+    "n": 374,
+    "median": 1.00559758192,
+    "p90": 1.02817646823,
     "max": 1.4026695481
    }
   ]
@@ -5076,10 +5140,12 @@
  "tuned_row": "{\"Apple M5 Pro\", 20,   512, 32,   192, 64, 64,   1024, 512, 4},",
  "env_line": "SVD_QR_MIN_ROWS=512 SVD_QR_MIN_K=32 SVD_BLOCK_MIN_K=192 SVD_BLOCK_MIN_K_BATCHED=64 SVD_BLOCK_MIN_BATCH=64 SVD_GPU_MAX_K=1024 SVD_GPU_MIN_BATCH_TIMES_K=512 SVD_GPU_MIN_BATCH=4",
  "raw": [
-  "docs/results/apple-m5-pro-20gpu/20260930-27b6c2/svd/raw.csv"
+  "docs/results/apple-m5-pro-20gpu/20260930-27b6c2/svd/raw.csv",
+  "docs/results/apple-m5-pro-20gpu/20261001-c76e82/svd/raw.csv"
  ],
  "submissions": [
-  "20260930-27b6c2"
+  "20260930-27b6c2",
+  "20261001-c76e82"
  ],
  "calibration": {
   "probe": {
