@@ -8,15 +8,16 @@
 
 QR decomposition, symmetric eigendecomposition and singular value
 decomposition for batches of matrices on Apple GPUs, for
-[MLX](https://github.com/ml-explore/mlx). A C++ library, installed with
-Homebrew or built from source inside your own project, with Python bindings
-for `mlx.core` arrays.
+[MLX](https://github.com/ml-explore/mlx) and for plain float buffers. A C++
+library, installed with Homebrew or built from source inside your own
+project, with Python bindings for `mlx.core` arrays, a C API, and a Swift
+package (on `[Float]`, and on mlx-swift's `MLXArray`).
 
 Each solver has several Metal kernels, one per regime (small matrices in large
 batches, large matrices spread over the whole GPU, long thin matrices), and
-every call is routed to the fastest of them, or to MLX's CPU path, by a policy
-measured on the device it runs on. MLX's own `linalg::eigh` and `linalg::svd`
-run only on the CPU.
+every call is routed to the fastest of them, or to LAPACK on the CPU, by a
+policy measured on the device it runs on. MLX's own `linalg::eigh` and
+`linalg::svd` run only on the CPU.
 
 > **Contributions welcome: measure your Mac.** The routing is only as good as
 > the measurements behind it, and every new chip needs its own. So far an M1
@@ -33,8 +34,8 @@ run only on the CPU.
 | operation | functions | GPU kernels | CPU path | details |
 |---|---|---|---|---|
 | QR | `qr_accelerated` | Householder in one threadgroup per matrix; grid-parallel blocked Householder | none | [docs/qr.md](docs/qr.md) |
-| symmetric eigendecomposition | `eigh_accelerated`, `eigvalsh_accelerated` | whole-matrix Jacobi; block Jacobi | MLX `eigh` | [docs/eigh.md](docs/eigh.md) |
-| thin SVD | `svd_accelerated`, `svdvals_accelerated` | whole-matrix one-sided Jacobi; block one-sided Jacobi; either after QR for tall input | MLX `svd`, thin | [docs/svd.md](docs/svd.md) |
+| symmetric eigendecomposition | `eigh_accelerated`, `eigvalsh_accelerated` | whole-matrix Jacobi; block Jacobi | LAPACK `ssyevd` | [docs/eigh.md](docs/eigh.md) |
+| thin SVD | `svd_accelerated`, `svdvals_accelerated` | whole-matrix one-sided Jacobi; block one-sided Jacobi; either after QR for tall input | LAPACK `sgesdd` | [docs/svd.md](docs/svd.md) |
 
 Input is any batch shape `[..., M, N]`, any real dtype (computed in float32),
 any magnitude from 1e-30 to 1e+37, rank-deficient or not. The eigensolver and
@@ -73,7 +74,9 @@ shader with it, `cmake --build build --target update_prebuilt_shaders`
 refreshes `shaders/prebuilt/`.
 
 Build options: `-DMETAL_LINALG_BUILD_TESTS=OFF` skips the tests, benchmarks
-and tuning harnesses; `-DMETAL_LINALG_SHARED=OFF` builds a static library.
+and tuning harnesses; `-DMETAL_LINALG_SHARED=OFF` builds a static library;
+`-DMETAL_LINALG_WITH_MLX=OFF` builds the buffer API and the C API alone, with
+no MLX anywhere.
 
 ## Quick start
 
@@ -249,6 +252,30 @@ The nanobind version has to match the one your MLX was built with, and the
 build checks it. [python/README.md](python/README.md) has the details,
 including Homebrew's Python.
 
+## Using it from C, Swift and Objective-C
+
+Under the MLX API is a core that works on plain float buffers (row-major,
+the matrices of a batch one after another) and has no MLX in it:
+`<metal_linalg/core.h>` in C++, and the same through a C API,
+`<metal_linalg/c_api.h>`:
+
+```c
+float w[2 * 64], v[2 * 64 * 64];
+metal_linalg_status st = metal_linalg_eigh(a, /*batch*/ 2, /*n*/ 64, /*lower*/ 1, w, v, NULL);
+if (st != METAL_LINALG_OK) fprintf(stderr, "%s\n", metal_linalg_last_error());
+```
+
+The Swift package wraps it, on `[Float]` and on `MLXArray`:
+
+```swift
+// .package(url: "https://github.com/c0rmac/metal-linalg.git", from: "2.0.0")
+import MetalLinalg
+let (w, v) = try eighAccelerated(a, batch: 2, n: 64)
+```
+
+Objective-C calls either API directly. See [docs/c-api.md](docs/c-api.md),
+[docs/swift.md](docs/swift.md) and [docs/objective-c.md](docs/objective-c.md).
+
 ## Where the GPU wins
 
 For batches. On an Apple M5 Pro, the best GPU kernel against the CPU:
@@ -275,6 +302,8 @@ on every device so far, so the routing keeps it there; batches of up to
 | `<metal_linalg/eigh.h>` | `eigh_accelerated`, `eigvalsh_accelerated`; `EighPolicy`, `eigh_policy()`, `set_eigh_policy()`, `eigh_policy_source()`; `eigh_backend(n, batch)`, `eigh_uses_gpu` |
 | `<metal_linalg/svd.h>` | `svd_accelerated`, `svdvals_accelerated`; `SvdPolicy`, `svd_policy()`, `set_svd_policy()`, `svd_policy_source()`; `svd_backend(m, n, batch)`, `svd_uses_gpu` |
 | `<metal_linalg/device.h>` | `device_name()`, `gpu_core_count()`: the GPU the policies were resolved for |
+| `<metal_linalg/core.h>` | the same on float buffers, without MLX: `core::qr`, `core::eigh`, `core::svd`; the policies, backends and options |
+| `<metal_linalg/c_api.h>` | the C API: `metal_linalg_qr`, `_eigh`, `_svd`, the routing queries and policies |
 
 Each header's `metal_linalg::detail` namespace has the individual backends,
 which always run their kernel, with options (tolerances, sweep bounds, launch
@@ -309,7 +338,7 @@ of Mac and updates the library's table. See [docs/tuning.md](docs/tuning.md).
 ## Tests, benchmarks and tuning
 
 ```sh
-ctest --test-dir build --output-on-failure    # test_qr, test_eigh, test_svd and the examples
+ctest --test-dir build --output-on-failure    # test_qr, test_eigh, test_svd, test_core, test_c_api, the examples
 ./build/benchmark_qr                          # GPU against the CPU, per solver
 ./build/benchmark_eigh
 ./build/benchmark_svd
@@ -329,6 +358,7 @@ device's values.
 |---|---|
 | `include/metal_linalg/` | the public headers |
 | `python/` | the Python package: bindings, the `metal_linalg` module, its tests |
+| `Package.swift`, `swift/` | the Swift package: the C module map, the embedded shaders, the Swift API and its tests |
 | `src/` | host code: routing policies, the Metal runtime, one driver per backend |
 | `shaders/` | the Metal kernels; `prebuilt/` holds their compiled metallibs |
 | `examples/` | small self-checking programs, one per use case |
@@ -341,6 +371,8 @@ device's values.
 
 - [QR](docs/qr.md), [symmetric eigensolver](docs/eigh.md),
   [SVD](docs/svd.md): algorithms, kernels, routing, accuracy, performance
+- Other languages: [C](docs/c-api.md), [Swift](docs/swift.md),
+  [Objective-C](docs/objective-c.md), [Python](python/README.md)
 - [Measuring your Mac](docs/tuning.md), [how the measurements work](docs/tuning-details.md),
   and [how to read a measurement report](docs/reading-reports.md)
 - Studies: QR routing on an [M1](docs/studies/qr-routing-apple-m1.md),

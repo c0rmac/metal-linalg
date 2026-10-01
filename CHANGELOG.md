@@ -32,9 +32,19 @@ now covers three decompositions, and is packaged as a library.
   `eigvalsh`, `svd`, `svdvals` on `mlx.core` arrays, the routing queries and
   policies. Compiled against the installed MLX and sharing its arrays without
   copying; see [python/README.md](python/README.md).
-- **Objective-C++**: a guide, [docs/objective-c.md](docs/objective-c.md), and
-  `examples/objc_quickstart.mm`, including a pattern for calling the library
-  from Swift through an Objective-C++ class.
+- **A core without MLX**, on plain float buffers: `<metal_linalg/core.h>`
+  (`core::qr`, `core::eigh`, `core::svd` and every backend). The MLX API is
+  now a thin layer over it, with the same names and signatures as before.
+  `-DMETAL_LINALG_WITH_MLX=OFF` builds the core alone.
+- **A C API**, `<metal_linalg/c_api.h>`: the decompositions, routing queries
+  and policies behind C types, with status codes and per-thread error
+  messages. See [docs/c-api.md](docs/c-api.md).
+- **A Swift package**: `MetalLinalg` on `[Float]`, and `MetalLinalgMLX` on
+  mlx-swift's `MLXArray`, built on the C API; the shaders reach it through
+  C23 `#embed` of `shaders/prebuilt/`. See [docs/swift.md](docs/swift.md).
+- **Objective-C**: a guide, [docs/objective-c.md](docs/objective-c.md), and
+  `examples/objc_quickstart.mm`; Objective-C can use the MLX API from `.mm`
+  files or the C API from anywhere.
 - Every measurement run records the exact Mac (e.g. "MacBook Pro (16-inch, M5
   Pro)"), and its power and thermal state after each part of the run; a
   device's combined summary compares the runs by machine, to find outliers.
@@ -70,6 +80,18 @@ now covers three decompositions, and is packaged as a library.
 | `m_crossover_for_batch(p, batch)` | `qr_backend(m, n, batch)` |
 | CMake target `qr_metal` | `metal_linalg::metal_linalg` |
 
+### Changed
+
+- **The CPU paths call LAPACK directly**: `ssyevd` for eigh and `sgesdd` for
+  the SVD (Accelerate, after a thin QR for tall input), instead of MLX's CPU
+  `eigh` and `svd`. On an M5 Pro the eigensolver's CPU path is as fast as
+  before and the SVD's is as fast on square and wide shapes and 5-25% faster
+  on tall ones. Non-finite input gives NaN on the CPU too, for that matrix
+  alone, as on the GPU. The routing tables were measured against the old
+  paths and are due to be remeasured.
+- The eigensolver's tuning sweep times the library's own CPU path, as the
+  SVD's already did, rather than MLX's.
+
 ### Fixes
 
 - **QR was not scale-invariant.** The kernels compare squared column norms
@@ -79,6 +101,15 @@ now covers three decompositions, and is packaged as a library.
 - **QR discarded real data for nearly dependent columns**: the reflection
   threshold (1e-7 on a squared norm) treated column tails shorter than 3e-4 of
   the matrix's scale as zero. It is now 1e-30, which only guards the division.
+- **The streaming QR backends could write past their buffers.** Their cached
+  workspaces were keyed by the padded shape but sized by the exact one, so a
+  call whose shape padded like an earlier, smaller one (1000×1000, then
+  1024×1024) reused buffers too small for it. They are now keyed by the exact
+  shape.
+- **Every call leaked Metal objects**: the library was built without ARC and
+  without an autorelease pool, so each call kept its command buffers and a
+  buffer wrapper alive for the life of the thread, which mattered in long
+  loops. It is now built with ARC, and every GPU call drains its own pool.
 - **Transposed and other strided views were read as their untransposed
   buffer**: an unevaluated MLX array reports itself contiguous, so contiguity
   is now checked after evaluation.

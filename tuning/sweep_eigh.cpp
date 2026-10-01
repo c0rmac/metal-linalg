@@ -1,7 +1,7 @@
 // Eigensolver routing harness: times every backend on one (batch, N) point.
 //
 //   usage: sweep_eigh <batch> <N> <backend>[,<backend>...]
-//   backends: cpu (MLX / Accelerate LAPACK), simd, tg (whole-matrix kernel in
+//   backends: cpu (the library's CPU path, LAPACK ssyevd), simd, tg (whole-matrix kernel in
 //             each execution mode), block (block Jacobi)
 //   out:   batch,N,backend,ok,ms,p25,p75,reps   (one row per backend)
 //
@@ -65,8 +65,10 @@ struct Solver {
     std::pair<array, array> (*fn)(const array&);
 };
 
+// What the library's routing sends to the CPU, so that is what it is measured against.
 std::pair<array, array> solve_cpu(const array& A) {
-    return linalg::eigh(A, "L", Device::cpu);
+    EighResult r = detail::eigh_cpu(A, true, true);
+    return {r.eigenvalues, r.eigenvectors};
 }
 std::pair<array, array> solve_simd(const array& A) {
     EighOptions o; o.mode = EighOptions::Mode::simd;

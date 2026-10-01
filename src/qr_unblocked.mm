@@ -1,18 +1,23 @@
-#include <metal_linalg/qr.h>
+#include <metal_linalg/core.h>
 #include "metal_runtime.h"
 #include "shaders.h"
-
-#include <mlx/mlx.h>
 
 #include <algorithm>
 #include <map>
 #include <stdexcept>
+#include <string>
 #include <tuple>
 #include <utility>
 
-using namespace mlx::core;
+using metal_linalg::detail::AutoreleasePool;
+using metal_linalg::detail::MetalRuntime;
+using metal_linalg::detail::ScaledInput;
+using metal_linalg::detail::copy_out;
+using metal_linalg::detail::make_pipeline;
+using metal_linalg::detail::pad_up;
+using metal_linalg::detail::scaled_input;
 
-namespace metal_linalg::detail {
+namespace metal_linalg::core::detail {
 namespace {
 
 constexpr size_t kQRSharedMemBytes = 5120;
@@ -88,39 +93,27 @@ struct Cache {
 // MAIN ENTRY POINT
 // =============================================================================
 
-std::pair<array, array> qr_unblocked(const array& a) {
-    if (a.ndim() < 2) {
-        throw std::invalid_argument("[qr_unblocked] Input must be at least a 2D matrix.");
-    }
-
-    const Shape& shape = a.shape();
-    const uint M = static_cast<uint>(shape[shape.size() - 2]);
-    const uint N = static_cast<uint>(shape[shape.size() - 1]);
+void qr_unblocked(const Matrices& a, float* q, float* r) {
+    const uint M = a.rows;
+    const uint N = a.cols;
     const uint K = std::min(M, N);
-
-    uint batch = 1;
-    for (size_t i = 0; i + 2 < shape.size(); ++i) {
-        batch *= static_cast<uint>(shape[i]);
-    }
+    const uint batch = a.batch;
+    if (K == 0 || batch == 0) return;
+    AutoreleasePool pool;
 
     const uint M_pad = pad_up(M, 32);
     const uint N_pad = pad_up(N, 16);
 
-    // 1. MLX Array Prep
-    // Scaled by a power of two per matrix; see prepare_input_scaled.
-    ScaledInput in = prepare_input_scaled(a);
-    array a_f32 = in.a;
-
-    // 2. Retrieve Cached State & Workspaces
+    // 1. Retrieve Cached State & Workspaces
     static Cache cache;
     QRPipelines p = cache.get_pipelines(M, N, M_pad, N_pad);
     Workspace w   = cache.get_workspace(batch, M, N, M_pad, N_pad, K);
 
-    // 3. Map Input Data (Zero-Copy)
-    id<MTLBuffer> buf_src = [cache.rt.device newBufferWithBytesNoCopy:(void*)a_f32.data<float>()
-                                                              length:a_f32.nbytes()
-                                                             options:MTLResourceStorageModeShared
-                                                         deallocator:nil];
+    // 2. Input, scaled by a power of two per matrix; see scaled_input.
+    ScaledInput in = scaled_input(cache.rt.device, a);
+    id<MTLBuffer> buf_src = in.buffer;
+
+    // 3. (The input is read in place where it can be.)
 
     // 4. Encode Command Sequence
     id<MTLCommandBuffer> cmd = [cache.rt.queue commandBuffer];
@@ -186,23 +179,10 @@ std::pair<array, array> qr_unblocked(const array& a) {
                                  cmd.error.localizedDescription.UTF8String);
     }
 
-    // 5. Flat Array Handoff to MLX
-    Shape R_shape(shape.begin(), shape.end());
-    R_shape[R_shape.size() - 2] = K;
-
-    Shape Q_shape(shape.begin(), shape.end());
-    Q_shape[Q_shape.size() - 1] = K;
-
-    const float* r_ptr = static_cast<const float*>([w.buf_R_out contents]);
-    const float* q_ptr = static_cast<const float*>([w.buf_Q_out contents]);
-
-    // Note: Passing the pointer like this forces MLX to deep copy the result,
-    // which protects our recycled `Workspace` buffers from being overwritten by MLX later.
-    array final_R = array(r_ptr, R_shape, float32);
-    if (in.scaled) final_R = multiply(final_R, in.unscale);
-    array final_Q = array(q_ptr, Q_shape, float32);
-
-    return {final_Q, final_R};
+    // 5. Copy out of the recycled workspace, undoing the scaling of R.
+    copy_out(static_cast<const float*>([w.buf_R_out contents]), r, batch, (size_t)K * N,
+             in.scaled ? &in.unscale : nullptr);
+    copy_out(static_cast<const float*>([w.buf_Q_out contents]), q, batch, (size_t)M * K);
 }
 
-} // namespace metal_linalg::detail
+} // namespace metal_linalg::core::detail

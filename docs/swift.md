@@ -1,0 +1,113 @@
+# Using metal-linalg from Swift
+
+The repository is a Swift package with two libraries:
+
+| product | for | depends on |
+|---|---|---|
+| `MetalLinalg` | `[Float]` buffers: row-major, the matrices of a batch one after another | nothing but the system frameworks |
+| `MetalLinalgMLX` | mlx-swift's `MLXArray`, any batch shape | `MetalLinalg`, [mlx-swift](https://github.com/ml-explore/mlx-swift) |
+
+```swift
+// Package.swift
+dependencies: [
+    .package(url: "https://github.com/c0rmac/metal-linalg.git", from: "2.0.0"),
+],
+targets: [
+    .target(name: "MyApp", dependencies: [
+        .product(name: "MetalLinalg", package: "metal-linalg"),       // or "MetalLinalgMLX"
+    ]),
+]
+```
+
+In Xcode: File > Add Package Dependencies, with the repository URL. macOS 14
+or later, on Apple Silicon.
+
+## On `[Float]`
+
+```swift
+import MetalLinalg
+
+// 1000 matrices of 64 x 32, row-major, one after another.
+let a: [Float] = ...
+let (q, r) = try qrAccelerated(a, batch: 1000, rows: 64, cols: 32)       // q: 1000*64*32, r: 1000*32*32
+let (u, s, vt) = try svdAccelerated(a, batch: 1000, rows: 64, cols: 32)  // thin; s descending
+
+let (w, v) = try eighAccelerated(sym, batch: 1000, n: 32)                // w ascending, v's columns the vectors
+let values = try eigvalshAccelerated(sym, batch: 1000, n: 32, uplo: .upper)
+```
+
+Every function throws `MetalLinalgError` (`.invalidArgument` for a count that
+does not match the shape, `.runtime` for a GPU failure). A matrix holding a
+NaN or an infinity is not an error: its results are NaN, and the rest of the
+batch is unaffected.
+
+## On `MLXArray`
+
+```swift
+import MLX
+import MetalLinalgMLX        // re-exports MetalLinalg
+
+let a = MLXRandom.normal([1000, 64, 32])
+let (q, r) = try qrAccelerated(a)
+let (u, s, vt) = try svdAccelerated(a)
+let (w, v) = try eighAccelerated(matmul(a.transposed(0, 2, 1), a))
+```
+
+Same names, overloaded on `MLXArray`; batch dimensions are arbitrary and the
+results are float32. Each call copies the input out of MLX and the results
+back in, which costs little next to the decompositions. mlx-swift exposes MLX
+to other packages through Swift and MLX's C API only, which is why this layer
+goes through the library's C API rather than its MLX C++ one.
+
+## Routing
+
+```swift
+deviceName                              // "Apple M5 Pro"
+eighPolicySource                        // "tuned:Apple M5 Pro"
+eighBackend(n: 512, batch: 64)          // "block": a batch of large matrices goes to the GPU
+eighBackend(n: 512, batch: 1)           // "cpu": a lone matrix is faster on the CPU
+
+var p = eighPolicy                      // replace the measured policy
+p.gpu_min_batch = 1
+eighPolicy = p
+```
+
+The policies are the C structs of `<metal_linalg/c_api.h>`, field for field
+as in [core.h](../include/metal_linalg/core.h); the
+[tuning guide](tuning.md) says what each field does and how the values are
+measured.
+
+## How the package is built
+
+SwiftPM compiles the library's own sources (`src/`) into the `CMetalLinalg`
+target, whose module is the C API alone (`swift/CMetalLinalg/include/module.modulemap`).
+SwiftPM cannot run the CMake step that embeds the compiled shaders, so
+`swift/CMetalLinalg/embedded_shaders.c` pulls in the metallibs committed under
+`shaders/prebuilt/` with C23's `#embed`: no Metal compiler is needed, and
+`shaders/prebuilt/` must be refreshed after editing a shader
+(`cmake --build build --target update_prebuilt_shaders`).
+
+## Running the tests
+
+`MetalLinalg` alone, without fetching mlx-swift:
+
+```bash
+METAL_LINALG_NO_MLX=1 swift test
+```
+
+The `MetalLinalgMLX` tests need MLX's own compiled kernels, which MLX loads at
+start-up. Xcode builds them (`xcodebuild test -scheme metal-linalg-Package
+-destination platform=macOS`, with the Metal toolchain installed). From the
+command line, SwiftPM's default build system tries to compile them and fails
+without the Metal toolchain, and the native one skips them; with the native
+one, put an `mlx.metallib` from the same MLX version next to the test binary:
+
+```bash
+swift build --build-system native --build-tests
+cp /path/to/mlx.metallib .build/arm64-apple-macosx/debug/metal-linalgPackageTests.xctest/Contents/MacOS/
+swift test --build-system native --skip-build
+```
+
+The tests compute their checks with MLX on the CPU, so a metallib from a
+nearby MLX version is enough: metal-linalg's own kernels are embedded and run
+on the GPU either way.

@@ -1,0 +1,6 @@
+// The C API is all Swift sees of the library; core.h and the MLX headers
+// are C++ and stay out of the module.
+module CMetalLinalg {
+    header "../../../include/metal_linalg/c_api.h"
+    export *
+}

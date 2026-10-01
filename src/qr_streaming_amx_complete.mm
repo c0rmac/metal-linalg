@@ -1,18 +1,23 @@
-#include <metal_linalg/qr.h>
+#include <metal_linalg/core.h>
 #include "metal_runtime.h"
 #include "shaders.h"
-
-#include <mlx/mlx.h>
 
 #include <algorithm>
 #include <map>
 #include <stdexcept>
+#include <string>
 #include <tuple>
 #include <utility>
 
-using namespace mlx::core;
+using metal_linalg::detail::AutoreleasePool;
+using metal_linalg::detail::MetalRuntime;
+using metal_linalg::detail::ScaledInput;
+using metal_linalg::detail::copy_out;
+using metal_linalg::detail::make_pipeline;
+using metal_linalg::detail::pad_up;
+using metal_linalg::detail::scaled_input;
 
-namespace metal_linalg::detail {
+namespace metal_linalg::core::detail {
 namespace {
 
 struct Pipelines {
@@ -103,22 +108,13 @@ struct Cache {
 // MAIN ENTRY POINT
 // =============================================================================
 
-std::pair<array, array> qr_streaming_amx_complete(const array& a) {
-    if (a.ndim() < 2)
-        throw std::invalid_argument("[qr_streaming_amx_complete] Input must be at least a 2D matrix.");
-
-    const Shape& shape       = a.shape();
-    const uint   original_M  = static_cast<uint>(shape[shape.size() - 2]);
-    const uint   original_N  = static_cast<uint>(shape[shape.size() - 1]);
-    const uint   original_K  = std::min(original_M, original_N);
-
-    uint batch = 1;
-    for (size_t i = 0; i + 2 < shape.size(); ++i)
-        batch *= static_cast<uint>(shape[i]);
-
-    // Scaled by a power of two per matrix; see prepare_input_scaled.
-    ScaledInput in = prepare_input_scaled(a);
-    array a_f32 = in.a;
+void qr_streaming_amx_complete(const Matrices& a, float* q, float* r) {
+    const uint original_M = a.rows;
+    const uint original_N = a.cols;
+    const uint original_K = std::min(original_M, original_N);
+    const uint batch      = a.batch;
+    if (original_K == 0 || batch == 0) return;
+    AutoreleasePool pool;
 
     const uint M_pad = pad_up(original_M, 32);
     const uint N_pad = pad_up(original_N, 32);
@@ -127,10 +123,9 @@ std::pair<array, array> qr_streaming_amx_complete(const array& a) {
     Pipelines p = cache.get_pipelines(M_pad, N_pad);
     Workspace w = cache.get_workspace(batch, M_pad, N_pad, original_M, original_N, original_K);
 
-    id<MTLBuffer> buf_src = [cache.rt.device newBufferWithBytesNoCopy:(void*)a_f32.data<float>()
-                                                              length:a_f32.nbytes()
-                                                             options:MTLResourceStorageModeShared
-                                                         deallocator:nil];
+    // Scaled by a power of two per matrix; see scaled_input.
+    ScaledInput in = scaled_input(cache.rt.device, a);
+    id<MTLBuffer> buf_src = in.buffer;
 
     id<MTLCommandBuffer>         cmd = [cache.rt.queue commandBuffer];
     id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
@@ -223,21 +218,10 @@ std::pair<array, array> qr_streaming_amx_complete(const array& a) {
                                  + cmd.error.localizedDescription.UTF8String);
     }
 
-    // 4. Instant MLX Handoff
-    Shape R_shape(shape.begin(), shape.end());
-    R_shape[R_shape.size() - 2] = original_K;
-
-    Shape Q_shape(shape.begin(), shape.end());
-    Q_shape[Q_shape.size() - 1] = original_K;
-
-    const float* r_ptr = static_cast<const float*>([w.buf_R_out contents]);
-    const float* q_ptr = static_cast<const float*>([w.buf_Q_out contents]);
-
-    array R = array(r_ptr, R_shape, float32);
-    if (in.scaled) R = multiply(R, in.unscale);
-    array Q = array(q_ptr, Q_shape, float32);
-
-    return {Q, R};
+    // Copy out of the recycled workspace, undoing the scaling of R.
+    copy_out(static_cast<const float*>([w.buf_R_out contents]), r, batch, (size_t)original_K * original_N,
+             in.scaled ? &in.unscale : nullptr);
+    copy_out(static_cast<const float*>([w.buf_Q_out contents]), q, batch, (size_t)original_M * original_K);
 }
 
-} // namespace metal_linalg::detail
+} // namespace metal_linalg::core::detail

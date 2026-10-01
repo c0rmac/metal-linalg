@@ -1,7 +1,6 @@
 #import <Metal/Metal.h>
 
-#include <metal_linalg/device.h>
-#include <metal_linalg/qr.h>
+#include <metal_linalg/core.h>
 
 #include <cstdlib>
 #include <string>
@@ -143,21 +142,12 @@ QrBackend qr_backend(unsigned m, unsigned n, unsigned batch) {
     return m >= crossover ? QrBackend::streaming_reduced : QrBackend::unblocked;
 }
 
-std::pair<mlx::core::array, mlx::core::array>
-qr_accelerated(const mlx::core::array& a) {
-    const auto& shape = a.shape();
-    const auto M = static_cast<unsigned>(shape[shape.size() - 2]);
-    const auto N = static_cast<unsigned>(shape[shape.size() - 1]);
-
-    unsigned batch = 1;
-    for (size_t i = 0; i + 2 < shape.size(); ++i) {
-        batch *= static_cast<unsigned>(shape[i]);
+void core::qr(const Matrices& a, float* q, float* r) {
+    if (qr_backend(a.rows, a.cols, a.batch) == QrBackend::streaming_reduced) {
+        core::detail::qr_streaming_amx_reduced(a, q, r);
+    } else {
+        core::detail::qr_unblocked(a, q, r);
     }
-
-    if (qr_backend(M, N, batch) == QrBackend::streaming_reduced) {
-        return detail::qr_streaming_amx_reduced(a);
-    }
-    return detail::qr_unblocked(a);
 }
 
 } // namespace metal_linalg

@@ -15,7 +15,7 @@ w, V = ml.eigh(a.swapaxes(-1, -2) @ a)   # w ascending (1000, 32), V (1000, 32, 
 ```
 
 Each call is routed to the fastest Metal kernel for its shape and batch, or to
-MLX's CPU path, by a policy measured on the Mac it runs on:
+LAPACK on the CPU, by a policy measured on the Mac it runs on:
 
 ```python
 ml.device_name()                      # 'Apple M5 Pro'

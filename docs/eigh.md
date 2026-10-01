@@ -19,7 +19,8 @@ exception, as LAPACK does.
 **Routing.** Two Metal backends cover the size range (see
 [Dispatch](#dispatch)), but Accelerate's LAPACK on the CPU is quick (a single
 512×512 in 18 ms on an M1), so the public functions run on the GPU only where
-it was measured faster, and call MLX's CPU `eigh` otherwise: on an M1 for
+it was measured faster, and call LAPACK's `ssyevd` (Accelerate) on the CPU
+otherwise: on an M1 for
 `N <= 64` with `batch * N >= 1024`, on an M5 Pro for `N <= 1024` with
 `batch * N >= 512` and at least 16 matrices. The boundary is part of the
 per-device policy (see [Tuning](#tuning));

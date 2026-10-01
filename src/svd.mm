@@ -1,18 +1,19 @@
-#include <metal_linalg/svd.h>
-#include <metal_linalg/device.h>
-#include <metal_linalg/qr.h>                 // qr_accelerated(), for the preconditioned backend
+#ifndef ACCELERATE_NEW_LAPACK
+#define ACCELERATE_NEW_LAPACK   // LAPACK's current interface; before any Accelerate header
+#endif
+#include <metal_linalg/core.h>
 #include "metal_runtime.h"
 #include "shaders.h"
 
 #import <Metal/Metal.h>
-
-#include <mlx/mlx.h>
-#include <mlx/linalg.h>
+#import <MetalPerformanceShaders/MetalPerformanceShaders.h>
+#include <Accelerate/Accelerate.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <map>
 #include <stdexcept>
@@ -21,11 +22,18 @@
 #include <utility>
 #include <vector>
 
-using namespace mlx::core;
+using metal_linalg::core::Matrices;
+using metal_linalg::detail::AutoreleasePool;
+using metal_linalg::detail::HostBuffer;
 using metal_linalg::detail::MetalRuntime;
+using metal_linalg::detail::Part;
+using metal_linalg::detail::copy_out;
+using metal_linalg::detail::input_buffer;
 using metal_linalg::detail::make_pipeline;
 using metal_linalg::detail::pad_up;
-using metal_linalg::detail::prepare_input;
+using metal_linalg::detail::scan;
+using metal_linalg::detail::transpose_out;
+using metal_linalg::detail::wrap_host;
 
 namespace metal_linalg {
 namespace {
@@ -118,15 +126,6 @@ uint auto_simdgroups(uint n_pairs, uint m, uint batch, uint cores) {
     const uint work   = (n_pairs * m + kRowPairsPerSimdgroup - 1) / kRowPairsPerSimdgroup;
     const uint budget = std::max(1u, kSimdgroupsPerCore * cores / std::max(1u, batch));
     return std::max(work, std::min(n_pairs, budget));
-}
-
-Shape batch_shape(const Shape& s) { return Shape(s.begin(), s.end() - 2); }
-
-array transpose_last_two(const array& x) {
-    std::vector<int> axes(x.ndim());
-    for (size_t i = 0; i < axes.size(); ++i) axes[i] = (int)i;
-    std::swap(axes[axes.size() - 1], axes[axes.size() - 2]);
-    return transpose(x, axes);
 }
 
 // Completes the zero columns of one M x N matrix U (row-major) to an
@@ -273,46 +272,75 @@ bool wants_block(unsigned k, unsigned batch) {
     return p.block_min_batch && k >= p.block_min_k_batched && batch >= p.block_min_batch;
 }
 
-void problem_size(const array& a, unsigned& m, unsigned& n, unsigned& batch) {
-    const Shape& s = a.shape();
-    m = a.ndim() >= 2 ? (unsigned)s[s.size() - 2] : 0;
-    n = a.ndim() >= 2 ? (unsigned)s[s.size() - 1] : 0;
-    batch = 1;
-    for (size_t i = 0; i + 2 < s.size(); ++i) batch *= (unsigned)s[i];
-}
-
-array converged_info(const Shape& shape) {
-    return full(Shape(shape.begin(), shape.end() - 2), (uint32_t)(1u | (1u << 16)));
-}
-
 } // namespace
 
 namespace detail {
 
 void svd_complete_columns(float* u, unsigned m, unsigned n) { complete_columns_impl(u, m, n); }
 
-SvdResult svd_jacobi(const array& a_in, bool compute_uv, const SvdOptions& opt) {
-    if (a_in.ndim() < 2) {
-        throw std::invalid_argument("[svd] Input must be at least a 2D matrix.");
+} // namespace detail
+
+namespace {
+
+// C = A B for every matrix of a batch, on the GPU: A [m, k], B [k, n] and
+// C [m, n]. A and B are page-aligned host memory, read in place.
+void batched_matmul(float* a, float* b, float* c_out, uint32_t batch, uint32_t m, uint32_t k, uint32_t n) {
+    AutoreleasePool pool;
+    MetalRuntime& rt = MetalRuntime::shared(METAL_LINALG_SHADER(Svd_Jacobi), "svd");
+    HostBuffer c((size_t)batch * m * n);
+    auto matrix = [&](float* data, uint32_t rows, uint32_t cols) {
+        MPSMatrixDescriptor* d =
+            [MPSMatrixDescriptor matrixDescriptorWithRows:rows
+                                                  columns:cols
+                                                 matrices:batch
+                                                 rowBytes:cols * sizeof(float)
+                                              matrixBytes:(size_t)rows * cols * sizeof(float)
+                                                 dataType:MPSDataTypeFloat32];
+        return [[MPSMatrix alloc] initWithBuffer:wrap_host(rt.device, data, (size_t)batch * rows * cols)
+                                      descriptor:d];
+    };
+    MPSMatrix* A = matrix(a, m, k);
+    MPSMatrix* B = matrix(b, k, n);
+    MPSMatrix* C = matrix(c.data(), m, n);
+    MPSMatrixMultiplication* mm =
+        [[MPSMatrixMultiplication alloc] initWithDevice:rt.device
+                                          transposeLeft:NO
+                                         transposeRight:NO
+                                             resultRows:m
+                                          resultColumns:n
+                                        interiorColumns:k
+                                                  alpha:1.0
+                                                   beta:0.0];
+    mm.batchStart = 0;
+    mm.batchSize  = batch;
+
+    id<MTLCommandBuffer> cmd = [rt.queue commandBuffer];
+    [mm encodeToCommandBuffer:cmd leftMatrix:A rightMatrix:B resultMatrix:C];
+    [cmd commit];
+    [cmd waitUntilCompleted];
+    if (cmd.error) {
+        throw std::runtime_error(std::string("[svd] GPU matrix product failed: ") +
+                                 cmd.error.localizedDescription.UTF8String);
     }
-    const Shape& shape = a_in.shape();
-    const uint M = (uint)shape[shape.size() - 2];
-    const uint N = (uint)shape[shape.size() - 1];
+    copy_out(c.data(), c_out, batch, (size_t)m * n);
+}
+
+} // namespace
+
+namespace core::detail {
+
+void svd_jacobi(const Matrices& a, const SvdOptions& opt,
+                float* u_out, float* s_out, float* vt_out, uint32_t* info_out) {
+    const uint M = a.rows;
+    const uint N = a.cols;
     const uint K = std::min(M, N);
-
-    uint batch = 1;
-    for (size_t i = 0; i + 2 < shape.size(); ++i) batch *= (uint)shape[i];
-
-    Shape u_shape = shape;                  u_shape[u_shape.size() - 1] = (int)K;
-    Shape s_shape = batch_shape(shape);     s_shape.push_back((int)K);
-    Shape vt_shape = shape;                 vt_shape[vt_shape.size() - 2] = (int)K;
-    Shape info_shape = batch_shape(shape);
-
+    const uint batch = a.batch;
+    const bool compute_uv = u_out || vt_out;
     if (K == 0 || batch == 0) {
-        return {zeros(compute_uv ? u_shape : Shape{0}, float32), zeros(s_shape, float32),
-                zeros(compute_uv ? vt_shape : Shape{0}, float32),
-                zeros(info_shape, mlx::core::uint32)};
+        if (info_out) std::fill(info_out, info_out + batch, 0u);
+        return;
     }
+    AutoreleasePool pool;
 
     // The kernel wants m >= n. For a wide matrix decompose the transpose,
     // A^T = U' S V'^T, and read off A = V' S U'^T.
@@ -322,8 +350,6 @@ SvdResult svd_jacobi(const array& a_in, bool compute_uv, const SvdOptions& opt) 
     if (n > 0xFFFFu) {
         throw std::invalid_argument("[svd] min(M, N) exceeds the 16-bit index used in threadgroup memory.");
     }
-
-    array a_f32 = prepare_input(wide ? transpose_last_two(a_in) : a_in);
 
     static Cache cache;
     id<MTLDevice> dev = cache.rt.device;
@@ -356,13 +382,7 @@ SvdResult svd_jacobi(const array& a_in, bool compute_uv, const SvdOptions& opt) 
                                     : std::sqrt(rows) * std::numeric_limits<float>::epsilon();
     prm.null_tol   = kNullEps * std::numeric_limits<float>::epsilon();
 
-    id<MTLBuffer> buf_src = [dev newBufferWithBytesNoCopy:(void*)a_f32.data<float>()
-                                                   length:a_f32.nbytes()
-                                                  options:MTLResourceStorageModeShared
-                                              deallocator:nil];
-    if (!buf_src) {
-        throw std::runtime_error("[svd] Could not wrap the input array as a Metal buffer.");
-    }
+    id<MTLBuffer> buf_src = input_buffer(dev, a, wide);
 
     uint chunk = batch;
     {
@@ -406,7 +426,7 @@ SvdResult svd_jacobi(const array& a_in, bool compute_uv, const SvdOptions& opt) 
     const uint* info_ptr = static_cast<const uint*>([ws.info contents]);
     for (uint b = 0; b < batch; ++b) {
         const uint w = info_ptr[b];
-        if (!svd_converged(w) && !svd_nonfinite(w)) {
+        if (!metal_linalg::detail::svd_converged(w) && !metal_linalg::detail::svd_nonfinite(w)) {
             throw std::runtime_error("[svd] Matrix " + std::to_string(b) + " of " +
                                      std::to_string(batch) + " (" + std::to_string(M) + "x" +
                                      std::to_string(N) + ") did not converge in " +
@@ -414,105 +434,174 @@ SvdResult svd_jacobi(const array& a_in, bool compute_uv, const SvdOptions& opt) 
         }
     }
 
-    array S(static_cast<const float*>([ws.S contents]), s_shape, float32);
-    array info(info_ptr, info_shape, mlx::core::uint32);
-    if (!compute_uv) {
-        return {zeros(Shape{0}, float32), S, zeros(Shape{0}, float32), info};
-    }
+    copy_out(static_cast<const float*>([ws.S contents]), s_out, batch, n);
+    if (info_out) std::memcpy(info_out, info_ptr, (size_t)batch * sizeof(uint32_t));
+    if (!compute_uv) return;
 
     // Rank-deficient matrices: give U an orthonormal completion.
     float* u_ptr = static_cast<float*>([ws.U contents]);
     for (uint b = 0; b < batch; ++b) {
-        if (svd_rank_deficient(info_ptr[b])) svd_complete_columns(u_ptr + (size_t)b * m * n, m, n);
+        if (metal_linalg::detail::svd_rank_deficient(info_ptr[b])) {
+            metal_linalg::detail::svd_complete_columns(u_ptr + (size_t)b * m * n, m, n);
+        }
     }
 
     // Kernel factors: Uk [batch, m, n], Vtk [batch, n, n].
-    Shape uk_shape = batch_shape(shape);  uk_shape.push_back((int)m);  uk_shape.push_back((int)n);
-    Shape vk_shape = batch_shape(shape);  vk_shape.push_back((int)n);  vk_shape.push_back((int)n);
-    array Uk(static_cast<const float*>(u_ptr), uk_shape, float32);
-    array Vtk(static_cast<const float*>([ws.Vt contents]), vk_shape, float32);
-
-    if (!wide) return {Uk, S, Vtk, info};
+    const float* vt_ptr = static_cast<const float*>([ws.Vt contents]);
+    if (!wide) {
+        copy_out(u_ptr, u_out, batch, (size_t)m * n);
+        copy_out(vt_ptr, vt_out, batch, (size_t)n * n);
+        return;
+    }
     // A = V' S U'^T:  U = V' = (Vtk)^T  [M, K],   Vt = U'^T = (Uk)^T  [K, N].
-    return {contiguous(transpose_last_two(Vtk)), S, contiguous(transpose_last_two(Uk)), info};
+    transpose_out(vt_ptr, u_out, batch, n, n);
+    transpose_out(u_ptr, vt_out, batch, m, n);
 }
 
-SvdResult svd_qr_jacobi(const array& a_in, bool compute_uv, const SvdOptions& opt) {
-    if (a_in.ndim() < 2) {
-        throw std::invalid_argument("[svd] Input must be at least a 2D matrix.");
+void svd_qr_jacobi(const Matrices& a, const SvdOptions& opt,
+                   float* u_out, float* s_out, float* vt_out, uint32_t* info_out) {
+    const uint32_t M = a.rows, N = a.cols, batch = a.batch;
+    const bool compute_uv = u_out || vt_out;
+    if (std::min(M, N) == 0 || batch == 0) {
+        if (info_out) std::fill(info_out, info_out + batch, 0u);
+        return;
     }
-    const Shape& shape = a_in.shape();
-    const bool wide = shape[shape.size() - 2] < shape[shape.size() - 1];
-    if (wide) {
+    if (M < N) {
         // A^T = U' S V'^T  =>  A = V' S U'^T.
-        SvdResult t = svd_qr_jacobi(transpose_last_two(a_in), compute_uv, opt);
-        if (!compute_uv) return t;
-        return {contiguous(transpose_last_two(t.Vt)), t.S, contiguous(transpose_last_two(t.U)), t.info};
+        HostBuffer at((size_t)batch * M * N);
+        transpose_out(a.data, at.data(), batch, M, N);
+        const Matrices t{at.data(), batch, N, M};
+        if (!compute_uv) {
+            svd_qr_jacobi(t, opt, nullptr, s_out, nullptr, info_out);
+            return;
+        }
+        HostBuffer ut((size_t)batch * N * M), vtt((size_t)batch * M * M);
+        svd_qr_jacobi(t, opt, ut.data(), s_out, vtt.data(), info_out);
+        transpose_out(vtt.data(), u_out, batch, M, M);   // U  = V'  = (Vt')^T  [M, M]
+        transpose_out(ut.data(), vt_out, batch, N, M);   // Vt = U'^T           [M, N]
+        return;
     }
 
     // A = Q R, R = U_R S V^T  =>  A = (Q U_R) S V^T. The tolerances are those
     // of A, not of the small factor.
-    auto [Q, R] = qr_accelerated(a_in);
+    const uint32_t l = M, k = N;
+    HostBuffer q((size_t)batch * l * k), r((size_t)batch * k * k);
+    core::qr(a, q.data(), r.data());
     SvdOptions inner = opt;
-    inner.effective_rows = std::max<unsigned>(opt.effective_rows, (unsigned)shape[shape.size() - 2]);
-    const unsigned k = (unsigned)shape[shape.size() - 1];
-    unsigned batch = 1;
-    for (size_t i = 0; i + 2 < shape.size(); ++i) batch *= (unsigned)shape[i];
+    inner.effective_rows = std::max<unsigned>(opt.effective_rows, l);
     const bool block = opt.kernel == SvdOptions::Kernel::block ||
                        (opt.kernel == SvdOptions::Kernel::automatic && wants_block(k, batch));
-    SvdResult r = block ? svd_block_jacobi(R, compute_uv, inner) : svd_jacobi(R, compute_uv, inner);
-    if (!compute_uv) return r;
-    return {matmul(Q, r.U), r.S, r.Vt, r.info};
+    auto kernel = block ? svd_block_jacobi : svd_jacobi;
+    const Matrices rm{r.data(), batch, k, k};
+    if (!compute_uv) {
+        kernel(rm, inner, nullptr, s_out, nullptr, info_out);
+        return;
+    }
+    HostBuffer ur((size_t)batch * k * k);
+    kernel(rm, inner, ur.data(), s_out, vt_out, info_out);
+    if (u_out) batched_matmul(q.data(), ur.data(), u_out, batch, l, k, k);
 }
 
-SvdResult svd_cpu(const array& a_in, bool compute_uv) {
-    if (a_in.ndim() < 2) {
-        throw std::invalid_argument("[svd] Input must be at least a 2D matrix.");
+void svd_cpu(const Matrices& a, float* u_out, float* s_out, float* vt_out, uint32_t* info_out) {
+    const uint32_t M = a.rows, N = a.cols, K = std::min(M, N), batch = a.batch;
+    if (K == 0 || batch == 0) {
+        if (info_out) std::fill(info_out, info_out + batch, 0u);
+        return;
     }
-    const Shape& shape = a_in.shape();
-    const int M = shape[shape.size() - 2], N = shape[shape.size() - 1];
-    const Device cpu = Device::cpu;
+    const bool compute_uv = u_out || vt_out;
+    const size_t per = (size_t)M * N;
 
-    if (M < N) {
-        SvdResult t = svd_cpu(transpose(a_in, [&] {
-            std::vector<int> ax(a_in.ndim());
-            for (size_t i = 0; i < ax.size(); ++i) ax[i] = (int)i;
-            std::swap(ax[ax.size() - 1], ax[ax.size() - 2]);
-            return ax; }(), cpu), compute_uv);
-        if (!compute_uv) return t;
-        return {transpose_last_two(t.Vt), t.S, transpose_last_two(t.U), t.info};
-    }
+    // LAPACK is column-major, so it sees each matrix transposed: A^T, N x M.
+    // Its thin SVD A^T = U' S V'^T gives A = V' S U'^T, and the column-major
+    // factors it writes are already the row-major ones wanted: U' (N x K) read
+    // row-major is Vt (K x N), and V'^T (K x M) read row-major is U (M x K).
+    //
+    // A tall matrix is reduced first, by a QR of A itself, as MLX's CPU path
+    // did before 2.0: sgesdd would reduce it too, but on the wide A^T it uses
+    // an LQ factorisation, and Accelerate's LQ routines measured about half
+    // the speed of its QR ones (M5 Pro: 4096 x 256 in 26 ms against 12 ms
+    // for a transpose and a QR). So: transpose into column-major A, A = Q R
+    // (sgeqrf, sorgqr), R = U_R S Vt_R (sgesdd on the N x N factor), and
+    // U = Q U_R (one sgemm).
+    const bool tall = M >= 2 * N;
+    char jobz = compute_uv ? 'S' : 'N';
+    __LAPACK_int lm = (__LAPACK_int)N, ln = (__LAPACK_int)M, lk = (__LAPACK_int)K, err = 0;
 
-    array a = astype(a_in, float32, cpu);
-    array info = converged_info(shape);
-    if (M == 0 || N == 0) {
-        Shape s_shape = batch_shape(shape);  s_shape.push_back(0);
-        return {zeros(compute_uv ? shape : Shape{0}, float32), zeros(s_shape, float32),
-                zeros(compute_uv ? shape : Shape{0}, float32), info};
-    }
+    std::vector<float> work_a(per), tau(K), r(tall ? (size_t)K * K : 1);
+    std::vector<float> spare_u(compute_uv ? (size_t)M * K : 1), spare_vt(compute_uv ? (size_t)K * N : 1);
+    std::vector<float> r_u(tall && compute_uv ? (size_t)K * K : 1), r_vt(tall && compute_uv ? (size_t)K * K : 1);
+    std::vector<__LAPACK_int> iwork(8 * (size_t)K);
 
-    // MLX only offers the full-size factors, whose U is M x M. For a tall
-    // matrix that is most of the cost and none of what was asked for, so
-    // reduce with a thin QR first, as LAPACK does for its own thin SVD.
-    if (M >= 2 * N) {
-        auto [Q, R] = linalg::qr(a, cpu);
-        std::vector<array> f = linalg::svd(R, compute_uv, cpu);
-        if (!compute_uv) return {zeros(Shape{0}, float32), f.back(), zeros(Shape{0}, float32), info};
-        return {matmul(Q, f[0], cpu), f[1], f[2], info};
+    // Workspace sizes, by query.
+    __LAPACK_int lwork = 1, query = -1;
+    auto grow = [&](float q) { lwork = std::max<__LAPACK_int>(lwork, (__LAPACK_int)std::ceil(q)); };
+    float q = 0.0f;
+    if (tall) {
+        sgeqrf_(&ln, &lk, work_a.data(), &ln, tau.data(), &q, &query, &err);                         grow(q);
+        if (compute_uv) { sorgqr_(&ln, &lk, &lk, work_a.data(), &ln, tau.data(), &q, &query, &err); grow(q); }
+        sgesdd_(&jobz, &lk, &lk, r.data(), &lk, s_out, r_u.data(), &lk, r_vt.data(), &lk,
+                &q, &query, iwork.data(), &err);                                                       grow(q);
+    } else {
+        sgesdd_(&jobz, &lm, &ln, work_a.data(), &lm, s_out, spare_vt.data(), &lm, spare_u.data(), &lk,
+                &q, &query, iwork.data(), &err);                                                       grow(q);
     }
+    std::vector<float> work(lwork);
 
-    std::vector<array> f = linalg::svd(a, compute_uv, cpu);
-    if (!compute_uv) return {zeros(Shape{0}, float32), f.back(), zeros(Shape{0}, float32), info};
-    array U = f[0];
-    if (M > N) {   // keep the leading N columns
-        Shape start(U.ndim(), 0), stop = U.shape();
-        stop.back() = N;
-        U = slice(U, start, stop, cpu);
+    auto lapack_check = [&](const char* routine, uint32_t b) {
+        if (err != 0) {
+            throw std::runtime_error(std::string("[svd] LAPACK ") + routine + " failed on matrix " +
+                                     std::to_string(b) + " of " + std::to_string(batch) + " (" +
+                                     std::to_string(M) + "x" + std::to_string(N) + "), info " +
+                                     std::to_string((long long)err) + ".");
+        }
+    };
+
+    // Non-finite input gives NaN for that matrix, as on the GPU.
+    std::vector<float> amax(batch);
+    std::vector<char>  finite(batch);
+    scan(a, Part::all, amax.data(), finite.data());
+
+    for (uint32_t b = 0; b < batch; ++b) {
+        float* s  = s_out + (size_t)b * K;
+        float* u  = u_out  ? u_out  + (size_t)b * M * K : spare_u.data();
+        float* vt = vt_out ? vt_out + (size_t)b * K * N : spare_vt.data();
+        if (!finite[b]) {
+            std::fill(s, s + K, NAN);
+            if (u_out)  std::fill(u, u + (size_t)M * K, NAN);
+            if (vt_out) std::fill(vt, vt + (size_t)K * N, NAN);
+            if (info_out) info_out[b] = 1u << 17;
+            continue;
+        }
+        if (!tall) {
+            std::memcpy(work_a.data(), a.data + b * per, per * sizeof(float));
+            sgesdd_(&jobz, &lm, &ln, work_a.data(), &lm, s, vt, &lm, u, &lk,
+                    work.data(), &lwork, iwork.data(), &err);
+            lapack_check("sgesdd", b);
+        } else {
+            vDSP_mtrans(a.data + b * per, 1, work_a.data(), 1, N, M);   // column-major A, M x N
+            sgeqrf_(&ln, &lk, work_a.data(), &ln, tau.data(), work.data(), &lwork, &err);
+            lapack_check("sgeqrf", b);
+            for (uint32_t j = 0; j < K; ++j)          // R: the upper triangle, column-major
+                for (uint32_t i = 0; i < K; ++i)
+                    r[i + (size_t)j * K] = i <= j ? work_a[i + (size_t)j * M] : 0.0f;
+            sgesdd_(&jobz, &lk, &lk, r.data(), &lk, s, r_u.data(), &lk, r_vt.data(), &lk,
+                    work.data(), &lwork, iwork.data(), &err);
+            lapack_check("sgesdd", b);
+            if (compute_uv) {
+                sorgqr_(&ln, &lk, &lk, work_a.data(), &ln, tau.data(), work.data(), &lwork, &err);
+                lapack_check("sorgqr", b);
+                // Row-major U = Q U_R, from the column-major Q and U_R (each
+                // read row-major as its transpose).
+                cblas_sgemm(CblasRowMajor, CblasTrans, CblasTrans, (__LAPACK_int)M, lk, lk, 1.0f,
+                            work_a.data(), (__LAPACK_int)M, r_u.data(), lk, 0.0f, u, lk);
+                vDSP_mtrans(r_vt.data(), 1, vt, 1, K, K);   // row-major Vt_R
+            }
+        }
+        if (info_out) info_out[b] = 1u | (1u << 16);
     }
-    return {U, f[1], f[2], info};
 }
 
-} // namespace detail
+} // namespace core::detail
 
 SvdPolicy   svd_policy()        { return policy_state().policy; }
 const char* svd_policy_source() { return policy_state().source.c_str(); }
@@ -547,35 +636,32 @@ SvdBackend svd_backend(unsigned m, unsigned n, unsigned batch) {
     return svd_uses_gpu(m, n, batch) ? svd_gpu_backend(m, n, batch) : SvdBackend::cpu;
 }
 
-namespace {
-
-SvdResult routed(const array& a, bool compute_uv) {
-    unsigned m, n, batch;
-    problem_size(a, m, n, batch);
-    if (a.ndim() < 2 || m == 0 || n == 0 || batch == 0) {
-        return detail::svd_jacobi(a, compute_uv, SvdOptions{});   // validates, handles empties
+void core::svd(const Matrices& a, float* u, float* s, float* vt, uint32_t* info) {
+    const unsigned m = a.rows, n = a.cols, batch = a.batch;
+    if (m == 0 || n == 0 || batch == 0) {
+        core::detail::svd_jacobi(a, SvdOptions{}, u, s, vt, info);   // handles empties
+        return;
     }
     SvdOptions opt;
     switch (svd_backend(m, n, batch)) {
-        case SvdBackend::cpu:             return detail::svd_cpu(a, compute_uv);
-        case SvdBackend::block_jacobi:    return detail::svd_block_jacobi(a, compute_uv, opt);
-        case SvdBackend::qr_jacobi:       opt.kernel = SvdOptions::Kernel::jacobi;
-                                          return detail::svd_qr_jacobi(a, compute_uv, opt);
-        case SvdBackend::qr_block_jacobi: opt.kernel = SvdOptions::Kernel::block;
-                                          return detail::svd_qr_jacobi(a, compute_uv, opt);
-        default:                          return detail::svd_jacobi(a, compute_uv, opt);
+        case SvdBackend::cpu:
+            core::detail::svd_cpu(a, u, s, vt, info);
+            return;
+        case SvdBackend::block_jacobi:
+            core::detail::svd_block_jacobi(a, opt, u, s, vt, info);
+            return;
+        case SvdBackend::qr_jacobi:
+            opt.kernel = SvdOptions::Kernel::jacobi;
+            core::detail::svd_qr_jacobi(a, opt, u, s, vt, info);
+            return;
+        case SvdBackend::qr_block_jacobi:
+            opt.kernel = SvdOptions::Kernel::block;
+            core::detail::svd_qr_jacobi(a, opt, u, s, vt, info);
+            return;
+        default:
+            core::detail::svd_jacobi(a, opt, u, s, vt, info);
+            return;
     }
-}
-
-} // namespace
-
-std::tuple<array, array, array> svd_accelerated(const array& a) {
-    SvdResult r = routed(a, true);
-    return {r.U, r.S, r.Vt};
-}
-
-array svdvals_accelerated(const array& a) {
-    return routed(a, false).S;
 }
 
 } // namespace metal_linalg

@@ -1,11 +1,8 @@
-#include <metal_linalg/svd.h>
-#include <metal_linalg/device.h>
+#include <metal_linalg/core.h>
 #include "metal_runtime.h"
 #include "shaders.h"
 
 #import <Metal/Metal.h>
-
-#include <mlx/mlx.h>
 
 #include <algorithm>
 #include <cmath>
@@ -19,12 +16,15 @@
 #include <utility>
 #include <vector>
 
-using namespace mlx::core;
+using metal_linalg::core::Matrices;
+using metal_linalg::detail::AutoreleasePool;
 using metal_linalg::detail::MetalRuntime;
 using metal_linalg::detail::ScaledInput;
+using metal_linalg::detail::copy_out;
 using metal_linalg::detail::make_pipeline;
 using metal_linalg::detail::pad_up;
-using metal_linalg::detail::prepare_input_scaled;
+using metal_linalg::detail::scaled_input;
+using metal_linalg::detail::transpose_out;
 
 namespace metal_linalg {
 namespace {
@@ -124,45 +124,26 @@ struct Cache {
     }
 };
 
-Shape batch_shape(const Shape& s) { return Shape(s.begin(), s.end() - 2); }
-
-array transpose_last_two(const array& x) {
-    std::vector<int> axes(x.ndim());
-    for (size_t i = 0; i < axes.size(); ++i) axes[i] = (int)i;
-    std::swap(axes[axes.size() - 1], axes[axes.size() - 2]);
-    return transpose(x, axes);
-}
-
 } // namespace
 
-namespace detail {
+namespace core::detail {
 
-SvdResult svd_block_jacobi(const array& a_in, bool compute_uv, const SvdOptions& opt) {
-    if (a_in.ndim() < 2) {
-        throw std::invalid_argument("[svd_block] Input must be at least a 2D matrix.");
-    }
-    const Shape& shape = a_in.shape();
-    const uint M = (uint)shape[shape.size() - 2];
-    const uint N = (uint)shape[shape.size() - 1];
+void svd_block_jacobi(const Matrices& a, const SvdOptions& opt,
+                      float* u_out, float* s_out, float* vt_out, uint32_t* info_out) {
+    const uint M = a.rows;
+    const uint N = a.cols;
     const uint K = std::min(M, N);
     if (K > kBlockMaxK) {
         throw std::invalid_argument("[svd_block] min(M, N)=" + std::to_string(K) + " exceeds the " +
                                     std::to_string(kBlockMaxK) + " supported by the output sort.");
     }
-
-    uint batch = 1;
-    for (size_t i = 0; i + 2 < shape.size(); ++i) batch *= (uint)shape[i];
-
-    Shape s_shape = batch_shape(shape);     s_shape.push_back((int)K);
-    Shape u_shape = shape;                  u_shape[u_shape.size() - 1] = (int)K;
-    Shape vt_shape = shape;                 vt_shape[vt_shape.size() - 2] = (int)K;
-    Shape info_shape = batch_shape(shape);
-
+    const uint batch = a.batch;
+    const bool compute_uv = u_out || vt_out;
     if (K == 0 || batch == 0) {
-        return {zeros(compute_uv ? u_shape : Shape{0}, float32), zeros(s_shape, float32),
-                zeros(compute_uv ? vt_shape : Shape{0}, float32),
-                zeros(info_shape, mlx::core::uint32)};
+        if (info_out) std::fill(info_out, info_out + batch, 0u);
+        return;
     }
+    AutoreleasePool pool;
 
     // The kernels want m >= n; a wide matrix is decomposed through its transpose.
     const bool wide = M < N;
@@ -175,12 +156,12 @@ SvdResult svd_block_jacobi(const array& a_in, bool compute_uv, const SvdOptions&
     const uint n_pairs = nb / 2;
     const uint rounds  = nb - 1;
 
-    // 1. Input, scaled by a power of two per matrix.
-    ScaledInput in = prepare_input_scaled(wide ? transpose_last_two(a_in) : a_in);
-
-    // 2. GPU state.
+    // 1. GPU state.
     static Cache cache;
     id<MTLDevice> dev = cache.rt.device;
+
+    // 2. Input, scaled by a power of two per matrix.
+    ScaledInput in = scaled_input(dev, a, wide);
     Pipelines p  = cache.get_pipelines(compute_uv);
     Workspace ws = cache.get_workspace(batch, m, n, m_pad, n_pad, n_pairs, compute_uv);
 
@@ -189,13 +170,7 @@ SvdResult svd_block_jacobi(const array& a_in, bool compute_uv, const SvdOptions&
         for (uint b = 0; b < batch; ++b) valid[b] = in.nonfinite[b] ? 0u : 1u;
     }
 
-    id<MTLBuffer> buf_src = [dev newBufferWithBytesNoCopy:(void*)in.a.data<float>()
-                                                   length:in.a.nbytes()
-                                                  options:MTLResourceStorageModeShared
-                                              deallocator:nil];
-    if (!buf_src) {
-        throw std::runtime_error("[svd_block] Could not wrap the input array as a Metal buffer.");
-    }
+    id<MTLBuffer> buf_src = in.buffer;
 
     const float rows_eff = (float)std::max({m, opt.effective_rows, kMinEffectiveRows});
     const float eps = std::numeric_limits<float>::epsilon();
@@ -362,30 +337,26 @@ SvdResult svd_block_jacobi(const array& a_in, bool compute_uv, const SvdOptions&
                 std::fill(u_ptr + (size_t)b * m * n, u_ptr + (size_t)(b + 1) * m * n, NAN);
                 std::fill(v_ptr + (size_t)b * n * n, v_ptr + (size_t)(b + 1) * n * n, NAN);
             }
-        } else if (compute_uv && svd_rank_deficient(info[b])) {
-            svd_complete_columns(u_ptr + (size_t)b * m * n, m, n);
+        } else if (compute_uv && metal_linalg::detail::svd_rank_deficient(info[b])) {
+            metal_linalg::detail::svd_complete_columns(u_ptr + (size_t)b * m * n, m, n);
         }
     }
 
-    // 4. Hand off; the singular values are scaled back.
-    array S(static_cast<const float*>(s_ptr), s_shape, float32);
-    if (in.scaled) {
-        Shape f_shape = batch_shape(shape);
-        f_shape.push_back(1);
-        S = multiply(S, reshape(in.unscale, f_shape));
-    }
-    array info_arr(info.data(), info_shape, mlx::core::uint32);
-    if (!compute_uv) {
-        return {zeros(Shape{0}, float32), S, zeros(Shape{0}, float32), info_arr};
-    }
+    // 4. Copy out of the recycled workspace; the singular values are scaled back.
+    copy_out(s_ptr, s_out, batch, n, in.scaled ? &in.unscale : nullptr);
+    if (info_out) std::memcpy(info_out, info.data(), (size_t)batch * sizeof(uint32_t));
+    if (!compute_uv) return;
 
-    Shape uk_shape = batch_shape(shape);  uk_shape.push_back((int)m);  uk_shape.push_back((int)n);
-    Shape vk_shape = batch_shape(shape);  vk_shape.push_back((int)n);  vk_shape.push_back((int)n);
-    array Uk(static_cast<const float*>(u_ptr), uk_shape, float32);
-    array Vtk(static_cast<const float*>(v_ptr), vk_shape, float32);
-    if (!wide) return {Uk, S, Vtk, info_arr};
-    return {contiguous(transpose_last_two(Vtk)), S, contiguous(transpose_last_two(Uk)), info_arr};
+    // Kernel factors: Uk [batch, m, n], Vtk [batch, n, n].
+    if (!wide) {
+        copy_out(u_ptr, u_out, batch, (size_t)m * n);
+        copy_out(v_ptr, vt_out, batch, (size_t)n * n);
+        return;
+    }
+    // A = V' S U'^T:  U = (Vtk)^T  [M, K],   Vt = (Uk)^T  [K, N].
+    transpose_out(v_ptr, u_out, batch, n, n);
+    transpose_out(u_ptr, vt_out, batch, m, n);
 }
 
-} // namespace detail
+} // namespace core::detail
 } // namespace metal_linalg

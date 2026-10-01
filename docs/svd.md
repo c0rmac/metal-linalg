@@ -90,8 +90,12 @@ on the GPU:
   block kernel iff  k >= block_min_k,  or  k >= block_min_k_batched and batch >= block_min_batch
 ```
 
-The CPU path is a fair one: MLX's `svd` through Accelerate, preceded by a thin
-QR when the matrix is tall, so that it too computes thin factors only.
+The CPU path is a fair one: LAPACK (Accelerate) called directly, `sgesdd`,
+preceded by a thin QR (`sgeqrf`, `sorgqr`) when the matrix is at least twice
+as tall as wide, so that it too computes thin factors only. The tables below
+were measured against the earlier CPU path, MLX's `svd` after a thin QR, which
+was as fast on square and wide shapes and 5-25% slower on tall ones; they are
+due to be remeasured.
 
 As for QR and the eigensolver, the policy is a per-device table, keyed on the
 Metal device name and GPU core count:

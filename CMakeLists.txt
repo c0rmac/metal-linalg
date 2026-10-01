@@ -18,6 +18,17 @@ option(METAL_LINALG_BUILD_EXAMPLES "Build the examples (run as tests)" ${METAL_L
 option(METAL_LINALG_BUILD_PYTHON "Build the Python extension (pyproject.toml turns this on)" OFF)
 option(METAL_LINALG_USE_PREBUILT_SHADERS
        "Use shaders/prebuilt/*.metallib instead of compiling the .metal sources" OFF)
+# Without MLX the library is the buffer core alone (core.h, c_api.h): no MLX
+# API, and nothing that needs MLX (tests, benchmarks, examples, Python).
+option(METAL_LINALG_WITH_MLX "Build the MLX API over the core" ON)
+if (NOT METAL_LINALG_WITH_MLX)
+    foreach (_opt METAL_LINALG_BUILD_TESTS METAL_LINALG_BUILD_EXAMPLES METAL_LINALG_BUILD_PYTHON)
+        if (${_opt})
+            message(STATUS "metal-linalg: ${_opt} needs MLX; turned off")
+            set(${_opt} OFF CACHE BOOL "" FORCE)
+        endif ()
+    endforeach ()
+endif ()
 
 # The Python extension must use the very MLX the `mlx` Python package loads, so
 # look where that package says first: a pip-installed mlx carries its own, and
@@ -34,7 +45,9 @@ if (METAL_LINALG_BUILD_PYTHON)
     list(PREPEND CMAKE_PREFIX_PATH "${_mlx_py_root}")
 endif ()
 
-find_package(MLX REQUIRED)
+if (METAL_LINALG_WITH_MLX)
+    find_package(MLX REQUIRED)
+endif ()
 include(GNUInstallDirs)
 
 # =============================================================================
@@ -163,8 +176,12 @@ add_library(metal_linalg ${_ml_kind}
     src/eigh_block_jacobi.mm
     src/svd.mm
     src/svd_block_jacobi.mm
+    src/c_api.cpp
     ${_ml_embedded}
 )
+if (METAL_LINALG_WITH_MLX)
+    target_sources(metal_linalg PRIVATE src/mlx_api.cpp)
+endif ()
 add_library(metal_linalg::metal_linalg ALIAS metal_linalg)
 
 # An absolute install name, so a consumer linked against the installed
@@ -183,14 +200,20 @@ target_include_directories(metal_linalg
     PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
+# The Objective-C++ sources are written for ARC: Metal objects are released
+# when their last reference goes, not leaked per call.
+target_compile_options(metal_linalg PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
+
 # The public headers only need MLX; the frameworks are the library's own, but
 # a static build hands them to the consumer's link line.
-target_link_libraries(metal_linalg
-    PUBLIC  mlx
-    PRIVATE "-framework Metal" "-framework Foundation" "-framework IOKit"
-)
+set(_ml_frameworks "-framework Metal" "-framework MetalPerformanceShaders" "-framework Foundation"
+                   "-framework IOKit" "-framework Accelerate")
+target_link_libraries(metal_linalg PRIVATE ${_ml_frameworks})
+if (METAL_LINALG_WITH_MLX)
+    target_link_libraries(metal_linalg PUBLIC mlx)
+endif ()
 if (NOT METAL_LINALG_SHARED)
-    target_link_libraries(metal_linalg INTERFACE "-framework Metal" "-framework Foundation" "-framework IOKit")
+    target_link_libraries(metal_linalg INTERFACE ${_ml_frameworks})
 endif ()
 
 # =============================================================================
@@ -247,6 +270,16 @@ if (METAL_LINALG_BUILD_TESTS)
     add_test(NAME qr_correctness   COMMAND test_qr)
     add_test(NAME eigh_correctness COMMAND test_eigh)
     add_test(NAME svd_correctness  COMMAND test_svd)
+
+    # The buffer core on its own, without MLX, and the C API compiled as C.
+    add_executable(test_core tests/test_core.cpp)
+    target_link_libraries(test_core PRIVATE metal_linalg)
+    add_test(NAME core_correctness COMMAND test_core)
+    enable_language(C)
+    add_executable(test_c_api tests/test_c_api.c)
+    set_target_properties(test_c_api PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON)
+    target_link_libraries(test_c_api PRIVATE metal_linalg)
+    add_test(NAME c_api COMMAND test_c_api)
 
     metal_linalg_add_tool(benchmark_qr   benchmarks/benchmark_qr.cpp)
     metal_linalg_add_tool(benchmark_eigh benchmarks/benchmark_eigh.cpp)

@@ -1,8 +1,9 @@
 # Using metal-linalg from Objective-C
 
-The library's API is C++, and Objective-C++ (a `.mm` file) calls C++
-directly: the library is itself written in Objective-C++. Nothing else is
-needed. A complete program is [`examples/objc_quickstart.mm`](../examples/objc_quickstart.mm),
+Objective-C++ (a `.mm` file) calls the library's C++ API directly, on MLX
+arrays as below; the library is itself written in Objective-C++. Code that
+holds its matrices in its own memory can skip MLX and use the C API instead,
+from `.m` or `.mm` files: see [Without MLX](#without-mlx). A complete program is [`examples/objc_quickstart.mm`](../examples/objc_quickstart.mm),
 built and run with the other examples by `ctest`.
 
 ```objc
@@ -53,38 +54,34 @@ Macs embeds `libmetal_linalg.dylib` and `libmlx.dylib` in its bundle
 (Frameworks, Libraries and Embedded Content) and sets the runpath to
 `@executable_path/../Frameworks` instead.
 
+## Without MLX
+
+An app that has its matrices in its own memory need not involve MLX at all:
+the C API (plain C, so usable from `.m` files too) and the C++ buffer API
+`<metal_linalg/core.h>` take float buffers directly, with no copies in and
+out of MLX arrays. Build with `-DMETAL_LINALG_WITH_MLX=OFF` to leave MLX out
+of the library as well.
+
+```objc
+#import <Foundation/Foundation.h>
+#include <metal_linalg/c_api.h>
+
+// `matrices`: `batch` symmetric n x n matrices, row-major, one after another.
+NSData* eigenvalues(NSData* matrices, uint32_t batch, uint32_t n, NSError** error) {
+    NSMutableData* w = [NSMutableData dataWithLength:(NSUInteger)batch * n * sizeof(float)];
+    metal_linalg_status st = metal_linalg_eigh(matrices.bytes, batch, n, 1, w.mutableBytes, NULL, NULL);
+    if (st != METAL_LINALG_OK) {
+        if (error) *error = [NSError errorWithDomain:@"metal_linalg" code:st
+                                            userInfo:@{NSLocalizedDescriptionKey: @(metal_linalg_last_error())}];
+        return nil;
+    }
+    return w;
+}
+```
+
+See [docs/c-api.md](c-api.md) for the conventions.
+
 ## From Swift
 
-Swift apps built on [mlx-swift](https://github.com/ml-explore/mlx-swift) use
-its own copy of MLX, so its `MLXArray` cannot be handed to the Homebrew build
-above; a Swift package that does that is in preparation. A Swift app that
-does not use mlx-swift can call metal-linalg through a small Objective-C++
-class that takes and returns plain buffers, exposed to Swift with a bridging
-header:
-
-```objc
-// LinalgBridge.h, imported by the Swift bridging header
-#import <Foundation/Foundation.h>
-@interface LinalgBridge : NSObject
-/// Eigenvalues of `batch` symmetric n x n matrices, row-major; returns batch * n values.
-+ (NSData *)eigenvaluesOf:(NSData *)matrices batch:(NSInteger)batch n:(NSInteger)n;
-@end
-```
-
-```objc
-// LinalgBridge.mm
-#import "LinalgBridge.h"
-#include <metal_linalg/metal_linalg.h>
-#include <mlx/mlx.h>
-namespace mx = mlx::core;
-
-@implementation LinalgBridge
-+ (NSData *)eigenvaluesOf:(NSData *)matrices batch:(NSInteger)batch n:(NSInteger)n {
-    const float* in = static_cast<const float*>(matrices.bytes);
-    mx::array a(in, {(int)batch, (int)n, (int)n}, mx::float32);
-    mx::array w = mx::contiguous(metal_linalg::eigvalsh_accelerated(a));
-    mx::eval({w});
-    return [NSData dataWithBytes:w.data<float>() length:w.nbytes()];
-}
-@end
-```
+Use the Swift package, on `[Float]` or on mlx-swift's `MLXArray`:
+[docs/swift.md](swift.md).

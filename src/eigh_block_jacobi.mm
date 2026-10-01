@@ -1,15 +1,13 @@
-#include <metal_linalg/eigh.h>
-#include <metal_linalg/device.h>
+#include <metal_linalg/core.h>
 #include "metal_runtime.h"
 #include "shaders.h"
 
 #import <Metal/Metal.h>
 
-#include <mlx/mlx.h>
-
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -17,11 +15,15 @@
 #include <utility>
 #include <vector>
 
-using namespace mlx::core;
+using metal_linalg::core::Matrices;
+using metal_linalg::detail::AutoreleasePool;
 using metal_linalg::detail::MetalRuntime;
+using metal_linalg::detail::Part;
+using metal_linalg::detail::copy_out;
+using metal_linalg::detail::input_buffer;
 using metal_linalg::detail::make_pipeline;
 using metal_linalg::detail::pad_up;
-using metal_linalg::detail::prepare_input;
+using metal_linalg::detail::scan;
 
 namespace metal_linalg {
 namespace {
@@ -116,38 +118,27 @@ struct Cache {
     }
 };
 
-Shape batch_shape(const Shape& s) { return Shape(s.begin(), s.end() - 2); }
-
 } // namespace
 
-namespace detail {
+namespace core::detail {
 
-EighResult eigh_block_jacobi(const array& a, bool compute_vectors, bool lower, const EighOptions& opt) {
-    if (a.ndim() < 2) {
-        throw std::invalid_argument("[eigh_block] Input must be at least a 2D matrix.");
-    }
-    const Shape& shape = a.shape();
-    const uint n = (uint)shape[shape.size() - 1];
-    if ((uint)shape[shape.size() - 2] != n) {
+void eigh_block_jacobi(const Matrices& a, bool lower, const EighOptions& opt,
+                       float* w_out, float* v_out, uint32_t* info_out) {
+    const uint n = a.cols;
+    if (a.rows != n) {
         throw std::invalid_argument("[eigh_block] Input matrices must be square.");
     }
     if (n > kBlockMaxN) {
         throw std::invalid_argument("[eigh_block] N=" + std::to_string(n) + " exceeds the " +
                                     std::to_string(kBlockMaxN) + " supported by the output sort.");
     }
-
-    uint batch = 1;
-    for (size_t i = 0; i + 2 < shape.size(); ++i) batch *= (uint)shape[i];
-
-    Shape vals_shape = batch_shape(shape);  vals_shape.push_back((int)n);
-    Shape vecs_shape = shape;
-    Shape info_shape = batch_shape(shape);
-
+    const uint batch = a.batch;
+    const bool compute_vectors = v_out != nullptr;
     if (n == 0 || batch == 0) {
-        return {zeros(vals_shape, float32),
-                zeros(compute_vectors ? vecs_shape : Shape{0}, float32),
-                zeros(info_shape, mlx::core::uint32)};
+        if (info_out) std::fill(info_out, info_out + batch, 0u);
+        return;
     }
+    AutoreleasePool pool;
 
     const uint n_pad   = pad_up(n, kGroup);
     const uint nb      = n_pad / kB;          // even, since n_pad is a multiple of 2b
@@ -156,18 +147,16 @@ EighResult eigh_block_jacobi(const array& a, bool compute_vectors, bool lower, c
 
     // 1. Input, and per-matrix scale / finiteness from the triangle in use.
     //    Junk in the unused triangle must not set the scale.
-    array a_f32 = prepare_input(a);
     std::vector<float> scale(batch, 1.0f);
     std::vector<int>   expo(batch, 0);
     std::vector<char>  nonfinite(batch, 0);
     {
-        array tri  = lower ? tril(a_f32, 0) : triu(a_f32, 0);
-        array amax = reshape(max(abs(tri), std::vector<int>{-2, -1}), {-1});
-        array bad  = reshape(any(logical_or(isnan(tri), isinf(tri)), std::vector<int>{-2, -1}), {-1});
-        eval({amax, bad});
+        std::vector<float> amax(batch);
+        std::vector<char>  finite(batch);
+        scan(a, lower ? Part::lower : Part::upper, amax.data(), finite.data());
         for (uint b = 0; b < batch; ++b) {
-            nonfinite[b] = bad.data<bool>()[b] ? 1 : 0;
-            const float m = amax.data<float>()[b];
+            nonfinite[b] = finite[b] ? 0 : 1;
+            const float m = amax[b];
             if (nonfinite[b] || !(m > 0.0f)) {
                 scale[b] = 0.0f;   // a zero matrix converges in zero sweeps
                 expo[b]  = 0;
@@ -189,13 +178,7 @@ EighResult eigh_block_jacobi(const array& a, bool compute_vectors, bool lower, c
     std::copy(scale.begin(), scale.end(), static_cast<float*>([ws.scale contents]));
     std::copy(expo.begin(),  expo.end(),  static_cast<int*>([ws.expo contents]));
 
-    id<MTLBuffer> buf_src = [dev newBufferWithBytesNoCopy:(void*)a_f32.data<float>()
-                                                   length:a_f32.nbytes()
-                                                  options:MTLResourceStorageModeShared
-                                              deallocator:nil];
-    if (!buf_src) {
-        throw std::runtime_error("[eigh_block] Could not wrap the input array as a Metal buffer.");
-    }
+    id<MTLBuffer> buf_src = input_buffer(dev, a);
 
     const uint inner_sweeps = std::max(1u, opt.inner_sweeps ? opt.inner_sweeps
                                                             : env_uint("EIGH_INNER_SWEEPS", 1));
@@ -364,14 +347,13 @@ EighResult eigh_block_jacobi(const array& a, bool compute_vectors, bool lower, c
         }
     }
 
-    // 4. Hand off (deep copies, so the recycled workspace stays private).
-    array vals(static_cast<const float*>([ws.vals contents]), vals_shape, float32);
-    array info_arr(info.data(), info_shape, mlx::core::uint32);
-    array vecs = compute_vectors
-        ? array(static_cast<const float*>([ws.vecs contents]), vecs_shape, float32)
-        : zeros(Shape{0}, float32);
-    return {vals, vecs, info_arr};
+    // 4. Copy out of the recycled workspace.
+    copy_out(static_cast<const float*>([ws.vals contents]), w_out, batch, n);
+    if (compute_vectors) {
+        copy_out(static_cast<const float*>([ws.vecs contents]), v_out, batch, (size_t)n * n);
+    }
+    if (info_out) std::memcpy(info_out, info.data(), (size_t)batch * sizeof(uint32_t));
 }
 
-} // namespace detail
+} // namespace core::detail
 } // namespace metal_linalg

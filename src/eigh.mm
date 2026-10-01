@@ -1,16 +1,17 @@
-#include <metal_linalg/eigh.h>
-#include <metal_linalg/device.h>
+#ifndef ACCELERATE_NEW_LAPACK
+#define ACCELERATE_NEW_LAPACK   // LAPACK's current interface; before any Accelerate header
+#endif
+#include <metal_linalg/core.h>
 #include "metal_runtime.h"
 #include "shaders.h"
 
 #import <Metal/Metal.h>
-
-#include <mlx/mlx.h>
-#include <mlx/linalg.h>
+#include <Accelerate/Accelerate.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -18,11 +19,15 @@
 #include <utility>
 #include <vector>
 
-using namespace mlx::core;
+using metal_linalg::core::Matrices;
+using metal_linalg::detail::AutoreleasePool;
 using metal_linalg::detail::MetalRuntime;
+using metal_linalg::detail::Part;
+using metal_linalg::detail::copy_out;
+using metal_linalg::detail::input_buffer;
 using metal_linalg::detail::make_pipeline;
 using metal_linalg::detail::pad_up;
-using metal_linalg::detail::prepare_input;
+using metal_linalg::detail::scan;
 
 namespace metal_linalg {
 namespace {
@@ -124,8 +129,6 @@ struct Cache {
         return workspaces[key] = w;
     }
 };
-
-Shape batch_shape(const Shape& s) { return Shape(s.begin(), s.end() - 2); }
 
 // -----------------------------------------------------------------------------
 // Routing policy
@@ -235,36 +238,28 @@ namespace detail {
 unsigned eigh_simd_max_n()  { return policy_state().policy.simd_max_n; }
 unsigned eigh_block_min_n() { return policy_state().policy.block_min_n; }
 
-EighResult eigh_jacobi(const array& a, bool compute_vectors, bool lower, const EighOptions& opt) {
-    if (a.ndim() < 2) {
-        throw std::invalid_argument("[eigh] Input must be at least a 2D matrix.");
-    }
-    const Shape& shape = a.shape();
-    const uint n = (uint)shape[shape.size() - 1];
-    if ((uint)shape[shape.size() - 2] != n) {
+} // namespace detail
+
+namespace core::detail {
+
+void eigh_jacobi(const Matrices& a, bool lower, const EighOptions& opt,
+                 float* w_out, float* v_out, uint32_t* info_out) {
+    const uint n = a.cols;
+    if (a.rows != n) {
         throw std::invalid_argument("[eigh] Input matrices must be square.");
     }
     if (n > 0xFFFFu) {
         throw std::invalid_argument("[eigh] N exceeds the 16-bit index used in threadgroup memory.");
     }
-
-    uint batch = 1;
-    for (size_t i = 0; i + 2 < shape.size(); ++i) batch *= (uint)shape[i];
-
-    Shape vals_shape = batch_shape(shape);  vals_shape.push_back((int)n);
-    Shape vecs_shape = shape;
-    Shape info_shape = batch_shape(shape);
-
+    const uint batch = a.batch;
+    const bool compute_vectors = v_out != nullptr;
     if (n == 0 || batch == 0) {
-        return {zeros(vals_shape, float32),
-                zeros(compute_vectors ? vecs_shape : Shape{0}, float32),
-                zeros(info_shape, mlx::core::uint32)};
+        if (info_out) std::fill(info_out, info_out + batch, 0u);
+        return;
     }
+    AutoreleasePool pool;
 
-    // 1. Input: float32, row-contiguous, materialised, page-aligned.
-    array a_f32 = prepare_input(a);
-
-    // 2. Resolve the launch geometry.
+    // 1. Resolve the launch geometry.
     static Cache cache;
     id<MTLDevice> dev = cache.rt.device;
 
@@ -274,7 +269,7 @@ EighResult eigh_jacobi(const array& a, bool compute_vectors, bool lower, const E
         case EighOptions::Mode::simd:        simd = true;  break;
         case EighOptions::Mode::threadgroup: simd = false; break;
         case EighOptions::Mode::block:       simd = false; break;   // not this backend's call
-        default:                             simd = n <= eigh_simd_max_n(); break;
+        default:                             simd = n <= policy_state().policy.simd_max_n; break;
     }
     if (const char* m = std::getenv("EIGH_MODE")) {
         const std::string s = m;
@@ -352,13 +347,7 @@ EighResult eigh_jacobi(const array& a, bool compute_vectors, bool lower, const E
     // 3. Buffers.
     Workspace ws = cache.get_workspace(batch, n, compute_vectors);
 
-    id<MTLBuffer> buf_src = [dev newBufferWithBytesNoCopy:(void*)a_f32.data<float>()
-                                                   length:a_f32.nbytes()
-                                                  options:MTLResourceStorageModeShared
-                                              deallocator:nil];
-    if (!buf_src) {
-        throw std::runtime_error("[eigh] Could not wrap the input array as a Metal buffer.");
-    }
+    id<MTLBuffer> buf_src = input_buffer(dev, a);
 
     // 4. Dispatch, one command buffer per chunk.
     const size_t mat_bytes = (size_t)n * n * sizeof(float);
@@ -409,7 +398,7 @@ EighResult eigh_jacobi(const array& a, bool compute_vectors, bool lower, const E
     const uint* info_ptr = static_cast<const uint*>([ws.info contents]);
     for (uint b = 0; b < batch; ++b) {
         const uint w = info_ptr[b];
-        if (!eigh_converged(w) && !eigh_nonfinite(w)) {
+        if (!metal_linalg::detail::eigh_converged(w) && !metal_linalg::detail::eigh_nonfinite(w)) {
             throw std::runtime_error("[eigh] Matrix " + std::to_string(b) + " of " +
                                      std::to_string(batch) + " (N=" + std::to_string(n) +
                                      ") did not converge in " + std::to_string(opt.max_sweeps) +
@@ -417,35 +406,67 @@ EighResult eigh_jacobi(const array& a, bool compute_vectors, bool lower, const E
         }
     }
 
-    // 6. Hand off. Constructing from a host pointer makes MLX deep-copy, which
-    // keeps the recycled workspace safe from later use.
-    array vals(static_cast<const float*>([ws.vals contents]), vals_shape, float32);
-    array info(info_ptr, info_shape, mlx::core::uint32);
-    array vecs = compute_vectors
-        ? array(static_cast<const float*>([ws.W contents]), vecs_shape, float32)
-        : zeros(Shape{0}, float32);
-
-    return {vals, vecs, info};
+    // 6. Copy out of the recycled workspace.
+    copy_out(static_cast<const float*>([ws.vals contents]), w_out, batch, n);
+    copy_out(static_cast<const float*>([ws.W contents]), v_out, batch, (size_t)n * n);
+    if (info_out) std::memcpy(info_out, info_ptr, (size_t)batch * sizeof(uint32_t));
 }
 
-} // namespace detail
+void eigh_cpu(const Matrices& a, bool lower, float* w_out, float* v_out, uint32_t* info_out) {
+    const uint32_t n = a.cols, batch = a.batch;
+    if (a.rows != n) {
+        throw std::invalid_argument("[eigh] Input matrices must be square.");
+    }
+    if (n == 0 || batch == 0) {
+        if (info_out) std::fill(info_out, info_out + batch, 0u);
+        return;
+    }
 
-namespace {
+    // LAPACK is column-major, so it sees each matrix transposed: the lower
+    // triangle of the row-major matrix is the upper triangle of the one
+    // LAPACK reads, and its eigenvectors come back as rows.
+    char jobz = v_out ? 'V' : 'N';
+    char uplo = lower ? 'U' : 'L';
+    const size_t per = (size_t)n * n;
+    std::vector<float> work_a(per);
+    __LAPACK_int N = (__LAPACK_int)n, lwork = -1, liwork = -1, err = 0;
+    float lwork_query = 0.0f;
+    __LAPACK_int liwork_query = 0;
+    ssyevd_(&jobz, &uplo, &N, work_a.data(), &N, w_out, &lwork_query, &lwork,
+            &liwork_query, &liwork, &err);
+    lwork  = std::max<__LAPACK_int>(1, (__LAPACK_int)std::ceil(lwork_query));
+    liwork = std::max<__LAPACK_int>(1, liwork_query);
+    std::vector<float>        work(lwork);
+    std::vector<__LAPACK_int> iwork(liwork);
 
-bool parse_uplo(const std::string& uplo, const char* who) {
-    if (uplo == "L" || uplo == "l") return true;
-    if (uplo == "U" || uplo == "u") return false;
-    throw std::invalid_argument(std::string("[") + who + "] uplo must be \"L\" or \"U\".");
+    // Non-finite input gives NaN for that matrix, as on the GPU, rather than
+    // whatever LAPACK makes of it. Only the triangle that is read counts.
+    std::vector<float> amax(batch);
+    std::vector<char>  finite(batch);
+    scan(a, lower ? Part::lower : Part::upper, amax.data(), finite.data());
+
+    for (uint32_t b = 0; b < batch; ++b) {
+        float* w = w_out + (size_t)b * n;
+        if (!finite[b]) {
+            std::fill(w, w + n, NAN);
+            if (v_out) std::fill(v_out + b * per, v_out + (b + 1) * per, NAN);
+            if (info_out) info_out[b] = 1u << 17;
+            continue;
+        }
+        std::memcpy(work_a.data(), a.data + b * per, per * sizeof(float));
+        ssyevd_(&jobz, &uplo, &N, work_a.data(), &N, w, work.data(), &lwork,
+                iwork.data(), &liwork, &err);
+        if (err != 0) {
+            throw std::runtime_error("[eigh] LAPACK ssyevd failed on matrix " + std::to_string(b) +
+                                     " of " + std::to_string(batch) + " (N=" + std::to_string(n) +
+                                     "), info " + std::to_string((long long)err) + ".");
+        }
+        if (v_out) vDSP_mtrans(work_a.data(), 1, v_out + b * per, 1, n, n);
+        if (info_out) info_out[b] = 1u | (1u << 16);
+    }
 }
 
-void problem_size(const array& a, unsigned& n, unsigned& batch) {
-    const Shape& s = a.shape();
-    n = a.ndim() >= 2 ? (unsigned)s[s.size() - 1] : 0;
-    batch = 1;
-    for (size_t i = 0; i + 2 < s.size(); ++i) batch *= (unsigned)s[i];
-}
-
-} // namespace
+} // namespace core::detail
 
 EighPolicy  eigh_policy()        { return policy_state().policy; }
 const char* eigh_policy_source() { return policy_state().source.c_str(); }
@@ -479,15 +500,22 @@ EighBackend eigh_backend(unsigned n, unsigned batch) {
     return eigh_uses_gpu(n, batch) ? eigh_gpu_backend(n, batch) : EighBackend::cpu;
 }
 
-namespace {
-
-// The GPU backend split, as the policy has it.
-EighResult gpu_eigh(const array& a, bool vectors, bool lower, unsigned n, unsigned batch) {
+void core::eigh(const Matrices& a, bool lower, float* w, float* v, uint32_t* info) {
+    if (a.rows != a.cols) {
+        throw std::invalid_argument("[eigh] Input matrices must be square.");
+    }
+    const unsigned n = a.cols, batch = a.batch;
+    if (n > 0 && batch > 0 && !eigh_uses_gpu(n, batch)) {
+        core::detail::eigh_cpu(a, lower, w, v, info);
+        return;
+    }
+    // The GPU backend split, as the policy has it.
     EighOptions opt;
     switch (eigh_gpu_backend(n, batch)) {
         case EighBackend::block:
             opt.mode = EighOptions::Mode::block;
-            return detail::eigh_block_jacobi(a, vectors, lower, opt);
+            core::detail::eigh_block_jacobi(a, lower, opt, w, v, info);
+            return;
         case EighBackend::simd:
             opt.mode = EighOptions::Mode::simd;
             break;
@@ -495,30 +523,7 @@ EighResult gpu_eigh(const array& a, bool vectors, bool lower, unsigned n, unsign
             opt.mode = EighOptions::Mode::threadgroup;
             break;
     }
-    return detail::eigh_jacobi(a, vectors, lower, opt);
-}
-
-} // namespace
-
-std::pair<array, array> eigh_accelerated(const array& a, const std::string& uplo) {
-    const bool lower = parse_uplo(uplo, "eigh");
-    unsigned n, batch;
-    problem_size(a, n, batch);
-    if (n > 0 && batch > 0 && !eigh_uses_gpu(n, batch)) {
-        return linalg::eigh(astype(a, float32), lower ? "L" : "U", Device::cpu);
-    }
-    EighResult r = gpu_eigh(a, true, lower, n, batch);
-    return {r.eigenvalues, r.eigenvectors};
-}
-
-array eigvalsh_accelerated(const array& a, const std::string& uplo) {
-    const bool lower = parse_uplo(uplo, "eigvalsh");
-    unsigned n, batch;
-    problem_size(a, n, batch);
-    if (n > 0 && batch > 0 && !eigh_uses_gpu(n, batch)) {
-        return linalg::eigvalsh(astype(a, float32), lower ? "L" : "U", Device::cpu);
-    }
-    return gpu_eigh(a, false, lower, n, batch).eigenvalues;
+    core::detail::eigh_jacobi(a, lower, opt, w, v, info);
 }
 
 } // namespace metal_linalg
