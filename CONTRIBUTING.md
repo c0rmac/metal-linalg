@@ -15,6 +15,7 @@ under its own ID, and the runs for a Mac are combined.
   - [3. Send the results as a pull request](#3-send-the-results-as-a-pull-request)
   - [What happens next](#what-happens-next)
 - [Other contributions](#other-contributions)
+- [Releases](#releases)
 
 ## Measure your Mac
 
@@ -140,3 +141,42 @@ update_prebuilt_shaders` to refresh the compiled copies in
 `shaders/prebuilt/`, which the Swift package and builds without the compiler
 use. Changing what a kernel does changes the measurements behind the routing;
 say so in the pull request, and the maintainers will arrange remeasuring.
+
+## Releases
+
+Releases are automatic. Every update to `main` that changes the library
+(anything beyond `docs/`, Markdown files and `.github/`) makes the
+[Release](.github/workflows/release.yml) workflow publish the next version:
+
+1. **The version.** The one in `CMakeLists.txt`'s `project()` is released as
+   it is if it has no tag yet; otherwise the patch number goes up by one, and
+   the workflow commits the new version (`CMakeLists.txt`, `pyproject.toml`)
+   to `main`. To start a minor or major version, set it in both files by hand.
+2. **The release.** A `vX.Y.Z` tag and a GitHub release, with that version's
+   `CHANGELOG.md` section as notes when there is one. GitHub attaches the
+   source tarball, which is what Homebrew builds.
+3. **Homebrew.** The formula in
+   [c0rmac/homebrew-metal-linalg](https://github.com/c0rmac/homebrew-metal-linalg)
+   is pointed at the new tarball and its checksum.
+
+A pull request that adds measurements is released once the Tuned policies
+workflow has turned them into tables.
+
+Step 3 needs a token that can push to the tap repository, kept in this
+repository as the secret `HOMEBREW_TAP_TOKEN`. To set it up once:
+
+1. On GitHub, **Settings > Developer settings > Personal access tokens >
+   Fine-grained tokens > Generate new token**. Give it access to *only* the
+   tap repositories (`homebrew-metal-linalg`, and `homebrew-isomorphism` if
+   isomorphism uses the same token), with the permission **Contents: Read and
+   write**.
+2. Store it in this repository (it prompts for the token, so it never
+   appears in your shell history):
+
+   ```bash
+   gh secret set HOMEBREW_TAP_TOKEN --repo c0rmac/metal-linalg
+   ```
+
+Without the secret, releases are still made, and each run's summary gives the
+two formula lines to change by hand. A token expires: when it does, generate a
+new one and set the secret again.

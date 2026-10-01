@@ -136,7 +136,7 @@ Tap it, then install:
 
 ```bash
 brew tap c0rmac/metal-linalg
-brew install --HEAD metal-linalg      # --HEAD until the first release is tagged
+brew install metal-linalg
 ```
 
 This builds and installs `libmetal_linalg.dylib`, the headers under
@@ -191,7 +191,7 @@ static, folded into your binary, and installs nothing of its own:
 add_subdirectory(path/to/metal-linalg)          # or:
 include(FetchContent)
 FetchContent_Declare(metal_linalg
-    GIT_REPOSITORY https://github.com/c0rmac/metal-linalg.git GIT_TAG main)   # a version tag once released
+    GIT_REPOSITORY https://github.com/c0rmac/metal-linalg.git GIT_TAG v2.0.0)   # or main, for the latest
 FetchContent_MakeAvailable(metal_linalg)
 
 target_link_libraries(my_app PRIVATE metal_linalg::metal_linalg)
@@ -306,8 +306,7 @@ The repository is a Swift package with two libraries: `MetalLinalg`, on
 
 ```swift
 dependencies: [
-    // the main branch until the first release is tagged; then from: "<version>"
-    .package(url: "https://github.com/c0rmac/metal-linalg.git", branch: "main"),
+    .package(url: "https://github.com/c0rmac/metal-linalg.git", from: "2.0.0"),
 ],
 targets: [
     .target(name: "MyApp", dependencies: [

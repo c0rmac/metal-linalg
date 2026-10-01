@@ -1,0 +1,84 @@
+name: Release
+
+# Every update to main that changes the library publishes the next release:
+# a vX.Y.Z tag, a GitHub release (whose source tarball is what Homebrew
+# builds), and the formula in c0rmac/homebrew-metal-linalg pointed at it.
+#
+# The version: the one in CMakeLists.txt's project() is released as it is if
+# it has no tag yet, so edit it by hand to start 2.1.0 or 3.0.0; otherwise the
+# patch number goes up by one and the new version is committed to main.
+# Changes to docs/, Markdown files and .github/ alone release nothing.
+#
+# A push that adds measurements (docs/results/, tuning/) is released after the
+# Tuned policies workflow has turned them into tables: that workflow's own
+# commit cannot trigger this one, so this one runs when it finishes.
+#
+# Updating the tap needs the secret HOMEBREW_TAP_TOKEN; see CONTRIBUTING.md,
+# "Releases". Without it the release is still made, and the job summary
+# gives the formula change to make by hand. Logic: .github/release.py.
+
+on:
+  push:
+    branches: [main]
+  workflow_run:
+    workflows: ["Tuned policies"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Decide the version
+        id: plan
+        env:
+          RELEASE_IGNORE: "docs/ .github/ *.md"
+          RELEASE_DEFER: "docs/results/ tuning/"
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+        run: python3 .github/release.py plan >> "$GITHUB_OUTPUT"
+
+      - name: Commit the new version
+        if: steps.plan.outputs.skip == 'false' && steps.plan.outputs.bump == 'true'
+        env:
+          RELEASE_VERSION_FILES: "CMakeLists.txt pyproject.toml"
+        run: |
+          python3 .github/release.py set-version "${{ steps.plan.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Release v${{ steps.plan.outputs.version }}"
+          git push origin HEAD:main
+
+      - name: Tag and publish the release
+        if: steps.plan.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="v${{ steps.plan.outputs.version }}"
+          git tag "$v"
+          git push origin "$v"
+          python3 .github/release.py notes "${{ steps.plan.outputs.version }}" > notes.md
+          if [ -s notes.md ]; then
+            gh release create "$v" --title "$v" --notes-file notes.md
+          else
+            gh release create "$v" --title "$v" --generate-notes
+          fi
+
+      - name: Point the Homebrew formula at it
+        if: steps.plan.outputs.skip == 'false'
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: python3 .github/release.py tap "${{ steps.plan.outputs.version }}" c0rmac/homebrew-metal-linalg
