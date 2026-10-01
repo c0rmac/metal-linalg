@@ -29,6 +29,32 @@ policy measured on the device it runs on. MLX's own `linalg::eigh` and
 > people with the same Mac are combined. Contributions are what keep the
 > library up to date as Apple ships new chips: [how to contribute](docs/tuning.md).
 
+## Contents
+
+- [What it provides](#what-it-provides)
+- [Installation](#installation):
+  [with Homebrew](#with-homebrew),
+  [from source](#from-source),
+  [requirements and build options](#requirements-and-build-options)
+- [Quick start](#quick-start)
+- [Examples](#examples):
+  [orthonormal bases with QR](#orthonormal-bases-with-qr),
+  [principal components with eigh](#principal-components-with-eigh),
+  [nearest orthogonal matrix with the SVD](#nearest-orthogonal-matrix-with-the-svd),
+  [seeing and changing the routing](#seeing-and-changing-the-routing)
+- [Using it in a CMake project](#using-it-in-a-cmake-project):
+  [against the installed package](#against-the-installed-package),
+  [built from source inside your project](#built-from-source-inside-your-project)
+- [Using it from Python](#using-it-from-python)
+- [Using it from C, Swift and Objective-C](#using-it-from-c-swift-and-objective-c):
+  [C](#c), [Swift and Objective-C](#swift-and-objective-c)
+- [Where the GPU wins](#where-the-gpu-wins)
+- [API at a glance](#api-at-a-glance)
+- [Per-device routing](#per-device-routing)
+- [Tests, benchmarks and tuning](#tests-benchmarks-and-tuning)
+- [Layout](#layout)
+- [Documentation](#documentation)
+
 ## What it provides
 
 | operation | functions | GPU kernels | CPU path | details |
@@ -45,6 +71,8 @@ rest of its batch intact. The QR and SVD factors are the thin ones,
 
 ## Installation
 
+### With Homebrew
+
 ```bash
 brew install c0rmac/metal-linalg/metal-linalg
 ```
@@ -55,7 +83,7 @@ embedded in the library, so nothing is looked up on disk at run time and
 nothing needs the Metal compiler. The formula lives in its own tap,
 [c0rmac/homebrew-metal-linalg](https://github.com/c0rmac/homebrew-metal-linalg).
 
-From source:
+### From source
 
 ```bash
 git clone https://github.com/c0rmac/metal-linalg.git
@@ -64,6 +92,8 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/opt/homebrew
 cmake --build build -j
 cmake --install build          # or --prefix <dir>
 ```
+
+### Requirements and build options
 
 **Requirements:** an Apple Silicon Mac, MLX (`brew install mlx`), CMake 3.25
 or later and a C++20 compiler (Xcode's clang). The Metal shader compiler is
@@ -147,16 +177,20 @@ with, the GPU as the default MLX device.
 Each of these is a complete program in [`examples/`](examples/), built with
 the tests and run by `ctest`, so it stays correct.
 
-**Orthonormal bases with QR** ([`orthonormal_bases.cpp`](examples/orthonormal_bases.cpp)):
-10,000 sets of 4 vectors in R^16, orthonormalised in one call.
+### Orthonormal bases with QR
+
+[`orthonormal_bases.cpp`](examples/orthonormal_bases.cpp): 10,000 sets of 4
+vectors in R^16, orthonormalised in one call.
 
 ```cpp
 mx::array vectors = mx::random::normal({10000, 16, 4});
 auto [Q, R] = metal_linalg::qr_accelerated(vectors);        // Q [10000, 16, 4], Q^T Q = I
 ```
 
-**Principal components with eigh** ([`pca.cpp`](examples/pca.cpp)): the
-dominant direction of each of 1000 point clouds, from the eigenvector of its
+### Principal components with eigh
+
+[`pca.cpp`](examples/pca.cpp): the dominant direction of each of 1000 point
+clouds, from the eigenvector of its
 covariance with the largest eigenvalue. Eigenvalues come back ascending, so
 that is the last column.
 
@@ -170,8 +204,9 @@ mx::array principal = mx::take(components, 7, -1);          // [1000, 8], one ax
 `eigvalsh_accelerated(cov)` returns the eigenvalues alone, for about a third
 less work.
 
-**Nearest orthogonal matrix with the SVD**
-([`nearest_orthogonal.cpp`](examples/nearest_orthogonal.cpp)): projecting
+### Nearest orthogonal matrix with the SVD
+
+[`nearest_orthogonal.cpp`](examples/nearest_orthogonal.cpp): projecting
 100,000 noisy 3×3 matrices back onto the orthogonal group (the orthogonal
 Procrustes problem). If M = U S V^T, the nearest orthogonal matrix is U V^T.
 
@@ -183,8 +218,10 @@ mx::array nearest = mx::matmul(U, Vt);
 `svdvals_accelerated(a)` returns the singular values alone, for about half
 the work.
 
-**Seeing and changing the routing** ([`routing.cpp`](examples/routing.cpp)):
-which kernel a shape will get on this machine, and why.
+### Seeing and changing the routing
+
+[`routing.cpp`](examples/routing.cpp): which kernel a shape will get on this
+machine, and why.
 
 ```cpp
 std::printf("%s, %u GPU cores, eigh policy from %s\n", metal_linalg::device_name(),
@@ -203,19 +240,20 @@ The same can be done without recompiling through environment variables, e.g.
 `EIGH_GPU_MIN_BATCH=1` or `SVD_DEVICE=gpu`; [docs/tuning.md](docs/tuning.md)
 lists them.
 
-
 ## Using it in a CMake project
 
-Against the installed package:
+### Against the installed package
 
 ```cmake
 find_package(MetalLinalg REQUIRED)
 target_link_libraries(my_app PRIVATE metal_linalg::metal_linalg)
 ```
 
-Or built from source inside your own project, so that the shaders and routing
-tables are those of the checkout. As a subproject the library is static,
-folded into your binary, and installs nothing of its own:
+### Built from source inside your project
+
+Built as part of your own project, the library uses the shaders and routing
+tables of the checkout you point it at. As a subproject it is static, folded
+into your binary, and installs nothing of its own:
 
 ```cmake
 add_subdirectory(path/to/metal-linalg)          # or:
@@ -254,6 +292,8 @@ including Homebrew's Python.
 
 ## Using it from C, Swift and Objective-C
 
+### C
+
 Under the MLX API is a core that works on plain float buffers (row-major,
 the matrices of a batch one after another) and has no MLX in it:
 `<metal_linalg/core.h>` in C++, and the same through a C API,
@@ -265,7 +305,9 @@ metal_linalg_status st = metal_linalg_eigh(a, /*batch*/ 2, /*n*/ 64, /*lower*/ 1
 if (st != METAL_LINALG_OK) fprintf(stderr, "%s\n", metal_linalg_last_error());
 ```
 
-The Swift package wraps it, on `[Float]` and on `MLXArray`:
+### Swift and Objective-C
+
+The Swift package wraps the C API, on `[Float]` and on `MLXArray`:
 
 ```swift
 // .package(url: "https://github.com/c0rmac/metal-linalg.git", from: "2.0.0")
