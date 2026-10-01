@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(metal_linalg VERSION 2.0.0 LANGUAGES CXX OBJCXX
+project(metal_linalg VERSION 2.0.1 LANGUAGES CXX OBJCXX
         DESCRIPTION "QR, symmetric eigendecomposition and SVD on Apple GPUs, for MLX")
 
 set(CMAKE_CXX_STANDARD 20)
