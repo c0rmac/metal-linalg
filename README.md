@@ -33,19 +33,24 @@ policy measured on the device it runs on. MLX's own `linalg::eigh` and
 
 - [Overview](#overview)
   - [What it provides](#what-it-provides)
+  - [Platforms](#platforms)
   - [Where the GPU wins](#where-the-gpu-wins)
   - [How calls are routed](#how-calls-are-routed)
-- [Getting started](#getting-started)
-  - [Requirements](#requirements)
+- [C++](#c)
   - [Install with Homebrew](#install-with-homebrew)
   - [Build from source](#build-from-source)
+  - [Use it in a CMake project](#use-it-in-a-cmake-project)
   - [Quick start](#quick-start)
-- [Using it](#using-it)
-  - [In a CMake project](#in-a-cmake-project)
-  - [From Python](#from-python)
-  - [From C](#from-c)
-  - [From Swift](#from-swift)
-  - [From Objective-C](#from-objective-c)
+- [Python](#python)
+  - [Install](#install)
+  - [Quick start](#quick-start-1)
+- [Swift](#swift)
+  - [Install](#install-1)
+  - [Quick start](#quick-start-2)
+- [C and Objective-C](#c-and-objective-c)
+  - [Install](#install-2)
+  - [Quick start](#quick-start-3)
+  - [Objective-C](#objective-c)
 - [Examples](#examples)
   - [Orthonormal bases with QR](#orthonormal-bases-with-qr)
   - [Principal components with eigh](#principal-components-with-eigh)
@@ -73,6 +78,17 @@ any magnitude from 1e-30 to 1e+37, rank-deficient or not. The eigensolver and
 the SVD return NaN for a non-finite matrix rather than raising, leaving the
 rest of its batch intact. The QR and SVD factors are the thin ones,
 `K = min(M, N)`.
+
+### Platforms
+
+The same solvers and routing, from four places, each on an Apple Silicon Mac:
+
+| platform | works on | install | |
+|---|---|---|---|
+| C++ | MLX arrays (`mlx::core::array`) | Homebrew, or CMake from source | [C++](#c) |
+| Python | MLX arrays (`mlx.core.array`) | `pip` | [Python](#python) |
+| Swift | `[Float]`, or mlx-swift's `MLXArray` | Swift Package Manager | [Swift](#swift) |
+| C and Objective-C | plain float buffers, no MLX | as for C++ | [C and Objective-C](#c-and-objective-c) |
 
 ### Where the GPU wins
 
@@ -110,19 +126,7 @@ misses GPU wins rather than routing work to a kernel that takes seconds.
 Every threshold can also be overridden with an environment variable or
 `set_*_policy()`; see [seeing and changing the routing](#seeing-and-changing-the-routing).
 
-## Getting started
-
-### Requirements
-
-- An Apple Silicon Mac.
-- MLX (`brew install mlx`), for the MLX API. The C API and the buffer API
-  build without it.
-- CMake 3.25 or later, and a C++20 compiler (Xcode's clang).
-- The Metal shader compiler only to change a shader: without it the build
-  uses the compiled shaders committed under `shaders/prebuilt/`. From Xcode 26
-  it is a separate download (`xcodebuild -downloadComponent MetalToolchain`);
-  after editing a shader with it, `cmake --build build --target
-  update_prebuilt_shaders` refreshes `shaders/prebuilt/`.
+## C++
 
 ### Install with Homebrew
 
@@ -144,6 +148,14 @@ from another formula are covered in
 
 ### Build from source
 
+You need CMake 3.25 or later, a C++20 compiler (Xcode's clang) and MLX
+(`brew install mlx`). The Metal shader compiler is needed only to change a
+shader: without it the build uses the compiled shaders committed under
+`shaders/prebuilt/`. From Xcode 26 it is a separate download (`xcodebuild
+-downloadComponent MetalToolchain`); after editing a shader with it,
+`cmake --build build --target update_prebuilt_shaders` refreshes
+`shaders/prebuilt/`.
+
 ```bash
 git clone https://github.com/c0rmac/metal-linalg.git
 cd metal-linalg
@@ -161,6 +173,29 @@ Build options:
 | `METAL_LINALG_BUILD_TESTS` | `ON` when built on its own, `OFF` as a subproject | the tests, benchmarks and tuning harnesses |
 | `METAL_LINALG_BUILD_EXAMPLES` | that of `METAL_LINALG_BUILD_TESTS` | the examples, run as tests |
 | `METAL_LINALG_USE_PREBUILT_SHADERS` | `OFF`, and `ON` without a Metal compiler | the metallibs in `shaders/prebuilt/` instead of compiling the shaders |
+
+### Use it in a CMake project
+
+Against the installed package:
+
+```cmake
+find_package(MetalLinalg REQUIRED)
+target_link_libraries(my_app PRIVATE metal_linalg::metal_linalg)
+```
+
+Or built as part of your own project, so that the library uses the shaders
+and routing tables of the checkout you point it at. As a subproject it is
+static, folded into your binary, and installs nothing of its own:
+
+```cmake
+add_subdirectory(path/to/metal-linalg)          # or:
+include(FetchContent)
+FetchContent_Declare(metal_linalg
+    GIT_REPOSITORY https://github.com/c0rmac/metal-linalg.git GIT_TAG main)   # a version tag once released
+FetchContent_MakeAvailable(metal_linalg)
+
+target_link_libraries(my_app PRIVATE metal_linalg::metal_linalg)
+```
 
 ### Quick start
 
@@ -226,32 +261,26 @@ steps, such as undoing the input scaling, come back as ordinary lazy arrays,
 so `eval` the results as usual. The functions are written for, and tested
 with, the GPU as the default MLX device.
 
-## Using it
+## Python
 
-### In a CMake project
+### Install
 
-Against the installed package:
+You need an Apple Silicon Mac, Python 3.10 or later, Xcode's command line
+tools (`xcode-select --install`) and CMake (`brew install cmake`). The
+package is compiled on your Mac against the MLX you have installed, so that
+it shares MLX's arrays without copying:
 
-```cmake
-find_package(MetalLinalg REQUIRED)
-target_link_libraries(my_app PRIVATE metal_linalg::metal_linalg)
+```bash
+pip install mlx scikit-build-core "nanobind==2.15.0"
+pip install --no-build-isolation git+https://github.com/c0rmac/metal-linalg.git
 ```
 
-Or built as part of your own project, so that the library uses the shaders
-and routing tables of the checkout you point it at. As a subproject it is
-static, folded into your binary, and installs nothing of its own:
+The nanobind version has to match the one your MLX was built with (2.15.0 for
+MLX 0.32), and the build checks it. After upgrading MLX, reinstall the
+package. [python/README.md](python/README.md) has the details, including
+Homebrew's Python.
 
-```cmake
-add_subdirectory(path/to/metal-linalg)          # or:
-include(FetchContent)
-FetchContent_Declare(metal_linalg
-    GIT_REPOSITORY https://github.com/c0rmac/metal-linalg.git GIT_TAG v2.0.0)
-FetchContent_MakeAvailable(metal_linalg)
-
-target_link_libraries(my_app PRIVATE metal_linalg::metal_linalg)
-```
-
-### From Python
+### Quick start
 
 ```python
 import mlx.core as mx
@@ -264,19 +293,61 @@ w, V = ml.eigh(a.swapaxes(-1, -2) @ a)
 ml.eigh_backend(512, 1)      # 'cpu': which backend a shape gets on this Mac
 ```
 
-The package is compiled against the MLX you have installed, so it shares
-MLX's arrays without copying:
+Inputs may be `mx.array`, NumPy arrays or nested lists; outputs are float32
+`mx.array`. `ml.eigvalsh` and `ml.svdvals` return the values alone.
 
-```bash
-pip install mlx scikit-build-core "nanobind==2.15.0"
-pip install --no-build-isolation git+https://github.com/c0rmac/metal-linalg.git
+## Swift
+
+### Install
+
+The repository is a Swift package with two libraries: `MetalLinalg`, on
+`[Float]`, which needs nothing else, and `MetalLinalgMLX`, on mlx-swift's
+`MLXArray`. macOS 14 or later, on Apple Silicon. In `Package.swift`:
+
+```swift
+dependencies: [
+    // the main branch until the first release is tagged; then from: "<version>"
+    .package(url: "https://github.com/c0rmac/metal-linalg.git", branch: "main"),
+],
+targets: [
+    .target(name: "MyApp", dependencies: [
+        .product(name: "MetalLinalg", package: "metal-linalg"),        // or "MetalLinalgMLX"
+    ]),
+]
 ```
 
-The nanobind version has to match the one your MLX was built with, and the
-build checks it. [python/README.md](python/README.md) has the details,
-including Homebrew's Python.
+or in Xcode, File > Add Package Dependencies, with the repository's URL.
 
-### From C
+### Quick start
+
+```swift
+import MetalLinalg
+
+// Two symmetric 64 x 64 matrices, row-major, one after the other.
+let (w, v) = try eighAccelerated(a, batch: 2, n: 64)       // w ascending, v's columns the vectors
+```
+
+```swift
+import MLX
+import MetalLinalgMLX
+
+let a = MLXRandom.normal([1000, 64, 32])
+let (q, r) = try qrAccelerated(a)
+let (u, s, vt) = try svdAccelerated(a)
+```
+
+Errors are thrown as `MetalLinalgError`. [docs/swift.md](docs/swift.md) has
+the whole API and how the package is built.
+
+## C and Objective-C
+
+### Install
+
+The C API is part of the library: install it as for [C++](#c), with Homebrew
+or from source. To leave MLX out of the library altogether, build from
+source with `-DMETAL_LINALG_WITH_MLX=OFF`.
+
+### Quick start
 
 Under the MLX API is a core that works on plain float buffers (row-major,
 the matrices of a batch one after another) and has no MLX in it:
@@ -284,28 +355,30 @@ the matrices of a batch one after another) and has no MLX in it:
 `<metal_linalg/c_api.h>`:
 
 ```c
-float w[2 * 64], v[2 * 64 * 64];
-metal_linalg_status st = metal_linalg_eigh(a, /*batch*/ 2, /*n*/ 64, /*lower*/ 1, w, v, NULL);
-if (st != METAL_LINALG_OK) fprintf(stderr, "%s\n", metal_linalg_last_error());
+#include <metal_linalg/c_api.h>
+#include <stdio.h>
+
+int main(void) {
+    /* Two symmetric 2 x 2 matrices, row-major, one after the other. */
+    const float a[8] = {2, 1, 1, 2,   4, 0, 0, 1};
+    float w[4], v[8];
+    if (metal_linalg_eigh(a, 2, 2, /*lower*/ 1, w, v, NULL) != METAL_LINALG_OK) {
+        fprintf(stderr, "eigh failed: %s\n", metal_linalg_last_error());
+        return 1;
+    }
+    printf("%g %g | %g %g\n", w[0], w[1], w[2], w[3]);   /* 1 3 | 1 4 */
+    return 0;
+}
+```
+
+```bash
+cc -std=c99 main.c -I/opt/homebrew/include -L/opt/homebrew/lib -lmetal_linalg -o main
 ```
 
 The conventions (layout, optional outputs, errors) are in
 [docs/c-api.md](docs/c-api.md).
 
-### From Swift
-
-The Swift package wraps the C API, on `[Float]` (`MetalLinalg`) and on
-mlx-swift's `MLXArray` (`MetalLinalgMLX`):
-
-```swift
-// .package(url: "https://github.com/c0rmac/metal-linalg.git", from: "2.0.0")
-import MetalLinalg
-let (w, v) = try eighAccelerated(a, batch: 2, n: 64)
-```
-
-See [docs/swift.md](docs/swift.md).
-
-### From Objective-C
+### Objective-C
 
 Objective-C++ (`.mm`) calls the C++ API directly, on MLX arrays; any
 Objective-C file can call the C API on its own buffers, with no MLX. See
@@ -313,8 +386,8 @@ Objective-C file can call the C API on its own buffers, with no MLX. See
 
 ## Examples
 
-Each of these is a complete program in [`examples/`](examples/), built with
-the tests and run by `ctest`, so it stays correct.
+In C++. Each is a complete program in [`examples/`](examples/), built with the
+tests and run by `ctest`, so it stays correct.
 
 ### Orthonormal bases with QR
 

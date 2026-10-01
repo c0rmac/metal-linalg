@@ -10,7 +10,8 @@ The repository is a Swift package with two libraries:
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/c0rmac/metal-linalg.git", from: "2.0.0"),
+    // the main branch until the first release is tagged; then from: "<version>"
+    .package(url: "https://github.com/c0rmac/metal-linalg.git", branch: "main"),
 ],
 targets: [
     .target(name: "MyApp", dependencies: [

@@ -28,7 +28,7 @@ functions are written for, and tested with, the GPU as the default MLX device.
 
 ## Building
 
-**With CMake**, as for C++ (see the [README](../README.md#in-a-cmake-project)),
+**With CMake**, as for C++ (see the [README](../README.md#use-it-in-a-cmake-project)),
 with Objective-C++ enabled:
 
 ```cmake
