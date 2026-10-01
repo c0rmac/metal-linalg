@@ -16,8 +16,15 @@ now covers three decompositions, and is packaged as a library.
   tall input, with a per-device route to the CPU. See [docs/svd.md](docs/svd.md).
 - **Per-device routing policies** for all three solvers, measured on an Apple
   M1 (QR, eigh) and an Apple M5 Pro (all three), with environment and
-  programmatic overrides, and harnesses to measure a new device
-  (`tuning/tune_{qr,eigh,svd}.py`, [docs/tuning.md](docs/tuning.md)). For QR
+  programmatic overrides.
+- **Measuring a Mac is one command**, `python3 tuning/run.py`: it checks the
+  machine, builds, tests, measures all three decompositions and writes a
+  uniquely named submission (`docs/results/<device>/<date>-<random>/`), so any
+  number of people with the same Mac can contribute.
+  The library's per-device tables (`src/tuned/`) are generated from every
+  run submitted for each device, by `tuning/generate_tables.py`, which a
+  GitHub Action runs on each results pull request (to validate it and show the
+  effect) and after each merge (to apply it). See [docs/tuning.md](docs/tuning.md). For QR
   this replaces the fixed rule of 1.0 with a crossover on the row count alone,
   measured over square, tall, wide and near-square shapes
   ([study](docs/studies/qr-routing-apple-m1.md)).
@@ -25,6 +32,9 @@ now covers three decompositions, and is packaged as a library.
 - `<metal_linalg/metal_linalg.h>`, which includes everything.
 - `qr_backend(m, n, batch)`, like `eigh_backend` and `svd_backend`.
 - `sweep_qr --policy`, like the other two sweeps.
+- `examples/`: five self-checking programs (a quick start, orthonormal bases
+  with QR, PCA with eigh, the nearest orthogonal matrix with the SVD, and the
+  routing queries), built with the tests and run by `ctest`.
 
 ### Packaging
 

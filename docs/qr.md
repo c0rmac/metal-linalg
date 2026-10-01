@@ -249,34 +249,13 @@ the M5 Pro the second effect won.
 `qr_policy_source()` reports `default:untuned-device (<name>)` on any GPU
 without a table entry, so an untuned device is visible rather than silent.
 
-Step-by-step instructions for measuring another device are in [`tuning.md`](tuning.md).
-
-**To retune** (about three minutes; `--full` for a denser grid):
-
-```sh
-cmake --build build --target sweep_qr
-python3 tuning/tune_qr.py build/sweep_qr
-```
-
-This writes `qr-tune-results/`:
-
-- `report.md` — a written report in the same shape as the M1 findings
-- `results.json` — plot-ready series, decision surface, rule comparison, noise floor
-- `raw.csv` — every timing, so the analysis can be redone without remeasuring
-
-It prints a paste-ready `kTuned[]` entry. It also re-tests the refinements that
-failed on an M1 rather than assuming they fail everywhere — a batch-dependent
-split could genuinely be justified on a GPU with far more cores — and warns if
-`M` is no longer the best feature on your hardware, which would be a structural
-change rather than a moved threshold.
-
-The reference M1 run is committed under
-[`results/qr-apple-m1/`](results/qr-apple-m1/) so a new run can be
-diffed against it. To re-render a report without remeasuring:
-
-```sh
-python3 tuning/tune_qr.py --reanalyse docs/results/qr-apple-m1/raw.csv
-```
+**To measure another Mac**, run `python3 tuning/run.py`, which measures all
+three decompositions in one go; see [`tuning.md`](tuning.md). Its QR part
+re-tests the refinements that failed on an M1 rather than assuming they fail
+everywhere (a batch-dependent split could be justified on a GPU with far more
+cores), and warns if `M` is no longer the best feature on that hardware, which
+would be a structural change rather than a moved threshold. The committed runs
+are under [`results/`](results/), one folder per device.
 
 To override the threshold without rebuilding, set `QR_M_CROSSOVER`, or call
 `set_qr_policy()`:

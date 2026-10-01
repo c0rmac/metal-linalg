@@ -104,13 +104,9 @@ Metal device name and GPU core count:
 The M1 has no row. The defaults come from measurements on an M1 taken while
 the machine was heavily loaded by other jobs, good enough to place the
 crossovers roughly and not for a table entry, so `svd_policy_source()`
-reports `default:untuned-device` there too. Tuning is one command, on an idle
-machine; see [`tuning.md`](tuning.md):
-
-```sh
-cmake --build build --target sweep_svd
-python3 tuning/tune_svd.py build/sweep_svd --max-k 1024
-```
+reports `default:untuned-device` there too. Measuring a Mac is one command,
+`python3 tuning/run.py`, which covers all three decompositions; see
+[`tuning.md`](tuning.md).
 
 `set_svd_policy()` and the environment variables `SVD_QR_MIN_ROWS`,
 `SVD_QR_MIN_K`, `SVD_BLOCK_MIN_K`, `SVD_BLOCK_MIN_K_BATCHED`,
@@ -139,7 +135,7 @@ backends, the worst reconstruction error was 2.3e-06 and the worst sweep count
 ## Performance
 
 Apple M5 Pro (20 GPU cores, 18 CPU cores), from the routing sweep in
-[`results/svd-apple-m5-pro/`](results/svd-apple-m5-pro/): min of two
+[`results/apple-m5-pro-20gpu/20260930-27b6c2/svd/`](results/apple-m5-pro-20gpu/20260930-27b6c2/svd/): min of two
 randomised passes, idle machine on mains. Each cell is the speedup of the
 fastest GPU backend over a thin SVD on the CPU, with the GPU time and the
 backend that won (`whole` and `block` are the two kernels on the matrix

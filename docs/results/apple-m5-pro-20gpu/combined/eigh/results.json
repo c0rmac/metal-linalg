@@ -2,7 +2,7 @@
  "device": {
   "name": "Apple M5 Pro",
   "gpu_cores": 20,
-  "source": "tuned:Apple M5 Pro"
+  "source": "default:untuned-device (Apple M5 Pro)"
  },
  "n_points": 197,
  "single_pass": false,
@@ -63,21 +63,21 @@
  },
  "tolerance": 0.005,
  "current": [
-  0,
+  8,
   96,
   1000000000,
   1000000000,
+  64,
   1024,
-  512,
-  16
+  1
  ],
  "stage1": {
   "n_points": 197,
   "current": {
-   "geomean": 1.0201714272058746,
-   "worst": 1.5175579791479752,
-   "over10": 11,
-   "total_ratio": 1.0045847647010633,
+   "geomean": 1.0571171860620474,
+   "worst": 2.9826628586190567,
+   "over10": 29,
+   "total_ratio": 1.004706337416935,
    "estimated_picks": 0,
    "n": 197
   },
@@ -105,7 +105,7 @@
     96,
     96
    ],
-   "current_in_band": true
+   "current_in_band": false
   },
   "curves": {
    "simd_max": [
@@ -292,11 +292,11 @@
  },
  "stage2": {
   "current": {
-   "geomean": 1.024315398499516,
-   "worst": 1.9271858887381277,
-   "over10": 15,
-   "total_ratio": 1.017031732091274,
-   "estimated_picks": 0,
+   "geomean": 1.2224503272797844,
+   "worst": 3.671923822601717,
+   "over10": 56,
+   "total_ratio": 2.423494075453344,
+   "estimated_picks": 9,
    "n": 197
   },
   "chosen": {
@@ -326,7 +326,7 @@
     16,
     16
    ],
-   "current_in_band": true
+   "current_in_band": false
   },
   "curves": {
    "gpu_max_n": [
@@ -606,11 +606,11 @@
  ],
  "rules": {
   "current": {
-   "geomean": 1.024315398499516,
-   "worst": 1.9271858887381277,
-   "over10": 15,
-   "total_ratio": 1.017031732091274,
-   "estimated_picks": 0,
+   "geomean": 1.2503114776781463,
+   "worst": 3.671923822601717,
+   "over10": 64,
+   "total_ratio": 2.4235957189550295,
+   "estimated_picks": 9,
    "n": 197
   },
   "chosen": {
@@ -3357,7 +3357,9 @@
  "warnings": [
   "chosen rule loses more than 25% at N=2 batch=256 (tg, 1.93x), N=768 batch=16 (block, 1.69x), N=4 batch=128 (tg, 1.58x), N=64 batch=4096 (tg, 1.52x), N=64 batch=2048 (tg, 1.45x), N=64 batch=1024 (tg, 1.45x), N=2 batch=512 (tg, 1.42x), N=64 batch=512 (tg, 1.39x) ...",
   "GPU split loses more than 25% against the best GPU backend at N=64 batch=4096 (tg, 1.52x), N=96 batch=8 (block, 1.50x), N=96 batch=2 (block, 1.49x), N=96 batch=4 (block, 1.48x), N=96 batch=1 (block, 1.46x), N=64 batch=2048 (tg, 1.45x), N=64 batch=1024 (tg, 1.45x), N=64 batch=512 (tg, 1.39x) ...",
-  "the GPU is still ahead of the CPU at the largest N measured (1024): gpu_max_n is a lower bound, rerun with --max-n 1024 to find the cap"
+  "the GPU is still ahead of the CPU at the largest N measured (1024): gpu_max_n is a lower bound, rerun with --max-n 1024 to find the cap",
+  "this device has no entry in kTuned[]: it is running the untuned default; paste the row above into src/eigh.mm",
+  "the fitted policy differs from the one in effect (default:untuned-device (Apple M5 Pro)): update this device's row in kTuned[] in src/eigh.mm"
  ],
  "noise": {
   "overall": {
@@ -3435,7 +3437,10 @@
   "routing": 924
  },
  "raw": [
-  "docs/results/eigh-apple-m5-pro/raw.csv"
+  "docs/results/apple-m5-pro-20gpu/20260930-27b6c2/eigh/raw.csv"
+ ],
+ "submissions": [
+  "20260930-27b6c2"
  ],
  "calibration": {
   "probe": {

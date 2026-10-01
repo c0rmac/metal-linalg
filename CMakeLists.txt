@@ -14,6 +14,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(METAL_LINALG_SHARED      "Build libmetal_linalg as a shared library" ${PROJECT_IS_TOP_LEVEL})
 option(METAL_LINALG_INSTALL     "Generate install and CMake package rules" ${PROJECT_IS_TOP_LEVEL})
 option(METAL_LINALG_BUILD_TESTS "Build the tests, benchmarks and tuning harnesses" ${PROJECT_IS_TOP_LEVEL})
+option(METAL_LINALG_BUILD_EXAMPLES "Build the examples (run as tests)" ${METAL_LINALG_BUILD_TESTS})
 option(METAL_LINALG_USE_PREBUILT_SHADERS
        "Use shaders/prebuilt/*.metallib instead of compiling the .metal sources" OFF)
 
@@ -245,4 +246,17 @@ if (METAL_LINALG_BUILD_TESTS)
     metal_linalg_add_tool(probe_occupancy tuning/probe_occupancy.mm)
     target_include_directories(probe_occupancy PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(probe_occupancy PRIVATE "-framework Metal" "-framework Foundation")
+endif ()
+
+# =============================================================================
+# Examples: small self-checking programs, also run by ctest
+# =============================================================================
+
+if (METAL_LINALG_BUILD_EXAMPLES)
+    include(CTest)
+    foreach (_ex quickstart orthonormal_bases pca nearest_orthogonal routing)
+        add_executable(example_${_ex} examples/${_ex}.cpp)
+        target_link_libraries(example_${_ex} PRIVATE metal_linalg)
+        add_test(NAME example_${_ex} COMMAND example_${_ex})
+    endforeach ()
 endif ()

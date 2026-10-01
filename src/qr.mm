@@ -31,24 +31,13 @@ struct TunedEntry {
     unsigned    batch_threshold;
 };
 
-// Measured with tuning/sweep_qr.cpp over 421 shapes and four sweeps
-// (~2400 randomised runs, median timing, two passes each), deliberately covering
-// square, tall, wide and near-square aspect ratios: an earlier square-heavy grid
-// gave a threshold that lost up to 1.95x on tall inputs, and no amount of
-// cross-validation could see it, because the sample never probed that region.
-//
-// The two thresholds are equal here: a batch-dependent split scored better on
-// the square-heavy grid and worse once aspect ratio was sampled properly.
-//
-// The M5 Pro row is from tuning/tune_qr.py over 143 shapes, two passes
-// (docs/results/qr-apple-m5-pro/). Its crossover is higher than the M1's
-// despite 2.5x the cores: the faster core helps the single-threadgroup backend
-// more than the extra cores help the grid-parallel one, which is the "R rises"
-// case above. The band is flat from 480 to 512, and both refinements were
-// rejected on the held-out half again.
+// The rows are generated from every run submitted for a device (docs/results/)
+// by tuning/generate_tables.py, which a GitHub Action reruns after each
+// merge; see docs/tuning.md. Why the measured values are what they are is in
+// docs/studies/. The last row keeps the array non-empty and matches nothing.
 constexpr TunedEntry kTuned[] = {
-    {"Apple M1", 8, 384, 384, 16},
-    {"Apple M5 Pro", 20, 512, 512, 16},
+#include "tuned/qr.inc"
+    {"", 0, 0, 0, 0},
 };
 
 struct ResolvedPolicy {
@@ -74,7 +63,8 @@ ResolvedPolicy resolve() {
         }
 
         for (const auto& e : kTuned) {
-            if (name == e.device_name && r.policy.gpu_cores == e.gpu_cores) {
+            if (e.device_name[0] != '\0' && name == e.device_name &&
+                r.policy.gpu_cores == e.gpu_cores) {
                 r.policy.m_crossover_small_batch = e.m_small_batch;
                 r.policy.m_crossover_large_batch = e.m_large_batch;
                 r.policy.batch_threshold         = e.batch_threshold;

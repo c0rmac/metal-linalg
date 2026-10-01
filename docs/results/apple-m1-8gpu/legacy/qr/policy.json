@@ -1,0 +1,7 @@
+{
+ "device": "Apple M1",
+ "gpu_cores": 8,
+ "concurrent_matrices": 48,
+ "source": "unknown",
+ "threadgroup_memory": 32768
+}

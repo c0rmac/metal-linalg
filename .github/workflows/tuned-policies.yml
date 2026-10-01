@@ -1,0 +1,81 @@
+name: Tuned policies
+
+# Turns every submitted measurement run (docs/results/) into the rows of the
+# library's per-device tables (src/tuned/). On a pull request it checks the
+# submissions and shows which rows would change; after a merge to main it
+# applies the change in a commit. No GPU is needed: the analysis is plain
+# Python. See docs/tuning.md.
+
+on:
+  pull_request:
+    paths: ["docs/results/**", "tuning/**"]
+  push:
+    branches: [main]
+    paths: ["docs/results/**", "tuning/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tuned-policies-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preview:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check the submissions
+        run: python3 tuning/validate_submissions.py
+
+      - name: Fit the tables from every run
+        run: python3 tuning/generate_tables.py --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Show which rows would change
+        run: |
+          {
+            echo "## Changes to the tables"
+            echo
+            if git diff --quiet -- src/tuned; then
+              echo "None: every row stays as it is."
+            else
+              echo '```diff'
+              git diff -- src/tuned
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  apply:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check the submissions
+        run: python3 tuning/validate_submissions.py
+
+      - name: Fit the tables from every run
+        run: python3 tuning/generate_tables.py --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Commit the tables if they changed
+        run: |
+          git add src/tuned docs/results
+          if git diff --cached --quiet; then
+            echo "The tables are already up to date."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Update the tuned policies from the submitted runs"
+          git push

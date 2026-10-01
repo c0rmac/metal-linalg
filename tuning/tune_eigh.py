@@ -84,6 +84,9 @@ import sys
 import time
 from collections import defaultdict
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import submissions as sub   # noqa: E402
+
 BACKENDS = ("cpu", "simd", "tg", "block")
 GPU_BACKENDS = ("simd", "tg", "block")
 INF = 10 ** 9
@@ -254,23 +257,10 @@ def sweep(binary, pts, passes, limit, out_csv):
 
 
 def load(paths):
-    """-> (times[(b,N)][backend] = min over passes, repeats[(b,N,backend)] = [ms...])"""
-    if isinstance(paths, str):
-        paths = [paths]
-    repeats = defaultdict(list)
-    for path in paths:
-        for r in csv.DictReader(open(path)):
-            if r.get("ok") != "1":
-                continue
-            ms = float(r["ms"])
-            if ms > 0:
-                repeats[(int(r["batch"]), int(r["N"]), r["backend"])].append(ms)
-    times = defaultdict(dict)
-    for (b, N, k), v in repeats.items():
-        times[(b, N)][k] = min(v)
+    """-> (times[(b,N)][backend], repeats, submissions); see submissions.combine."""
+    times, repeats, subs = sub.combine(paths, lambda r: (int(r["batch"]), int(r["N"])))
     times = {p: v for p, v in times.items() if any(k in v for k in GPU_BACKENDS)}
-    return times, repeats
-
+    return times, repeats, subs
 
 def query_policy(binary):
     """The device and the routing policy the library resolved for it."""
@@ -878,6 +868,8 @@ def write_report(res, path):
     cho = res["rules"]["chosen"]
     L = []
     L.append(f"# Eigensolver routing on {d['name']} ({d['gpu_cores']} GPU cores)")
+    L.append("")
+    L.append("What every section and number below means: [reading-reports.md](https://github.com/c0rmac/metal-linalg/blob/main/docs/reading-reports.md).")
     if res.get("calibration"):
         c = res["calibration"]["scale"]
         L.append("")
@@ -906,6 +898,11 @@ def write_report(res, path):
              f"N in {res['grid']['N']}, batch in {res['grid']['batch']}, four backends, "
              f"{'one pass' if res.get('single_pass') else 'two or more passes, min-of-repeats'}.")
     L.append("")
+    if len(res.get("submissions") or []) > 1:
+        L.append(f"Combined from {len(res['submissions'])} submissions ({', '.join(res['submissions'])}): "
+          f"each submission's fastest pass, then the median across submissions. The noise "
+          f"floor is per submission.")
+        L.append("")
     L.append("## Answer")
     L.append("")
     if res.get("trustworthy", True):
@@ -1128,12 +1125,13 @@ def main():
         if calibration:
             SCALE.update(calibration["scale"])
 
-    times, repeats = load(raw_paths)
+    times, repeats, subs = load(raw_paths)
     if not times:
         sys.exit("no usable measurements")
     res = analyse(times, repeats, device, drift_info=(side or {}).get("drift"),
                   states=(side or {}).get("machine"))
     res["raw"] = raw_paths
+    res["submissions"] = subs
     res["calibration"] = calibration
     with open(os.path.join(args.out, "results.json"), "w") as fh:
         json.dump(res, fh, indent=1)

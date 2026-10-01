@@ -661,5 +661,8 @@
     "geomean": 1.0125,
     "worst": 1.215
   },
-  "ktuned_entry": "{\"Apple M5 Pro\", 20, 512, 512, 16},"
+  "ktuned_entry": "{\"Apple M5 Pro\", 20, 512, 512, 16},",
+  "submissions": [
+    "20260930-27b6c2"
+  ]
 }

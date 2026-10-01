@@ -1,5 +1,7 @@
 # Eigensolver routing on Apple M5 Pro (20 GPU cores)
 
+What every section and number below means: [reading-reports.md](https://github.com/c0rmac/metal-linalg/blob/main/docs/reading-reports.md).
+
 Cost model scaled to this device from one probe point: block x0.14, cpu x0.93, whole-matrix x1.00 (1.00 is an M1).
 
 Machine state: load 1.8/18 at the start, load 1.6/18 at the end; power mains.
@@ -23,7 +25,7 @@ To try it without rebuilding:
 EIGH_SIMD_MAX_N=0 EIGH_BLOCK_MIN_N=96 EIGH_BLOCK_MIN_N_BATCHED=0 EIGH_BLOCK_MIN_BATCH=0 EIGH_GPU_MAX_N=1024 EIGH_GPU_MIN_BATCH_TIMES_N=512 EIGH_GPU_MIN_BATCH=16
 ```
 
-The policy in effect on this device came from `tuned:Apple M5 Pro`. It matches the fitted one.
+The policy in effect on this device came from `default:untuned-device (Apple M5 Pro)`. It differs from the fitted one; see the warnings.
 
 Against the best measured backend at every point the whole rule scores 1.0243 geometric-mean regret, worst 1.93x, 15 of 197 points losing more than 10%, and 1.017x the oracle's total time. The decision is fitted in two stages, below, because the CPU routing would otherwise hide the GPU backend crossover.
 
@@ -32,6 +34,8 @@ Against the best measured backend at every point the whole rule scores 1.0243 ge
 - chosen rule loses more than 25% at N=2 batch=256 (tg, 1.93x), N=768 batch=16 (block, 1.69x), N=4 batch=128 (tg, 1.58x), N=64 batch=4096 (tg, 1.52x), N=64 batch=2048 (tg, 1.45x), N=64 batch=1024 (tg, 1.45x), N=2 batch=512 (tg, 1.42x), N=64 batch=512 (tg, 1.39x) ...
 - GPU split loses more than 25% against the best GPU backend at N=64 batch=4096 (tg, 1.52x), N=96 batch=8 (block, 1.50x), N=96 batch=2 (block, 1.49x), N=96 batch=4 (block, 1.48x), N=96 batch=1 (block, 1.46x), N=64 batch=2048 (tg, 1.45x), N=64 batch=1024 (tg, 1.45x), N=64 batch=512 (tg, 1.39x) ...
 - the GPU is still ahead of the CPU at the largest N measured (1024): gpu_max_n is a lower bound, rerun with --max-n 1024 to find the cap
+- this device has no entry in kTuned[]: it is running the untuned default; paste the row above into src/eigh.mm
+- the fitted policy differs from the one in effect (default:untuned-device (Apple M5 Pro)): update this device's row in kTuned[] in src/eigh.mm
 
 ## Stage 1: which GPU backend
 
@@ -39,7 +43,7 @@ Scored against the best *GPU* backend at each of the 197 points, as if there wer
 
 | rule | geomean regret | worst | >10% | total time / oracle | est. picks |
 |---|---|---|---|---|---|
-| policy in effect ('0', '96', 'none', 'none') | 1.0202 | 1.52x | 11 | 1.005 | 0 |
+| policy in effect ('8', '96', 'none', 'none') | 1.0571 | 2.98x | 29 | 1.005 | 0 |
 | fitted ('0', '96', 'none', 'none') | 1.0202 | 1.52x | 11 | 1.005 | 0 |
 
 2 of 96 (simd_max_n, block_min_n) pairs are within 0.5% of the best geomean: simd_max_n 0 .. 2, block_min_n 96 .. 96.
@@ -128,7 +132,7 @@ Given the split above, GPU iff `N <= gpu_max_n`, `batch * N >= gpu_min_batch_tim
 | rule | geomean regret | worst | >10% | total time / oracle | est. picks |
 |---|---|---|---|---|---|
 | oracle (best per point) | 1.0000 | 1.00x | 0 | 1.000 | 0 |
-| policy in effect ('1024', '512', '16') | 1.0243 | 1.93x | 15 | 1.017 | 0 |
+| policy in effect ('64', '1024', '1') | 1.2225 | 3.67x | 56 | 2.423 | 9 |
 | fitted ('1024', '512', '16') | 1.0243 | 1.93x | 15 | 1.017 | 0 |
 
 4 of 924 combinations are within 0.5% of the best geomean: gpu_max_n 1024 .. none, gpu_min_batch_times_n 512 .. 1024, gpu_min_batch 16 .. 16.

@@ -17,14 +17,6 @@ every call is routed to the fastest of them, or to MLX's CPU path, by a policy
 measured on the device it runs on. MLX's own `linalg::eigh` and `linalg::svd`
 run only on the CPU.
 
-```cpp
-#include <metal_linalg/metal_linalg.h>
-
-auto [Q, R]     = metal_linalg::qr_accelerated(a);     // a: mlx::core::array [..., M, N]
-auto [w, V]     = metal_linalg::eigh_accelerated(s);   // s symmetric [..., N, N]
-auto [U, S, Vt] = metal_linalg::svd_accelerated(a);    // thin factors
-```
-
 ## What it provides
 
 | operation | functions | GPU kernels | CPU path | details |
@@ -38,23 +30,6 @@ any magnitude from 1e-30 to 1e+37, rank-deficient or not. The eigensolver and
 the SVD return NaN for a non-finite matrix rather than raising, leaving the
 rest of its batch intact. The QR and SVD factors are the thin ones,
 `K = min(M, N)`.
-
-## Where the GPU wins
-
-For batches. On an Apple M5 Pro, the best GPU kernel against the CPU:
-
-| | lone matrix | batch 16 | batch 256 | batch 4096 |
-|---|---|---|---|---|
-| eigh 16×16 | 0.10x | 0.67x | 6.5x | 15.9x |
-| eigh 128×128 | 0.08x | 1.08x | 2.9x | 2.8x |
-| eigh 512×512 | 0.30x | 1.10x | — | — |
-| SVD 32×32 | 0.22x | 0.77x | 6.1x | 9.4x |
-| SVD 2048×64 | 0.59x | 6.2x | 10.1x | GPU only |
-| SVD 512×512 | 0.51x | 1.68x | — | — |
-
-A single matrix is faster on the CPU at every size measured, up to 4096×4096,
-on every device so far, so the routing keeps it there; batches of up to
-1024×1024 go to the GPU. The full tables are in the per-solver docs.
 
 ## Installation
 
@@ -89,7 +64,133 @@ refreshes `shaders/prebuilt/`.
 Build options: `-DMETAL_LINALG_BUILD_TESTS=OFF` skips the tests, benchmarks
 and tuning harnesses; `-DMETAL_LINALG_SHARED=OFF` builds a static library.
 
-## Using it from CMake
+## Quick start
+
+A complete program: one batch, all three decompositions. `CMakeLists.txt`:
+
+```cmake
+cmake_minimum_required(VERSION 3.25)
+project(my_app LANGUAGES CXX)
+
+find_package(MetalLinalg REQUIRED)
+
+add_executable(my_app main.cpp)
+target_link_libraries(my_app PRIVATE metal_linalg::metal_linalg)
+```
+
+`main.cpp`:
+
+```cpp
+#include <metal_linalg/metal_linalg.h>
+#include <mlx/mlx.h>
+
+#include <cstdio>
+
+namespace mx = mlx::core;
+namespace ml = metal_linalg;
+
+int main() {
+    mx::set_default_device(mx::Device::gpu);
+
+    // A batch of 1000 random 64 x 32 matrices.
+    mx::array A = mx::random::normal({1000, 64, 32});
+
+    // QR: Q [1000, 64, 32] with orthonormal columns, R [1000, 32, 32] upper triangular.
+    auto [Q, R] = ml::qr_accelerated(A);
+
+    // Thin SVD: U [1000, 64, 32], S [1000, 32] descending, Vt [1000, 32, 32].
+    auto [U, S, Vt] = ml::svd_accelerated(A);
+
+    // Symmetric eigendecomposition of C = A^T A: w [1000, 32] ascending, V [1000, 32, 32].
+    mx::array C = mx::matmul(mx::swapaxes(A, -1, -2), A);
+    auto [w, V] = ml::eigh_accelerated(C);
+
+    mx::eval({Q, R, U, S, Vt, w, V});
+
+    mx::array qr_err  = mx::max(mx::abs(mx::subtract(mx::matmul(Q, R), A)));
+    mx::array svd_err = mx::max(mx::abs(mx::subtract(
+        mx::matmul(mx::multiply(U, mx::expand_dims(S, -2)), Vt), A)));
+    std::printf("max |QR - A| = %.1e, max |U diag(S) Vt - A| = %.1e\n",
+                qr_err.item<float>(), svd_err.item<float>());
+}
+```
+
+```sh
+cmake -S . -B build -DCMAKE_PREFIX_PATH=/opt/homebrew
+cmake --build build
+./build/my_app      # e.g. max |QR - A| = 5.2e-06, max |U diag(S) Vt - A| = 6.7e-06
+```
+
+Every function takes any batch shape `[..., M, N]` and returns MLX arrays.
+Unlike most MLX operations the decompositions are not lazy: each call
+evaluates its input and runs its kernels before it returns. A few finishing
+steps, such as undoing the input scaling, come back as ordinary lazy arrays,
+so `eval` the results as usual. The functions are written for, and tested
+with, the GPU as the default MLX device.
+
+## Examples
+
+Each of these is a complete program in [`examples/`](examples/), built with
+the tests and run by `ctest`, so it stays correct.
+
+**Orthonormal bases with QR** ([`orthonormal_bases.cpp`](examples/orthonormal_bases.cpp)):
+10,000 sets of 4 vectors in R^16, orthonormalised in one call.
+
+```cpp
+mx::array vectors = mx::random::normal({10000, 16, 4});
+auto [Q, R] = metal_linalg::qr_accelerated(vectors);        // Q [10000, 16, 4], Q^T Q = I
+```
+
+**Principal components with eigh** ([`pca.cpp`](examples/pca.cpp)): the
+dominant direction of each of 1000 point clouds, from the eigenvector of its
+covariance with the largest eigenvalue. Eigenvalues come back ascending, so
+that is the last column.
+
+```cpp
+// X: [1000 clouds, 500 points, 8 dims]
+mx::array cov = mx::divide(mx::matmul(mx::swapaxes(X, -1, -2), X), mx::array(499.0f));
+auto [variance, components] = metal_linalg::eigh_accelerated(cov);
+mx::array principal = mx::take(components, 7, -1);          // [1000, 8], one axis per cloud
+```
+
+`eigvalsh_accelerated(cov)` returns the eigenvalues alone, for about a third
+less work.
+
+**Nearest orthogonal matrix with the SVD**
+([`nearest_orthogonal.cpp`](examples/nearest_orthogonal.cpp)): projecting
+100,000 noisy 3×3 matrices back onto the orthogonal group (the orthogonal
+Procrustes problem). If M = U S V^T, the nearest orthogonal matrix is U V^T.
+
+```cpp
+auto [U, S, Vt] = metal_linalg::svd_accelerated(observed);  // observed: [100000, 3, 3]
+mx::array nearest = mx::matmul(U, Vt);
+```
+
+`svdvals_accelerated(a)` returns the singular values alone, for about half
+the work.
+
+**Seeing and changing the routing** ([`routing.cpp`](examples/routing.cpp)):
+which kernel a shape will get on this machine, and why.
+
+```cpp
+std::printf("%s, %u GPU cores, eigh policy from %s\n", metal_linalg::device_name(),
+            metal_linalg::gpu_core_count(), metal_linalg::eigh_policy_source());
+// Apple M5 Pro, 20 GPU cores, eigh policy from tuned:Apple M5 Pro
+
+metal_linalg::eigh_backend(512, 64);   // EighBackend::block: a batch of large matrices goes to the GPU
+metal_linalg::eigh_backend(512, 1);    // EighBackend::cpu: a lone matrix is faster on the CPU
+
+auto p = metal_linalg::eigh_policy();  // replace the measured policy at run time
+p.gpu_min_batch = 1;
+metal_linalg::set_eigh_policy(p);      // eigh_policy_source() is now "user"
+```
+
+The same can be done without recompiling through environment variables, e.g.
+`EIGH_GPU_MIN_BATCH=1` or `SVD_DEVICE=gpu`; [docs/tuning.md](docs/tuning.md)
+lists them.
+
+
+## Using it in a CMake project
 
 Against the installed package:
 
@@ -112,9 +213,22 @@ FetchContent_MakeAvailable(metal_linalg)
 target_link_libraries(my_app PRIVATE metal_linalg::metal_linalg)
 ```
 
-[isomorphism](https://github.com/c0rmac/isomorphism)'s MLX backend uses it
-this way for `qr`, `eigh` and `svd`, or the Homebrew package when configured
-with `-DMETAL_LINALG_USE_INSTALLED=ON`.
+## Where the GPU wins
+
+For batches. On an Apple M5 Pro, the best GPU kernel against the CPU:
+
+| | lone matrix | batch 16 | batch 256 | batch 4096 |
+|---|---|---|---|---|
+| eigh 16×16 | 0.10x | 0.67x | 6.5x | 15.9x |
+| eigh 128×128 | 0.08x | 1.08x | 2.9x | 2.8x |
+| eigh 512×512 | 0.30x | 1.10x | — | — |
+| SVD 32×32 | 0.22x | 0.77x | 6.1x | 9.4x |
+| SVD 2048×64 | 0.59x | 6.2x | 10.1x | GPU only |
+| SVD 512×512 | 0.51x | 1.68x | — | — |
+
+A single matrix is faster on the CPU at every size measured, up to 4096×4096,
+on every device so far, so the routing keeps it there; batches of up to
+1024×1024 go to the GPU. The full tables are in the per-solver docs.
 
 ## API at a glance
 
@@ -129,8 +243,7 @@ with `-DMETAL_LINALG_USE_INSTALLED=ON`.
 Each header's `metal_linalg::detail` namespace has the individual backends,
 which always run their kernel, with options (tolerances, sweep bounds, launch
 parameters) and a per-matrix `info` word; these are what the tests and tuning
-harnesses use. The functions are written for, and tested with, the GPU as the
-default MLX device: call `mlx::core::set_default_device(Device::gpu)` first.
+harnesses use.
 
 ## Per-device routing
 
@@ -148,19 +261,24 @@ the Metal device name and GPU core count:
 which applies (`tuned:Apple M5 Pro`, `default:untuned-device (<name>)`,
 `env:...` or `user`). The defaults err toward the CPU, so an untuned device
 misses GPU wins rather than routing work to a kernel that takes seconds.
-Measuring a new device takes about 40 minutes and one command per solver; see
-[docs/tuning.md](docs/tuning.md). Every threshold can also be overridden with
-an environment variable or `set_*_policy()`.
+Every threshold can also be overridden with an environment variable or
+`set_*_policy()`.
+
+**Is your Mac missing, or would you like to add to its measurements?**
+`python3 tuning/run.py` measures all three decompositions in one command
+(about 40 minutes) and saves a uniquely named submission to send as a pull
+request. When it is merged, a GitHub Action recombines every run for that kind
+of Mac and updates the library's table. See [docs/tuning.md](docs/tuning.md).
 
 ## Tests, benchmarks and tuning
 
 ```sh
-ctest --test-dir build --output-on-failure    # test_qr, test_eigh, test_svd
+ctest --test-dir build --output-on-failure    # test_qr, test_eigh, test_svd and the examples
 ./build/benchmark_qr                          # GPU against the CPU, per solver
 ./build/benchmark_eigh
 ./build/benchmark_svd
 ./build/sweep_svd --policy                    # the device and the policy in effect
-python3 tuning/tune_svd.py build/sweep_svd    # measure this device; see docs/tuning.md
+python3 tuning/run.py                         # measure this Mac; see docs/tuning.md
 ```
 
 The tests (75 QR, 135 eigh, 197 SVD checks) cover every backend directly and
@@ -176,20 +294,22 @@ device's values.
 | `include/metal_linalg/` | the public headers |
 | `src/` | host code: routing policies, the Metal runtime, one driver per backend |
 | `shaders/` | the Metal kernels; `prebuilt/` holds their compiled metallibs |
+| `examples/` | small self-checking programs, one per use case |
 | `tests/` | correctness tests |
 | `benchmarks/` | GPU-against-CPU benchmarks |
-| `tuning/` | the per-device sweep binaries and analysis scripts |
-| `docs/` | per-solver guides, the tuning guide, studies and committed results |
+| `tuning/` | measuring a Mac (`run.py`), combining runs (`combine.py`), and the sweeps behind them |
+| `docs/` | per-solver guides, the tuning guide, studies, and every submitted run under `results/<device>/<id>/` |
 
 ## Documentation
 
 - [QR](docs/qr.md), [symmetric eigensolver](docs/eigh.md),
   [SVD](docs/svd.md): algorithms, kernels, routing, accuracy, performance
-- [Tuning on another device](docs/tuning.md)
+- [Measuring your Mac](docs/tuning.md), [how the measurements work](docs/tuning-details.md),
+  and [how to read a measurement report](docs/reading-reports.md)
 - Studies: QR routing on an [M1](docs/studies/qr-routing-apple-m1.md),
   eigensolver routing on an [M1](docs/studies/eigh-routing-apple-m1.md), all
   three on an [M5 Pro](docs/studies/routing-apple-m5-pro.md);
   [eigensolver launch parameters](docs/studies/eigh-launch-parameters-apple-m1.md);
   [SVD design notes](docs/studies/svd-design-notes.md)
-- Raw timings and generated reports: [docs/results/](docs/results/)
+- Every submitted run, with its raw timings and reports: [docs/results/](docs/results/)
 - [Changes](CHANGELOG.md)

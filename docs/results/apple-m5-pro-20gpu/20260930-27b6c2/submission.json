@@ -1,0 +1,53 @@
+{
+ "id": "20260930-27b6c2",
+ "date": "2026-09-30",
+ "device": {
+  "name": "Apple M5 Pro",
+  "gpu_cores": 20,
+  "slug": "apple-m5-pro-20gpu"
+ },
+ "cpu": {
+  "cores": 18,
+  "per_level": [
+   6,
+   12
+  ]
+ },
+ "memory_gb": 48,
+ "macos": "26.6",
+ "mlx": "0.32.1",
+ "metal_linalg": null,
+ "note": "Measured before the 2.0 commit (b4cd681) with the same kernels; the QR, eigh and SVD sweeps were run one after another by hand, as tuning/run.py now does.",
+ "quick": false,
+ "conditions": {
+  "start": {
+   "load_1m": 1.7734375,
+   "cpus": 18,
+   "power": "mains",
+   "low_power_mode": null,
+   "busy_processes": 0
+  },
+  "end": {
+   "load_1m": 1.6591796875,
+   "cpus": 18,
+   "power": "mains",
+   "low_power_mode": null,
+   "busy_processes": 0
+  }
+ },
+ "results": {
+  "qr": {
+   "trustworthy": true,
+   "row": "{\"Apple M5 Pro\", 20, 512, 512, 16},"
+  },
+  "eigh": {
+   "trustworthy": true,
+   "row": "{\"Apple M5 Pro\", 20,   0, 96, 0, 0,   1024, 512, 16},"
+  },
+  "svd": {
+   "trustworthy": true,
+   "row": "{\"Apple M5 Pro\", 20,   512, 32,   192, 64, 64,   1024, 512, 4},"
+  }
+ },
+ "epoch": 1
+}

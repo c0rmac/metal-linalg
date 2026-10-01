@@ -13,7 +13,7 @@ N × N matrices? There are four:
 `eigh.mm` encodes the decision as a per-device routing policy (`EighPolicy`).
 This document is the measurement behind the M1 entry, in the same form as the QR study
 ([`qr-routing-apple-m1.md`](qr-routing-apple-m1.md)); the generated report with
-every table is [`results/eigh-apple-m1/report.md`](../results/eigh-apple-m1/report.md).
+every table is [`results/apple-m1-8gpu/legacy/eigh/report.md`](../results/apple-m1-8gpu/legacy/eigh/report.md).
 
 ## The answer
 
@@ -242,5 +242,5 @@ CPU, which costs a missed GPU win rather than a slow call.
 To re-render from the committed M1 data without measuring:
 
 ```sh
-python3 tuning/tune_eigh.py --reanalyse docs/results/eigh-apple-m1/raw.csv
+python3 tuning/tune_eigh.py --reanalyse docs/results/apple-m1-8gpu/legacy/eigh/raw.csv
 ```

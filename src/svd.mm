@@ -196,23 +196,13 @@ struct TunedEntry {
     unsigned    gpu_min_batch;
 };
 
-// The SvdPolicy defaults come from measurements on an M1 taken while the
-// machine was heavily loaded by other jobs, which is good enough to place the
-// crossovers roughly and not good enough for a table entry; see
-// docs/studies/svd-design-notes.md. The M1 itself therefore has no row.
-//
-// Apple M5 Pro: tuning/tune_svd.py over 263 (shape, batch) points up to
-// k = 1024, five backends, two randomised passes, idle machine on mains
-// (docs/results/svd-apple-m5-pro/). Against the best GPU backend the
-// QR-preconditioned path pays from 512 rows and k = 32, the block kernel
-// from k = 192, and from k = 64 in batches of 64 or more; that batch term was
-// better on held-out data in 100% of bootstrap resamples. Against the CPU the
-// GPU is ahead up to the largest k measured (1024 is a lower bound), never
-// for fewer than four matrices, and only when batch * k >= 512; the
-// flat region is gpu_max_k 1024 or none, gpu_min_batch_times_k 512 alone,
-// gpu_min_batch 4 alone.
+// The rows are generated from every run submitted for a device (docs/results/)
+// by tuning/generate_tables.py, which a GitHub Action reruns after each
+// merge; see docs/tuning.md. Why the measured values are what they are is in
+// docs/studies/. The last row keeps the array non-empty and matches nothing.
 constexpr TunedEntry kTuned[] = {
-    {"Apple M5 Pro", 20,   512, 32,   192, 64, 64,   1024, 512, 4},
+#include "tuned/svd.inc"
+    {"", 0,   0, 0,   0, 0, 0,   0, 0, 0},
 };
 
 struct ResolvedPolicy {

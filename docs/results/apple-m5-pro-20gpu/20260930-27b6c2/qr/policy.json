@@ -1,0 +1,7 @@
+{
+ "device": "Apple M5 Pro",
+ "gpu_cores": 20,
+ "concurrent_matrices": 120,
+ "source": "tuned:Apple M5 Pro",
+ "threadgroup_memory": 32768
+}

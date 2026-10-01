@@ -1,0 +1,267 @@
+#!/usr/bin/env python3
+"""Measure this Mac for metal-linalg: all three decompositions, one command.
+
+    python3 tuning/run.py              # about 40 minutes; leave the Mac alone
+    python3 tuning/run.py --quick      # a 15-minute smoke test, not a submission
+
+Checks that the Mac is fit to measure, builds the tools, runs the correctness
+tests, then the QR, eigensolver and SVD sweeps one after another, and writes
+everything to one new submission:
+
+    docs/results/<device>/<id>/     e.g. docs/results/apple-m5-pro-20gpu/20260930-27b6c2/
+
+<id> is the date and a random suffix, so any number of people with the same
+Mac can submit without colliding. What it records: the chip, its core counts
+and memory, the macOS and MLX versions, the load average and power source,
+and the timings. Nothing that identifies you or the machine.
+
+Requires: Apple Silicon, `brew install mlx cmake`, Python 3.8 or later.
+See docs/tuning.md.
+"""
+
+import argparse
+import json
+import os
+import platform
+import shutil
+import subprocess
+import sys
+import time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+sys.path.insert(0, HERE)
+import submissions as sub   # noqa: E402
+import tune_eigh as te      # noqa: E402  machine state checks
+
+# (decomposition, harness, sweep binary, options, options for --quick)
+SWEEPS = [
+    ("qr",   "tune_qr.py",   "sweep_qr",   [], []),
+    ("eigh", "tune_eigh.py", "sweep_eigh", ["--max-n", "1024"], ["--quick"]),
+    ("svd",  "tune_svd.py",  "sweep_svd",  ["--max-k", "1024"], ["--quick"]),
+]
+TESTS = ["test_qr", "test_eigh", "test_svd"]
+REPO_URL = "https://github.com/c0rmac/metal-linalg"
+
+
+def fail(msg):
+    print(f"\n{msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def say(msg=""):
+    print(msg, flush=True)
+
+
+def capture(cmd, **kw):
+    r = subprocess.run(cmd, capture_output=True, text=True, **kw)
+    return r.returncode, (r.stdout or "") + (r.stderr or "")
+
+
+def find_tools():
+    """cmake and the Homebrew prefix MLX lives under."""
+    cmake = shutil.which("cmake") or next(
+        (p for p in ("/opt/homebrew/bin/cmake", "/usr/local/bin/cmake") if os.path.exists(p)), None)
+    if not cmake:
+        fail("CMake is not installed. Install it with:  brew install cmake")
+    prefix = "/opt/homebrew"
+    if shutil.which("brew"):
+        rc, out = capture(["brew", "--prefix"])
+        if rc == 0 and out.strip():
+            prefix = out.strip().splitlines()[-1]
+    if not os.path.isdir(os.path.join(prefix, "share", "cmake", "MLX")):
+        fail("MLX is not installed. Install it with:  brew install mlx")
+    return cmake, prefix
+
+
+def check_machine(anyway):
+    st = te.machine_state()
+    problems = te.state_problems(st)
+    if st.get("power") == "battery":
+        problems.append("running on battery")
+    if problems and not anyway:
+        fail("This Mac is not ready to measure: " + "; ".join(problems) + ".\n"
+             "Plug into power, turn Low Power Mode off, quit other apps, and run this again.\n"
+             "(--anyway runs regardless, but the results will be marked untrustworthy.)")
+    return st
+
+
+def build(cmake, prefix, build_dir):
+    say("Building the measurement tools ...")
+    steps = [[cmake, "-S", ROOT, "-B", build_dir, "-DCMAKE_BUILD_TYPE=Release",
+              f"-DCMAKE_PREFIX_PATH={prefix}", "-DMETAL_LINALG_BUILD_EXAMPLES=OFF"],
+             [cmake, "--build", build_dir, "-j", "--target"] + [s[2] for s in SWEEPS] + TESTS]
+    for cmd in steps:
+        rc, out = capture(cmd)
+        if rc != 0:
+            fail("The build failed:\n" + "\n".join(out.splitlines()[-25:]))
+
+
+def run_tests(build_dir):
+    say("Checking correctness first ...")
+    for t in TESTS:
+        rc, out = capture([os.path.join(build_dir, t)])
+        last = [l for l in out.splitlines() if "checks" in l]
+        if rc != 0:
+            log = os.path.join(build_dir, f"{t}.log")
+            open(log, "w").write(out)
+            fail(f"{t} failed on this Mac, so its timings would mean nothing. Please open an issue at\n"
+                 f"{REPO_URL}/issues with the output in {log}.")
+        say(f"  {t}: {last[-1].strip() if last else 'passed'}")
+
+
+def spec(build_dir):
+    """The Mac, as the library sees it plus a few system facts."""
+    rc, out = capture([os.path.join(build_dir, "sweep_qr"), "--policy"])
+    if rc != 0:
+        fail("Could not read the device from sweep_qr:\n" + out)
+    pol = json.loads(out.strip().splitlines()[-1])
+
+    def sysctl(name):
+        rc, v = capture(["sysctl", "-n", name])
+        return int(v) if rc == 0 and v.strip().isdigit() else None
+
+    levels = [sysctl(f"hw.perflevel{i}.physicalcpu") for i in range(3)]
+    mem = sysctl("hw.memsize")
+    rc, macos = capture(["sw_vers", "-productVersion"])
+    mlx = None
+    if shutil.which("brew"):
+        rc2, v = capture(["brew", "list", "--versions", "mlx"])
+        mlx = v.split()[-1] if rc2 == 0 and v.split() else None
+    rc3, commit = capture(["git", "-C", ROOT, "rev-parse", "--short", "HEAD"])
+    rc4, dirty = capture(["git", "-C", ROOT, "status", "--porcelain", "--untracked-files=no"])
+    return {
+        "device": {"name": pol["device"], "gpu_cores": pol["gpu_cores"],
+                   "slug": sub.device_slug(pol["device"], pol["gpu_cores"])},
+        "cpu": {"cores": sysctl("hw.ncpu"), "per_level": [n for n in levels if n]},
+        "memory_gb": round(mem / 2**30) if mem else None,
+        "macos": macos.strip() if rc == 0 else None,
+        "mlx": mlx,
+        "metal_linalg": (commit.strip() + ("+changes" if dirty.strip() else "")) if rc3 == 0 else None,
+    }
+
+
+def run_sweep(op, harness, binary, options, out_dir, log_path):
+    """Runs one harness, showing its progress and keeping a log."""
+    cmd = [sys.executable, os.path.join(HERE, harness), binary, "--out", out_dir] + options
+    with open(log_path, "w") as log:
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        for line in p.stdout:
+            log.write(line)
+            if line.strip():
+                print(f"  [{op}] {line.rstrip()}", flush=True)
+        return p.wait()
+
+
+def result_of(op, out_dir):
+    path = os.path.join(out_dir, "results.json")
+    if not os.path.exists(path):
+        return {"trustworthy": False, "row": None, "why": "no results"}
+    r = json.load(open(path))
+    row = r.get("ktuned_entry") or r.get("tuned_row")
+    if op == "qr":   # judged by its noise floor
+        ok = r["noise"]["overall"]["median"] <= 1.10
+        why = None if ok else "run-to-run noise above 10%"
+    else:
+        ok = bool(r.get("trustworthy"))
+        why = None if ok else "; ".join(r.get("warnings", [])[:1])
+    return {"trustworthy": ok, "row": row, "why": why}
+
+
+def write_summary(path, info):
+    d = info["device"]
+    L = [f"# {d['name']}, {d['gpu_cores']} GPU cores — submission {info['id']}", "",
+         f"{info['cpu']['cores']} CPU cores, {info['memory_gb']} GB, macOS {info['macos']}, "
+         f"MLX {info['mlx']}, metal-linalg {info['metal_linalg']}. "
+         f"{'Smoke test (--quick), not a submission. ' if info['quick'] else ''}"
+         f"Measured {info['date']}.", "",
+         "| decomposition | trustworthy | row for `kTuned[]` | minutes | report |",
+         "|---|---|---|---|---|"]
+    for op, r in info["results"].items():
+        L.append(f"| {op} | {'yes' if r['trustworthy'] else 'no: ' + (r.get('why') or '')} | "
+                 f"`{r['row']}` | {info['minutes'].get(op, '')} | [{op}/report.md]({op}/report.md) |")
+    open(path, "w").write("\n".join(L) + "\n")
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--quick", action="store_true",
+                    help="a short smoke test of the whole pipeline; not for submitting")
+    ap.add_argument("--anyway", action="store_true",
+                    help="measure even if the Mac is busy or on battery (results marked untrustworthy)")
+    args = ap.parse_args()
+
+    if sys.platform != "darwin" or platform.machine() != "arm64":
+        fail("metal-linalg measures Apple Silicon Macs; this is not one.")
+    cmake, prefix = find_tools()
+    start_state = check_machine(args.anyway)
+
+    build_dir = os.path.join(ROOT, "build-tuning")
+    build(cmake, prefix, build_dir)
+    run_tests(build_dir)
+
+    info = spec(build_dir)
+    info["id"] = sub.new_id()
+    info["date"] = time.strftime("%Y-%m-%d", time.gmtime())
+    info["quick"] = args.quick
+    info["epoch"] = sub.EPOCH
+    slug = info["device"]["slug"]
+    base = os.path.join(build_dir, "quick") if args.quick else os.path.join(ROOT, "docs", "results")
+    out = os.path.join(base, slug, info["id"])
+    os.makedirs(out)
+    info = {"id": info.pop("id"), "date": info.pop("date"), **info}
+    info.update({"status": "running", "conditions": {"start": start_state}, "results": {}, "minutes": {}})
+    json.dump(info, open(os.path.join(out, "submission.json"), "w"), indent=1)
+
+    total = "15" if args.quick else "40"
+    say(f"\nMeasuring {info['device']['name']} ({info['device']['gpu_cores']} GPU cores): about {total} "
+        f"minutes. Leave the Mac alone until it finishes.\nWriting to {os.path.relpath(out, ROOT)}/\n")
+    for op, harness, binary, options, quick_options in SWEEPS:
+        say(f"--- {op} ---")
+        t0 = time.time()
+        rc = run_sweep(op, harness, os.path.join(build_dir, binary),
+                       quick_options if args.quick else options,
+                       os.path.join(out, op), os.path.join(out, f"{op}.log"))
+        info["minutes"][op] = round((time.time() - t0) / 60, 1)
+        info["results"][op] = result_of(op, os.path.join(out, op))
+        if rc != 0:
+            info["results"][op].update(trustworthy=False, why=f"the harness exited with status {rc}")
+        json.dump(info, open(os.path.join(out, "submission.json"), "w"), indent=1)
+
+    info["conditions"]["end"] = te.machine_state()
+    info["status"] = "complete"
+    json.dump(info, open(os.path.join(out, "submission.json"), "w"), indent=1)
+    write_summary(os.path.join(out, "summary.md"), info)
+
+    rel = os.path.relpath(out, ROOT)
+    say("\n" + "=" * 72)
+    for op, r in info["results"].items():
+        say(f"{op:5s} {'ok ' if r['trustworthy'] else 'NOT trustworthy: ' + (r.get('why') or '')}"
+            f"  {r['row'] or ''}")
+    say(f"\nEverything is in {rel}/ (summary.md first).")
+    if args.quick:
+        say("This was a smoke test. Run without --quick to measure for real.")
+        return
+    if not all(r["trustworthy"] for r in info["results"].values()):
+        say("Some measurements are not trustworthy (see above); they will not be used. "
+            "Please run again with the Mac idle and on power.")
+        return
+    d = info["device"]
+    say(f"""
+Thank you! To contribute these results, open a pull request that adds the folder:
+
+  gh repo fork --remote                     # once; needs `brew install gh` and `gh auth login`
+  git switch -c results/{slug}-{info['id']}
+  git add {rel}
+  git commit -m "Results: {d['name']}, {d['gpu_cores']} GPU cores ({info['id']})"
+  git push -u origin HEAD
+  gh pr create --fill
+
+or zip {rel} and attach it to a new issue at {REPO_URL}/issues/new
+
+Once it is merged, the library's settings for this Mac are recomputed from every
+run submitted for it, and updated automatically.""")
+
+
+if __name__ == "__main__":
+    main()

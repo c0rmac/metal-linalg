@@ -6,9 +6,9 @@ solvers, and the first SVD row on any device. The machine has a 20-core GPU,
 18 CPU cores (6 super, 12 performance) and 48 GB. The method is that of the M1
 studies ([QR](qr-routing-apple-m1.md), [eigh](eigh-routing-apple-m1.md)); the
 generated reports with every table are in
-[`results/qr-apple-m5-pro/`](../results/qr-apple-m5-pro/report.md),
-[`results/eigh-apple-m5-pro/`](../results/eigh-apple-m5-pro/report.md) and
-[`results/svd-apple-m5-pro/`](../results/svd-apple-m5-pro/report.md).
+[`results/apple-m5-pro-20gpu/20260930-27b6c2/qr/`](../results/apple-m5-pro-20gpu/20260930-27b6c2/qr/report.md),
+[`results/apple-m5-pro-20gpu/20260930-27b6c2/eigh/`](../results/apple-m5-pro-20gpu/20260930-27b6c2/eigh/report.md) and
+[`results/apple-m5-pro-20gpu/20260930-27b6c2/svd/`](../results/apple-m5-pro-20gpu/20260930-27b6c2/svd/report.md).
 
 ## The answer
 
@@ -189,18 +189,9 @@ batches of large matrices the GPU's.
 ## Reproducing
 
 ```sh
-cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/opt/homebrew
-cmake --build build -j
-python3 tuning/tune_qr.py   build/sweep_qr
-python3 tuning/tune_eigh.py build/sweep_eigh --max-n 1024
-python3 tuning/tune_svd.py  build/sweep_svd  --max-k 1024
+python3 tuning/run.py
 ```
 
-and to redo the analysis from these runs without the GPU:
-
-```sh
-python3 tuning/tune_eigh.py build/sweep_eigh --reanalyse docs/results/eigh-apple-m5-pro/raw.csv
-python3 tuning/tune_svd.py  build/sweep_svd  --reanalyse docs/results/svd-apple-m5-pro/raw.csv
-```
-
-See [`../tuning.md`](../tuning.md) for the full procedure.
+which writes a new submission beside this one; with several, the device's
+rows come from all of them (`python3 tuning/combine.py
+docs/results/apple-m5-pro-20gpu`). See [`../tuning.md`](../tuning.md).

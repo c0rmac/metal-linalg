@@ -2,7 +2,7 @@
  "device": {
   "name": "Apple M5 Pro",
   "gpu_cores": 20,
-  "source": "tuned:Apple M5 Pro"
+  "source": "default:untuned-device (Apple M5 Pro)"
  },
  "n_points": 263,
  "single_pass": false,
@@ -50,13 +50,13 @@
  "tolerance": 0.005,
  "current": [
   512,
-  32,
-  192,
   64,
+  192,
+  1000000000,
+  1000000000,
   64,
   1024,
-  512,
-  4
+  1
  ],
  "grid": {
   "shapes": [
@@ -239,11 +239,11 @@
   "n_points": 263,
   "n_candidates": 588,
   "current": {
-   "geomean": 1.0415560306521174,
-   "worst": 1.9783457975220449,
-   "over10": 30,
-   "total_ratio": 1.1283330149899777,
-   "estimated_picks": 1,
+   "geomean": 1.1261945391432848,
+   "worst": 3.8039665336791826,
+   "over10": 54,
+   "total_ratio": 1.6571244281125264,
+   "estimated_picks": 3,
    "n": 263
   },
   "chosen": {
@@ -281,95 +281,95 @@
    "qr_min_rows": [
     {
      "value": 16,
-     "geomean": 1.0856644420156114,
+     "geomean": 1.1215535777146215,
      "worst": 3.088203386632706,
-     "over10": 60
+     "over10": 81
     },
     {
      "value": 32,
-     "geomean": 1.0856644420156114,
+     "geomean": 1.1215535777146215,
      "worst": 3.088203386632706,
-     "over10": 60
+     "over10": 81
     },
     {
      "value": 64,
-     "geomean": 1.0856644420156114,
+     "geomean": 1.1215535777146215,
      "worst": 3.088203386632706,
-     "over10": 60
+     "over10": 81
     },
     {
      "value": 128,
-     "geomean": 1.0694498935051406,
+     "geomean": 1.104803020001611,
      "worst": 2.3556208670095518,
-     "over10": 54
+     "over10": 75
     },
     {
      "value": 256,
-     "geomean": 1.0508739334394908,
+     "geomean": 1.0872687236861251,
      "worst": 1.9908175717613268,
-     "over10": 42
+     "over10": 65
     },
     {
      "value": 512,
-     "geomean": 1.0415560306521174,
-     "worst": 1.9783457975220449,
-     "over10": 30
+     "geomean": 1.0824595530626575,
+     "worst": 2.2908050839131104,
+     "over10": 56
     },
     {
      "value": 1024,
-     "geomean": 1.0451528983626817,
-     "worst": 2.286712813019664,
-     "over10": 25
+     "geomean": 1.0873458648963104,
+     "worst": 2.2908050839131104,
+     "over10": 51
     },
     {
      "value": 2048,
-     "geomean": 1.1047878738586978,
-     "worst": 4.166935289783984,
-     "over10": 37
+     "geomean": 1.1559690372189053,
+     "worst": 5.313119281041038,
+     "over10": 60
     },
     {
      "value": null,
-     "geomean": 1.172231695653693,
-     "worst": 6.52626125269362,
-     "over10": 52
+     "geomean": 1.2326100958125512,
+     "worst": 5.8285167319725195,
+     "over10": 74
     }
    ],
    "qr_min_k": [
     {
      "value": 8,
-     "geomean": 1.061104453109061,
+     "geomean": 1.1027756724197453,
      "worst": 3.866045558375985,
-     "over10": 37
+     "over10": 63
     },
     {
      "value": 16,
-     "geomean": 1.061104453109061,
+     "geomean": 1.1027756724197453,
      "worst": 3.866045558375985,
-     "over10": 37
+     "over10": 63
     },
     {
      "value": 32,
-     "geomean": 1.0415560306521174,
-     "worst": 1.9783457975220449,
-     "over10": 30
+     "geomean": 1.0824595530626575,
+     "worst": 2.2908050839131104,
+     "over10": 56
     },
     {
      "value": 64,
-     "geomean": 1.0432737672885501,
+     "geomean": 1.084244747883706,
      "worst": 3.8039665336791826,
-     "over10": 24
+     "over10": 50
     },
     {
      "value": 128,
-     "geomean": 1.065659314643859,
-     "worst": 3.8039665336791826,
-     "over10": 25
+     "geomean": 1.157656244876909,
+     "worst": 5.8285167319725195,
+     "over10": 58
     },
     {
      "value": 256,
-     "geomean": 1.1435483805022257,
-     "worst": 6.52626125269362,
-     "over10": 44
+     "geomean": 1.2024493827315457,
+     "worst": 5.8285167319725195,
+     "over10": 66
     }
    ],
    "block_min": [
@@ -594,11 +594,11 @@
  "stage2": {
   "n_candidates": 462,
   "current": {
-   "geomean": 1.0417703098195836,
-   "worst": 2.0315108453917916,
-   "over10": 31,
-   "total_ratio": 1.1300787464119575,
-   "estimated_picks": 1,
+   "geomean": 1.5455074680721952,
+   "worst": 9.096736214090788,
+   "over10": 95,
+   "total_ratio": 8.33141090537302,
+   "estimated_picks": 18,
    "n": 263
   },
   "chosen": {
@@ -628,7 +628,7 @@
     4,
     4
    ],
-   "current_in_band": true
+   "current_in_band": false
   },
   "curves": {
    "gpu_max_k": [
@@ -812,22 +812,22 @@
    "base": {
     "params": [
      1024,
-     512,
+     256,
      4
     ],
     "train": {
-     "geomean": 1.041277199997741,
-     "worst": 2.0315108453917916,
-     "over10": 17,
-     "total_ratio": 1.0141947460997234,
+     "geomean": 1.0458404313015226,
+     "worst": 1.9783457975220449,
+     "over10": 19,
+     "total_ratio": 1.0137079035269347,
      "estimated_picks": 0,
      "n": 150
     },
     "test": {
-     "geomean": 1.0424252411272066,
-     "worst": 1.656053271905011,
-     "over10": 14,
-     "total_ratio": 1.245956818182878,
+     "geomean": 1.0676336450689605,
+     "worst": 3.0857853842229472,
+     "over10": 18,
+     "total_ratio": 1.246137625422264,
      "estimated_picks": 1,
      "n": 113
     }
@@ -868,9 +868,9 @@
      "n": 113
     },
     "bootstrap": {
-     "p_better": 0.0,
-     "gain_median": -0.014833579277965803,
-     "gain_p05": -0.03329956595696182
+     "p_better": 0.6775,
+     "gain_median": 0.00747164626066632,
+     "gain_p05": -0.01685727734484077
     },
     "justified": false
    }
@@ -888,11 +888,11 @@
  ],
  "rules": {
   "current": {
-   "geomean": 1.0417703098195836,
-   "worst": 2.0315108453917916,
-   "over10": 31,
-   "total_ratio": 1.1300787464119575,
-   "estimated_picks": 1,
+   "geomean": 1.6000297372180063,
+   "worst": 9.096736214090788,
+   "over10": 104,
+   "total_ratio": 8.395407194226578,
+   "estimated_picks": 18,
    "n": 263
   },
   "chosen": {
@@ -5017,7 +5017,9 @@
   "chosen rule loses more than 25% at 2048x64 batch=4 (cpu, 2.03x), 1024x32 batch=16 (qr, 1.98x), 512x32 batch=16 (qr, 1.70x), 512x32 batch=64 (qr, 1.69x), 256x32 batch=4096 (jacobi, 1.66x), 512x32 batch=4096 (qr, 1.56x), 128x128 batch=4 (jacobi, 1.47x), 512x32 batch=1024 (qr, 1.45x) ...",
   "GPU split loses more than 25% against the best GPU backend at 1024x32 batch=16 (qr, 1.98x), 512x32 batch=16 (qr, 1.70x), 512x32 batch=64 (qr, 1.69x), 1024x32 batch=1 (qr, 1.68x), 1024x32 batch=4 (qr, 1.68x), 256x32 batch=4096 (jacobi, 1.66x), 512x32 batch=4 (qr, 1.61x), 512x32 batch=4096 (qr, 1.56x) ...",
   "chosen rule picks a backend that was not timed at 1 points; the cost model's guess counts in the geomean and is kept out of the worst case: 256x128 batch=4096 (block, est 3.02x)",
-  "the GPU is still ahead of the CPU at the largest k measured (1024): gpu_max_k is a lower bound, rerun with a larger --max-k to find the cap"
+  "the GPU is still ahead of the CPU at the largest k measured (1024): gpu_max_k is a lower bound, rerun with a larger --max-k to find the cap",
+  "this device has no entry in kTuned[]: it is running the untuned default; paste the row above into src/svd.mm",
+  "the fitted policy differs from the one in effect (default:untuned-device (Apple M5 Pro))"
  ],
  "noise": {
   "overall": {
@@ -5074,7 +5076,10 @@
  "tuned_row": "{\"Apple M5 Pro\", 20,   512, 32,   192, 64, 64,   1024, 512, 4},",
  "env_line": "SVD_QR_MIN_ROWS=512 SVD_QR_MIN_K=32 SVD_BLOCK_MIN_K=192 SVD_BLOCK_MIN_K_BATCHED=64 SVD_BLOCK_MIN_BATCH=64 SVD_GPU_MAX_K=1024 SVD_GPU_MIN_BATCH_TIMES_K=512 SVD_GPU_MIN_BATCH=4",
  "raw": [
-  "docs/results/svd-apple-m5-pro/raw.csv"
+  "docs/results/apple-m5-pro-20gpu/20260930-27b6c2/svd/raw.csv"
+ ],
+ "submissions": [
+  "20260930-27b6c2"
  ],
  "calibration": {
   "probe": {

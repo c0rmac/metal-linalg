@@ -1,5 +1,7 @@
 # SVD routing on Apple M5 Pro (20 GPU cores)
 
+What every section and number below means: [reading-reports.md](https://github.com/c0rmac/metal-linalg/blob/main/docs/reading-reports.md).
+
 Cost model scaled to this device from one probe point: block x0.30, cpu x0.67, jacobi x0.16, qr x0.26, qrblock x0.33 (1.00 is an M1).
 
 Machine state: load 1.6/18 at the start, load 1.7/18 at the end; power mains.

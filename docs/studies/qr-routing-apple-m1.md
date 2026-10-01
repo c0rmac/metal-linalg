@@ -264,5 +264,5 @@ saturates nearer 480. It also re-tests **which feature** wins, and says so
 loudly if `M` is no longer the answer, because that would be a structural change
 and matters far more than the threshold moving.
 
-The reference M1 run is committed under [`results/qr-apple-m1/`](../results/qr-apple-m1/)
+The reference M1 run is committed under [`results/apple-m1-8gpu/legacy/qr/`](../results/apple-m1-8gpu/legacy/qr/)
 so a new run can be diffed against it.

@@ -151,30 +151,13 @@ struct TunedEntry {
     unsigned    gpu_min_batch;
 };
 
-// Apple M1: 174 (N, batch) points, four backends, two randomised passes
-// (docs/studies/eigh-routing-apple-m1.md). Fitted in two stages. Against the best GPU backend,
-// block_min_n = 96 is the only value within 0.5% of the best geometric-mean
-// regret (1.024, worst 1.49x; 128 scores 1.045 with a 2.64x worst case) and
-// simd_max_n is flat from 0 to 8. Against the best of all backends,
-// gpu_max_n = 64 is the only near-optimal cap and the batch * N product is
-// flat between 512 and 1024. The batch-dependent block crossover and a per-N
-// CPU boundary were both tried and rejected on held-out data.
-//
-// Apple M5 Pro: 197 points up to N = 1024, two passes, idle machine on mains
-// (docs/results/eigh-apple-m5-pro/). The block crossover is again 96,
-// the only value within 0.5% of the best; simd mode never wins, so
-// simd_max_n = 0. Against the CPU the GPU is ahead up to the largest N
-// measured, but never for a lone matrix at any N (0.3x to 0.5x up to 4096)
-// nor below 16 of them: gpu_min_batch = 16 is the only near-optimal value
-// (the curve turns at 32), and given it the cap is flat from 1024 to none
-// and the batch * N floor from 512 to 1024. The batch-dependent block
-// crossover (block from 64 at batch >= 256) was better on held-out data in
-// 93% of resamples against the 95% bar, and the per-N CPU boundary in 72%;
-// neither is adopted. On the M1 the minimum batch is 1: the product rule
-// already keeps lone matrices off its GPU, whose cap is 64.
+// The rows are generated from every run submitted for a device (docs/results/)
+// by tuning/generate_tables.py, which a GitHub Action reruns after each
+// merge; see docs/tuning.md. Why the measured values are what they are is in
+// docs/studies/. The last row keeps the array non-empty and matches nothing.
 constexpr TunedEntry kTuned[] = {
-    {"Apple M1", 8,   8, 96, 0, 0,   64, 1024, 1},
-    {"Apple M5 Pro", 20,   0, 96, 0, 0,   1024, 512, 16},
+#include "tuned/eigh.inc"
+    {"", 0,   0, 0, 0, 0,   0, 0, 0},
 };
 
 struct ResolvedPolicy {
@@ -201,7 +184,8 @@ ResolvedPolicy resolve_policy() {
     r.policy.gpu_cores = gpu_core_count();
 
     for (const auto& e : kTuned) {
-        if (r.device == e.device_name && r.policy.gpu_cores == e.gpu_cores) {
+        if (e.device_name[0] != '\0' && r.device == e.device_name &&
+            r.policy.gpu_cores == e.gpu_cores) {
             r.policy.simd_max_n            = e.simd_max_n;
             r.policy.block_min_n           = e.block_min_n;
             r.policy.block_min_n_batched   = e.block_min_n_batched;

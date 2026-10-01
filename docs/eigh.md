@@ -222,7 +222,7 @@ up to 1.5x between runs, so treat ratios near 1 as ties.
 | 1024 | block | 0.33x (585 ms) | -- | -- | -- |
 
 The same on an Apple M5 Pro (20 GPU cores, 18 CPU cores), from the routing
-sweep in [`results/eigh-apple-m5-pro/`](results/eigh-apple-m5-pro/):
+sweep in [`results/apple-m5-pro-20gpu/20260930-27b6c2/eigh/`](results/apple-m5-pro-20gpu/20260930-27b6c2/eigh/):
 min of two randomised passes, idle machine on mains, against the same thin CPU
 path. The cell names the GPU backend that won at that point (`tg` is backend 1
 in threadgroup mode; simd mode never won on this device).
@@ -316,16 +316,9 @@ never catastrophic, so being untuned costs a missed GPU win, not a call routed
 to a backend that takes seconds. A GPU with more cores than an M1 will want a
 higher `gpu_max_n` than this, as the M5 Pro row shows.
 
-Step-by-step instructions for measuring another device, for both this and the
-QR crossover, are in [`tuning.md`](tuning.md).
-
-**To tune a device** (about 17 minutes on an M1, 12 on an M5 Pro with the
-larger grid), on an idle machine, on mains power, with Low Power Mode off:
-
-```sh
-cmake --build build --target sweep_eigh
-python3 tuning/tune_eigh.py build/sweep_eigh --max-n 1024
-```
+**To measure another Mac**, run `python3 tuning/run.py`, which measures all
+three decompositions in one go (about 40 minutes); see [`tuning.md`](tuning.md).
+The eigensolver part works as follows.
 
 The conditions matter more here than for QR, because one of the four backends
 is the CPU and other jobs slow it most, which biases the routing toward the
@@ -335,16 +328,9 @@ and after it. A busy machine, a probe that moved by more than 25%, or a single
 pass (`--quick`, a five-minute smoke test of the pipeline) marks the report
 "indicative only" and says not to paste its row.
 
-This writes `eigh-tune-results/`:
-
-- `report.md` — a written report in the same shape as the M1 one
-- `results.json` — plot-ready series, decision surfaces, rule comparison, held-out verdicts, noise floor
-- `raw.csv` — every timing, so the analysis can be redone without remeasuring
-- `policy.json` — the device, the policy it was running, and the cost-model calibration
-
-and prints a row to paste into `kTuned[]` in `src/eigh.mm`, plus the same policy
-as environment variables to try before rebuilding. Nothing in the harness
-assumes the machine it was written on:
+It writes a report, the timings and the fitted row for `kTuned[]` in
+`src/eigh.mm` into the submission's `eigh/` folder. Nothing in it assumes the
+machine it was written on:
 
 - The device name, core count and policy in effect are read from the binary
   (`sweep_eigh --policy`).
@@ -364,13 +350,9 @@ assumes the machine it was written on:
   bootstrap resamples.
 
 The M1 and M5 Pro runs are committed under
-[`results/eigh-apple-m1/`](results/eigh-apple-m1/) and
-[`results/eigh-apple-m5-pro/`](results/eigh-apple-m5-pro/) so a new run can
-be diffed against them. To re-render a report without remeasuring:
-
-```sh
-python3 tuning/tune_eigh.py --reanalyse docs/results/eigh-apple-m1/raw.csv
-```
+[`results/apple-m1-8gpu/`](results/apple-m1-8gpu/) and
+[`results/apple-m5-pro-20gpu/`](results/apple-m5-pro-20gpu/) so a new run can
+be diffed against them.
 
 To override the policy without rebuilding, set the environment variables
 below, or call `set_eigh_policy()`:
