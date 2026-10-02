@@ -31,6 +31,10 @@ on:
         description: "Only point the Homebrew tap at this existing release (e.g. 2.0.1), to retry a failed tap update"
         required: false
         default: ""
+      pypi_version:
+        description: "Only build and publish the Python package of this existing release (e.g. 2.1.1), to retry a failed PyPI upload"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -41,8 +45,11 @@ concurrency:
 
 jobs:
   release:
-    if: github.event_name != 'workflow_dispatch' || inputs.tap_version == ''
+    if: github.event_name != 'workflow_dispatch' || (inputs.tap_version == '' && inputs.pypi_version == '')
     runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.plan.outputs.skip }}
+      version: ${{ steps.plan.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -89,6 +96,46 @@ jobs:
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: python3 .github/release.py tap "${{ steps.plan.outputs.version }}" c0rmac/homebrew-metal-linalg
+
+  wheels:
+    # The Python package of the release just made, or of pypi_version.
+    needs: release
+    if: >-
+      !cancelled() &&
+      (needs.release.outputs.skip == 'false' || (github.event_name == 'workflow_dispatch' && inputs.pypi_version != ''))
+    uses: ./.github/workflows/wheels.yml
+    with:
+      ref: v${{ needs.release.outputs.version || inputs.pypi_version }}
+
+  pypi:
+    # Publishes through PyPI's trusted publishing, so no token is stored here;
+    # see CONTRIBUTING.md, "Releases". The files also go on the GitHub release.
+    needs: [release, wheels]
+    if: ${{ !cancelled() && needs.wheels.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/metal-linalg/
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-dist
+          path: dist/
+
+      - name: Attach them to the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "v${{ needs.release.outputs.version || inputs.pypi_version }}" dist/* \
+            --repo "${{ github.repository }}" --clobber
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
 
   tap:
     # Retries the last step for a release that already exists.

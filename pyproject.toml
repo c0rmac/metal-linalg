@@ -1,20 +1,29 @@
-# The Python package, metal_linalg. It is compiled against the MLX of the
-# environment it is installed into, so install it without build isolation;
-# see python/README.md.
+# The Python package, metal_linalg, published to PyPI as prebuilt wheels.
+#
+# The extension links the libmlx inside the `mlx` package and passes mx.array
+# objects through MLX's nanobind registry, so it works only with the exact MLX
+# it was compiled against, and only if compiled with the nanobind that MLX
+# used. Both are pinned here, at build and at run time, and move together:
+# to follow a new MLX, change both MLX_PIN lines below and, if the
+# build says so, the nanobind pin. See python/README.md and CONTRIBUTING.md.
 
 [build-system]
-requires = ["scikit-build-core>=0.10", "nanobind>=2"]
+requires = ["scikit-build-core>=0.11", "nanobind==3.0.1", "mlx==0.32.3"]  # MLX_PIN
 build-backend = "scikit_build_core.build"
 
 [project]
 name = "metal-linalg"
-version = "2.1.0"
+version = "2.2.0"
 description = "QR, symmetric eigendecomposition and SVD for batches of matrices on Apple GPUs, for MLX"
 readme = "python/README.md"
 requires-python = ">=3.10"
-dependencies = ["mlx"]
+dependencies = ["mlx==0.32.3"]  # MLX_PIN
+license = "MIT"
 classifiers = [
-    "Operating System :: MacOS",
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: GPU",
+    "Intended Audience :: Science/Research",
+    "Operating System :: MacOS :: MacOS X",
     "Programming Language :: C++",
     "Programming Language :: Python :: 3",
     "Topic :: Scientific/Engineering :: Mathematics",
@@ -22,13 +31,16 @@ classifiers = [
 
 [project.urls]
 Homepage = "https://github.com/c0rmac/metal-linalg"
+Documentation = "https://github.com/c0rmac/metal-linalg/blob/main/python/README.md"
+Changelog = "https://github.com/c0rmac/metal-linalg/blob/main/CHANGELOG.md"
 
 [tool.scikit-build]
 minimum-version = "0.10"
 cmake.version = ">=3.25"
 cmake.build-type = "Release"
 wheel.packages = ["python/metal_linalg"]
-sdist.exclude = ["build*", "docs/results", "benchmarks", "tuning"]
+sdist.exclude = ["build*", "cmake-build-*", "docs", "benchmarks", "tuning", "swift",
+                 "examples", "tests", ".github", "Package.swift"]
 
 [tool.scikit-build.cmake.define]
 METAL_LINALG_BUILD_PYTHON = "ON"
@@ -36,3 +48,6 @@ METAL_LINALG_BUILD_TESTS = "OFF"
 METAL_LINALG_BUILD_EXAMPLES = "OFF"
 METAL_LINALG_SHARED = "OFF"
 METAL_LINALG_INSTALL = "OFF"
+# Wheels run on macOS 14 and later, like the mlx wheels they depend on.
+CMAKE_OSX_DEPLOYMENT_TARGET = "14.0"
+CMAKE_OSX_ARCHITECTURES = "arm64"
