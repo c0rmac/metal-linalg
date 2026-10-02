@@ -3,6 +3,7 @@
 
     python3 tuning/run.py              # about 40 minutes; leave the Mac alone
     python3 tuning/run.py --quick      # a 15-minute smoke test, not a submission
+    python3 tuning/run.py --only qr    # one decomposition (qr ~3 min, eigh ~11, svd ~35)
 
 Checks that the Mac is fit to measure, builds the tools, runs the correctness
 tests, then the QR, eigensolver and SVD sweeps one after another, and writes
@@ -241,9 +242,18 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--quick", action="store_true",
                     help="a short smoke test of the whole pipeline; not for submitting")
+    ap.add_argument("--only", metavar="OPS",
+                    help="measure only these decompositions, comma-separated (qr, eigh, svd): to "
+                         "remeasure one after its routing or kernels change; the others keep the "
+                         "settings fitted from earlier runs")
     ap.add_argument("--anyway", action="store_true",
                     help="measure even if the Mac is busy or on battery (results marked untrustworthy)")
     args = ap.parse_args()
+    known = [op for op, *_ in SWEEPS]
+    only = known if not args.only else [op.strip() for op in args.only.split(",") if op.strip()]
+    if not only or any(op not in known for op in only):
+        fail(f"--only takes a comma-separated list of {', '.join(known)}; got {args.only!r}.")
+    sweeps = [s for s in SWEEPS if s[0] in only]
 
     if sys.platform != "darwin" or platform.machine() != "arm64":
         fail("metal-linalg measures Apple Silicon Macs; this is not one.")
@@ -267,10 +277,11 @@ def main():
     info.update({"status": "running", "conditions": {"start": conditions()}, "results": {}, "minutes": {}})
     json.dump(info, open(os.path.join(out, "submission.json"), "w"), indent=1)
 
-    total = "15" if args.quick else "40"
+    minutes = {"qr": (2, 3), "eigh": (5, 11), "svd": (8, 35)}
+    total = str(sum(minutes[op][0 if args.quick else 1] for op in only))
     say(f"\nMeasuring {info['device']['name']} ({info['device']['gpu_cores']} GPU cores): about {total} "
         f"minutes. Leave the Mac alone until it finishes.\nWriting to {os.path.relpath(out, ROOT)}/\n")
-    for op, harness, binary, options, quick_options in SWEEPS:
+    for op, harness, binary, options, quick_options in sweeps:
         say(f"--- {op} ---")
         t0 = time.time()
         rc = run_sweep(op, harness, os.path.join(build_dir, binary),
