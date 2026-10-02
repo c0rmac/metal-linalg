@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Measure this Mac for metal-linalg: all three decompositions, one command.
 
-    python3 tuning/run.py              # about 40 minutes; leave the Mac alone
+    python3 tuning/run.py              # about an hour; leave the Mac alone
     python3 tuning/run.py --quick      # a 15-minute smoke test, not a submission
-    python3 tuning/run.py --only qr    # one decomposition (qr ~3 min, eigh ~11, svd ~35)
+    python3 tuning/run.py --only qr    # one decomposition (qr ~3 min, eigh ~25, svd ~35)
 
 Checks that the Mac is fit to measure, builds the tools, runs the correctness
 tests, then the QR, eigensolver and SVD sweeps one after another, and writes
@@ -40,7 +40,7 @@ import tune_eigh as te      # noqa: E402  machine state checks
 # (decomposition, harness, sweep binary, options, options for --quick)
 SWEEPS = [
     ("qr",   "tune_qr.py",   "sweep_qr",   [], []),
-    ("eigh", "tune_eigh.py", "sweep_eigh", ["--max-n", "1024"], ["--quick"]),
+    ("eigh", "tune_eigh.py", "sweep_eigh", ["--max-n", "2048"], ["--quick"]),
     ("svd",  "tune_svd.py",  "sweep_svd",  ["--max-k", "1024"], ["--quick"]),
 ]
 TESTS = ["test_qr", "test_eigh", "test_svd"]
@@ -277,7 +277,7 @@ def main():
     info.update({"status": "running", "conditions": {"start": conditions()}, "results": {}, "minutes": {}})
     json.dump(info, open(os.path.join(out, "submission.json"), "w"), indent=1)
 
-    minutes = {"qr": (2, 3), "eigh": (5, 11), "svd": (8, 35)}
+    minutes = {"qr": (2, 3), "eigh": (8, 25), "svd": (8, 35)}
     total = str(sum(minutes[op][0 if args.quick else 1] for op in only))
     say(f"\nMeasuring {info['device']['name']} ({info['device']['gpu_cores']} GPU cores): about {total} "
         f"minutes. Leave the Mac alone until it finishes.\nWriting to {os.path.relpath(out, ROOT)}/\n")

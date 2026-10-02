@@ -33,6 +33,13 @@ eigh.mm encodes the answer as a per-device routing policy (EighPolicy):
     block_min_batch           batch reaches this                     (GPU backend 2)
     gpu_max_n               GPU only up to this N                    (CPU routing)
     gpu_min_batch_times_n   GPU only if batch * N is at least this   (CPU routing)
+    gpu_min_batch           GPU only if the batch is at least this   (CPU routing)
+    values_*                the same three for eigenvalues alone     (CPU routing, eigvalsh)
+
+Every backend is also timed computing eigenvalues alone (backend names
+<name>_vals): eigvalsh has its own GPU-or-CPU boundary, because the CPU then
+uses a faster method (LAPACK's two-stage reduction from N = 128). Stage 3 fits
+that boundary given the same GPU split.
 
 and the report ends in a row to paste into kTuned[] in eigh.mm.
 
@@ -96,7 +103,13 @@ B_LIST = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096]
 N_QUICK = [4, 8, 16, 32, 64, 96, 128, 192, 256, 512]
 B_QUICK = [1, 4, 16, 64, 256, 1024, 4096]
 
-N_EXTRA = [768, 1024]   # added by --max-n
+N_EXTRA = [768, 1024, 1536, 2048]   # added by --max-n
+# Above 1024 only lone matrices and small batches are measured, with a larger
+# per-call budget: enough to see whether the GPU is still behind the CPU there,
+# so that gpu_max_n is a measured cap rather than the edge of the grid.
+LARGE_N = 1024
+LARGE_BATCHES = [1, 2, 4]
+CAP_LARGE_MS = 8000.0
 
 # Candidate values for each constant. A value only changes behaviour when it
 # crosses a measured N (or batch * N), so the grids are the measured values
@@ -114,7 +127,11 @@ B_GRID     = list(B_LIST)
 # at run time by what `sweep_eigh --policy` reports; this is only the fallback
 # for re-analysing a raw.csv that has no policy.json beside it.
 CURRENT = (8, 96, INF, INF, 64, 1024, 1)
+# The eigenvalues-alone boundary in effect, (gpu_max_n, min_bn, min_batch), or
+# None where the device has none of its own (it then follows CURRENT's).
+CURRENT_VALUES = None
 NO_LIMIT = 0xFFFFFFFF   # kEighNoLimit
+VALS = "_vals"
 
 # Per-call cost model, ms. Only used to skip points that would take several
 # seconds per call, and to score a rule that picks a backend at such a point.
@@ -136,6 +153,29 @@ def configure_grids(times):
     MIN_BATCHES = [1] + [b for b in B_GRID if 1 < b <= 32]
 
 
+def policy_values(pol):
+    """The eigenvalues-alone boundary in a policy, or None if it has none."""
+    if not pol.get("values_gpu_min_batch", 0):
+        return None
+    gm = pol["values_gpu_max_n"]
+    return (INF if gm >= NO_LIMIT else gm, pol["values_gpu_min_batch_times_n"], pol["values_gpu_min_batch"])
+
+
+def split_values(times):
+    """(times with eigenvectors, times for eigenvalues alone), each keyed by the
+    plain backend names. Runs from before the _vals backends give an empty
+    second part."""
+    vec, val = {}, {}
+    for p, tv in times.items():
+        a = {k: v for k, v in tv.items() if not k.endswith(VALS)}
+        b = {k[:-len(VALS)]: v for k, v in tv.items() if k.endswith(VALS)}
+        if any(k in a for k in GPU_BACKENDS):
+            vec[p] = a
+        if any(k in b for k in GPU_BACKENDS) and "cpu" in b:
+            val[p] = b
+    return vec, val
+
+
 def policy_to_tuple(pol):
     batched = pol.get("block_min_batch", 0) > 0
     gm = pol["gpu_max_n"]
@@ -146,21 +186,33 @@ def policy_to_tuple(pol):
             max(1, pol.get("gpu_min_batch", 1)))    # absent: a build without the constant
 
 
-def tuned_row(device, params):
-    """The line to paste into kTuned[] in eigh.mm."""
+def _route_fields(gm, mb, mbatch):
+    if mb >= INF:                 # never GPU
+        gm, mb = 0, 0
+    return f"{'kEighNoLimit' if gm >= INF else gm}, {mb}, {mbatch}"
+
+
+def tuned_row(device, params, values=None):
+    """The line to paste into kTuned[] in eigh.mm. `values` is the
+    eigenvalues-alone boundary, or None (written as 0, 0, 0: as for eigenvectors)."""
     s, bm, lo, bh, gm, mb, mbatch = params
     if lo >= INF or bh >= INF:
         lo, bh = 0, 0
-    if mb >= INF:                 # never GPU
-        gm, mb = 0, 0
-    gm_s = "kEighNoLimit" if gm >= INF else str(gm)
     bm_s = str(1 << 30) if bm >= INF else str(bm)
+    v = _route_fields(*values) if values else "0, 0, 0"
     return (f'{{"{device["name"]}", {device["gpu_cores"]},   {s}, {bm_s}, {lo}, {bh},   '
-            f'{gm_s}, {mb}, {mbatch}}},')
+            f'{_route_fields(gm, mb, mbatch)},   {v}}},')
 
 
-def env_line(params):
+def env_line(params, values=None):
     s, bm, lo, bh, gm, mb, mbatch = params
+    extra = ""
+    if values:
+        vg, vm, vb = values
+        if vm >= INF:
+            vg, vm = 0, 0
+        extra = (f" EIGH_VALUES_GPU_MAX_N={NO_LIMIT if vg >= INF else vg} "
+                 f"EIGH_VALUES_GPU_MIN_BATCH_TIMES_N={vm} EIGH_VALUES_GPU_MIN_BATCH={vb}")
     if lo >= INF or bh >= INF:
         lo, bh = 0, 0
     if mb >= INF:
@@ -168,10 +220,11 @@ def env_line(params):
     return (f"EIGH_SIMD_MAX_N={s} EIGH_BLOCK_MIN_N={(1 << 30) if bm >= INF else bm} "
             f"EIGH_BLOCK_MIN_N_BATCHED={lo} EIGH_BLOCK_MIN_BATCH={bh} "
             f"EIGH_GPU_MAX_N={NO_LIMIT if gm >= INF else gm} EIGH_GPU_MIN_BATCH_TIMES_N={mb} "
-            f"EIGH_GPU_MIN_BATCH={mbatch}")
+            f"EIGH_GPU_MIN_BATCH={mbatch}" + extra)
 
 
 def est_ms(backend, N, b):
+    backend = backend[:-len(VALS)] if backend.endswith(VALS) else backend
     n3 = float(N) ** 3
     if backend in ("tg", "simd"):
         t = 0.3 + 1e-5 * n3 * max(1.0, b / 8.0)
@@ -183,18 +236,19 @@ def est_ms(backend, N, b):
 
 
 def backends_for(N, b):
+    cap = CAP_LARGE_MS if N > LARGE_N else CAP_MS
     ks = []
-    if N <= 32 and est_ms("simd", N, b) <= CAP_MS:
+    if N <= 32 and est_ms("simd", N, b) <= cap:
         ks.append("simd")
-    if est_ms("tg", N, b) <= CAP_MS:
+    if est_ms("tg", N, b) <= cap:
         ks.append("tg")
-    if N >= 32 and est_ms("block", N, b) <= CAP_MS:
+    if N >= 32 and est_ms("block", N, b) <= cap:
         ks.append("block")
     if not ks:
         return []
-    if est_ms("cpu", N, b) <= CAP_MS:
+    if est_ms("cpu", N, b) <= cap:
         ks.append("cpu")
-    return ks
+    return ks + [k + VALS for k in ks]   # each again for eigenvalues alone
 
 
 def point_grid(quick=False, max_n=512):
@@ -203,7 +257,7 @@ def point_grid(quick=False, max_n=512):
     Bs = B_QUICK if quick else B_LIST
     pts = []
     for N in Ns:
-        for b in Bs:
+        for b in (LARGE_BATCHES if N > LARGE_N else Bs):
             ks = backends_for(N, b)
             if ks:
                 pts.append((b, N, ks))
@@ -625,6 +679,7 @@ def _curve(score_fn, base, idx, grid):
 
 
 def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
+    times, vtimes = split_values(times)
     configure_grids(times)
     single_pass = not any(len(v) >= 2 for v in repeats.values())
     res = {"device": device, "n_points": len(times), "single_pass": single_pass, "drift": drift_info,
@@ -718,6 +773,34 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
     }
     res["stage2"] = s2
 
+    # ---- stage 3: CPU routing for eigenvalues alone, given the same split ----
+    values = None
+    if vtimes:
+        cur_v = CURRENT_VALUES or cur_route          # none of its own: it follows stage 2's
+        sc3 = fit_routing(split, vtimes)
+        best3, near3 = near_optimal(sc3, tol)
+        vfull = choose(near3, split + cur_v, _score3(score_rule(split + cur_v, vtimes)), best3, tol)
+        values = tuple(vfull[4:])
+        vtrain, vtest = split_points(vtimes)
+        _, tr_near3 = near_optimal(fit_routing(split, vtrain), tol)
+        tr_v = choose(tr_near3, split + cur_v)
+        res["stage3"] = {
+            "n_points": len(vtimes),
+            "current": _strip(score_rule(split + cur_v, vtimes)),
+            "current_is_eigh_boundary": CURRENT_VALUES is None,
+            "eigh_boundary": _strip(score_rule(params, vtimes)),   # what eigvalsh would do without its own
+            "chosen": _strip(score_rule(vfull, vtimes)),
+            "chosen_params": list(values),
+            "band": {"n_near_optimal": len(near3), "gpu_max_n": _band(near3, 4),
+                     "min_bn": _band(near3, 5), "min_batch": _band(near3, 6)},
+            "holdout": {"train_points": len(vtrain), "test_points": len(vtest),
+                        "params": list(tr_v[4:]),
+                        "test": _strip(evaluate(lambda N, b: rule_choice(tr_v, N, b), vtest)),
+                        "eigh_boundary_test": _strip(evaluate(lambda N, b: rule_choice(params, N, b), vtest))},
+        }
+    res["values_chosen"] = list(values) if values else None
+    res["current_values"] = list(CURRENT_VALUES) if CURRENT_VALUES else None
+
     # ---- the whole rule ----
     res["chosen"] = list(params)
     res["rules"] = {"current": _strip(score_rule(CURRENT, times)),
@@ -781,15 +864,31 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
     if str(device.get("source", "")).startswith("default:untuned-device"):
         warns.append("this device has no entry in kTuned[]: it is running the untuned default; "
                      "paste the row above into src/eigh.mm")
-    if tuple(params) != tuple(CURRENT):
+    if tuple(params) != tuple(CURRENT) or (values and tuple(values) != tuple(CURRENT_VALUES or ())):
         warns.append(f"the fitted policy differs from the one in effect ({device.get('source', 'unknown')}): "
                      f"update this device's row in kTuned[] in src/eigh.mm")
     res["warnings"] = warns
     res["noise"] = floor
     res["trustworthy"] = (not single_pass) and (drift_info is None or drift_info["ok"]) and not busy
     res["machine"] = states
-    res["tuned_row"] = tuned_row(device, params)
-    res["env_line"] = env_line(params)
+    if values:
+        vmax = max(N for _, N in vtimes)
+        vtop = [(b, N) for (b, N) in vtimes if N == vmax]
+        if values[0] >= vmax or any(vtimes[p]["cpu"] > min(v for k, v in vtimes[p].items() if k != "cpu")
+                                    for p in vtop):
+            warns.append(f"eigenvalues alone: the GPU is still ahead at the largest N measured ({vmax}); "
+                         f"values_gpu_max_n is a lower bound")
+        misses_v = sorted(((r, N, b, k) for (b, N), (k, r, e) in score_rule(split + values, vtimes)["_per_point"].items()
+                           if r > 1.25 and not e), reverse=True)
+        if misses_v:
+            warns.append("eigenvalues alone: the chosen boundary loses more than 25% at " +
+                         ", ".join(f"N={N} batch={b} ({k}, {r:.2f}x)" for r, N, b, k in misses_v[:8]) +
+                         (" ..." if len(misses_v) > 8 else ""))
+    else:
+        warns.append("no eigenvalues-alone timings (a run from before they were measured): the row's "
+                      "values_* fields are 0, so eigvalsh follows eigh's boundary")
+    res["tuned_row"] = tuned_row(device, params, values)
+    res["env_line"] = env_line(params, values)
     res["n_candidates"] = {"split": len(SIMD_MAXS) * len(BLOCK_MINS),
                            "routing": len(GPU_MAX_NS) * len(MIN_BNS) * len(MIN_BATCHES)}
     return res
@@ -912,7 +1011,8 @@ def write_report(res, path):
     L.append("")
     L.append("```cpp")
     L.append("// device, GPU cores,   simd_max_n, block_min_n, block_min_n_batched, block_min_batch,   "
-             "gpu_max_n, gpu_min_batch_times_n, gpu_min_batch")
+             "gpu_max_n, gpu_min_batch_times_n, gpu_min_batch,   values_gpu_max_n, "
+             "values_gpu_min_batch_times_n, values_gpu_min_batch")
     L.append(res["tuned_row"])
     L.append("```")
     L.append("")
@@ -923,7 +1023,8 @@ def write_report(res, path):
     L.append("```")
     L.append("")
     src = d.get("source", "unknown")
-    same = tuple(res["current"]) == tuple(res["chosen"])
+    same = tuple(res["current"]) == tuple(res["chosen"]) and (res.get("values_chosen") is None or
+            res.get("current_values") == res["values_chosen"])
     L.append(f"The policy in effect on this device came from `{src}`. " +
              ("It matches the fitted one." if same else
               "It differs from the fitted one; see the warnings."))
@@ -1036,6 +1137,38 @@ def write_report(res, path):
     L.append(_surface(res["surface"], "speedup"))
     L.append("")
 
+    s3 = res.get("stage3")
+    if s3:
+        L.append("## Stage 3: GPU or CPU, eigenvalues alone")
+        L.append("")
+        L.append("The same rule for `eigvalsh`, with its own thresholds (`values_gpu_max_n`, "
+                 "`values_gpu_min_batch_times_n`, `values_gpu_min_batch`), fitted on the `_vals` timings "
+                 f"of {s3['n_points']} points given the split above. The CPU computes eigenvalues alone by "
+                 "LAPACK's two-stage reduction from N = 128, so the boundary need not be eigh's.")
+        L.append("")
+        L.append("| rule | geomean regret | worst | >10% | total time / oracle | est. picks |")
+        L.append("|---|---|---|---|---|---|")
+        cur_label = ("eigh's boundary, in effect" if s3["current_is_eigh_boundary"]
+                     else "policy in effect")
+        L.append(_stats_row(cur_label, s3["current"]))
+        if not s3["current_is_eigh_boundary"]:
+            L.append(_stats_row("eigh's fitted boundary", s3["eigh_boundary"]))
+        L.append(_stats_row(f"fitted {tuple(_fmt_v(v) for v in s3['chosen_params'])}", s3["chosen"]))
+        L.append("")
+        b3 = s3["band"]
+        L.append(f"{b3['n_near_optimal']} combinations are within {res['tolerance']*100:.1f}% of the best "
+                 f"geomean: values_gpu_max_n {_fmt_v(b3['gpu_max_n'][0])} .. {_fmt_v(b3['gpu_max_n'][1])}, "
+                 f"values_gpu_min_batch_times_n {_fmt_v(b3['min_bn'][0])} .. {_fmt_v(b3['min_bn'][1])}, "
+                 f"values_gpu_min_batch {_fmt_v(b3['min_batch'][0])} .. {_fmt_v(b3['min_batch'][1])}.")
+        L.append("")
+        h3 = s3["holdout"]
+        L.append(f"Held out: fitted on {h3['train_points']} points "
+                 f"{tuple(_fmt_v(v) for v in h3['params'])}, scored on the other {h3['test_points']}: "
+                 f"geomean {h3['test']['geomean']:.4f}x, worst {h3['test']['worst']:.2f}x, against "
+                 f"{h3['eigh_boundary_test']['geomean']:.4f}x, worst {h3['eigh_boundary_test']['worst']:.2f}x "
+                 f"for eigh's boundary on the same points.")
+        L.append("")
+
     L.append("## Noise floor")
     L.append("")
     nf = res["noise"]
@@ -1059,7 +1192,7 @@ def write_report(res, path):
 # ---------------------------------------------------------------------------
 
 def main():
-    global CURRENT
+    global CURRENT, CURRENT_VALUES
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("binary", nargs="?", help="path to the built sweep_eigh")
@@ -1121,6 +1254,7 @@ def main():
         if pol:
             device = {"name": pol["device"], "gpu_cores": pol["gpu_cores"], "source": pol["source"]}
             CURRENT = policy_to_tuple(pol)
+            CURRENT_VALUES = policy_values(pol)
         calibration = side.get("calibration")
         if calibration:
             SCALE.update(calibration["scale"])
@@ -1147,6 +1281,12 @@ def main():
           f"({res['rules']['chosen']['geomean']:.4f}x vs best of all, worst {res['rules']['chosen']['worst']:.2f}x)")
     print(f"in effect ({device['source']}): {res['rules']['current']['geomean']:.4f}x, "
           f"worst {res['rules']['current']['worst']:.2f}x")
+    if res.get("values_chosen"):
+        vg, vm, vb = res["values_chosen"]
+        s3 = res["stage3"]
+        print(f"eigenvalues alone: values_gpu_max_n={_fmt_v(vg)} values_gpu_min_batch_times_n={_fmt_v(vm)} "
+              f"values_gpu_min_batch={vb}   ({s3['chosen']['geomean']:.4f}x, worst {s3['chosen']['worst']:.2f}x; "
+              f"with eigh's boundary {s3['eigh_boundary']['geomean']:.4f}x, worst {s3['eigh_boundary']['worst']:.2f}x)")
     print(f"\nkTuned[] row:  {res['tuned_row']}" +
           ("" if res["trustworthy"] else "     <-- indicative only, do not paste (see first warning)"))
     for w in res["warnings"]:

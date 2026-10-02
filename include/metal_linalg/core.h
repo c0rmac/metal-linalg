@@ -144,6 +144,17 @@ namespace metal_linalg {
         // Device this was resolved against. Informational: detected, not
         // assumed, and what a retune should be keyed on.
         unsigned gpu_cores = 0;   // 0 if it could not be detected
+
+        // --- GPU or CPU, for eigenvalues alone (eigvalsh) ---
+        // The same rule with its own thresholds, since the CPU computes
+        // eigenvalues alone by a faster method (the two-stage reduction from
+        // N = 128), and the GPU's saving from skipping the eigenvectors is
+        // smaller. values_gpu_min_batch = 0 means "as for eigenvectors": a
+        // device measured before these fields existed, or a policy that does
+        // not set them.
+        unsigned values_gpu_max_n             = 0;
+        unsigned values_gpu_min_batch_times_n = 0;
+        unsigned values_gpu_min_batch         = 0;
     };
 
     // The policy in effect. Resolved once, on first use.
@@ -169,6 +180,10 @@ namespace metal_linalg {
 
     // True iff eigh_backend(n, batch) is a GPU backend.
     bool eigh_uses_gpu(unsigned n, unsigned batch);
+
+    // The same for eigenvalues alone (eigvalsh), under the values_* boundary.
+    EighBackend eigvalsh_backend(unsigned n, unsigned batch);
+    bool eigvalsh_uses_gpu(unsigned n, unsigned batch);
 
     // -------------------------------------------------------------------------
     // Options of the lower-level entry points, for tests and tuning

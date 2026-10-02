@@ -161,6 +161,12 @@ public func eighBackend(n: Int, batch: Int = 1) -> String {
     String(cString: metal_linalg_eigh_backend(UInt32(clamping: n), UInt32(clamping: batch)))
 }
 
+/// The backend `eigvalshAccelerated` uses: as `eighBackend`, under the policy's
+/// eigenvalues-alone boundary (`values_gpu_*`).
+public func eigvalshBackend(n: Int, batch: Int = 1) -> String {
+    String(cString: metal_linalg_eigvalsh_backend(UInt32(clamping: n), UInt32(clamping: batch)))
+}
+
 /// "cpu", "jacobi", "block_jacobi", "qr_jacobi" or "qr_block_jacobi".
 public func svdBackend(rows: Int, cols: Int, batch: Int = 1) -> String {
     String(cString: metal_linalg_svd_backend(UInt32(clamping: rows), UInt32(clamping: cols), UInt32(clamping: batch)))

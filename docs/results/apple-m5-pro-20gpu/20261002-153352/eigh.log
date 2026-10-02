@@ -1,0 +1,37 @@
+device: Apple M5 Pro (20 GPU cores), policy from tuned:Apple M5 Pro
+cost model scale: tg x1.00, simd x1.00, block x0.14, cpu x0.95
+sweep -> /Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261002-153352/eigh/raw.csv
+  203 points, 1150 backend timings per pass x 2 passes; rough estimate 45 min
+    20/406  elapsed 1.2m  eta 23.3m
+    40/406  elapsed 2.5m  eta 22.9m
+    60/406  elapsed 3.9m  eta 22.2m
+    80/406  elapsed 5.5m  eta 22.5m
+    100/406  elapsed 7.1m  eta 21.6m
+    120/406  elapsed 8.2m  eta 19.7m
+    140/406  elapsed 8.8m  eta 16.6m
+    160/406  elapsed 9.2m  eta 14.1m
+    180/406  elapsed 10.3m  eta 12.9m
+    200/406  elapsed 11.2m  eta 11.5m
+    220/406  elapsed 12.8m  eta 10.8m
+    240/406  elapsed 13.7m  eta 9.5m
+    260/406  elapsed 15.3m  eta 8.6m
+    280/406  elapsed 15.9m  eta 7.1m
+    300/406  elapsed 17.2m  eta 6.1m
+    320/406  elapsed 17.8m  eta 4.8m
+    340/406  elapsed 18.9m  eta 3.7m
+    360/406  elapsed 20.0m  eta 2.6m
+    380/406  elapsed 21.0m  eta 1.4m
+    400/406  elapsed 22.4m  eta 0.3m
+    406/406  elapsed 22.6m  eta 0.0m
+
+203 points on Apple M5 Pro (20 GPU cores)
+GPU split:   simd_max_n=0 block_min_n=128 block_min_n_batched=64 block_min_batch=64   (1.0042x vs best GPU backend, worst 1.19x)
+CPU routing: gpu_max_n=1024 gpu_min_batch_times_n=512 gpu_min_batch=16   (1.0142x vs best of all, worst 1.75x)
+in effect (tuned:Apple M5 Pro): 1.0240x, worst 1.75x
+eigenvalues alone: values_gpu_max_n=256 values_gpu_min_batch_times_n=2048 values_gpu_min_batch=32   (1.0075x, worst 1.28x; with eigh's boundary 1.0610x, worst 3.90x)
+
+kTuned[] row:  {"Apple M5 Pro", 20,   0, 128, 64, 64,   1024, 512, 16,   256, 2048, 32},
+warning: chosen rule loses more than 25% at N=4 batch=128 (tg, 1.75x), N=768 batch=16 (block, 1.66x), N=2 batch=256 (tg, 1.63x), N=2 batch=512 (tg, 1.25x)
+warning: the fitted policy differs from the one in effect (tuned:Apple M5 Pro): update this device's row in kTuned[] in src/eigh.mm
+warning: eigenvalues alone: the chosen boundary loses more than 25% at N=24 batch=64 (cpu, 1.28x), N=64 batch=64 (block, 1.26x)
+wrote /Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261002-153352/eigh/results.json and report.md

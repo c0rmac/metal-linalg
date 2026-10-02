@@ -127,6 +127,13 @@ class Routing(unittest.TestCase):
             self.assertNotEqual(ml.eigh_backend(512, 1), "cpu")
             ml.set_eigh_policy(gpu_max_n=0)
             self.assertEqual(ml.eigh_backend(8, 4096), "cpu")
+            # eigenvalues alone: unset (values_gpu_min_batch = 0) follows eigh,
+            # set decides on its own
+            ml.set_eigh_policy(values_gpu_min_batch=0)
+            self.assertEqual(ml.eigvalsh_backend(8, 4096), "cpu")
+            ml.set_eigh_policy(values_gpu_max_n=64, values_gpu_min_batch_times_n=0, values_gpu_min_batch=1)
+            self.assertNotEqual(ml.eigvalsh_backend(8, 4096), "cpu")
+            self.assertEqual(ml.eigh_backend(8, 4096), "cpu")
         finally:
             ml.set_eigh_policy(measured)
         self.assertEqual(ml.eigh_policy(), measured)

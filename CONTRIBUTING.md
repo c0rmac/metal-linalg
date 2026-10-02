@@ -41,7 +41,7 @@ Plug the Mac in, quit other apps, then:
 python3 tuning/run.py
 ```
 
-That is the whole measurement. It takes about 40 minutes:
+That is the whole measurement. It takes about an hour:
 
 - it checks the Mac is ready (on power, not busy, Low Power Mode off), and
   stops with a message saying what to change if not;

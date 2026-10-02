@@ -29,8 +29,11 @@ on the CPU, eigenvectors come from `ssyevd`, and eigenvalues alone
 reduction (dense to band in matrix-matrix products, then band to
 tridiagonal), which on an M5 Pro is 1.2x faster at N = 1024, 3.8x at 4096
 and 5.7x at 8192 (2.6 s rather than 14.8 s for one 8192×8192). LAPACK's
-two-stage driver does not return eigenvectors;
-`eigh_backend(n, batch)` reports what a given
+two-stage driver does not return eigenvectors.
+Because the CPU's method differs, `eigvalsh` has its own GPU-or-CPU boundary
+(the policy's `values_gpu_*` fields), measured from eigenvalue-only timings;
+a device measured before it existed routes `eigvalsh` as `eigh`.
+`eigh_backend(n, batch)` and `eigvalsh_backend(n, batch)` report what a given
 problem will run on. `EIGH_DEVICE=gpu` or `cpu` forces a path; the
 `metal_linalg::detail` entry points always run their kernel. See
 [Performance](#performance) for the numbers behind the rule.
@@ -315,7 +318,13 @@ whose cap is 64; on the M5 Pro that needs a third constant, a minimum batch of
 N = 8, never wins on the M5 Pro.
 
 The GPU/CPU rule is `N <= gpu_max_n`, `batch * N >= gpu_min_batch_times_n` and
-`batch >= gpu_min_batch`; the last is 1 (no minimum) on the M1.
+`batch >= gpu_min_batch`; the last is 1 (no minimum) on the M1. Eigenvalues
+alone follow the same rule with `values_gpu_max_n`,
+`values_gpu_min_batch_times_n` and `values_gpu_min_batch`, fitted on the same
+sweep's eigenvalue-only timings (`<backend>_vals`); `values_gpu_min_batch = 0`
+means "as for eigenvectors". The sweep reaches N = 2048 for lone matrices and
+small batches, so `gpu_max_n` is a measured cap rather than the edge of the
+grid.
 `eigh_policy_source()` reports `default:untuned-device (<name>)` on any GPU
 without a table entry, so an untuned device is visible rather than silent. The
 default errs toward the CPU, which is the safe direction: the CPU path is
@@ -324,7 +333,7 @@ to a backend that takes seconds. A GPU with more cores than an M1 will want a
 higher `gpu_max_n` than this, as the M5 Pro row shows.
 
 **To measure another Mac**, run `python3 tuning/run.py`, which measures all
-three decompositions in one go (about 40 minutes); see [`tuning.md`](tuning.md).
+three decompositions in one go (about an hour); see [`tuning.md`](tuning.md).
 The eigensolver part works as follows.
 
 The conditions matter more here than for QR, because one of the four backends
@@ -386,6 +395,7 @@ To probe another GPU without a rebuild:
 | `EIGH_SIMD_MAX_N`, `EIGH_BLOCK_MIN_N` | the GPU backend split |
 | `EIGH_BLOCK_MIN_N_BATCHED`, `EIGH_BLOCK_MIN_BATCH` | the batch-dependent block crossover (0 = off) |
 | `EIGH_GPU_MAX_N`, `EIGH_GPU_MIN_BATCH_TIMES_N`, `EIGH_GPU_MIN_BATCH` | the GPU/CPU boundary |
+| `EIGH_VALUES_GPU_MAX_N`, `EIGH_VALUES_GPU_MIN_BATCH_TIMES_N`, `EIGH_VALUES_GPU_MIN_BATCH` | the GPU/CPU boundary for eigenvalues alone (`eigvalsh`) |
 | `EIGH_DEVICE=gpu` / `cpu` | bypass the GPU/CPU boundary |
 | `EIGH_MODE=simd` / `threadgroup` | force the execution mode of backend 1 |
 | `EIGH_INNER_SWEEPS=<k>` | scalar sweeps per block subproblem |
