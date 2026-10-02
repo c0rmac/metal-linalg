@@ -1,5 +1,19 @@
 # Changes
 
+## 2.2.3 (2026-10-02)
+
+- **QR uses its CPU path on the M5 Pro.** The M5 Pro's QR row predated QR's
+  CPU path, so every QR call went to the GPU: a lone 64×64 took 0.42 ms
+  rather than 0.03 ms in LAPACK. A new QR measurement sets the boundary to
+  "GPU iff `batch * k >= 512`" (1.08x geomean regret over 173 shapes, 1.67x
+  for always the GPU). The M1 row still sends every QR call to the GPU until
+  an M1 is remeasured (`python3 tuning/run.py --only qr`).
+- `tuning/run.py --only qr|eigh|svd` measures one decomposition.
+- QR tuning: submissions with CPU timings pass validation (they were
+  rejected); the GPU size limit is never put at the largest size measured;
+  lone matrices up to 3072×3072 are measured.
+- The Python `qr` docstring no longer says QR always runs on the GPU.
+
 ## 2.2.2 (2026-10-02)
 
 - **Complex input raises an error** (`std::invalid_argument` in C++,

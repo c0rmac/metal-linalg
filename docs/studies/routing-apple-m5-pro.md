@@ -186,6 +186,23 @@ batches of large matrices the GPU's.
 | eigh `gpu_min_batch` | 1 | 16 | new; a lone matrix is the CPU's on both |
 | SVD | no row | first row | the M1 needs a run on an idle machine |
 
+## Update, 2026-10-02: QR's GPU-or-CPU boundary
+
+The QR row above predates QR's CPU path, so it sent every QR call to the GPU,
+up to ~100x slower than LAPACK on a lone 16×16. A QR-only run
+([`20261002-9d19ba`](../results/apple-m5-pro-20gpu/20261002-9d19ba/qr/report.md),
+`python3 tuning/run.py --only qr`) timed the CPU on 173 shapes, including lone
+matrices up to 3072×3072, and gives the boundary
+
+```cpp
+{"Apple M5 Pro", 20, 512, 512, 16,   kQrNoLimit, 512, 1},   // GPU iff batch * k >= 512
+```
+
+1.08x geomean regret over the measured shapes, against 1.67x for always the
+GPU. The kernel crossover (512) is unchanged. Its misroutes are near the
+boundary: one 512×512 goes to the GPU at 1.7x the CPU's time, and 64 of
+16×16 at 1.9x.
+
 ## Reproducing
 
 ```sh

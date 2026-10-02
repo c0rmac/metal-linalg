@@ -266,18 +266,23 @@ the M5 Pro the second effect won.
 | GPU | cores | `m_crossover` | GPU or CPU | status |
 |---|---|---|---|---|
 | Apple M1 | 8 | 384 | always the GPU (measured before the CPU path) | measured — see [`studies/qr-routing-apple-m1.md`](studies/qr-routing-apple-m1.md) |
-| Apple M5 Pro | 20 | 512 | always the GPU (measured before the CPU path) | measured — see [`studies/routing-apple-m5-pro.md`](studies/routing-apple-m5-pro.md) |
+| Apple M5 Pro | 20 | 512 | GPU iff `batch * k >= 512` | measured — see [`studies/routing-apple-m5-pro.md`](studies/routing-apple-m5-pro.md) |
 | anything else | — | 384 | GPU iff `batch * k >= 1024` | **untuned default** |
 
 The GPU-or-CPU boundary is measured by every run made since QR had a CPU path;
 a device's row sends every call to the GPU until such a run has been submitted
-for it.
+for it (`python3 tuning/run.py --only qr` measures QR alone in about 3
+minutes). On the M5 Pro the boundary sends a lone matrix with `k < 512` to the CPU,
+and a handful of small ones (4 of 64×64) too, up to 15× faster than the GPU
+there; from `k = 512` a lone matrix stays on the GPU, which is 2-3x faster
+from 2048 up.
 
 `qr_policy_source()` reports `default:untuned-device (<name>)` on any GPU
 without a table entry, so an untuned device is visible rather than silent.
 
 **To measure another Mac**, run `python3 tuning/run.py`, which measures all
-three decompositions in one go; see [`tuning.md`](tuning.md). Its QR part
+three decompositions in one go (`--only qr` for QR alone); see
+[`tuning.md`](tuning.md). Its QR part
 re-tests the refinements that failed on an M1 rather than assuming they fail
 everywhere (a batch-dependent split could be justified on a GPU with far more
 cores), and warns if `M` is no longer the best feature on that hardware, which
