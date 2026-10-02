@@ -158,6 +158,10 @@ Releases are automatic. Every update to `main` that changes the library
 3. **Homebrew.** The formula in
    [c0rmac/homebrew-metal-linalg](https://github.com/c0rmac/homebrew-metal-linalg)
    is pointed at the new tarball and its checksum.
+4. **PyPI.** [wheels.yml](.github/workflows/wheels.yml) builds the sdist
+   and a wheel per Python (3.10 to 3.14) at the new tag, checks and tests
+   them, and they are attached to the GitHub release and published to
+   [PyPI](https://pypi.org/project/metal-linalg/).
 
 A pull request that adds measurements is released once the Tuned policies
 workflow has turned them into tables.
@@ -180,3 +184,20 @@ repository as the secret `HOMEBREW_TAP_TOKEN`. To set it up once:
 Without the secret, releases are still made, and each run's summary gives the
 two formula lines to change by hand. A token expires: when it does, generate a
 new one and set the secret again.
+
+Step 4 uses PyPI's trusted publishing, so no PyPI token is stored anywhere.
+To set it up once, on [pypi.org](https://pypi.org/manage/account/publishing/),
+add a (pending) trusted publisher for the project `metal-linalg`: owner
+`c0rmac`, repository `metal-linalg`, workflow `release.yml`, environment
+`pypi`. If an upload fails, rerun just that step for the release with
+**Actions > Release > Run workflow**, `pypi_version` set to its version.
+
+### Following a new MLX
+
+The Python package works only with the MLX release it was built against, so
+`pyproject.toml` pins it (the two `MLX_PIN` lines), together with the
+nanobind that MLX was built with. When MLX releases, change both `mlx==`
+pins; if the build then stops on a nanobind mismatch, it names the internals
+version MLX uses, and `nanobind==` goes to the release with that version
+(MLX's `CMakeLists.txt` names the nanobind tag it fetches). The release that
+follows publishes wheels for the new MLX.

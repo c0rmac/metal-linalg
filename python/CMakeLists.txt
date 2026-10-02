@@ -23,9 +23,19 @@ execute_process(COMMAND "${Python_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/nano
 if (NOT _abi_rc EQUAL 0)
     message(FATAL_ERROR "metal-linalg: could not import mlx with ${Python_EXECUTABLE}:\n${_abi_err}")
 endif ()
-string(REGEX MATCH "^v([0-9]+)_" _ "${_mlx_nb_abi}")
-set(_mlx_nb_version "${CMAKE_MATCH_1}")
-# nanobind defines its internals version in src/nb_internals.h, indented.
+# The tag is v<N>_... from nanobind 2.x and nanobind_..._v<N> from 3.x, whose
+# internals never interoperate with 2.x's whatever the number.
+if (_mlx_nb_abi MATCHES "^v([0-9]+)_")
+    set(_mlx_nb_version "${CMAKE_MATCH_1}")
+    set(_mlx_nb_major 2)
+elseif (_mlx_nb_abi MATCHES "^nanobind_.*_v([0-9]+)$")
+    set(_mlx_nb_version "${CMAKE_MATCH_1}")
+    set(_mlx_nb_major 3)
+else ()
+    message(FATAL_ERROR "metal-linalg: could not read the nanobind ABI mlx.core uses "
+                        "(its tag is '${_mlx_nb_abi}')")
+endif ()
+# nanobind defines its internals version in src/nb_internals.h or nb_abi.h, indented.
 file(GLOB_RECURSE _nb_headers "${nanobind_ROOT}/../src/*.h" "${nanobind_ROOT}/../include/nanobind/*.h")
 set(_our_nb_version "")
 foreach (_h IN LISTS _nb_headers)
@@ -34,16 +44,12 @@ foreach (_h IN LISTS _nb_headers)
         string(REGEX MATCH "[0-9]+$" _our_nb_version "${_line}")
     endif ()
 endforeach ()
-# nanobind 3 also changed the key's format, so it never shares state with a
-# 2.x module whatever its version number.
 string(REGEX MATCH "^[0-9]+" _nb_major "${nanobind_VERSION}")
-if (NOT _mlx_nb_version)
-    message(FATAL_ERROR "metal-linalg: could not read the nanobind ABI mlx.core uses")
-elseif (NOT _our_nb_version STREQUAL _mlx_nb_version OR NOT _nb_major STREQUAL "2")
-    message(FATAL_ERROR "metal-linalg: mlx.core was built with nanobind internals v${_mlx_nb_version}, "
-                        "but the installed nanobind ${nanobind_VERSION} uses v${_our_nb_version}, so "
-                        "mx.array could not pass between the two modules. Install the nanobind "
-                        "release that matches (see python/README.md).")
+if (NOT _our_nb_version STREQUAL _mlx_nb_version OR NOT _nb_major STREQUAL _mlx_nb_major)
+    message(FATAL_ERROR "metal-linalg: mlx.core was built with nanobind ${_mlx_nb_major}.x, internals "
+                        "v${_mlx_nb_version}, but the installed nanobind ${nanobind_VERSION} uses "
+                        "v${_our_nb_version}, so mx.array could not pass between the two modules. "
+                        "Install the nanobind release that matches (see python/README.md).")
 endif ()
 message(STATUS "metal-linalg: Python ${Python_VERSION}, mlx nanobind ABI ${_mlx_nb_abi}, "
                "nanobind ABI v${_our_nb_version}, MLX ${MLX_VERSION} at ${MLX_LIBRARY}")
@@ -55,10 +61,16 @@ target_compile_definitions(_core PRIVATE
     "METAL_LINALG_MLX_VERSION=\"${MLX_VERSION}\"")
 
 # libmlx is found where the mlx package keeps it: inside the package for a
-# pip-installed mlx, in the Homebrew prefix for Homebrew's.
+# pip-installed mlx (site-packages/mlx/lib, beside this package), in the
+# Homebrew prefix for Homebrew's. Only the second needs an absolute path; a
+# wheel must not carry one, as it would name the machine that built it.
 get_filename_component(_mlx_libdir "${MLX_LIBRARY}" DIRECTORY)
+set(_core_rpath "@loader_path/../mlx/lib")
+if (NOT _mlx_libdir MATCHES "/mlx/lib$")
+    list(APPEND _core_rpath "${_mlx_libdir}")
+endif ()
 set_target_properties(_core PROPERTIES
     BUILD_WITH_INSTALL_RPATH ON
-    INSTALL_RPATH "@loader_path/../mlx/lib;${_mlx_libdir}")
+    INSTALL_RPATH "${_core_rpath}")
 
 install(TARGETS _core LIBRARY DESTINATION metal_linalg)

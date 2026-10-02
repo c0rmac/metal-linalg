@@ -14,8 +14,23 @@ import mlx.core as mx
 import metal_linalg as ml
 
 
+def setUpModule():
+    # CI builds wheels on virtual Macs, which may have no usable GPU; there
+    # the package is only checked to install and import.
+    if not mx.metal.is_available():
+        raise unittest.SkipTest("no Metal GPU")
+
+
 def max_abs(x):
     return mx.max(mx.abs(x)).item()
+
+
+def mm(a, b):
+    """a @ b on the CPU: some MLX releases multiply float32 on the GPU in
+    reduced precision on some Macs (0.32.3 on the M5, to about 1e-2), which
+    would hide the accuracy being checked."""
+    with mx.stream(mx.cpu):
+        return a @ b
 
 
 def eye(n):
@@ -31,8 +46,8 @@ class Decompositions(unittest.TestCase):
         q, r = ml.qr(a)
         self.assertEqual(q.shape, (64, 32, 16))
         self.assertEqual(r.shape, (64, 16, 16))
-        self.assertLess(max_abs(q @ r - a), 1e-4)
-        self.assertLess(max_abs(q.swapaxes(-1, -2) @ q - eye(16)), 1e-5)
+        self.assertLess(max_abs(mm(q, r) - a), 1e-4)
+        self.assertLess(max_abs(mm(q.swapaxes(-1, -2), q) - eye(16)), 1e-5)
         self.assertEqual(max_abs(mx.tril(r, -1)), 0.0)
 
     def test_eigh(self):
@@ -41,7 +56,7 @@ class Decompositions(unittest.TestCase):
         w, v = ml.eigh(s)
         self.assertEqual(w.shape, (32, 24))
         self.assertEqual(v.shape, (32, 24, 24))
-        self.assertLess(max_abs(s @ v - v * w[..., None, :]) / max_abs(s), 1e-5)
+        self.assertLess(max_abs(mm(s, v) - v * w[..., None, :]) / max_abs(s), 1e-5)
         self.assertTrue(mx.all(w[..., 1:] >= w[..., :-1]).item())
         self.assertLess(max_abs(ml.eigvalsh(s) - w) / max_abs(w), 1e-5)
 
@@ -57,7 +72,7 @@ class Decompositions(unittest.TestCase):
         a = mx.random.normal((16, 40, 24))
         u, s, vt = ml.svd(a)
         self.assertEqual((u.shape, s.shape, vt.shape), ((16, 40, 24), (16, 24), (16, 24, 24)))
-        self.assertLess(max_abs(u * s[..., None, :] @ vt - a), 1e-4)
+        self.assertLess(max_abs(mm(u * s[..., None, :], vt) - a), 1e-4)
         self.assertTrue(mx.all(s[..., :-1] >= s[..., 1:]).item())
         self.assertLess(max_abs(ml.svdvals(a) - s) / max_abs(s), 1e-5)
 
@@ -65,11 +80,11 @@ class Decompositions(unittest.TestCase):
         a = mx.random.normal((8, 20, 50))
         u, s, vt = ml.svd(a)
         self.assertEqual((u.shape, s.shape, vt.shape), ((8, 20, 20), (8, 20), (8, 20, 50)))
-        self.assertLess(max_abs(u * s[..., None, :] @ vt - a), 1e-4)
+        self.assertLess(max_abs(mm(u * s[..., None, :], vt) - a), 1e-4)
 
     def test_accepts_lists(self):
         q, r = ml.qr([[1.0, 2.0], [3.0, 4.0]])
-        self.assertLess(max_abs(q @ r - mx.array([[1.0, 2.0], [3.0, 4.0]])), 1e-5)
+        self.assertLess(max_abs(mm(q, r) - mx.array([[1.0, 2.0], [3.0, 4.0]])), 1e-5)
 
     def test_nan_stays_in_its_matrix(self):
         a = mx.random.normal((3, 6, 6))

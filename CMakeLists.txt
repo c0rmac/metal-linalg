@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.25)
-project(metal_linalg VERSION 2.1.0 LANGUAGES CXX OBJCXX
+if (NOT CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
+    message(FATAL_ERROR "metal-linalg runs on Apple Silicon Macs only (Metal and Accelerate); "
+                        "it cannot be built on ${CMAKE_HOST_SYSTEM_NAME}.")
+endif ()
+project(metal_linalg VERSION 2.2.0 LANGUAGES CXX OBJCXX
         DESCRIPTION "QR, symmetric eigendecomposition and SVD on Apple GPUs, for MLX")
 
 set(CMAKE_CXX_STANDARD 20)

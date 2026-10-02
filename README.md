@@ -272,20 +272,15 @@ with, the GPU as the default MLX device.
 
 ### Install
 
-You need an Apple Silicon Mac, Python 3.10 or later, Xcode's command line
-tools (`xcode-select --install`) and CMake (`brew install cmake`). The
-package is compiled on your Mac against the MLX you have installed, so that
-it shares MLX's arrays without copying:
-
 ```bash
-pip install mlx scikit-build-core "nanobind==2.15.0"
-pip install --no-build-isolation git+https://github.com/c0rmac/metal-linalg.git
+pip install metal-linalg
 ```
 
-The nanobind version has to match the one your MLX was built with (2.15.0 for
-MLX 0.32), and the build checks it. After upgrading MLX, reinstall the
-package. [python/README.md](python/README.md) has the details, including
-Homebrew's Python.
+Prebuilt wheels for Apple Silicon Macs on macOS 14 or later, Python 3.10 to
+3.14. Each release is built against one MLX release and pins it (`mlx==0.32.3`
+at present), since it shares MLX's library and arrays; pip installs that
+`mlx` with it. [python/README.md](python/README.md) covers building from
+source, and against Homebrew's MLX.
 
 ### Quick start
 

@@ -1,4 +1,5 @@
-"""Prints the nanobind ABI tag mlx.core was built with, e.g. v21_system_libcpp_abi1.
+"""Prints the nanobind ABI tag mlx.core was built with: v21_system_libcpp_abi1
+from nanobind 2.x, nanobind_system_libcpp_abi1_a1_v22 from nanobind 3.x.
 
 An extension can exchange mx.array objects with MLX only if it is built with a
 nanobind that produces the same tag under the "mlx" domain; python/CMakeLists.txt

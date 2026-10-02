@@ -1,5 +1,21 @@
 # Changes
 
+## 2.2.0 (2026-10-02)
+
+- **The Python package is on PyPI**: `pip install metal-linalg` installs a
+  prebuilt wheel (Apple Silicon, macOS 14+, Python 3.10 to 3.14) and the MLX
+  it was built against, which it pins exactly (`mlx==0.32.3`). Every release
+  builds, checks and tests the wheels and publishes them
+  ([wheels.yml](.github/workflows/wheels.yml)). Building from source no
+  longer needs `--no-build-isolation`: the build fetches the pinned MLX and
+  nanobind itself.
+- The Python build accepts nanobind 3's ABI, which the pip MLX uses from
+  0.32.3 (nanobind 3.0.1); it still builds against MLX built with nanobind
+  2.x, such as Homebrew's.
+- The Python tests check residuals with CPU matmuls: MLX 0.32.3 multiplies
+  float32 on the M5's GPU to only about 1e-2, which failed checks of results
+  that are accurate to 1e-6.
+
 ## 2.1.0 (2026-10-02)
 
 - **QR has a CPU path**, like the eigensolver and the SVD: LAPACK's `sgeqrf`

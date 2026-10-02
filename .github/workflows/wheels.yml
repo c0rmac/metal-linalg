@@ -1,0 +1,77 @@
+name: Python wheels
+
+# Builds the Python package's sdist and one wheel per CPython (3.10 to 3.14),
+# checks each wheel's linkage (python/check_wheel.py), installs it into a
+# fresh environment with plain pip and runs python/tests against it.
+#
+# On a pull request this only checks that the package builds. The Release
+# workflow calls it at the new tag and publishes what it built to PyPI.
+#
+# The wheels are tagged macosx_14_0_arm64, the oldest macOS the mlx wheels
+# support. They link the libmlx of the exact `mlx` release pinned in
+# pyproject.toml, which pip installs beside them.
+
+on:
+  pull_request:
+    paths:
+      - "pyproject.toml"
+      - "CMakeLists.txt"
+      - "cmake/**"
+      - "include/**"
+      - "src/**"
+      - "shaders/**"
+      - "python/**"
+      - ".github/workflows/wheels.yml"
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: "The tag or commit to build"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
+      PYTHONS: "3.10 3.11 3.12 3.13 3.14"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Build the sdist, then every wheel from it
+        run: |
+          uv build --sdist --out-dir dist
+          for py in $PYTHONS; do
+            uv build dist/*.tar.gz --wheel --python "$py" --out-dir dist
+          done
+          ls -l dist
+
+      - name: Check the wheels
+        run: python3 python/check_wheel.py dist/*.whl
+
+      - name: Install each wheel with pip and test it
+        run: |
+          cp -r python/tests "$RUNNER_TEMP/tests"
+          for py in $PYTHONS; do
+            uv venv --seed --python "$py" "$RUNNER_TEMP/venv-$py"
+            # The wheel by its file, so that PyPI's copy of a version is never taken instead.
+            "$RUNNER_TEMP/venv-$py/bin/pip" install dist/*-cp${py/./}-*.whl
+            # Outside the checkout, so that the installed package is the one tested.
+            (cd "$RUNNER_TEMP" && "$RUNNER_TEMP/venv-$py/bin/python" -c \
+              "import metal_linalg as ml, mlx.core as mx; print(ml.__version__, mx.__version__, mx.metal.is_available() and ml.device_name())" \
+              && "$RUNNER_TEMP/venv-$py/bin/python" -m unittest discover -s tests -v)
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-dist
+          path: dist/
+          if-no-files-found: error
