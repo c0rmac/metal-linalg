@@ -19,11 +19,17 @@ exception, as LAPACK does.
 **Routing.** Two Metal backends cover the size range (see
 [Dispatch](#dispatch)), but Accelerate's LAPACK on the CPU is quick (a single
 512×512 in 18 ms on an M1), so the public functions run on the GPU only where
-it was measured faster, and call LAPACK's `ssyevd` (Accelerate) on the CPU
+it was measured faster, and call LAPACK (Accelerate) on the CPU
 otherwise: on an M1 for
 `N <= 64` with `batch * N >= 1024`, on an M5 Pro for `N <= 1024` with
 `batch * N >= 512` and at least 16 matrices. The boundary is part of the
 per-device policy (see [Tuning](#tuning));
+on the CPU, eigenvectors come from `ssyevd`, and eigenvalues alone
+(`eigvalsh`) from N = 128 come from `ssyevd_2stage`, the two-stage
+reduction (dense to band in matrix-matrix products, then band to
+tridiagonal), which on an M5 Pro is 1.2x faster at N = 1024, 3.8x at 4096
+and 5.7x at 8192 (2.6 s rather than 14.8 s for one 8192×8192). LAPACK's
+two-stage driver does not return eigenvectors;
 `eigh_backend(n, batch)` reports what a given
 problem will run on. `EIGH_DEVICE=gpu` or `cpu` forces a path; the
 `metal_linalg::detail` entry points always run their kernel. See

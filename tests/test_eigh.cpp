@@ -518,6 +518,52 @@ int main() {
     }
 
     // -------------------------------------------------------------------------
+    // CPU eigenvalues alone: the two-stage reduction from N = 128, the
+    // one-stage one below. Each is checked against a known spectrum and
+    // against the eigenvalues of the one-stage path with eigenvectors.
+    // -------------------------------------------------------------------------
+    std::printf("\n[ CPU eigenvalues: one-stage below N=128, two-stage from it ]\n");
+    {
+        setenv("EIGH_DEVICE", "cpu", 1);
+        for (int n : {127, 128, 300, 1024}) {
+            std::vector<float> spec(n);
+            for (int i = 0; i < n; ++i) spec[i] = -1.0f + 2.0f * i / (n - 1) + (i % 7 == 0 ? 0.5f : 0.0f);
+            std::sort(spec.begin(), spec.end());
+            array A = with_spectrum(spec);
+            array w = eigvalsh_accelerated(A);
+            auto [w_v, V] = eigh_accelerated(A);
+            eval({w, w_v});
+            const float d_spec = max_abs(subtract(w, from_values(spec, {n})));
+            const float d_vec  = max_abs(subtract(w, w_v));
+            char label[64];
+            std::snprintf(label, sizeof label, "N=%d %s", n, n >= 128 ? "two-stage" : "one-stage");
+            ++g_checks;
+            if (d_spec > 1e-4f || d_vec > 1e-4f) {
+                fail(label, "|w - spectrum| " + std::to_string(d_spec) + ", |w - eigh's w| " + std::to_string(d_vec));
+            } else {
+                std::printf("  ok    %-44s |w-spec|=%.1e |w-eigh|=%.1e\n", label, d_spec, d_vec);
+            }
+        }
+        // Only the named triangle is read: junk in the other must not matter.
+        {
+            const int n = 300;
+            array S = random_symmetric(1, n, 900);
+            array junk = full({n, n}, 7.0f);
+            array lower_only = add(tril(S), triu(junk, 1));
+            array upper_only = add(triu(S), tril(junk, -1));
+            array w  = eigvalsh_accelerated(S);
+            array wl = eigvalsh_accelerated(lower_only, "L");
+            array wu = eigvalsh_accelerated(upper_only, "U");
+            eval({w, wl, wu});
+            const float d = std::max(max_abs(subtract(w, wl)), max_abs(subtract(w, wu))) / frobenius(S);
+            ++g_checks;
+            if (d > 1e-6f) fail("N=300 two-stage reads only its triangle (L, U)", "differ by " + std::to_string(d));
+            else std::printf("  ok    %-44s |dw|=%.1e\n", "N=300 two-stage reads only its triangle (L, U)", d);
+        }
+        unsetenv("EIGH_DEVICE");
+    }
+
+    // -------------------------------------------------------------------------
     // Routing policy. The policy is device-tuned, so nothing here may assume
     // the values measured on any one GPU: each check installs the policy it
     // needs, and the device's own policy is restored at the end.
