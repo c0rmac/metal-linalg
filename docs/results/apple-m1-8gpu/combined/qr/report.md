@@ -19,7 +19,7 @@ M >= 384  ->  qr_streaming_amx_reduced
 otherwise  ->  qr_unblocked
 ```
 
-The optimum is flat from **352 to 384** rows (every threshold within 0.3% of the best, 1.0119x). Any value inside that band is equivalent on this hardware; **384** is the middle of it.
+The optimum is flat from **352 to 384** rows (every threshold within 0.3% of the best, 1.0122x). Any value inside that band is equivalent on this hardware; **384** is the middle of it.
 
 Paste into `kTuned[]` in `src/qr.mm`:
 
@@ -31,21 +31,21 @@ Paste into `kTuned[]` in `src/qr.mm`:
 
 | threshold | regret | excess | |
 |---|---|---|---|
-| 128 | 1.1120x | +9.89% |  |
-| 192 | 1.0642x | +5.17% |  |
-| 256 | 1.0368x | +2.46% |  |
-| 288 | 1.0173x | +0.53% |  |
-| 320 | 1.0173x | +0.53% |  |
-| 352 | 1.0119x | +0.00% | **in band** |
-| 384 | 1.0119x | +0.00% | **in band** |
-| 416 | 1.0156x | +0.37% |  |
-| 448 | 1.0187x | +0.67% |  |
-| 480 | 1.0335x | +2.13% |  |
-| 512 | 1.0399x | +2.77% |  |
-| 576 | 1.0672x | +5.46% |  |
-| 640 | 1.0691x | +5.65% |  |
-| 768 | 1.1142x | +10.11% |  |
-| 1024 | 1.1212x | +10.80% |  |
+| 128 | 1.1142x | +10.08% |  |
+| 192 | 1.0654x | +5.26% |  |
+| 256 | 1.0375x | +2.50% |  |
+| 288 | 1.0177x | +0.54% |  |
+| 320 | 1.0177x | +0.54% |  |
+| 352 | 1.0122x | +0.00% | **in band** |
+| 384 | 1.0122x | +0.00% | **in band** |
+| 416 | 1.0159x | +0.37% |  |
+| 448 | 1.0190x | +0.67% |  |
+| 480 | 1.0342x | +2.17% |  |
+| 512 | 1.0407x | +2.82% |  |
+| 576 | 1.0685x | +5.56% |  |
+| 640 | 1.0705x | +5.76% |  |
+| 768 | 1.1164x | +10.29% |  |
+| 1024 | 1.1236x | +11.01% |  |
 
 The penalty is usually asymmetric. Erring low costs little; erring high degrades specifically on tall inputs. Adding GPU cores makes the grid-parallel backend relatively stronger and pushes the true crossover down, so an untuned device is safer low than high.
 
@@ -62,30 +62,30 @@ xychart-beta
     title "Regret by threshold (lower is better)"
     x-axis [128, 192, 256, 288, 320, 352, 384, 416, 448, 480, 512, 576, 640, 768, 1024]
     y-axis "geometric-mean regret" 1.0 --> 1.28
-    line [1.1120, 1.0642, 1.0368, 1.0173, 1.0173, 1.0119, 1.0119, 1.0156, 1.0187, 1.0335, 1.0399, 1.0672, 1.0691, 1.1142, 1.1212]
+    line [1.1142, 1.0654, 1.0375, 1.0177, 1.0177, 1.0122, 1.0122, 1.0159, 1.0190, 1.0342, 1.0407, 1.0685, 1.0705, 1.1164, 1.1236]
     line [1.0887, 1.0532, 1.0306, 1.0149, 1.0149, 1.0132, 1.0132, 1.0304, 1.0404, 1.0762, 1.0941, 1.1533, 1.1533, 1.2690, 1.2690]
-    line [1.1164, 1.0603, 1.0366, 1.0150, 1.0150, 1.0093, 1.0093, 1.0049, 1.0049, 1.0052, 1.0052, 1.0099, 1.0158, 1.0228, 1.0434]
+    line [1.1240, 1.0641, 1.0388, 1.0159, 1.0159, 1.0099, 1.0099, 1.0052, 1.0052, 1.0055, 1.0055, 1.0105, 1.0167, 1.0242, 1.0461]
 ```
 
 Series order: pooled, tall only, square only.
 
 | threshold | pooled | square | tall | wide | near-square | pooled worst |
 |---|---|---|---|---|---|---|
-| 128 | 1.1120 | 1.1164 | 1.0887 | 1.1017 | 1.1602 | 3.69x |
-| 192 | 1.0642 | 1.0603 | 1.0532 | 1.0315 | 1.1155 | 2.20x |
-| 256 | 1.0368 | 1.0366 | 1.0306 | 1.0087 | 1.0684 | 1.84x |
-| 288 | 1.0173 | 1.0150 | 1.0149 | 1.0010 | 1.0370 | 1.48x |
-| 320 | 1.0173 | 1.0150 | 1.0149 | 1.0010 | 1.0370 | 1.48x |
-| 352 | 1.0119 | 1.0093 | 1.0132 | 1.0010 | 1.0210 | 1.36x |
-| 384 | 1.0119 | 1.0093 | 1.0132 | 1.0010 | 1.0210 | 1.36x |
-| 416 | 1.0156 | 1.0049 | 1.0304 | 1.0010 | 1.0135 | 1.54x |
-| 448 | 1.0187 | 1.0049 | 1.0404 | 1.0010 | 1.0099 | 1.54x |
-| 480 | 1.0335 | 1.0052 | 1.0762 | 1.0010 | 1.0183 | 1.95x |
-| 512 | 1.0399 | 1.0052 | 1.0941 | 1.0010 | 1.0177 | 1.95x |
-| 576 | 1.0672 | 1.0099 | 1.1533 | 1.0010 | 1.0421 | 2.21x |
-| 640 | 1.0691 | 1.0158 | 1.1533 | 1.0010 | 1.0421 | 2.21x |
-| 768 | 1.1142 | 1.0228 | 1.2690 | 1.0010 | 1.0583 | 3.26x |
-| 1024 | 1.1212 | 1.0434 | 1.2690 | 1.0010 | 1.0583 | 3.26x |
+| 128 | 1.1142 | 1.1240 | 1.0887 | 1.1017 | 1.1602 | 3.69x |
+| 192 | 1.0654 | 1.0641 | 1.0532 | 1.0315 | 1.1155 | 2.20x |
+| 256 | 1.0375 | 1.0388 | 1.0306 | 1.0087 | 1.0684 | 1.84x |
+| 288 | 1.0177 | 1.0159 | 1.0149 | 1.0010 | 1.0370 | 1.48x |
+| 320 | 1.0177 | 1.0159 | 1.0149 | 1.0010 | 1.0370 | 1.48x |
+| 352 | 1.0122 | 1.0099 | 1.0132 | 1.0010 | 1.0210 | 1.36x |
+| 384 | 1.0122 | 1.0099 | 1.0132 | 1.0010 | 1.0210 | 1.36x |
+| 416 | 1.0159 | 1.0052 | 1.0304 | 1.0010 | 1.0135 | 1.54x |
+| 448 | 1.0190 | 1.0052 | 1.0404 | 1.0010 | 1.0099 | 1.54x |
+| 480 | 1.0342 | 1.0055 | 1.0762 | 1.0010 | 1.0183 | 1.95x |
+| 512 | 1.0407 | 1.0055 | 1.0941 | 1.0010 | 1.0177 | 1.95x |
+| 576 | 1.0685 | 1.0105 | 1.1533 | 1.0010 | 1.0421 | 2.21x |
+| 640 | 1.0705 | 1.0167 | 1.1533 | 1.0010 | 1.0421 | 2.21x |
+| 768 | 1.1164 | 1.0242 | 1.2690 | 1.0010 | 1.0583 | 3.26x |
+| 1024 | 1.1236 | 1.0461 | 1.2690 | 1.0010 | 1.0583 | 3.26x |
 
 ## Which feature decides
 
@@ -93,9 +93,9 @@ Series order: pooled, tall only, square only.
 
 | feature | best threshold | geomean regret | worst |
 |---|---|---|---|
-| M (rows) | 352 | 1.0119x | 1.36x |
-| max(M, N) | 352 | 1.0429x | 2.31x |
-| K = min(M, N) | 256 | 1.1796x | 9.90x |
+| M (rows) | 352 | 1.0122x | 1.36x |
+| max(M, N) | 352 | 1.0438x | 2.31x |
+| K = min(M, N) | 256 | 1.1832x | 9.90x |
 
 ## Decision surface
 
@@ -135,21 +135,21 @@ Per-region columns matter more than the overall number: an aggregate can look ex
 
 | rule | geomean | worst | >10% off | square | tall | wide | near-square |
 |---|---|---|---|---|---|---|---|
-| original 5-rule heuristic | 1.1084x | 3.63x | 115/385 | 1.060 | 1.063 | 1.390 | 1.126 |
-| max(M,N) >= 512 | 1.0721x | 2.31x | 86/385 | 1.005 | 1.094 | 1.249 | 1.040 |
-| K = min(M,N) >= 128 | 1.1923x | 9.90x | 156/385 | 1.116 | 1.323 | 1.102 | 1.134 |
-| M >= 384  (chosen) | 1.0119x | 1.36x | 21/385 | 1.009 | 1.013 | 1.001 | 1.021 |
+| original 5-rule heuristic | 1.1105x | 3.63x | 115/378 | 1.063 | 1.063 | 1.390 | 1.126 |
+| max(M,N) >= 512 | 1.0735x | 2.31x | 86/378 | 1.006 | 1.094 | 1.249 | 1.040 |
+| K = min(M,N) >= 128 | 1.1962x | 9.90x | 156/378 | 1.124 | 1.323 | 1.102 | 1.134 |
+| M >= 384  (chosen) | 1.0122x | 1.36x | 21/378 | 1.010 | 1.013 | 1.001 | 1.021 |
 
 ## Refinements tested
 
 Both of these were rejected on an 8-core M1, and both are re-tested here rather than assumed. A GPU with many more cores saturates `qr_unblocked` much later, so the batch split in particular could be justified elsewhere. Each is fitted on half the shapes and scored on the other half.
 
-Baseline for comparison — `M >= 384` on the held-out half: **1.0116x** geomean, 1.36x worst.
+Baseline for comparison — `M >= 384` on the held-out half: **1.0135x** geomean, 1.36x worst.
 
 | refinement | fitted form | train | held-out | held-out worst | verdict |
 |---|---|---|---|---|---|
-| batch-dependent split | `M >= (416 if batch < 16 else 352)` | 1.0103x | 1.0113x | 1.36x | reject |
-| narrow-N special case | `M >= 448 or (N <= 64 and M >= 224)` | 1.0084x | 1.0199x | 1.84x | reject |
+| batch-dependent split | `M >= (352 if batch < 2 else 352)` | 1.0109x | 1.0135x | 1.36x | reject |
+| narrow-N special case | `M >= 448 or (N <= 64 and M >= 224)` | 1.0092x | 1.0195x | 1.84x | reject |
 
 > Neither refinement survived. Ship the plain threshold. A refinement that looks good on the training half and not on the held-out half is fitting noise, which is exactly what the split is there to catch.
 

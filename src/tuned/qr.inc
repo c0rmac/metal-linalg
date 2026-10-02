@@ -2,5 +2,5 @@
 // One row per device with usable runs; see docs/tuning.md.
 // apple-m1-8gpu: 1 run (legacy)
 {"Apple M1", 8, 384, 384, 16,   kQrNoLimit, 0, 1},
-// apple-m5-pro-20gpu: 2 runs (20260930-27b6c2, 20261001-c76e82)
-{"Apple M5 Pro", 20, 512, 512, 16,   kQrNoLimit, 0, 1},
+// apple-m5-pro-20gpu: 3 runs (20260930-27b6c2, 20261001-c76e82, 20261002-9d19ba)
+{"Apple M5 Pro", 20, 512, 512, 16,   kQrNoLimit, 512, 1},
