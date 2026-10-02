@@ -549,6 +549,8 @@
    }
   }
  },
+ "values_chosen": null,
+ "current_values": null,
  "chosen": [
   8,
   96,
@@ -3020,7 +3022,8 @@
  ],
  "warnings": [
   "chosen rule loses more than 25% at N=24 batch=32 (cpu, 1.70x), N=48 batch=16 (cpu, 1.33x), N=12 batch=64 (cpu, 1.32x), N=64 batch=4096 (tg, 1.30x), N=24 batch=16 (cpu, 1.30x), N=64 batch=2048 (tg, 1.27x), N=32 batch=16 (cpu, 1.27x), N=64 batch=1024 (tg, 1.25x)",
-  "GPU split loses more than 25% against the best GPU backend at N=96 batch=2 (block, 1.49x), N=96 batch=8 (block, 1.48x), N=96 batch=4 (block, 1.43x), N=96 batch=1 (block, 1.37x), N=64 batch=4096 (tg, 1.30x), N=64 batch=2048 (tg, 1.27x), N=64 batch=1024 (tg, 1.25x)"
+  "GPU split loses more than 25% against the best GPU backend at N=96 batch=2 (block, 1.49x), N=96 batch=8 (block, 1.48x), N=96 batch=4 (block, 1.43x), N=96 batch=1 (block, 1.37x), N=64 batch=4096 (tg, 1.30x), N=64 batch=2048 (tg, 1.27x), N=64 batch=1024 (tg, 1.25x)",
+  "no eigenvalues-alone timings (a run from before they were measured): the row's values_* fields are 0, so eigvalsh follows eigh's boundary"
  ],
  "noise": {
   "overall": {
@@ -3076,7 +3079,7 @@
  },
  "trustworthy": true,
  "machine": null,
- "tuned_row": "{\"Apple M1\", 8,   8, 96, 0, 0,   64, 1024, 1},",
+ "tuned_row": "{\"Apple M1\", 8,   8, 96, 0, 0,   64, 1024, 1,   0, 0, 0},",
  "env_line": "EIGH_SIMD_MAX_N=8 EIGH_BLOCK_MIN_N=96 EIGH_BLOCK_MIN_N_BATCHED=0 EIGH_BLOCK_MIN_BATCH=0 EIGH_GPU_MAX_N=64 EIGH_GPU_MIN_BATCH_TIMES_N=1024 EIGH_GPU_MIN_BATCH=1",
  "n_candidates": {
   "split": 80,
