@@ -3,7 +3,7 @@
 ```cpp
 #include <metal_linalg/qr.h>
 
-// a: MLX array of shape [M, N] or [..., M, N] (float32 or auto-cast)
+// a: MLX array of shape [M, N] or [..., M, N] (real: float32, or cast to it; complex input throws)
 // Returns: {Q, R} where Q is [..., M, K] and R is [..., K, N], K = min(M, N)
 auto [Q, R] = metal_linalg::qr_accelerated(a);
 ```

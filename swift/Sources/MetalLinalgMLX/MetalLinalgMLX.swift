@@ -19,6 +19,11 @@ private func flatten(_ a: MLXArray, _ who: String) throws -> Flat {
     guard shape.count >= 2 else {
         throw MetalLinalgError(kind: .invalidArgument, message: "[\(who)] Input must be at least a 2D matrix.")
     }
+    // Real input only: casting complex to float32 would keep the real parts.
+    guard a.dtype != .complex64 else {
+        throw MetalLinalgError(kind: .invalidArgument,
+                               message: "[\(who)] Complex input is not supported: the decompositions are real (float32).")
+    }
     let batchShape = Array(shape.dropLast(2))
     return Flat(values: a.asType(.float32).asArray(Float.self),
                 batchShape: batchShape,

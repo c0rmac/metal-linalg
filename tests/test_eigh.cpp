@@ -642,6 +642,9 @@ int main() {
         try { eigh_accelerated(zeros({4, 4}), "X"); fail("bad uplo", "did not throw"); }
         catch (const std::invalid_argument&) { std::printf("  ok    bad uplo throws\n"); }
         ++g_checks;
+        try { eigh_accelerated(astype(eye(4), complex64)); fail("complex input", "did not throw"); }
+        catch (const std::invalid_argument&) { std::printf("  ok    complex input throws\n"); }
+        ++g_checks;
         try {
             EighOptions o; o.max_sweeps = 0;
             detail::eigh_jacobi(random_symmetric(1, 8, 700), true, true, o);
