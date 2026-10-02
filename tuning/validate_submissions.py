@@ -25,7 +25,7 @@ import submissions as sub   # noqa: E402
 
 RESULTS = os.path.join(ROOT, "docs", "results")
 OPS = {"qr": (["pass", "batch", "M", "N", "backend", "ok", "ms", "p25", "p75", "reps"],
-              {"unblocked", "reduced", "complete"}),
+              {"cpu", "unblocked", "reduced", "complete"}),
        "eigh": (["pass", "batch", "N", "backend", "ok", "ms", "p25", "p75", "reps"],
                 {"cpu", "simd", "tg", "block"}),
        "svd": (["pass", "batch", "M", "N", "backend", "ok", "ms", "p25", "p75", "reps"],

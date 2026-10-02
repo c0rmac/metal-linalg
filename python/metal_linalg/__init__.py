@@ -54,7 +54,8 @@ def qr(a):
 
     ``a`` is ``[..., M, N]``. Returns ``Q`` ``[..., M, K]`` with orthonormal
     columns and ``R`` ``[..., K, N]`` upper triangular, ``K = min(M, N)``.
-    Always runs on the GPU.
+    Runs on the GPU, or in LAPACK on the CPU for problems too small to pay
+    for a GPU launch, as this Mac was measured (see :func:`qr_backend`).
     """
     return _core.qr(_array(a))
 

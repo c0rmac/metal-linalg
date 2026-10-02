@@ -43,6 +43,12 @@ hostnames or serial numbers.
 pipeline. Its results are written to `build-tuning/quick/` and are not for
 sending.
 
+`python3 tuning/run.py --only qr` (or `eigh`, `svd`, or a comma-separated
+list) measures only those decompositions: QR in about 3 minutes. It is for
+remeasuring one after its routing or kernels change; the settings of the
+others keep coming from earlier runs of the same Mac. The submission is sent
+like any other.
+
 ---
 
 **Maintainers:** a GitHub Action (`.github/workflows/tuned-policies.yml`)

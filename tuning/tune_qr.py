@@ -68,6 +68,14 @@ INF = float("inf")
 SMALL_DIMS = (8, 16, 32)
 SMALL_BATCHES = (1, 4, 16, 64, 256, 1024)
 
+# Large matrices alone or in small batches, the other end of the boundary: a
+# lone matrix goes to the CPU at k <= 768, but the GPU wins again from about
+# 1024 (on an M5 Pro, one 4096x4096 in 0.22 s against 0.61 s). Without them a
+# fitted rule cannot tell, and sends every lone large matrix to the CPU. Also
+# left out of the kernel crossover, for the same reason as the small ones.
+LARGE_DIMS = (1024, 1536, 2048, 3072)
+LARGE_BATCHES = (1, 2, 4)
+
 # Candidate thresholds. A threshold only changes behaviour when it crosses a
 # measured M, so values between two measured M's are equivalent by construction.
 THRESHOLDS = [128, 192, 256, 288, 320, 352, 384, 416, 448, 480, 512, 576, 640, 768, 1024]
@@ -114,6 +122,7 @@ def shape_grid(full=False):
     pts = []
     pts += [(b, d, d) for d in square_dims for b in batches_sq]
     pts += [(b, d, d) for d in SMALL_DIMS for b in SMALL_BATCHES]
+    pts += [(b, d, d) for d in LARGE_DIMS for b in LARGE_BATCHES]
     pts += [(b, M, N) for M in SURFACE_M for N in SURFACE_N for b in SURFACE_BATCHES]
     for (M, N) in tall:
         pts += [(b, M, N) for b in batches_rect]
@@ -279,7 +288,7 @@ def narrow_n(t1, tn, t2):
 def for_crossover(key):
     """Whether a shape takes part in the kernel crossover analysis."""
     _, M, N = key
-    return not (M == N and M in SMALL_DIMS)
+    return not (M == N and (M in SMALL_DIMS or M in LARGE_DIMS))
 
 
 def routed(params, chosen):
@@ -306,8 +315,12 @@ def fit_cpu_routing(best, chosen, tol=0.005):
     ks = sorted({min(M, N) for (_, M, N) in pts})
     bks = sorted({b * min(M, N) for (b, M, N) in pts})
     batches = sorted({b for (b, _, _) in pts})
+    # A limit at the largest k measured fits the data exactly as well as no
+    # limit, but says nothing about larger k, where the GPU may win (for QR it
+    # does, by 2-3x on one 4096x4096). So only limits inside the grid are
+    # candidates: one is chosen only where the CPU wins above it.
     candidates = [(gm, mb, mbatch)
-                  for gm in ks + [INF]
+                  for gm in ks[:-1] + [INF]
                   for mb in [0] + bks
                   for mbatch in [1] + [b for b in batches if 1 < b <= 64]]
 
