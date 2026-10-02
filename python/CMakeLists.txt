@@ -74,3 +74,8 @@ set_target_properties(_core PROPERTIES
     INSTALL_RPATH "${_core_rpath}")
 
 install(TARGETS _core LIBRARY DESTINATION metal_linalg)
+
+# The MLX version, readable before _core is loaded (see metal_linalg/__init__.py).
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/_build.py"
+     "# Written by the build.\nmlx_version = \"${MLX_VERSION}\"\n")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/_build.py" DESTINATION metal_linalg)

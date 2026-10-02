@@ -16,15 +16,20 @@ are float32 mx.array. See https://github.com/c0rmac/metal-linalg.
 
 import mlx.core as mx
 
-from . import _core
+from ._build import mlx_version as _built_mlx
+
+# Checked before loading the extension: against another MLX it would fail to
+# load with a missing-symbol error that names neither version.
+if _built_mlx != mx.__version__:
+    raise ImportError(
+        f"metal_linalg was built against MLX {_built_mlx} but MLX "
+        f"{mx.__version__} is installed. Install the matching pair with "
+        f"`pip install -U metal-linalg mlx`, or `pip install mlx=={_built_mlx}` "
+        f"(see https://github.com/c0rmac/metal-linalg/blob/main/python/README.md).")
+
+from . import _core  # noqa: E402
 
 __version__ = _core.__version__
-
-if _core.mlx_version != mx.__version__:
-    raise ImportError(
-        f"metal_linalg was built against MLX {_core.mlx_version} but MLX "
-        f"{mx.__version__} is installed. Reinstall metal_linalg so that it is "
-        f"built against this MLX (see python/README.md).")
 
 __all__ = [
     "qr", "eigh", "eigvalsh", "svd", "svdvals",

@@ -1,5 +1,12 @@
 # Changes
 
+## 2.2.1 (2026-10-02)
+
+- Importing the Python package with a different MLX than it was built
+  against raises the `ImportError` that names both versions and the fix,
+  instead of the loader's missing-symbol error: the version is now checked
+  before the extension is loaded.
+
 ## 2.2.0 (2026-10-02)
 
 - **The Python package is on PyPI**: `pip install metal-linalg` installs a
