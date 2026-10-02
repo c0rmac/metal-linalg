@@ -7,7 +7,7 @@
 // Returns: {w, V} with w [..., N] ascending and V [..., N, N], A = V diag(w) V^T
 auto [w, V] = metal_linalg::eigh_accelerated(a);        // reads the lower triangle
 auto [w2, V2] = metal_linalg::eigh_accelerated(a, "U"); // or the upper
-array w3 = metal_linalg::eigvalsh_accelerated(a);       // eigenvalues only, ~1/3 less work
+array w3 = metal_linalg::eigvalsh_accelerated(a);       // eigenvalues only: less work (see Routing)
 ```
 
 Same contract as `mlx::core::linalg::eigh`, which as of MLX 0.31 refuses to
@@ -420,4 +420,7 @@ device's own policy at the end.
 - R. P. Brent and F. T. Luk, ["The solution of singular-value and symmetric eigenvalue problems on multiprocessor arrays"](https://epubs.siam.org/doi/10.1137/0906007), *SIAM J. Sci. Stat. Comput.* 6(1), 1985 — the round-robin parallel ordering.
 - H. Rutishauser, ["The Jacobi method for real symmetric matrices"](https://doi.org/10.1007/BF02165223), *Numerische Mathematik* 9, 1966 — the analytic diagonal update.
 - J. Demmel and K. Veselić, ["Jacobi's method is more accurate than QR"](https://epubs.siam.org/doi/10.1137/0613074), *SIAM J. Matrix Anal. Appl.* 13(4), 1992.
+- C. H. Bischof, B. Lang and X. Sun, ["A framework for symmetric band reduction"](https://doi.org/10.1145/365723.365735), *ACM Trans. Math. Softw.* 26(4), 2000 — reducing a dense matrix to band form, then the band to tridiagonal: the two-stage reduction behind `eigvalsh`'s CPU path.
+- A. Haidar, H. Ltaief and J. Dongarra, ["Parallel reduction to condensed forms for symmetric eigenvalue problems using aggregated fine-grained and memory-aware kernels"](https://doi.org/10.1145/2063384.2063394), SC '11, 2011 — the two-stage algorithm as [LAPACK 3.7.0](https://netlib.org/lapack/lapack-3.7.0.html) implements it (`ssyevd_2stage`), which this library calls through Accelerate.
+- E. Ringoot, R. Alomairy, V. Churavy and A. Edelman, ["Performant unified GPU kernels for portable singular value computation across hardware and precision"](https://doi.org/10.1145/3754598.3754667), 2025 ([arXiv:2508.06339](https://arxiv.org/abs/2508.06339)), and E. Ringoot, R. Alomairy and A. Edelman, ["Accelerating bidiagonalization of banded matrices through memory-aware bulge-chasing on GPUs"](https://arxiv.org/abs/2510.12705), 2025 — two-stage reductions on GPUs, including Apple's; they prompted measuring the two-stage reduction on Apple Silicon. Their GPU kernels are not used here.
 - NVIDIA, [cuSOLVER `syevjBatched`](https://docs.nvidia.com/cuda/cusolver/index.html#cusolverdn-t-syevjbatch) — Jacobi as the production batched symmetric eigensolver on GPUs.

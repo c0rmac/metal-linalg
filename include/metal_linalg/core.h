@@ -106,8 +106,9 @@ namespace metal_linalg {
     //
     // The decision has two parts. GPU or CPU: the Metal kernels need a batch
     // to fill the GPU and Accelerate's LAPACK is quick, so the GPU is used
-    // only inside the region where it was measured faster, and LAPACK's
-    // ssyevd on the CPU otherwise (same decomposition; eigenvector signs may
+    // only inside the region where it was measured faster, and LAPACK on
+    // the CPU otherwise: ssyevd, or for eigenvalues alone from N = 128 the
+    // two-stage ssyevd_2stage (same decomposition; eigenvector signs may
     // differ). Then, on the GPU, which backend: the whole-matrix kernel in
     // simd or threadgroup mode, or block Jacobi.
 
@@ -419,7 +420,8 @@ namespace metal_linalg {
             void eigh_block_jacobi(const Matrices& a, bool lower, const EighOptions& opt,
                                    float* w, float* v, uint32_t* info);
 
-            // LAPACK ssyevd on the CPU, one matrix at a time. `info` reports
+            // LAPACK on the CPU, one matrix at a time: ssyevd, or ssyevd_2stage
+            // for eigenvalues alone (v == nullptr) from N = 128. `info` reports
             // every finite matrix as converged in one sweep.
             void eigh_cpu(const Matrices& a, bool lower, float* w, float* v, uint32_t* info);
 

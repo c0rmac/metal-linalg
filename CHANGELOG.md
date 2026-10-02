@@ -1,6 +1,6 @@
 # Changes
 
-## Unreleased
+## 2.3.0 (2026-10-02)
 
 - **Large eigenvalue-only problems are much faster on the CPU.**
   `eigvalsh` from N = 128 uses LAPACK's two-stage reduction

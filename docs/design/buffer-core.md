@@ -27,7 +27,7 @@ kernels and the routing:
 | `prepare_input`, `prepare_input_scaled` | `core::prepare`: scan, scale and wrap or copy into a Metal buffer, in plain C++ |
 | outputs built as `mx::array` copies | written into caller-provided buffers; the MLX layer allocates each `mx::array` first and passes its memory |
 | transposes, rescaling, NaN fills | plain loops |
-| CPU fallbacks (`mx::linalg::eigh`, `svd`) | Accelerate LAPACK directly (`ssyevd`; `sgesdd`, after `sgeqrf`/`sorgqr` for tall input) |
+| CPU fallbacks (`mx::linalg::eigh`, `svd`) | Accelerate LAPACK directly (`ssyevd`, or `ssyevd_2stage` for eigenvalues alone from N = 128 since 2.3.0; `sgesdd`, after `sgeqrf`/`sorgqr` for tall input) |
 | `matmul(Q, U_R)` in the QR-preconditioned SVD | Metal Performance Shaders, on the GPU |
 
 The public C++ API keeps its names and signatures. Policies, options,
