@@ -113,6 +113,17 @@ int main(void) {
         p.gpu_min_batch = 1;
         metal_linalg_eigh_policy_set(&p);
         CHECK(strcmp(metal_linalg_eigh_backend(8, 4096), "cpu") != 0, "unlimited GPU still routes to cpu");
+        /* Eigenvalues alone: values_gpu_min_batch = 0 follows eigh; set, it decides apart. */
+        p.values_gpu_min_batch = 0;
+        metal_linalg_eigh_policy_set(&p);
+        CHECK(strcmp(metal_linalg_eigvalsh_backend(8, 4096), "cpu") != 0, "unset values boundary did not follow eigh");
+        p.values_gpu_max_n = 0;
+        p.values_gpu_min_batch_times_n = 0;
+        p.values_gpu_min_batch = 1;
+        metal_linalg_eigh_policy_set(&p);
+        CHECK(strcmp(metal_linalg_eigvalsh_backend(8, 4096), "cpu") == 0, "values_gpu_max_n = 0 still routes to %s",
+              metal_linalg_eigvalsh_backend(8, 4096));
+        CHECK(strcmp(metal_linalg_eigh_backend(8, 4096), "cpu") != 0, "the values boundary moved eigh");
         metal_linalg_eigh_policy_set(&measured);
         CHECK(metal_linalg_eigh_policy_get().gpu_max_n == measured.gpu_max_n, "policy not restored");
     }

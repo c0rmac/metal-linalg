@@ -54,7 +54,8 @@ const char* name(ml::SvdBackend b) {
                      X(gpu_max_k) X(gpu_min_batch_times_k) X(gpu_min_batch)                   \
                      X(gpu_cores) X(concurrent_matrices)
 #define EIGH_FIELDS(X) X(simd_max_n) X(block_min_n) X(block_min_n_batched) X(block_min_batch) \
-                       X(gpu_max_n) X(gpu_min_batch_times_n) X(gpu_min_batch) X(gpu_cores)
+                       X(gpu_max_n) X(gpu_min_batch_times_n) X(gpu_min_batch) X(gpu_cores)      \
+                       X(values_gpu_max_n) X(values_gpu_min_batch_times_n) X(values_gpu_min_batch)
 #define SVD_FIELDS(X) X(qr_min_rows) X(qr_min_k) X(block_min_k) X(block_min_k_batched)       \
                       X(block_min_batch) X(gpu_max_k) X(gpu_min_batch_times_k) X(gpu_min_batch) \
                       X(gpu_cores)
@@ -90,6 +91,8 @@ NB_MODULE(_core, m) {
         return name(ml::qr_backend(rows, cols, batch)); }, "m"_a, "n"_a, "batch"_a = 1);
     m.def("eigh_backend", [](unsigned n, unsigned batch) {
         return name(ml::eigh_backend(n, batch)); }, "n"_a, "batch"_a = 1);
+    m.def("eigvalsh_backend", [](unsigned n, unsigned batch) {
+        return name(ml::eigvalsh_backend(n, batch)); }, "n"_a, "batch"_a = 1);
     m.def("svd_backend", [](unsigned rows, unsigned cols, unsigned batch) {
         return name(ml::svd_backend(rows, cols, batch)); }, "m"_a, "n"_a, "batch"_a = 1);
 

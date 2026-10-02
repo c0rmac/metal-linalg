@@ -601,6 +601,36 @@ int main() {
         api("routed to CPU (40x40)",       random_symmetric(1, 40, 800));
         api("routed to GPU (256 x 8x8)",   random_symmetric(256, 8, 801));
 
+        // Eigenvalues alone: values_gpu_min_batch = 0 means "as for
+        // eigenvectors"; set, the values_* fields decide eigvalsh on their own.
+        {
+            bool same = true;
+            for (unsigned nn : {4u, 32u, 64u, 65u, 512u})
+                for (unsigned bb : {1u, 8u, 64u, 4096u})
+                    same = same && eigvalsh_uses_gpu(nn, bb) == eigh_uses_gpu(nn, bb);
+            expect("values boundary unset -> eigvalsh routed as eigh", same);
+            EighPolicy v = known;
+            v.values_gpu_max_n = 16;
+            v.values_gpu_min_batch_times_n = 0;
+            v.values_gpu_min_batch = 1;
+            set_eigh_policy(v);
+            expect("values boundary set -> each side decided apart "
+                   "(N=32 b=256: eigh GPU, eigvalsh CPU; N=8 b=1: eigh CPU, eigvalsh GPU)",
+                   eigh_uses_gpu(32, 256) && eigvalsh_backend(32, 256) == EighBackend::cpu &&
+                   !eigh_uses_gpu(8, 1) && eigvalsh_uses_gpu(8, 1));
+            for (auto [bb, nn] : {std::pair{256, 32}, std::pair{1, 8}}) {
+                array A = random_symmetric(bb, nn, 805 + nn);
+                array w = eigvalsh_accelerated(A);
+                auto [w_ref, V] = eigh_accelerated(A);
+                eval({w, w_ref});
+                const float d = max_abs(subtract(w, w_ref)) / std::max(frobenius(A), 1.0f);
+                expect("eigvalsh " + std::to_string(bb) + " x " + std::to_string(nn) + "x" + std::to_string(nn) +
+                       " on " + (eigvalsh_uses_gpu(nn, bb) ? "GPU" : "CPU") + " == eigh's eigenvalues",
+                       d < 1e-5f, "differ by " + std::to_string(d));
+            }
+            set_eigh_policy(known);
+        }
+
         setenv("EIGH_DEVICE", "cpu", 1);
         expect("EIGH_DEVICE=cpu forces the CPU", !eigh_uses_gpu(8, 256));
         setenv("EIGH_DEVICE", "gpu", 1);

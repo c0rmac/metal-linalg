@@ -34,7 +34,7 @@ __version__ = _core.__version__
 __all__ = [
     "qr", "eigh", "eigvalsh", "svd", "svdvals",
     "device_name", "gpu_core_count",
-    "qr_backend", "eigh_backend", "svd_backend",
+    "qr_backend", "eigh_backend", "eigvalsh_backend", "svd_backend",
     "qr_policy", "eigh_policy", "svd_policy",
     "set_qr_policy", "set_eigh_policy", "set_svd_policy",
     "qr_policy_source", "eigh_policy_source", "svd_policy_source",
@@ -119,6 +119,12 @@ def eigh_backend(n, batch=1):
     """Which backend :func:`eigh` uses: ``"cpu"``, ``"simd"``,
     ``"threadgroup"`` or ``"block"``."""
     return _core.eigh_backend(n, batch)
+
+
+def eigvalsh_backend(n, batch=1):
+    """Which backend :func:`eigvalsh` uses; as :func:`eigh_backend`, under
+    the eigenvalues-alone boundary of the policy (``values_gpu_*``)."""
+    return _core.eigvalsh_backend(n, batch)
 
 
 def svd_backend(m, n, batch=1):

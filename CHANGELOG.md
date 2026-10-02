@@ -1,5 +1,28 @@
 # Changes
 
+## 2.4.0 (2026-10-02)
+
+- **`eigvalsh` has its own GPU-or-CPU boundary.** Since 2.3.0 the CPU
+  computes eigenvalues alone by the two-stage reduction, up to 3x faster than
+  the path eigh's boundary was measured against, so routing `eigvalsh` by
+  that boundary sent work to the GPU where the CPU was faster: on an M5 Pro
+  up to 3.9x slower (1.061x geomean regret over 194 shapes). `EighPolicy`
+  gains `values_gpu_max_n`, `values_gpu_min_batch_times_n` and
+  `values_gpu_min_batch` (with `EIGH_VALUES_GPU_*` overrides);
+  `values_gpu_min_batch = 0` means "as for eigenvectors", which is what a
+  device measured before keeps. New: `eigvalsh_backend()` and
+  `eigvalsh_uses_gpu()` (C++), `metal_linalg_eigvalsh_backend()` (C),
+  `ml.eigvalsh_backend()` (Python), `eigvalshBackend()` (Swift). The C policy
+  struct gains the three fields at its end.
+- **The M5 Pro's eigenvalues-alone boundary is measured**: GPU iff
+  N <= 256, batch * N >= 2048 and batch >= 32 (1.0075x geomean regret,
+  worst 1.28x; held out 1.0068x).
+- **The eigh sweep times every backend for eigenvalues alone too**
+  (`<backend>_vals`) and reaches N = 2048 for lone matrices and small
+  batches, so `gpu_max_n` is a measured cap rather than the edge of the
+  grid (on the M5 Pro the CPU is 2.4-2.6x faster at 1536 and 2048). A full
+  `tuning/run.py` now takes about an hour; `--only eigh` about 27 minutes.
+
 ## 2.3.0 (2026-10-02)
 
 - **Large eigenvalue-only problems are much faster on the CPU.**

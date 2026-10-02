@@ -2,7 +2,9 @@
 //
 //   usage: sweep_eigh <batch> <N> <backend>[,<backend>...]
 //   backends: cpu (the library's CPU path, LAPACK ssyevd), simd, tg (whole-matrix kernel in
-//             each execution mode), block (block Jacobi)
+//             each execution mode), block (block Jacobi); each also as <name>_vals,
+//             eigenvalues alone (eigvalsh: the CPU path is then LAPACK ssyevd_2stage
+//             from N = 128), which has its own GPU-or-CPU boundary
 //   out:   batch,N,backend,ok,ms,p25,p75,reps   (one row per backend)
 //
 //   usage: sweep_eigh --policy
@@ -59,10 +61,11 @@ array transpose_last_two(const array& x) {
     return transpose(x, axes);
 }
 
-// The solve under test, returning {w, V}.
+// The solve under test, returning {w, V}; for eigenvalues alone, {w, w}.
 struct Solver {
     std::string name;
     std::pair<array, array> (*fn)(const array&);
+    bool vectors = true;
 };
 
 // What the library's routing sends to the CPU, so that is what it is measured against.
@@ -86,8 +89,44 @@ std::pair<array, array> solve_block(const array& A) {
     return {r.eigenvalues, r.eigenvectors};
 }
 
+// Eigenvalues alone, as eigvalsh runs them. (The detail entry points take
+// (A, compute_vectors, lower, ...).)
+std::pair<array, array> vals_cpu(const array& A) {
+    array w = detail::eigh_cpu(A, false, true).eigenvalues; return {w, w};
+}
+std::pair<array, array> vals_simd(const array& A) {
+    EighOptions o; o.mode = EighOptions::Mode::simd;
+    array w = detail::eigh_jacobi(A, false, true, o).eigenvalues; return {w, w};
+}
+std::pair<array, array> vals_tg(const array& A) {
+    EighOptions o; o.mode = EighOptions::Mode::threadgroup;
+    array w = detail::eigh_jacobi(A, false, true, o).eigenvalues; return {w, w};
+}
+std::pair<array, array> vals_block(const array& A) {
+    EighOptions o; o.mode = EighOptions::Mode::block;
+    array w = detail::eigh_block_jacobi(A, false, true, o).eigenvalues; return {w, w};
+}
+
+// Eigenvalues alone: the largest error against MLX's CPU eigvalsh (LAPACK,
+// independent of every backend here), relative to ||A||.
+float values_error(const Solver& s, const array& A) {
+    try {
+        array w = s.fn(A).first;
+        array w_ref = linalg::eigvalsh(A, "L", Device::cpu);
+        array e  = max(abs(subtract(w, w_ref)));
+        array nA = sqrt(sum(square(A)));
+        eval({e, nA});
+        const float err = e.item<float>();
+        if (!std::isfinite(err)) return INFINITY;
+        return err / std::max(nA.item<float>(), 1e-30f);
+    } catch (const std::exception&) {
+        return INFINITY;
+    }
+}
+
 // Relative eigen-residual, or infinity if the backend cannot run here.
 float correctness(const Solver& s, const array& A) {
+    if (!s.vectors) return values_error(s, A);
     try {
         auto [w, V] = s.fn(A);
         eval({w, V});
@@ -158,14 +197,16 @@ int main(int argc, char** argv) {
         std::printf("{\"device\": \"%s\", \"gpu_cores\": %u, \"source\": \"%s\", "
                     "\"simd_max_n\": %u, \"block_min_n\": %u, \"block_min_n_batched\": %u, "
                     "\"block_min_batch\": %u, \"gpu_max_n\": %u, \"gpu_min_batch_times_n\": %u, "
-                    "\"gpu_min_batch\": %u}\n",
+                    "\"gpu_min_batch\": %u, \"values_gpu_max_n\": %u, "
+                    "\"values_gpu_min_batch_times_n\": %u, \"values_gpu_min_batch\": %u}\n",
                     device_name(), p.gpu_cores, eigh_policy_source(),
                     p.simd_max_n, p.block_min_n, p.block_min_n_batched, p.block_min_batch,
-                    p.gpu_max_n, p.gpu_min_batch_times_n, p.gpu_min_batch);
+                    p.gpu_max_n, p.gpu_min_batch_times_n, p.gpu_min_batch,
+                    p.values_gpu_max_n, p.values_gpu_min_batch_times_n, p.values_gpu_min_batch);
         return 0;
     }
     if (argc != 4) {
-        std::fprintf(stderr, "usage: %s <batch> <N> <cpu|simd|tg|block>[,...]\n"
+        std::fprintf(stderr, "usage: %s <batch> <N> <cpu|simd|tg|block>[_vals][,...]\n"
                              "       %s --policy\n", argv[0], argv[0]);
         return 2;
     }
@@ -182,6 +223,10 @@ int main(int argc, char** argv) {
         else if (name == "simd")  solvers.push_back({name, solve_simd});
         else if (name == "tg")    solvers.push_back({name, solve_tg});
         else if (name == "block") solvers.push_back({name, solve_block});
+        else if (name == "cpu_vals")   solvers.push_back({name, vals_cpu, false});
+        else if (name == "simd_vals")  solvers.push_back({name, vals_simd, false});
+        else if (name == "tg_vals")    solvers.push_back({name, vals_tg, false});
+        else if (name == "block_vals") solvers.push_back({name, vals_block, false});
         else if (!name.empty()) { std::fprintf(stderr, "unknown backend: %s\n", name.c_str()); return 2; }
         pos = comma + 1;
     }

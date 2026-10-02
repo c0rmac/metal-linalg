@@ -23,7 +23,7 @@ policy measured on the device it runs on. MLX's own `linalg::eigh` and
 > the measurements behind it, and every new chip needs its own. So far an M1
 > and an M5 Pro have been measured; every other Mac runs a cautious default
 > that misses much of what its GPU can do. If you have an Apple Silicon Mac,
-> one command measures it (`python3 tuning/run.py`, about 40 minutes of the
+> one command measures it (`python3 tuning/run.py`, about an hour of the
 > Mac's time) and produces a results folder to send as a pull request. Each
 > run improves the library for everyone with that Mac, and runs from several
 > people with the same Mac are combined. Contributions are what keep the
@@ -460,7 +460,7 @@ lists them.
 |---|---|
 | `<metal_linalg/metal_linalg.h>` | all of the below |
 | `<metal_linalg/qr.h>` | `qr_accelerated`; `QrPolicy`, `qr_policy()`, `set_qr_policy()`, `qr_policy_source()`; `qr_backend(m, n, batch)` |
-| `<metal_linalg/eigh.h>` | `eigh_accelerated`, `eigvalsh_accelerated`; `EighPolicy`, `eigh_policy()`, `set_eigh_policy()`, `eigh_policy_source()`; `eigh_backend(n, batch)`, `eigh_uses_gpu` |
+| `<metal_linalg/eigh.h>` | `eigh_accelerated`, `eigvalsh_accelerated`; `EighPolicy`, `eigh_policy()`, `set_eigh_policy()`, `eigh_policy_source()`; `eigh_backend(n, batch)`, `eigvalsh_backend(n, batch)`, `eigh_uses_gpu`, `eigvalsh_uses_gpu` |
 | `<metal_linalg/svd.h>` | `svd_accelerated`, `svdvals_accelerated`; `SvdPolicy`, `svd_policy()`, `set_svd_policy()`, `svd_policy_source()`; `svd_backend(m, n, batch)`, `svd_uses_gpu` |
 | `<metal_linalg/device.h>` | `device_name()`, `gpu_core_count()`: the GPU the policies were resolved for |
 | `<metal_linalg/core.h>` | the same on float buffers, without MLX: `core::qr`, `core::eigh`, `core::svd`; the policies, backends and options |

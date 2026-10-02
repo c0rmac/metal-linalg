@@ -113,6 +113,9 @@ const char* metal_linalg_qr_backend(uint32_t rows, uint32_t cols, uint32_t batch
 const char* metal_linalg_eigh_backend(uint32_t n, uint32_t batch) {
     return name(eigh_backend(n, batch));
 }
+const char* metal_linalg_eigvalsh_backend(uint32_t n, uint32_t batch) {
+    return name(eigvalsh_backend(n, batch));
+}
 const char* metal_linalg_svd_backend(uint32_t rows, uint32_t cols, uint32_t batch) {
     return name(svd_backend(rows, cols, batch));
 }
@@ -127,7 +130,8 @@ metal_linalg_qr_policy metal_linalg_qr_policy_get(void) {
 metal_linalg_eigh_policy metal_linalg_eigh_policy_get(void) {
     const EighPolicy p = eigh_policy();
     return {p.simd_max_n, p.block_min_n, p.block_min_n_batched, p.block_min_batch,
-            p.gpu_max_n, p.gpu_min_batch_times_n, p.gpu_min_batch, p.gpu_cores};
+            p.gpu_max_n, p.gpu_min_batch_times_n, p.gpu_min_batch, p.gpu_cores,
+            p.values_gpu_max_n, p.values_gpu_min_batch_times_n, p.values_gpu_min_batch};
 }
 
 metal_linalg_svd_policy metal_linalg_svd_policy_get(void) {
@@ -159,6 +163,9 @@ void metal_linalg_eigh_policy_set(const metal_linalg_eigh_policy* c) {
     p.gpu_max_n             = c->gpu_max_n;
     p.gpu_min_batch_times_n = c->gpu_min_batch_times_n;
     p.gpu_min_batch         = c->gpu_min_batch;
+    p.values_gpu_max_n             = c->values_gpu_max_n;
+    p.values_gpu_min_batch_times_n = c->values_gpu_min_batch_times_n;
+    p.values_gpu_min_batch         = c->values_gpu_min_batch;
     set_eigh_policy(p);
 }
 

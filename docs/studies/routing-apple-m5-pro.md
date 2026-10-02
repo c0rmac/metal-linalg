@@ -203,6 +203,34 @@ GPU. The kernel crossover (512) is unchanged. Its misroutes are near the
 boundary: one 512×512 goes to the GPU at 1.7x the CPU's time, and 64 of
 16×16 at 1.9x.
 
+## Update, 2026-10-02: eigenvalues alone, and eigh past N = 1024
+
+Since 2.3.0 `eigvalsh` runs on the CPU by LAPACK's two-stage reduction, up to
+3x faster than the `ssyevd` the eigh row was fitted against, so routing
+`eigvalsh` by eigh's boundary sent it to the GPU where the CPU had become
+faster. An eigh-only run
+([`20261002-153352`](../results/apple-m5-pro-20gpu/20261002-153352/eigh/report.md),
+`python3 tuning/run.py --only eigh`) times every backend both ways (with
+eigenvectors and, as `<backend>_vals`, without) and gives `eigvalsh` its own
+boundary:
+
+```cpp
+// ..., gpu_max_n, gpu_min_batch_times_n, gpu_min_batch,   values_gpu_max_n, values_gpu_min_batch_times_n, values_gpu_min_batch
+{"Apple M5 Pro", 20,   0, 96, 0, 0,   1024, 512, 16,   256, 2048, 32},
+```
+
+| eigenvalues alone, 194 points | geomean regret | worst |
+|---|---|---|
+| eigh's boundary (as before) | 1.0610 | 3.90x |
+| its own, fitted | 1.0075 | 1.28x |
+| its own, fitted on half, scored on the other half | 1.0068 | 1.26x |
+
+The run also measures N = 1536 and 2048 for lone matrices and batches of 2 and
+4, where the CPU is 2.4-2.6x faster than block Jacobi, so `gpu_max_n = 1024` is
+now a measured cap rather than the edge of the grid. eigh's own row is
+unchanged: combined with the earlier runs, its fitted values stay within the
+near-optimal region.
+
 ## Reproducing
 
 ```sh

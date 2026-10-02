@@ -95,5 +95,15 @@ final class MetalLinalgTests: XCTestCase {
         eighPolicy = p
         XCTAssertEqual(eighBackend(n: 8, batch: 4096), "cpu")
         XCTAssertEqual(eighPolicySource, "user")
+        // Eigenvalues alone: unset (values_gpu_min_batch = 0) follows eigh; set, it decides apart.
+        p.values_gpu_min_batch = 0
+        eighPolicy = p
+        XCTAssertEqual(eigvalshBackend(n: 8, batch: 4096), "cpu")
+        p.values_gpu_max_n = 64
+        p.values_gpu_min_batch_times_n = 0
+        p.values_gpu_min_batch = 1
+        eighPolicy = p
+        XCTAssertNotEqual(eigvalshBackend(n: 8, batch: 4096), "cpu")
+        XCTAssertEqual(eighBackend(n: 8, batch: 4096), "cpu")
     }
 }

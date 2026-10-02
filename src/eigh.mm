@@ -152,6 +152,11 @@ struct TunedEntry {
     unsigned    gpu_max_n;
     unsigned    gpu_min_batch_times_n;
     unsigned    gpu_min_batch;
+    // Eigenvalues alone. Rows measured before these existed leave them 0,
+    // which means "as for eigenvectors" (values_gpu_min_batch = 0).
+    unsigned    values_gpu_max_n;
+    unsigned    values_gpu_min_batch_times_n;
+    unsigned    values_gpu_min_batch;
 };
 
 // The rows are generated from every run submitted for a device (docs/results/)
@@ -160,7 +165,7 @@ struct TunedEntry {
 // docs/studies/. The last row keeps the array non-empty and matches nothing.
 constexpr TunedEntry kTuned[] = {
 #include "tuned/eigh.inc"
-    {"", 0,   0, 0, 0, 0,   0, 0, 0},
+    {"", 0,   0, 0, 0, 0,   0, 0, 0,   0, 0, 0},
 };
 
 struct ResolvedPolicy {
@@ -196,6 +201,9 @@ ResolvedPolicy resolve_policy() {
             r.policy.gpu_max_n             = e.gpu_max_n;
             r.policy.gpu_min_batch_times_n = e.gpu_min_batch_times_n;
             r.policy.gpu_min_batch         = e.gpu_min_batch;
+            r.policy.values_gpu_max_n             = e.values_gpu_max_n;
+            r.policy.values_gpu_min_batch_times_n = e.values_gpu_min_batch_times_n;
+            r.policy.values_gpu_min_batch         = e.values_gpu_min_batch;
             r.source = "tuned:" + r.device;
             break;
         }
@@ -222,6 +230,9 @@ ResolvedPolicy resolve_policy() {
     over("EIGH_GPU_MAX_N",             r.policy.gpu_max_n);
     over("EIGH_GPU_MIN_BATCH_TIMES_N", r.policy.gpu_min_batch_times_n);
     over("EIGH_GPU_MIN_BATCH",         r.policy.gpu_min_batch);
+    over("EIGH_VALUES_GPU_MAX_N",             r.policy.values_gpu_max_n);
+    over("EIGH_VALUES_GPU_MIN_BATCH_TIMES_N", r.policy.values_gpu_min_batch_times_n);
+    over("EIGH_VALUES_GPU_MIN_BATCH",         r.policy.values_gpu_min_batch);
     if (!env.empty()) r.source = "env:" + env;
     return r;
 }
@@ -504,19 +515,38 @@ EighBackend eigh_gpu_backend(unsigned n, unsigned batch) {
     return n <= p.simd_max_n ? EighBackend::simd : EighBackend::threadgroup;
 }
 
-bool eigh_uses_gpu(unsigned n, unsigned batch) {
+namespace {
+
+// GPU iff N <= max_n, batch * N >= min_bn and batch >= min_batch, unless
+// EIGH_DEVICE forces a side.
+bool gpu_rule(unsigned n, unsigned batch, unsigned max_n, unsigned min_bn, unsigned min_batch) {
     if (const char* e = std::getenv("EIGH_DEVICE")) {
         const std::string s = e;
         if (s == "gpu") return true;
         if (s == "cpu") return false;
     }
+    return n <= max_n && (unsigned long long)batch * n >= min_bn && batch >= min_batch;
+}
+
+} // namespace
+
+bool eigh_uses_gpu(unsigned n, unsigned batch) {
     const EighPolicy& p = policy_state().policy;
-    return n <= p.gpu_max_n && (unsigned long long)batch * n >= p.gpu_min_batch_times_n &&
-           batch >= p.gpu_min_batch;
+    return gpu_rule(n, batch, p.gpu_max_n, p.gpu_min_batch_times_n, p.gpu_min_batch);
+}
+
+bool eigvalsh_uses_gpu(unsigned n, unsigned batch) {
+    const EighPolicy& p = policy_state().policy;
+    if (p.values_gpu_min_batch == 0) return eigh_uses_gpu(n, batch);   // not measured apart
+    return gpu_rule(n, batch, p.values_gpu_max_n, p.values_gpu_min_batch_times_n, p.values_gpu_min_batch);
 }
 
 EighBackend eigh_backend(unsigned n, unsigned batch) {
     return eigh_uses_gpu(n, batch) ? eigh_gpu_backend(n, batch) : EighBackend::cpu;
+}
+
+EighBackend eigvalsh_backend(unsigned n, unsigned batch) {
+    return eigvalsh_uses_gpu(n, batch) ? eigh_gpu_backend(n, batch) : EighBackend::cpu;
 }
 
 void core::eigh(const Matrices& a, bool lower, float* w, float* v, uint32_t* info) {
@@ -524,7 +554,8 @@ void core::eigh(const Matrices& a, bool lower, float* w, float* v, uint32_t* inf
         throw std::invalid_argument("[eigh] Input matrices must be square.");
     }
     const unsigned n = a.cols, batch = a.batch;
-    if (n > 0 && batch > 0 && !eigh_uses_gpu(n, batch)) {
+    const bool gpu = v ? eigh_uses_gpu(n, batch) : eigvalsh_uses_gpu(n, batch);
+    if (n > 0 && batch > 0 && !gpu) {
         core::detail::eigh_cpu(a, lower, w, v, info);
         return;
     }
