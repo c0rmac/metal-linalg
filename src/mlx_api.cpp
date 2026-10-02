@@ -30,6 +30,12 @@ Input prepare(const mx::array& a, const char* who) {
     if (a.ndim() < 2) {
         throw std::invalid_argument(std::string("[") + who + "] Input must be at least a 2D matrix.");
     }
+    // Real input only: casting a complex array to float32 would keep the real
+    // parts and return the decomposition of a different matrix.
+    if (mx::issubdtype(a.dtype(), mx::complexfloating)) {
+        throw std::invalid_argument(std::string("[") + who + "] Complex input is not supported: "
+                                    "the decompositions are real (float32).");
+    }
     // The evaluation has to come first. An unevaluated MLX array reports
     // itself as row-contiguous (its flags default to true), so checking flags
     // on a lazy transposed view and then evaluating hands back the

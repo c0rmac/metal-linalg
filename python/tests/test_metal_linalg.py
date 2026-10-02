@@ -98,6 +98,12 @@ class Decompositions(unittest.TestCase):
     def test_errors(self):
         with self.assertRaises(ValueError):
             ml.eigh(mx.random.normal((4, 5)))      # not square
+        # Complex input would otherwise lose its imaginary part silently:
+        # this Hermitian matrix has eigenvalues 1 and 3, its real part 2 and 2.
+        hermitian = mx.array([[2 + 0j, 1j], [-1j, 2 + 0j]])
+        for fn in (ml.qr, ml.eigh, ml.eigvalsh, ml.svd, ml.svdvals):
+            with self.assertRaisesRegex(ValueError, "Complex input"):
+                fn(hermitian)
 
 
 class Routing(unittest.TestCase):

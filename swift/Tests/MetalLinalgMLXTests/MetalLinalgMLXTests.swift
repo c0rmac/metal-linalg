@@ -59,6 +59,7 @@ final class MetalLinalgMLXTests: XCTestCase {
         try onCPU {
             XCTAssertThrowsError(try qrAccelerated(MLXArray([1, 2, 3] as [Float])))   // 1-D
             XCTAssertThrowsError(try eighAccelerated(MLXRandom.normal([3, 4])))      // not square
+            XCTAssertThrowsError(try svdAccelerated(MLXArray.eye(3).asType(.complex64))) // complex
         }
     }
 }

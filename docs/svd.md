@@ -3,7 +3,7 @@
 ```cpp
 #include <metal_linalg/svd.h>
 
-// a: MLX array of shape [M, N] or [..., M, N] (float32 or auto-cast), any M and N
+// a: MLX array of shape [M, N] or [..., M, N] (real: float32, or cast to it; complex input throws), any M and N
 // Returns the thin SVD, K = min(M, N):
 //   U [..., M, K] orthonormal columns, S [..., K] descending, Vt [..., K, N] orthonormal rows
 auto [U, S, Vt] = metal_linalg::svd_accelerated(a);

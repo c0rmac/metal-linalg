@@ -1,5 +1,13 @@
 # Changes
 
+## 2.2.2 (2026-10-02)
+
+- **Complex input raises an error** (`std::invalid_argument` in C++,
+  `ValueError` in Python, `MetalLinalgError.invalidArgument` in Swift)
+  instead of being cast to float32, which kept only the real parts and
+  returned the decomposition of a different matrix: for the Hermitian
+  `[[2, i], [-i, 2]]`, `eigvalsh` gave `[2, 2]` instead of `[1, 3]`.
+
 ## 2.2.1 (2026-10-02)
 
 - Importing the Python package with a different MLX than it was built

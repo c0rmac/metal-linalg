@@ -3,7 +3,7 @@
 ```cpp
 #include <metal_linalg/eigh.h>
 
-// a: MLX array of shape [N, N] or [..., N, N], real symmetric (float32 or auto-cast)
+// a: MLX array of shape [N, N] or [..., N, N], real symmetric (real: float32, or cast to it; complex input throws)
 // Returns: {w, V} with w [..., N] ascending and V [..., N, N], A = V diag(w) V^T
 auto [w, V] = metal_linalg::eigh_accelerated(a);        // reads the lower triangle
 auto [w2, V2] = metal_linalg::eigh_accelerated(a, "U"); // or the upper
