@@ -71,7 +71,7 @@ policy measured on the device it runs on. MLX's own `linalg::eigh` and
 | operation | functions | GPU kernels | CPU path | details |
 |---|---|---|---|---|
 | QR | `qr_accelerated` | Householder in one threadgroup per matrix; grid-parallel blocked Householder | LAPACK `sgeqrf`, `sorgqr` | [docs/qr.md](docs/qr.md) |
-| symmetric eigendecomposition | `eigh_accelerated`, `eigvalsh_accelerated` | whole-matrix Jacobi; block Jacobi | LAPACK `ssyevd` | [docs/eigh.md](docs/eigh.md) |
+| symmetric eigendecomposition | `eigh_accelerated`, `eigvalsh_accelerated` | whole-matrix Jacobi; block Jacobi | LAPACK `ssyevd`; `ssyevd_2stage` for eigenvalues alone from N = 128 | [docs/eigh.md](docs/eigh.md) |
 | thin SVD | `svd_accelerated`, `svdvals_accelerated` | whole-matrix one-sided Jacobi; block one-sided Jacobi; either after QR for tall input | LAPACK `sgesdd` | [docs/svd.md](docs/svd.md) |
 
 Input is any batch shape `[..., M, N]`, any real dtype (computed in float32),

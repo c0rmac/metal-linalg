@@ -412,6 +412,9 @@ void eigh_jacobi(const Matrices& a, bool lower, const EighOptions& opt,
     if (info_out) std::memcpy(info_out, info_ptr, (size_t)batch * sizeof(uint32_t));
 }
 
+// The smallest n whose eigenvalues alone go through the two-stage reduction.
+constexpr uint32_t kEighTwoStageMinN = 128;
+
 void eigh_cpu(const Matrices& a, bool lower, float* w_out, float* v_out, uint32_t* info_out) {
     const uint32_t n = a.cols, batch = a.batch;
     if (a.rows != n) {
@@ -427,13 +430,28 @@ void eigh_cpu(const Matrices& a, bool lower, float* w_out, float* v_out, uint32_
     // LAPACK reads, and its eigenvectors come back as rows.
     char jobz = v_out ? 'V' : 'N';
     char uplo = lower ? 'U' : 'L';
+    // Eigenvalues alone go through LAPACK's two-stage reduction (dense to
+    // band in matrix-matrix products, then band to tridiagonal), which the
+    // one-stage reduction, bound by memory bandwidth in its matrix-vector
+    // half, falls far behind as n grows: on an M5 Pro 1.2x faster at
+    // n = 1024, 4x at 4096, 6x at 8192, and level from 128 down to 32.
+    // LAPACK's two-stage driver does not compute eigenvectors.
+    const bool two_stage = !v_out && n >= kEighTwoStageMinN;
+    auto syevd = two_stage ? ssyevd_2stage_ : ssyevd_;
+    // The two-stage reduction runs about 1.5x faster on the lower triangle
+    // than the upper (and loses to one-stage at N = 1024 on the upper), so it
+    // is always given the lower: where that is the row-major lower triangle,
+    // which LAPACK would see as its upper, the matrix is transposed on copy.
+    const bool transpose_in = two_stage && lower;
+    if (two_stage) uplo = 'L';
+    const char* routine = two_stage ? "ssyevd_2stage" : "ssyevd";
     const size_t per = (size_t)n * n;
     std::vector<float> work_a(per);
     __LAPACK_int N = (__LAPACK_int)n, lwork = -1, liwork = -1, err = 0;
     float lwork_query = 0.0f;
     __LAPACK_int liwork_query = 0;
-    ssyevd_(&jobz, &uplo, &N, work_a.data(), &N, w_out, &lwork_query, &lwork,
-            &liwork_query, &liwork, &err);
+    syevd(&jobz, &uplo, &N, work_a.data(), &N, w_out, &lwork_query, &lwork,
+          &liwork_query, &liwork, &err);
     lwork  = std::max<__LAPACK_int>(1, (__LAPACK_int)std::ceil(lwork_query));
     liwork = std::max<__LAPACK_int>(1, liwork_query);
     std::vector<float>        work(lwork);
@@ -453,11 +471,12 @@ void eigh_cpu(const Matrices& a, bool lower, float* w_out, float* v_out, uint32_
             if (info_out) info_out[b] = 1u << 17;
             continue;
         }
-        std::memcpy(work_a.data(), a.data + b * per, per * sizeof(float));
-        ssyevd_(&jobz, &uplo, &N, work_a.data(), &N, w, work.data(), &lwork,
-                iwork.data(), &liwork, &err);
+        if (transpose_in) vDSP_mtrans(a.data + b * per, 1, work_a.data(), 1, n, n);
+        else              std::memcpy(work_a.data(), a.data + b * per, per * sizeof(float));
+        syevd(&jobz, &uplo, &N, work_a.data(), &N, w, work.data(), &lwork,
+              iwork.data(), &liwork, &err);
         if (err != 0) {
-            throw std::runtime_error("[eigh] LAPACK ssyevd failed on matrix " + std::to_string(b) +
+            throw std::runtime_error(std::string("[eigh] LAPACK ") + routine + " failed on matrix " + std::to_string(b) +
                                      " of " + std::to_string(batch) + " (N=" + std::to_string(n) +
                                      "), info " + std::to_string((long long)err) + ".");
         }

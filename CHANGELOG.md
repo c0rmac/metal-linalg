@@ -1,5 +1,17 @@
 # Changes
 
+## 2.3.0 (2026-10-02)
+
+- **Large eigenvalue-only problems are much faster on the CPU.**
+  `eigvalsh` from N = 128 uses LAPACK's two-stage reduction
+  (`ssyevd_2stage`: dense to band in matrix-matrix products, then band to
+  tridiagonal) instead of `ssyevd`, whose reduction is bound by memory
+  bandwidth. On an M5 Pro: 1.2x at N = 1024, 1.6x at 2048, 3.8x at 4096,
+  5.7x at 8192 (14.8 s to 2.6 s). The matrix is always handed over as its
+  lower triangle, on which the two-stage reduction is about 1.5x faster.
+  `eigh` with eigenvectors is unchanged: LAPACK's two-stage driver does not
+  return them.
+
 ## 2.2.3 (2026-10-02)
 
 - **QR uses its CPU path on the M5 Pro.** The M5 Pro's QR row predated QR's
