@@ -13,7 +13,7 @@ metal-linalg routes every call by measurements made on each kind of Mac. This pa
 
 **Have one of these Macs?** One command measures it, in about an hour, and a pull request submits it: [how to contribute](https://github.com/c0rmac/metal-linalg/blob/main/CONTRIBUTING.md). Every run improves the library for everyone with that chip; the library prints a notice on chips that need one.
 
-2 current, 2 incomplete, 1 stale and 91 not measured, over 32 chip configurations and 3 decompositions.
+2 current, 2 incomplete, 1 stale and 109 not measured, over 38 chip configurations and 3 decompositions.
 
 ## By chip
 
@@ -54,8 +54,14 @@ metal-linalg routes every call by measurements made on each kind of Mac. This pa
 <tr><td>Apple M4 Max</td><td>32</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td></tr>
 <tr><td>Apple M4 Max</td><td>40</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td></tr>
 <tr><th colspan="5" style="text-align:left">M5</th></tr>
+<tr><td>Apple M5</td><td>8</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td></tr>
 <tr><td>Apple M5</td><td>10</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td></tr>
+<tr><td>Apple M5 Pro</td><td>16</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td></tr>
 <tr><td>Apple M5 Pro</td><td>20</td><td style="background:#dcfce7;color:#1c1917">🟢 <b>current</b><br>3 runs, latest 2026-10-02</td><td style="background:#dcfce7;color:#1c1917">🟢 <b>current</b><br>4 runs, latest 2026-10-03</td><td style="background:#ffedd5;color:#1c1917">🟠 <b>stale</b><br>2 runs, latest 2026-10-01<br>kernel version 1, now 2: still used</td></tr>
+<tr><td>Apple M5 Max</td><td>32</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td></tr>
+<tr><td>Apple M5 Max</td><td>40</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td></tr>
+<tr><td>Apple M5 Ultra</td><td>64</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td></tr>
+<tr><td>Apple M5 Ultra</td><td>80</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td></tr>
 </table>
 
 ## Submitted runs
