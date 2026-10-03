@@ -101,7 +101,7 @@
  "results": {
   "qr": {
    "trustworthy": true,
-   "row": "{\"Apple M5 Pro\", 20, 512, 512, 16,   8, 10240, 1,   1024, 4},",
+   "row": "{\"Apple M5 Pro\", 20, 512, 512, 16,   8, 10240, 1, 0,   1024, 4},",
    "why": null,
    "probe_drift": null
   },

@@ -1,5 +1,50 @@
 # Changes
 
+## 2.10.0 (2026-10-03)
+
+- **A new batched SVD kernel, `golub_kahan`.** The SVD counterpart of 2.9.0's
+  `ql`: LAPACK's method on the GPU, one threadgroup per matrix with the matrix
+  in threadgroup memory (k <= 83; longer when tall): Householder
+  bidiagonalization, then implicit bidiagonal QR (`sbdsqr`'s shifted sweep,
+  with zero diagonal entries chased out), whose rotations one thread records
+  a step at a time and every thread applies to its own row of U or V. V lives
+  in a device-memory workspace, which doubled how many matrices share a core.
+  On an M5 Pro it is 1.5-2.9x faster than the Jacobi kernels at every size it
+  takes and 1.2-1.8x faster than the 18-core CPU for large batches up to
+  48×48 (4096 of 32×32: 9.3 ms, Jacobi 22.6 ms, CPU 15.4 ms), the region
+  where the M5 Pro now uses the GPU for the SVD; through torch, the SVD of
+  4096 32×32 matrices went from 19 ms to 9.2 ms (torch on MPS: 27 ms).
+  Backward stable like LAPACK's QR iteration (reconstruction and
+  orthogonality about 1e-6); the Jacobi kernels remain where tiny singular
+  values are wanted to high relative accuracy. A tall matrix that does not
+  fit goes through this library's QR first (`qr_golub_kahan`). The policy
+  has a window for it, `gk_min_k` .. `gk_max_k` (`SVD_GK_MIN_K`,
+  `SVD_GK_MAX_K`), fitted per device and off on devices without
+  measurements. `svd_backend()` reports `"golub_kahan"` or
+  `"qr_golub_kahan"`; `detail::svd_golub_kahan` runs it directly, and
+  `SvdOptions::Kernel::golub_kahan` on the factor of the QR.
+- **Two more routing terms.** SVD: a cap on the long side, `gpu_max_l`
+  (`SVD_GPU_MAX_L`): the CPU path reduces a tall matrix by a QR first and
+  wins tall shapes at any batch (256×16, 4096 of them: 0.72x on the GPU),
+  while large batches of 32×32 are the GPU's; with a cap on k alone the fit
+  gave up everything above k = 24. QR: a lower bound on k, `gpu_min_k`
+  (`QR_GPU_MIN_K`): the parallel CPU path wins the smallest matrices at every
+  batch measured (16384 of 16×16: 3.3 ms, 8.1 on the GPU), which a product
+  rule sent to the GPU. No cap and no bound on devices without measurements.
+- Re-measured on the M5 Pro: QR (run `20261003-af087d`, now with batches up to
+  16384) and the SVD (run `20261003-106b6c`, with `golub_kahan` and k = 24,
+  40, 56, 80 added to its grid). Against the best backend at each point
+  measured, the SVD row now scores 1.005 geometric-mean regret, worst 1.26x
+  (2.9.0's row on the same points: 1.030, worst 2.09x), and QR's 1.034
+  (2.9.0's: 1.060). The SVD's kernel version moved (QR's routing changes the timings
+  of its QR-preconditioned backends), so earlier SVD runs are stale.
+- The C API's policy structs gain these fields at their ends:
+  `metal_linalg_svd_policy` `gk_min_k`, `gk_max_k`, `gpu_max_l`;
+  `metal_linalg_qr_policy` `gpu_min_k`.
+- `benchmark_svd` has a `gk` column; the QR harness measures batches of 4096
+  and 16384, and the SVD harness fits the `golub_kahan` window as stage 1b,
+  as the eigensolver's fits `ql`'s.
+
 ## 2.9.0 (2026-10-03)
 
 - **The CPU path spreads a batch over every core.** QR, eigh and the SVD on

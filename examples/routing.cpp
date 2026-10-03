@@ -33,6 +33,8 @@ const char* name(ml::SvdBackend b) {
         case ml::SvdBackend::block_jacobi:    return "GPU, block kernel";
         case ml::SvdBackend::qr_jacobi:       return "GPU, QR then whole-matrix kernel";
         case ml::SvdBackend::qr_block_jacobi: return "GPU, QR then block kernel";
+        case ml::SvdBackend::golub_kahan:     return "GPU, bidiagonalization and QR, one threadgroup";
+        case ml::SvdBackend::qr_golub_kahan:  return "GPU, QR then bidiagonalization and QR, one threadgroup";
         default:                              return "GPU bidiagonalization, LAPACK's bidiagonal solver";
     }
 }
@@ -48,6 +50,7 @@ int main() {
     std::printf("eigh 512 x 512,    batch 64     -> %s\n", name(ml::eigh_backend(512, 64)));
     std::printf("eigh 2048 x 2048,  batch 1      -> %s\n", name(ml::eigh_backend(2048, 1)));
     std::printf("eigh 512 x 512,    batch 1      -> %s\n", name(ml::eigh_backend(512, 1)));
+    std::printf("svd  32 x 32,      batch 4096   -> %s\n", name(ml::svd_backend(32, 32, 4096)));
     std::printf("svd  1024 x 64,    batch 64     -> %s\n", name(ml::svd_backend(1024, 64, 64)));
     std::printf("svd  256 x 256,    batch 16     -> %s\n", name(ml::svd_backend(256, 256, 16)));
 

@@ -1,13 +1,17 @@
-// SVD benchmark: the four Metal backends against a thin SVD on the CPU.
+// SVD benchmark: the Jacobi and golub_kahan Metal backends against a thin SVD
+// on the CPU.
 //
-//   benchmark_svd                    all five over a grid of shapes and batches
+//   benchmark_svd                    all of them over a grid of shapes and batches
 //   benchmark_svd <batch> <M> <N>    one point
 //   benchmark_svd --tune             simdgroups per matrix, for svd.mm
 //
 // The GPU columns are the whole-matrix kernel (jacobi) and the block kernel
 // (block) on the matrix itself, then each after this library's QR on tall
-// input (qr, qr+block). Both kernels are pinned, so no column follows the
-// routing policy; the crossover between them is what the columns show.
+// input (qr, qr+block), then golub_kahan (gk: bidiagonalization and implicit
+// QR, one threadgroup per matrix; on the matrix itself where it fits, else
+// after the QR, as svd.mm routes it). The kernels are pinned, so no column
+// follows the routing policy; the crossovers between them are what the
+// columns show.
 //
 // The CPU column is a fair one. mlx::core::linalg::svd only offers the
 // full-size factors, whose U is M x M, which for a tall matrix is most of the
@@ -88,7 +92,7 @@ unsigned max_sweeps(const array& info) {
 
 // A GPU column: 0 ms means not run.
 struct Row {
-    double jacobi_ms, block_ms, qr_ms, qr_block_ms, cpu_ms, cpu_full_ms;
+    double jacobi_ms, block_ms, qr_ms, qr_block_ms, gk_ms, cpu_ms, cpu_full_ms;
     float recon;          // of the fastest GPU backend
     unsigned sweeps;      // of the whole-matrix kernel, or the block kernel if that alone ran
     const char* best;     // name of the fastest GPU backend
@@ -123,8 +127,11 @@ Row bench_point(int batch, int M, int N) {
         {"block",    k >= kBlockMinK,          [&] { return detail::svd_block_jacobi(A, true, {}); }},
         {"qr",       tall && k <= kJacobiMaxK, [&] { return detail::svd_qr_jacobi(A, true, pinned(SvdOptions::Kernel::jacobi)); }},
         {"qr+block", tall && k >= kBlockMinK,  [&] { return detail::svd_qr_jacobi(A, true, pinned(SvdOptions::Kernel::block)); }},
+        {"gk",       k <= (int)detail::svd_gk_max_k(), [&] {
+             return detail::svd_gk_fits(M, N) ? detail::svd_golub_kahan(A, true)
+                                              : detail::svd_qr_jacobi(A, true, pinned(SvdOptions::Kernel::golub_kahan)); }},
     };
-    double* slots[] = {&r.jacobi_ms, &r.block_ms, &r.qr_ms, &r.qr_block_ms};
+    double* slots[] = {&r.jacobi_ms, &r.block_ms, &r.qr_ms, &r.qr_block_ms, &r.gk_ms};
     double best = INFINITY;
     for (size_t i = 0; i < gpus.size(); ++i) {
         if (!gpus[i].run) continue;
@@ -152,10 +159,10 @@ Row bench_point(int batch, int M, int N) {
 }
 
 void print_header() {
-    std::printf("%6s %6s %7s | %10s %10s | %10s %10s | %10s %10s | %8s %-8s | %8s %6s\n",
-                "M", "N", "batch", "jacobi ms", "block ms", "qr ms", "qr+block", "CPU ms", "CPU full",
+    std::printf("%6s %6s %7s | %10s %10s | %10s %10s | %10s | %10s %10s | %8s %-8s | %8s %6s\n",
+                "M", "N", "batch", "jacobi ms", "block ms", "qr ms", "qr+block", "gk ms", "CPU ms", "CPU full",
                 "best/CPU", "best", "recon", "sweeps");
-    std::printf("%s\n", std::string(136, '-').c_str());
+    std::printf("%s\n", std::string(149, '-').c_str());
 }
 
 void print_ms(double ms) {
@@ -164,11 +171,12 @@ void print_ms(double ms) {
 
 void print_row(int batch, int M, int N, const Row& r) {
     double best = INFINITY;
-    for (double ms : {r.jacobi_ms, r.block_ms, r.qr_ms, r.qr_block_ms})
+    for (double ms : {r.jacobi_ms, r.block_ms, r.qr_ms, r.qr_block_ms, r.gk_ms})
         if (ms > 0) best = std::min(best, ms);
     std::printf("%6d %6d %7d | ", M, N, batch);
     print_ms(r.jacobi_ms); print_ms(r.block_ms); std::printf("| ");
     print_ms(r.qr_ms);     print_ms(r.qr_block_ms); std::printf("| ");
+    print_ms(r.gk_ms);     std::printf("| ");
     std::printf("%10.3f %10.3f | %7.2fx %-8s | %8.1e %6u\n", r.cpu_ms, r.cpu_full_ms,
                 r.cpu_ms / best, r.best ? r.best : "--", r.recon, r.sweeps);
     std::fflush(stdout);
@@ -181,11 +189,13 @@ int main(int argc, char** argv) {
     set_cache_limit(0);
 
     std::printf("\nThin SVD on an Apple GPU (one-sided Jacobi: whole-matrix and block kernels, each direct\n"
-                "and QR-preconditioned) vs the CPU. median of >=5 runs after 2 warmups; recon = ||A - U S Vt||_F / ||A||_F\n"
+                "and QR-preconditioned; gk: bidiagonalization and implicit QR, one threadgroup per matrix)\n"
+                "vs the CPU. median of >=5 runs after 2 warmups; recon = ||A - U S Vt||_F / ||A||_F\n"
                 "of the fastest GPU backend; sweeps = the whole-matrix kernel's. CPU = thin factors through\n"
-                "MLX / Accelerate, QR first when tall; CPU full = MLX svd as is. -- = not run: the whole-matrix\n"
-                "kernel above k = %d, the block kernel below k = %d, the QR paths unless M >= 2N.\n\n",
-                kJacobiMaxK, kBlockMinK);
+                "LAPACK, QR first when tall, a batch over every core; CPU full = MLX svd as is. -- = not run:\n"
+                "the whole-matrix kernel above k = %d, the block kernel below k = %d, the QR paths unless\n"
+                "M >= 2N, gk above k = %u.\n\n",
+                kJacobiMaxK, kBlockMinK, detail::svd_gk_max_k());
 
     if (argc == 4) {
         const int batch = std::atoi(argv[1]), M = std::atoi(argv[2]), N = std::atoi(argv[3]);
@@ -226,7 +236,7 @@ int main(int argc, char** argv) {
 
     struct Cfg { int M, N, max_batch; };
     const std::vector<Cfg> cfgs = {
-        {4, 4, 0}, {8, 8, 0}, {16, 16, 0}, {32, 32, 0}, {64, 64, 4096}, {128, 128, 256},
+        {4, 4, 0}, {8, 8, 0}, {16, 16, 0}, {32, 32, 0}, {48, 48, 0}, {64, 64, 4096}, {128, 128, 256},
         {192, 192, 64}, {256, 256, 16}, {384, 384, 16}, {512, 512, 16}, {1024, 1024, 1},
         {64, 8, 0}, {128, 32, 1024}, {256, 32, 1024}, {1024, 16, 256}, {1024, 64, 64}, {2048, 64, 16},
         {1024, 256, 16}, {2048, 512, 1},

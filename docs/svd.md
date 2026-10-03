@@ -52,7 +52,7 @@ Such singular values are reported as they are, tiny, and the host gives `U` an
 orthonormal completion for them. The tolerance is numpy's default for
 `matrix_rank`, `max(M, N) * eps`, with a floor of `64 * eps`.
 
-## Two kernels, four GPU backends
+## Two Jacobi kernels, four GPU backends
 
 As for QR and the eigensolver, different shapes get different shaders. Two
 independent choices make four GPU backends:
@@ -136,15 +136,105 @@ $1.3 \times 10^{-6}$ of float64 LAPACK's relative to $\sigma_\text{max}$
 (about $10^{-5}$ for `svdvals`, as for LAPACK's own singular-values-only
 path).
 
+## A sixth backend for batches: `golub_kahan` (`Svd_GolubKahan.metal`)
+
+Against a CPU path that spreads a batch over every core, the Jacobi kernels
+lost nearly everywhere (see [Performance](#performance)): one-sided Jacobi does
+several times the flops of LAPACK's method and needs a dozen sweeps. The
+`golub_kahan` backend (`src/svd_golub_kahan.mm`, new in 2.10.0) is LAPACK's
+method in one threadgroup per matrix, the SVD counterpart of the eigensolver's
+`ql` ([eigh.md](eigh.md)):
+
+1. **Bidiagonalization**, $A = Q B P^T$ (`sgebd2`): per column a Householder
+   reflector from the left, then per row one from the right, the matrix in
+   threadgroup memory. The left reflector's column sums are walked by the
+   thread owning each column and its update is row-local; the right reflector
+   needs only its row, so the thread owning that row forms it as soon as the
+   row is updated, and the right update runs on into the next column's sum:
+   four barriers per column.
+2. **Forming $Q$ and $P$** from the reflectors: $Q$ in place (`sorg2r`), $V =
+   P$ in a device-memory workspace.
+3. **Implicit bidiagonal QR** (`sbdsqr`'s shifted sweep, its shift the smaller
+   singular value of the trailing 2×2), chasing from the top of the block and
+   deflating at the bottom; a negligible diagonal entry is set to zero and
+   chased out of its block with rotations of its own (Golub and Van Loan
+   §8.6.2). The iteration works on the bidiagonal alone, so one thread runs it
+   and records each step's rotations, the left ones for $U$ and the right
+   ones for $V$, and every thread then applies the recorded list to its own
+   row, carrying the value the rotations share in a register. A step costs
+   one barrier, and from $k = 33$ a simdgroup of its own computes the next
+   step while the rows apply this one.
+4. Negative values flip their column of $V$; a rank sort orders them.
+
+A wide matrix is decomposed as its transpose. Each matrix is scaled by a power
+of two first, as in the other kernels, and the kernel is built with fast math
+and the eigensolver `ql` kernel's Newton-refined division and square root.
+
+**Why $V$ lives in device memory.** The kernel is latency-bound (the QR
+iteration is one thread's chain of dependent rotations), so its speed is
+decided by how many matrices share a GPU core, and threadgroup memory bounds
+that. Kept beside the matrix in threadgroup memory, $V$ halved it; stored in
+device memory, transposed so that the threads owning consecutive rows of it
+touch consecutive addresses, it made 4096 matrices of 32×32 1.4x faster and
+1024 of 48×48 1.5x on an M5 Pro, and raised the size limit from 59 to 83.
+
+**Sizes.** The matrix lives in threadgroup memory, so the backend takes
+squares up to 83×83 with 32 KB (`detail::svd_gk_max_k()`), longer matrices
+when tall (444×16, 202×32). Inside its window the router runs it on the
+matrix itself where it fits (`golub_kahan`) and otherwise after this
+library's QR, on the $k \times k$ factor (`qr_golub_kahan`), as the Jacobi
+kernels are preconditioned.
+
+On an M5 Pro, $k \times k$ matrices in batches, from the routing sweep in
+[`results/apple-m5-pro-20gpu/20261003-106b6c/svd/`](results/apple-m5-pro-20gpu/20261003-106b6c/svd/)
+(min of two randomised passes; the CPU path spreads the batch over 18 cores):
+
+| k×k | batch | golub_kahan | best Jacobi | CPU | Jacobi / GK | CPU / GK |
+|---|---|---|---|---|---|---|
+| 8 | 4096 | 0.93 ms | 1.41 ms | 1.42 ms | 1.51x | **1.52x** |
+| 16 | 1024 | 0.86 ms | 1.76 ms | 1.16 ms | 2.03x | **1.34x** |
+| 16 | 4096 | 2.41 ms | 5.76 ms | 4.42 ms | 2.39x | **1.84x** |
+| 24 | 4096 | 5.67 ms | 14.1 ms | 9.43 ms | 2.50x | **1.66x** |
+| 32 | 256 | 0.96 ms | 2.19 ms | 1.10 ms | 2.30x | **1.15x** |
+| 32 | 1024 | 2.57 ms | 6.91 ms | 3.97 ms | 2.69x | **1.55x** |
+| 32 | 4096 | 9.30 ms | 22.6 ms | 15.4 ms | 2.43x | **1.65x** |
+| 40 | 4096 | 18.0 ms | 49.6 ms | 23.8 ms | 2.75x | **1.32x** |
+| 48 | 1024 | 7.23 ms | 21.3 ms | 9.06 ms | 2.94x | **1.25x** |
+| 48 | 4096 | 27.6 ms | 79.4 ms | 34.2 ms | 2.88x | **1.24x** |
+| 56 | 4096 | 44.6 ms | 104 ms | 40.7 ms | 2.32x | 0.91x |
+| 64 | 4096 | 73.0 ms | 114 ms | 53.3 ms | 1.56x | 0.73x |
+| 80 | 4096 | 174 ms | 309 ms | 97.7 ms | 1.77x | 0.56x |
+
+It is 1.5-2.9x faster than the best Jacobi kernel at every size it takes, and
+ahead of the CPU for large batches up to 48×48. Beyond that the CPU pulls
+away: the QR iteration is one thread's serial chain per matrix, and with the
+matrix in threadgroup memory too few matrices share a core to hide it. Tall
+matrices are the CPU's whatever the backend, since the CPU path reduces them
+by a QR first (256×32, 4096 of them: 0.84x), which the routing's
+`gpu_max_l` says.
+
+Accuracy is that of LAPACK's QR iteration: backward stable, singular values
+accurate relative to $\sigma_\text{max}$. In `tests/test_svd.cpp`, from 1×1 to
+83×83, tall, wide, rank-deficient (the zero-diagonal chase), zero, identity,
+graded from 1e+4 to 1e-4 and scaled from 1e-30 to 1e+37: reconstruction and
+orthogonality at most $2.4 \times 10^{-6}$, singular values within
+$6 \times 10^{-7}$ of LAPACK's relative to $\|A\|_F$. One-sided Jacobi
+computes small singular values to high *relative* accuracy, which a QR
+iteration does not; where that matters, `gk_max_k = 0` (`SVD_GK_MAX_K=0`)
+keeps the Jacobi kernels.
+
 ## Routing
 
 With $k = \min(M, N)$ and $l = \max(M, N)$:
 
 ```
-GPU iff  k <= gpu_max_k,  batch * k >= gpu_min_batch_times_k  and  batch >= gpu_min_batch,  else CPU
+GPU iff  k <= gpu_max_k,  l <= gpu_max_l,  batch * k >= gpu_min_batch_times_k  and  batch >= gpu_min_batch,  else CPU
 on the GPU:
-  precondition with QR iff  l >= qr_min_rows,  k >= qr_min_k  and  l >= 2k
-  block kernel iff  k >= block_min_k,  or  k >= block_min_k_batched and batch >= block_min_batch
+  golub_kahan iff  gk_min_k <= k <= gk_max_k  (clipped to svd_gk_max_k()):
+                   on the matrix if it fits, else after QR (qr_golub_kahan)
+  otherwise the Jacobi kernels:
+    precondition with QR iff  l >= qr_min_rows,  k >= qr_min_k  and  l >= 2k
+    block kernel iff  k >= block_min_k,  or  k >= block_min_k_batched and batch >= block_min_batch
 where that says CPU:
   bidiag instead iff  k >= bidiag_min_k  (svdvals: k >= values_bidiag_min_k; 0 = never)
 ```
@@ -161,17 +251,22 @@ caps the cores used. The tables below were measured against this CPU path.
 As for QR and the eigensolver, the policy is a per-device table, keyed on the
 Metal device name and GPU core count:
 
-| GPU | cores | QR from | block from | GPU iff | else bidiag | status |
-|---|---|---|---|---|---|---|
-| Apple M5 Pro | 20 | 512 rows, k >= 32 | k = 192; k = 64 in batches of 64+ | k <= 8 and batch * k >= 4096 | from k = 1024 (svdvals 2048), lone matrices | measured — run [`20261003-2d2c19`](results/apple-m5-pro-20gpu/20261003-2d2c19/svd/report.md) |
-| anything else | — | 512 rows, k >= 64 | k = 192 | k <= 64 and batch * k >= 1024 | never | **untuned default** |
+| GPU | cores | GPU iff | golub_kahan | QR from | block from | else bidiag | status |
+|---|---|---|---|---|---|---|---|
+| Apple M5 Pro | 20 | k <= 48, l <= 64 and batch * k >= 4096 | k = 4 .. 56 | 512 rows, k >= 32 | k = 192; k = 64 in batches of 64+ | from k = 1024 (svdvals 2048), lone matrices | measured — run [`20261003-106b6c`](results/apple-m5-pro-20gpu/20261003-106b6c/svd/report.md) |
+| anything else | — | k <= 64 and batch * k >= 1024 | never | 512 rows, k >= 64 | k = 192 | never | **untuned default** |
 
-The M5 Pro row is the first measured against the CPU path that spreads a
-batch over every core (2.9.0), and against it the Jacobi kernels win only for
-large batches of the smallest matrices (see [Performance](#performance)):
-the row sends almost every batch to the CPU, and one large matrix to `bidiag`.
-Before 2.9.0 it sent batches up to k = 1024 to the GPU, measured against one
-CPU core.
+On the M5 Pro large batches of small matrices, up to 48×48 and a long side
+of 64, go to `golub_kahan` on the GPU, everything else in a batch to the CPU,
+and one large matrix to `bidiag`. Against the best backend at each of the 295
+points measured, the row scores 1.005 geometric-mean regret, worst 1.26x
+(1.030 and 2.09x for the 2.9.0 row on the same data). The long-side cap
+`gpu_max_l` (new in 2.10.0, no cap on a device without it) is what lets the
+rule take the square batches the GPU wins without the tall ones it loses:
+with a cap on k alone, the fit stopped at k = 24. In 2.9.0, measured against
+the same CPU path, the Jacobi kernels won only for large batches of the
+smallest matrices; before 2.9.0 the row sent batches up to k = 1024 to the
+GPU, measured against one CPU core.
 
 The M1 has no row. The defaults come from measurements on an M1 taken while
 the machine was heavily loaded by other jobs, good enough to place the
@@ -183,11 +278,11 @@ reports `default:untuned-device` there too. Measuring a Mac is one command,
 `set_svd_policy()` and the environment variables `SVD_QR_MIN_ROWS`,
 `SVD_QR_MIN_K`, `SVD_BLOCK_MIN_K`, `SVD_BLOCK_MIN_K_BATCHED`,
 `SVD_BLOCK_MIN_BATCH`, `SVD_GPU_MAX_K`, `SVD_GPU_MIN_BATCH_TIMES_K`,
-`SVD_GPU_MIN_BATCH`, `SVD_BIDIAG_MIN_K`, `SVD_VALUES_BIDIAG_MIN_K`,
-`SVD_BIDIAG_MAX_BATCH`, `SVD_VALUES_BIDIAG_MAX_BATCH` and
-`SVD_DEVICE=gpu|cpu|bidiag` override it. `svd_backend(m, n, batch)` and
-`svdvals_backend(m, n, batch)` say which of the six backends a problem gets,
-with vectors and for singular values alone.
+`SVD_GPU_MIN_BATCH`, `SVD_GPU_MAX_L`, `SVD_BIDIAG_MIN_K`, `SVD_VALUES_BIDIAG_MIN_K`,
+`SVD_BIDIAG_MAX_BATCH`, `SVD_VALUES_BIDIAG_MAX_BATCH`, `SVD_GK_MIN_K`,
+`SVD_GK_MAX_K` and `SVD_DEVICE=gpu|cpu|bidiag` override it.
+`svd_backend(m, n, batch)` and `svdvals_backend(m, n, batch)` say which of the
+eight backends a problem gets, with vectors and for singular values alone.
 
 ## Accuracy
 
@@ -209,44 +304,44 @@ backends, the worst reconstruction error was 2.3e-06 and the worst sweep count
 
 ## Performance
 
-Apple M5 Pro (20 GPU cores, 18 CPU cores) with 2.9.0, from the routing sweep in
-[`results/apple-m5-pro-20gpu/20261003-2d2c19/svd/`](results/apple-m5-pro-20gpu/20261003-2d2c19/svd/): min of two
+Apple M5 Pro (20 GPU cores, 18 CPU cores) with 2.10.0, from the routing sweep in
+[`results/apple-m5-pro-20gpu/20261003-106b6c/svd/`](results/apple-m5-pro-20gpu/20261003-106b6c/svd/): min of two
 randomised passes, on mains, against the CPU path as the library runs it, a
 batch spread over all 18 cores. Each cell is the speedup of the fastest GPU
 backend over the CPU, with the GPU time and the backend (`whole` and `block`
-are the two kernels on the matrix itself, `QR+` after preconditioning); bold
-is where the GPU was ahead.
+are the two Jacobi kernels on the matrix itself, `QR+` after preconditioning,
+`GK` the golub_kahan backend); bold is where the GPU was ahead.
 
 | shape | batch 1 | batch 4 | batch 16 | batch 64 | batch 256 | batch 4096 |
 |---|---|---|---|---|---|---|
-| 4×4 | 0.02x (0.18 ms, whole) | 0.10x (0.24 ms, whole) | 0.17x (0.26 ms, whole) | 0.82x (0.17 ms, whole) | 0.64x (0.20 ms, whole) | **1.68x** (0.43 ms, whole) |
-| 8×8 | 0.04x (0.20 ms, whole) | 0.13x (0.18 ms, whole) | 0.40x (0.19 ms, whole) | 0.58x (0.21 ms, whole) | 0.73x (0.26 ms, whole) | **1.01x** (1.42 ms, whole) |
-| 16×16 | 0.09x (0.22 ms, whole) | 0.15x (0.28 ms, whole) | 0.38x (0.25 ms, whole) | 0.56x (0.32 ms, whole) | 0.63x (0.65 ms, whole) | 0.76x (5.81 ms, whole) |
-| 32×32 | 0.19x (0.33 ms, whole) | 0.26x (0.36 ms, whole) | 0.50x (0.39 ms, whole) | 0.46x (0.86 ms, whole) | 0.51x (2.19 ms, whole) | 0.69x (22.5 ms, block) |
-| 64×64 | 0.19x (1.07 ms, whole) | 0.22x (1.09 ms, whole) | 0.34x (1.18 ms, whole) | 0.32x (3.24 ms, whole) | 0.42x (9.07 ms, block) | 0.48x (116 ms, block) |
-| 128×128 | 0.21x (4.92 ms, whole) | 0.27x (4.95 ms, whole) | 0.34x (5.05 ms, whole) | 0.42x (14.5 ms, block) | 0.45x (48.1 ms, block) | 0.40x (755 ms, block) |
-| 256×256 | 0.30x (13.1 ms, block) | 0.30x (14.2 ms, block) | 0.26x (24.7 ms, block) | 0.24x (84.5 ms, block) | 0.22x (354 ms, block) | -- |
-| 512×512 | 0.52x (32.3 ms, block) | 0.38x (48.7 ms, block) | 0.18x (159 ms, block) | 0.16x (646 ms, block) | -- | -- |
-| 1024×1024 | 0.67x (117 ms, block) | 0.31x (307 ms, block) | 0.25x (1.22 s, block) | -- | -- | -- |
-| 64×8 | 0.06x (0.20 ms, whole) | 0.17x (0.18 ms, whole) | 0.43x (0.22 ms, whole) | 0.71x (0.23 ms, whole) | 0.98x (0.31 ms, whole) | **1.42x** (2.02 ms, whole) |
-| 256×32 | 0.25x (0.47 ms, whole) | 0.33x (0.49 ms, whole) | 0.63x (0.52 ms, whole) | 0.54x (1.34 ms, whole) | 0.58x (4.77 ms, block) | 0.64x (51.4 ms, block) |
-| 1024×32 | 0.32x (0.69 ms, QR+whole) | 0.45x (0.87 ms, QR+whole) | 0.54x (1.15 ms, whole) | 0.44x (4.61 ms, QR+whole) | 0.47x (13.0 ms, block) | 0.53x (161 ms, block) |
-| 1024×64 | 0.38x (1.55 ms, QR+whole) | 0.52x (2.14 ms, QR+whole) | 0.50x (3.56 ms, QR+whole) | 0.54x (10.6 ms, QR+whole) | 0.57x (33.2 ms, block) | 0.56x (483 ms, block) |
-| 2048×64 | 0.48x (1.92 ms, QR+whole) | 0.57x (3.47 ms, QR+whole) | 0.57x (5.57 ms, QR+whole) | 0.53x (18.2 ms, QR+whole) | 0.59x (59.7 ms, block) | 0.47x (1.09 s, QR+block) |
-| 1024×256 | 0.48x (13.6 ms, QR+block) | 0.43x (17.9 ms, QR+block) | 0.40x (30.1 ms, QR+block) | 0.40x (108 ms, QR+block) | 0.38x (432 ms, QR+block) | -- |
-| 2048×256 | 0.57x (15.9 ms, QR+block) | 0.47x (22.5 ms, QR+block) | 0.50x (39.9 ms, QR+block) | 0.48x (149 ms, QR+block) | 0.46x (586 ms, QR+block) | -- |
+| 4×4 | 0.02x (0.18 ms, whole) | 0.10x (0.22 ms, GK) | 0.25x (0.16 ms, whole) | 0.64x (0.20 ms, GK) | 0.67x (0.21 ms, GK) | **1.83x** (0.38 ms, GK) |
+| 8×8 | 0.05x (0.17 ms, whole) | 0.10x (0.23 ms, whole) | 0.41x (0.19 ms, whole) | 0.67x (0.22 ms, whole) | 0.81x (0.24 ms, GK) | **1.52x** (0.93 ms, GK) |
+| 16×16 | 0.06x (0.34 ms, GK) | 0.18x (0.22 ms, whole) | 0.35x (0.27 ms, whole) | 0.56x (0.33 ms, whole) | **1.05x** (0.39 ms, GK) | **1.84x** (2.41 ms, GK) |
+| 32×32 | 0.17x (0.34 ms, whole) | 0.26x (0.35 ms, whole) | 0.37x (0.51 ms, whole) | 0.51x (0.77 ms, GK) | **1.15x** (0.96 ms, GK) | **1.65x** (9.30 ms, GK) |
+| 48×48 | 0.15x (0.79 ms, whole) | 0.20x (0.81 ms, whole) | 0.34x (0.87 ms, whole) | 0.56x (1.22 ms, GK) | 0.97x (2.38 ms, GK) | **1.24x** (27.6 ms, GK) |
+| 64×64 | 0.19x (1.11 ms, whole) | 0.21x (1.09 ms, whole) | 0.35x (1.13 ms, whole) | 0.53x (1.97 ms, GK) | 0.69x (5.43 ms, GK) | 0.73x (73.0 ms, GK) |
+| 128×128 | 0.21x (4.90 ms, whole) | 0.27x (4.93 ms, whole) | 0.34x (5.06 ms, whole) | 0.42x (14.4 ms, block) | 0.45x (48.2 ms, block) | 0.40x (749.6 ms, block) |
+| 256×256 | 0.30x (13.0 ms, block) | 0.29x (14.2 ms, block) | 0.25x (24.9 ms, block) | 0.24x (83.1 ms, block) | 0.23x (346.8 ms, block) | -- |
+| 512×512 | 0.52x (32.1 ms, block) | 0.38x (48.4 ms, block) | 0.18x (154.2 ms, block) | 0.16x (630.0 ms, block) | -- | -- |
+| 1024×1024 | 0.67x (115.3 ms, block) | 0.32x (292.8 ms, block) | 0.25x (1.23 s, block) | -- | -- | -- |
+| 64×8 | 0.06x (0.20 ms, whole) | 0.16x (0.19 ms, whole) | 0.35x (0.23 ms, GK) | 0.75x (0.22 ms, whole) | 0.97x (0.30 ms, GK) | **1.48x** (1.93 ms, GK) |
+| 64×32 | 0.13x (0.52 ms, QR+whole) | 0.28x (0.38 ms, whole) | 0.49x (0.47 ms, whole) | 0.55x (0.85 ms, whole) | 0.93x (1.63 ms, GK) | **1.30x** (16.2 ms, GK) |
+| 256×32 | 0.22x (0.51 ms, whole) | 0.33x (0.48 ms, whole) | 0.62x (0.52 ms, whole) | 0.53x (1.34 ms, whole) | 0.69x (3.92 ms, GK) | 0.84x (38.4 ms, GK) |
+| 1024×32 | 0.32x (0.70 ms, QR+whole) | 0.45x (0.85 ms, QR+whole) | 0.51x (1.15 ms, whole) | 0.61x (3.46 ms, QR+whole) | 0.61x (10.1 ms, GK) | 0.61x (135.6 ms, GK) |
+| 1024×64 | 0.37x (1.58 ms, QR+whole) | 0.52x (2.15 ms, QR+whole) | 0.62x (3.41 ms, QR+whole) | 0.61x (9.44 ms, GK) | 0.65x (29.2 ms, GK) | 0.61x (431.8 ms, QR+block) |
+| 2048×64 | 0.48x (1.88 ms, QR+whole) | 0.56x (3.50 ms, QR+whole) | 0.63x (4.91 ms, QR+whole) | 0.66x (14.9 ms, QR+whole) | 0.66x (53.3 ms, GK) | 0.69x (732.2 ms, QR+block) |
+| 1024×256 | 0.46x (14.2 ms, QR+block) | 0.46x (16.1 ms, QR+block) | 0.44x (28.0 ms, QR+block) | 0.44x (96.5 ms, QR+block) | 0.41x (391.6 ms, QR+block) | -- |
+| 2048×256 | 0.55x (16.3 ms, QR+block) | 0.55x (19.1 ms, QR+block) | 0.53x (36.6 ms, QR+block) | 0.51x (137.7 ms, QR+block) | 0.52x (515.8 ms, QR+block) | -- |
 
 `--` was not measured.
 
-Against a CPU that uses its cores, the Jacobi kernels lose nearly everywhere:
-one-sided Jacobi does several times the flops of LAPACK's method, as the
-eigensolver's Jacobi kernels do, and needs more sweeps than they do. They win
-only for large batches of the smallest matrices (1.4-1.7x at 4096 of 4×4 and
-64×8), and one large matrix wins on `bidiag`. The tables in this document's
-earlier versions, with up to 16x for batches, were against one CPU core. The
-eigensolver's answer, a batched kernel doing LAPACK's method (`ql`, see
-[eigh.md](eigh.md)), has an SVD counterpart, Householder bidiagonalization and
-implicit bidiagonal QR in one threadgroup, which has not been built.
+Against a CPU that uses its cores, the GPU wins large batches of small
+matrices, which since 2.10.0 is `golub_kahan`'s: 1.2-1.8x from 4×4 to 48×48
+at 4096 matrices, and from 256 matrices for 16×16 and 32×32, where the Jacobi
+kernels had won only at 4×4 and 64×8. Lone matrices and small batches stay
+the CPU's, as do tall shapes and k from 56 up; one large matrix wins on
+`bidiag`. The tables in this document's versions before 2.9.0, with up to 16x
+for batches, were against one CPU core.
 
 Against `mlx::core::linalg::svd` as it stands, tall shapes look far better
 than this, because MLX computes the full M×M `U`. That is a fair description
@@ -264,14 +359,17 @@ cmake --build build --target test_svd
 ./build/test_svd          # or: ctest --test-dir build
 ```
 
-229 checks: square, tall and wide shapes around the simdgroup, pair-count and
-block boundaries, batches, every simdgroup count, all five GPU backends and
+314 checks: square, tall and wide shapes around the simdgroup, pair-count and
+block boundaries, batches, every simdgroup count, all seven GPU backends and
 each branch of the CPU one (the `bidiag` backend from 1×1 to 1024×1024, with
-QR first and through the transpose, with vectors and without), rank deficiency repeated over twelve random
-instances per shape and backend, structured spectra (graded columns, singular
-values from 1e+4 to 1e-4, repeated values), magnitudes from 1e-30 to 1e+37,
-NaN inside a batch, and the routing policy, including the batch-dependent
-kernel crossover, without assuming any device's values.
+QR first and through the transpose, with vectors and without; `golub_kahan`
+from 1×1 to its limit, either side of its chaser simdgroup, directly and
+after a QR), rank deficiency repeated over random instances per shape and
+backend, structured spectra (graded columns, singular values from 1e+4 to
+1e-4, repeated values), magnitudes from 1e-30 to 1e+37, NaN inside a batch,
+and the routing policy, including the batch-dependent kernel crossover, the
+golub_kahan window and the long-side cap, without assuming any device's
+values.
 
 ## References
 
@@ -280,6 +378,8 @@ kernel crossover, without assuming any device's values.
 - J. Demmel and K. Veselić, ["Jacobi's method is more accurate than QR"](https://epubs.siam.org/doi/10.1137/0613074), 1992.
 - R. P. Brent and F. T. Luk, 1985 — the parallel ordering; see the eigensolver's references.
 - G. H. Golub and W. Kahan, ["Calculating the singular values and pseudo-inverse of a matrix"](https://doi.org/10.1137/0702016), *J. SIAM Ser. B Numer. Anal.* 2(2), 1965 — reduction to bidiagonal form by Householder reflections, the method of the `bidiag` backend.
+- J. Demmel and W. Kahan, ["Accurate singular values of bidiagonal matrices"](https://doi.org/10.1137/0911052), *SIAM J. Sci. Stat. Comput.* 11(5), 1990 — LAPACK's `sbdsqr`, whose shifted QR sweep, shift and deflation the `golub_kahan` backend runs.
+- G. H. Golub and C. F. Van Loan, *Matrix Computations*, 4th ed., 2013 — §5.4.8 (bidiagonalization) and §8.6 (the Golub-Kahan SVD step, and zero diagonal entries), the `golub_kahan` backend.
 - J. J. Dongarra, S. J. Hammarling and D. C. Sorensen, ["Block reduction of matrices to condensed forms for eigenvalue computations"](https://doi.org/10.1016/0377-0427(89)90367-1), *J. Comput. Appl. Math.* 27(1-2), 1989 — the blocked bidiagonalization (LAPACK's `sgebrd` and `slabrd`) the backend runs on the GPU.
 - M. Gu and S. C. Eisenstat, ["A divide-and-conquer algorithm for the bidiagonal SVD"](https://doi.org/10.1137/S0895479892242232), *SIAM J. Matrix Anal. Appl.* 16(1), 1995 — LAPACK's `sbdsdc`, which solves the bidiagonal problem.
 - S. Tomov, R. Nath and J. Dongarra, ["Accelerating the reduction to upper Hessenberg, tridiagonal, and bidiagonal forms through hybrid GPU-based computing"](https://doi.org/10.1016/j.parco.2010.06.001), *Parallel Computing* 36(12), 2010 — the hybrid CPU/GPU split (MAGMA) the backend follows, with the panel kept on the GPU.

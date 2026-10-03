@@ -67,6 +67,8 @@ const char* name(SvdBackend b) {
         case SvdBackend::qr_jacobi:       return "qr_jacobi";
         case SvdBackend::qr_block_jacobi: return "qr_block_jacobi";
         case SvdBackend::bidiag:          return "bidiag";
+        case SvdBackend::golub_kahan:     return "golub_kahan";
+        case SvdBackend::qr_golub_kahan:  return "qr_golub_kahan";
         default:                          return "cpu";
     }
 }
@@ -138,7 +140,7 @@ metal_linalg_qr_policy metal_linalg_qr_policy_get(void) {
     const QrPolicy p = qr_policy();
     return {p.m_crossover_small_batch, p.m_crossover_large_batch, p.batch_threshold,
             p.gpu_max_k, p.gpu_min_batch_times_k, p.gpu_min_batch,
-            p.gpu_cores, p.concurrent_matrices, p.gpu_large_min_k, p.gpu_large_max_batch};
+            p.gpu_cores, p.concurrent_matrices, p.gpu_large_min_k, p.gpu_large_max_batch, p.gpu_min_k};
 }
 
 metal_linalg_eigh_policy metal_linalg_eigh_policy_get(void) {
@@ -154,7 +156,8 @@ metal_linalg_svd_policy metal_linalg_svd_policy_get(void) {
     const SvdPolicy p = svd_policy();
     return {p.qr_min_rows, p.qr_min_k, p.block_min_k, p.block_min_k_batched, p.block_min_batch,
             p.gpu_max_k, p.gpu_min_batch_times_k, p.gpu_min_batch, p.gpu_cores,
-            p.bidiag_min_k, p.values_bidiag_min_k, p.bidiag_max_batch, p.values_bidiag_max_batch};
+            p.bidiag_min_k, p.values_bidiag_min_k, p.bidiag_max_batch, p.values_bidiag_max_batch,
+            p.gk_min_k, p.gk_max_k, p.gpu_max_l};
 }
 
 // The informational fields keep the detected values.
@@ -169,6 +172,7 @@ void metal_linalg_qr_policy_set(const metal_linalg_qr_policy* c) {
     p.gpu_min_batch           = c->gpu_min_batch;
     p.gpu_large_min_k         = c->gpu_large_min_k;
     p.gpu_large_max_batch     = c->gpu_large_max_batch;
+    p.gpu_min_k               = c->gpu_min_k;
     set_qr_policy(p);
 }
 
@@ -209,6 +213,9 @@ void metal_linalg_svd_policy_set(const metal_linalg_svd_policy* c) {
     p.values_bidiag_min_k   = c->values_bidiag_min_k;
     p.bidiag_max_batch        = c->bidiag_max_batch;
     p.values_bidiag_max_batch = c->values_bidiag_max_batch;
+    p.gk_min_k                = c->gk_min_k;
+    p.gk_max_k                = c->gk_max_k;
+    p.gpu_max_l               = c->gpu_max_l;
     set_svd_policy(p);
 }
 

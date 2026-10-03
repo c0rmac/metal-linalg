@@ -155,6 +155,42 @@ int main(void) {
         CHECK(strcmp(metal_linalg_svd_backend(512, 512, 1), "bidiag") == 0, "bidiag_min_k = 256: 512x512 routes to %s",
               metal_linalg_svd_backend(512, 512, 1));
         CHECK(strcmp(metal_linalg_svdvals_backend(512, 512, 1), "cpu") == 0, "values_bidiag_min_k = 0 still bidiag");
+        /* The golub_kahan window on the GPU: directly where the matrix fits, after a QR where it does not. */
+        sp = svd_measured;
+        sp.gpu_max_k = 64;
+        sp.gpu_min_batch_times_k = 0;
+        sp.gpu_min_batch = 1;
+        sp.gpu_max_l = 0xFFFFFFFFu;
+        sp.gk_min_k = 8;
+        sp.gk_max_k = 48;
+        metal_linalg_svd_policy_set(&sp);
+        CHECK(metal_linalg_svd_policy_get().gk_max_k == 48, "gk_max_k not set");
+        CHECK(strcmp(metal_linalg_svd_backend(40, 24, 16), "golub_kahan") == 0, "gk window: 40x24 routes to %s",
+              metal_linalg_svd_backend(40, 24, 16));
+        CHECK(strcmp(metal_linalg_svd_backend(4000, 16, 16), "qr_golub_kahan") == 0, "gk window: 4000x16 routes to %s",
+              metal_linalg_svd_backend(4000, 16, 16));
+        CHECK(strcmp(metal_linalg_svd_backend(49, 49, 16), "jacobi") == 0, "outside the gk window: 49x49 routes to %s",
+              metal_linalg_svd_backend(49, 49, 16));
+        {
+            float a[2 * 6 * 4], u[2 * 6 * 4], s[2 * 4], vt[2 * 4 * 4];
+            uint32_t info[2];
+            for (int i = 0; i < 2 * 6 * 4; ++i) a[i] = (float)((i * 7) % 11) - 5.0f;
+            sp.gk_min_k = 1;
+            metal_linalg_svd_policy_set(&sp);
+            CHECK(strcmp(metal_linalg_svd_backend(6, 4, 2), "golub_kahan") == 0, "gk window: 6x4 routes to %s",
+                  metal_linalg_svd_backend(6, 4, 2));
+            CHECK(metal_linalg_svd(a, 2, 6, 4, u, s, vt, info) == METAL_LINALG_OK, "svd (golub_kahan): %s",
+                  metal_linalg_last_error());
+            float err = 0.0f;
+            for (int b = 0; b < 2; ++b)
+                for (int i = 0; i < 6; ++i)
+                    for (int j = 0; j < 4; ++j) {
+                        float r = 0.0f;
+                        for (int t = 0; t < 4; ++t) r += u[b * 24 + i * 4 + t] * s[b * 4 + t] * vt[b * 16 + t * 4 + j];
+                        err = fmaxf(err, fabsf(r - a[b * 24 + i * 4 + j]));
+                    }
+            CHECK(err < 1e-4f, "svd (golub_kahan) reconstruction error %g", err);
+        }
         metal_linalg_svd_policy_set(&svd_measured);
         metal_linalg_eigh_policy_set(&measured);
         CHECK(metal_linalg_eigh_policy_get().gpu_max_n == measured.gpu_max_n, "policy not restored");

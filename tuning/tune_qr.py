@@ -66,7 +66,11 @@ INF = float("inf")
 # in THRESHOLDS can change for them, so that analysis stays comparable with
 # runs made before QR had a CPU path.
 SMALL_DIMS = (8, 16, 32)
-SMALL_BATCHES = (1, 4, 16, 64, 256, 1024)
+# Up to 16384: since the CPU path spreads a batch over every core it wins the
+# smallest matrices at any batch measured, and a product rule fitted without
+# the largest batches sends them to the GPU (10000 of 16x16: 3.7 ms there,
+# 2.1 ms on the CPU, on an M5 Pro).
+SMALL_BATCHES = (1, 4, 16, 64, 256, 1024, 4096, 16384)
 
 # Large matrices alone or in small batches, the other end of the boundary: a
 # lone matrix goes to the CPU at k <= 768, but the GPU wins again from about
@@ -82,7 +86,7 @@ LARGE_BATCHES = (1, 2, 4)
 # square batches above stop at 64, so without these a fit cannot see it. Also
 # left out of the kernel crossover, to keep that comparable with earlier runs.
 MID_DIMS = (64, 128, 256)
-MID_BATCHES = (256, 1024)
+MID_BATCHES = (256, 1024, 4096)
 
 # Candidate thresholds. A threshold only changes behaviour when it crosses a
 # measured M, so values between two measured M's are equivalent by construction.
@@ -306,10 +310,11 @@ def for_crossover(key):
 
 def routed(params, chosen, large=(0, 0)):
     """The full rule: GPU or CPU by (gpu_max_k, gpu_min_batch_times_k,
-    gpu_min_batch), or the GPU anyway for k >= gpu_large_min_k in a batch of at
-    most gpu_large_max_batch (`large`; 0 = never / any batch), then the kernel
-    crossover, as qr_backend does."""
-    gm, mb, mbatch = params
+    gpu_min_batch[, gpu_min_k]), or the GPU anyway for k >= gpu_large_min_k in
+    a batch of at most gpu_large_max_batch (`large`; 0 = never / any batch),
+    then the kernel crossover, as qr_backend does."""
+    gm, mb, mbatch = params[:3]
+    mk = params[3] if len(params) > 3 else 0
     lk, lcap = large
     kernel = flat_rule(chosen)
 
@@ -317,7 +322,7 @@ def routed(params, chosen, large=(0, 0)):
         k = min(M, N)
         if lk and k >= lk and (not lcap or b <= lcap):
             return kernel(b, M, N)
-        if k > gm or b * k < mb or b < mbatch:
+        if k < mk or k > gm or b * k < mb or b < mbatch:
             return "cpu"
         return kernel(b, M, N)
     return rule
@@ -337,10 +342,16 @@ def fit_cpu_routing(best, chosen, tol=0.005):
     # limit, but says nothing about larger k, where the GPU may win (for QR it
     # does, by 2-3x on one 4096x4096). So only limits inside the grid are
     # candidates: one is chosen only where the CPU wins above it.
-    candidates = [(gm, mb, mbatch)
-                  for gm in ks[:-1] + [INF]
+    # gpu_min_k, the lower bound on k: the CPU wins the smallest matrices at any
+    # batch, so the product rule alone would have to give up either them or
+    # the large batches of mid-size matrices the GPU still wins. A window must
+    # span two measured k at least: one around a single k says nothing about
+    # the sizes either side of it.
+    candidates = [(gm, mb, mbatch, mk)
+                  for mk in [0] + [k for k in ks if k <= 256]
+                  for gm in ks[:-1] + [INF] if gm > mk
                   for mb in [0] + bks
-                  for mbatch in [1] + [b for b in batches if 1 < b <= 64]]
+                  for mbatch in [1] + [b for b in batches if 1 < b <= 16]]
 
     # The large-matrix clause: since the CPU path spreads a batch over every
     # core, a product rule can no longer send both large lone matrices (GPU)
@@ -370,7 +381,7 @@ def fit_cpu_routing(best, chosen, tol=0.005):
 
     params, large, e = fit(pts)
     without_large = evaluate(routed(params, chosen), pts)
-    gpu_always = evaluate(routed((INF, 0, 1), chosen), pts)
+    gpu_always = evaluate(routed((INF, 0, 1, 0), chosen), pts)
     cpu_always = evaluate(lambda b, M, N: "cpu", pts)
 
     # Held out: fitted on half the shapes, scored on the other half against
@@ -380,9 +391,9 @@ def fit_cpu_routing(best, chosen, tol=0.005):
     te = {k: pts[k] for i, k in enumerate(keys) if i % 2 == 1}
     p_tr, l_tr, _ = fit(tr)
     held = evaluate(routed(p_tr, chosen, l_tr), te)
-    held_gpu = evaluate(routed((INF, 0, 1), chosen), te)
+    held_gpu = evaluate(routed((INF, 0, 1, 0), chosen), te)
 
-    gm, mb, mbatch = params
+    gm, mb, mbatch, mk = params
     cpu_wins = sorted([b, M, N] for (b, M, N), t in pts.items() if min(t, key=t.get) == "cpu")
     stat = lambda x: {"geomean": round(x["geomean"], 4), "worst": round(x["worst"], 3),
                       "over_tie": x["over_tie"], "n": x["n"]}
@@ -390,13 +401,14 @@ def fit_cpu_routing(best, chosen, tol=0.005):
         "gpu_max_k": NO_LIMIT if gm >= INF else gm,
         "gpu_min_batch_times_k": mb,
         "gpu_min_batch": mbatch,
+        "gpu_min_k": mk,
         "gpu_large_min_k": large[0],
         "gpu_large_max_batch": large[1],
         "chosen": stat(e),
         "without_large": stat(without_large),
         "gpu_always": stat(gpu_always),
         "cpu_always": stat(cpu_always),
-        "held_out": {"fitted": [NO_LIMIT if p_tr[0] >= INF else p_tr[0], p_tr[1], p_tr[2], l_tr[0], l_tr[1]],
+        "held_out": {"fitted": [NO_LIMIT if p_tr[0] >= INF else p_tr[0], p_tr[1], p_tr[2], p_tr[3], l_tr[0], l_tr[1]],
                      "routing": stat(held), "gpu_always": stat(held_gpu)},
         "cpu_fastest": cpu_wins,
     }
@@ -567,12 +579,13 @@ def analyse(best_all, repeats, device):
         counts[region(k[1], k[2])] += 1
 
     routing = fit_cpu_routing(best_all, chosen)
-    lk, lcap = 0, 0
+    lk, lcap, mk = 0, 0, 0
     if routing is None:     # measured before QR had a CPU path: always the GPU
         gm_s, mb, mbatch = "kQrNoLimit", 0, 1
     else:
         gm_s = ("kQrNoLimit" if routing["gpu_max_k"] >= NO_LIMIT else str(routing["gpu_max_k"]))
         mb, mbatch = routing["gpu_min_batch_times_k"], routing["gpu_min_batch"]
+        mk = routing.get("gpu_min_k", 0)
         lk, lcap = routing["gpu_large_min_k"], routing["gpu_large_max_batch"]
 
     return {
@@ -592,7 +605,7 @@ def analyse(best_all, repeats, device):
         "baseline_held_out": {"geomean": round(base_te["geomean"], 4),
                               "worst": round(base_te["worst"], 3)},
         "ktuned_entry": (f'{{"{device["name"]}", {device["gpu_cores"]}, '
-                         f'{chosen}, {chosen}, 16,   {gm_s}, {mb}, {mbatch},   {lk}, {lcap}}},'),
+                         f'{chosen}, {chosen}, 16,   {gm_s}, {mb}, {mbatch}, {mk},   {lk}, {lcap}}},'),
     }
 
 
@@ -734,7 +747,8 @@ def write_report(res, path):
         lk = rt.get("gpu_large_min_k", 0)
         large = (f"\nor k >= {lk}" + (f" and batch <= {rt['gpu_large_max_batch']}" if rt.get("gpu_large_max_batch") else "")
                  + "   (large matrices)") if lk else ""
-        A(f"```\nGPU iff k <= {gm}, batch * k >= {rt['gpu_min_batch_times_k']} "
+        mk = rt.get("gpu_min_k", 0)
+        A(f"```\nGPU iff {str(mk) + ' <= ' if mk else ''}k <= {gm}, batch * k >= {rt['gpu_min_batch_times_k']} "
           f"and batch >= {rt['gpu_min_batch']}   (k = min(M, N)){large}\notherwise LAPACK on the CPU\n```")
         A("")
         A("Fitted on every shape with a CPU timing; inside the region within 0.5% of "
@@ -953,7 +967,7 @@ def main():
     if rt:
         gm = "no limit" if rt["gpu_max_k"] >= NO_LIMIT else rt["gpu_max_k"]
         lk = rt.get("gpu_large_min_k", 0)
-        print(f"  CPU routing: GPU iff k <= {gm}, batch*k >= {rt['gpu_min_batch_times_k']}, "
+        print(f"  CPU routing: GPU iff {rt.get('gpu_min_k', 0)} <= k <= {gm}, batch*k >= {rt['gpu_min_batch_times_k']}, "
               f"batch >= {rt['gpu_min_batch']}" +
               (f", or k >= {lk} and batch <= {rt['gpu_large_max_batch'] or 'any'}" if lk else "") +
               f"   ({rt['chosen']['geomean']:.4f}x vs "

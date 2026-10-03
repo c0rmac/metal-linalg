@@ -27,7 +27,7 @@ measurements). The library reports the state at run time
 and docs/measurements.md shows it for every chip.
 """
 
-KERNEL_EPOCHS = {"qr": 2, "eigh": 2, "svd": 3}
+KERNEL_EPOCHS = {"qr": 2, "eigh": 2, "svd": 4}
 
 # (decomposition, epoch, library version, date, why)
 HISTORY = [
@@ -46,13 +46,16 @@ HISTORY = [
     ("svd", 3, "2.9.0", "2026-10-03",
      "the CPU path spreads a batch over every core (7.5-15x faster for batches of small matrices "
      "on an M5 Pro), so every GPU-or-CPU boundary has moved"),
+    ("svd", 4, "2.10.0", "2026-10-03",
+     "QR keeps the smallest matrices on the CPU at any batch (gpu_min_k), which moves the timings "
+     "of the QR-preconditioned backends"),
 ]
 
 REQUIRED = {
     "qr": {"unblocked", "reduced", "cpu"},
     "eigh": {"cpu", "simd", "tg", "block", "tridiag", "ql",
              "cpu_vals", "simd_vals", "tg_vals", "block_vals", "tridiag_vals", "ql_vals"},
-    "svd": {"cpu", "jacobi", "block", "qr", "qrblock", "bidiag", "cpu_vals", "bidiag_vals"},
+    "svd": {"cpu", "jacobi", "block", "qr", "qrblock", "bidiag", "gk", "cpu_vals", "bidiag_vals"},
 }
 
 # Backends added after a decomposition's first measurements, and when: what
@@ -69,6 +72,7 @@ ADDED = {
     "bidiag_vals": "the bidiag backend (2.7.0)",
     "ql": "the ql backend (2.9.0)",
     "ql_vals": "the ql backend (2.9.0)",
+    "gk": "the golub_kahan backend (2.10.0)",
 }
 # Where a backend name means something else for one decomposition.
 ADDED_FOR = {
