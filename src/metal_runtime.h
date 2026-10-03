@@ -139,8 +139,9 @@ void for_each_rows(uint32_t batch, uint32_t rows, uint32_t cols, const F& f) {
 // 2 matrices of 2048 x 2048 (1.55x) to 4096 of 8 x 8 (14x): Accelerate gains
 // little from its own threads on one matrix of these sizes, so whole matrices
 // per core use the machine better. On macOS 14, where Accelerate's threading
-// cannot be switched off per thread, only matrices too small for it to thread
-// are split, so the two never compete for the cores.
+// cannot be switched off per thread (and in a build with an SDK older than
+// macOS 15's, which does not declare the switch), only matrices too small for
+// it to thread are split, so the two never compete for the cores.
 //
 // An exception from f is rethrown on the calling thread once every chunk has
 // stopped; chunks not yet started are skipped.
