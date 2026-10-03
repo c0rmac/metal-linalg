@@ -115,7 +115,7 @@ class Routing(unittest.TestCase):
 
     def test_backend_names(self):
         self.assertIn(ml.qr_backend(64, 64, 100), {"cpu", "unblocked", "streaming_reduced"})
-        self.assertIn(ml.eigh_backend(32, 4096), {"cpu", "simd", "threadgroup", "block"})
+        self.assertIn(ml.eigh_backend(32, 4096), {"cpu", "simd", "threadgroup", "block", "tridiag"})
         self.assertIn(ml.svd_backend(1024, 64, 64),
                       {"cpu", "jacobi", "block_jacobi", "qr_jacobi", "qr_block_jacobi"})
 
@@ -131,6 +131,15 @@ class Routing(unittest.TestCase):
             # set decides on its own
             ml.set_eigh_policy(values_gpu_min_batch=0)
             self.assertEqual(ml.eigvalsh_backend(8, 4096), "cpu")
+            # the tridiag backend replaces the CPU from its threshold
+            ml.set_eigh_policy(tridiag_min_n=256, values_tridiag_min_n=0)
+            self.assertEqual(ml.eigh_backend(512, 1), "tridiag")
+            self.assertEqual(ml.eigh_backend(128, 1), "cpu")
+            a = mx.random.normal((300, 300)); s = (a + a.T) / 2
+            w, v = ml.eigh(s)
+            with mx.stream(mx.cpu):
+                self.assertLess(mx.max(mx.abs(s @ v - v * w[None, :])).item() / mx.max(mx.abs(s)).item(), 1e-4)
+            ml.set_eigh_policy(tridiag_min_n=0)
             ml.set_eigh_policy(values_gpu_max_n=64, values_gpu_min_batch_times_n=0, values_gpu_min_batch=1)
             self.assertNotEqual(ml.eigvalsh_backend(8, 4096), "cpu")
             self.assertEqual(ml.eigh_backend(8, 4096), "cpu")

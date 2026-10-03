@@ -155,6 +155,16 @@ namespace metal_linalg {
         unsigned values_gpu_max_n             = 0;
         unsigned values_gpu_min_batch_times_n = 0;
         unsigned values_gpu_min_batch         = 0;
+
+        // --- the tridiag backend instead of the CPU ---
+        // Where the rules above choose the CPU, N >= tridiag_min_n (with
+        // eigenvectors) or N >= values_tridiag_min_n (eigenvalues alone) uses
+        // the tridiag backend instead: LAPACK's method with its two expensive
+        // steps on the GPU, faster than the CPU for one large matrix (on an
+        // M5 Pro 2x at N = 2048, 5x at 4096, 6x at 8192 with eigenvectors).
+        // 0 means never, which is what a device without measurements has.
+        unsigned tridiag_min_n        = 0;
+        unsigned values_tridiag_min_n = 0;
     };
 
     // The policy in effect. Resolved once, on first use.
@@ -168,7 +178,10 @@ namespace metal_linalg {
     // environment and the tuned table.
     void set_eigh_policy(const EighPolicy& p);
 
-    enum class EighBackend { cpu, simd, threadgroup, block };
+    // tridiag: the hybrid large-N backend (Householder tridiagonalization and
+    // back-transformation on the GPU, the tridiagonal eigenproblem on the
+    // CPU); last, so the others keep their numbers.
+    enum class EighBackend { cpu, simd, threadgroup, block, tridiag };
 
     // What an eigh call does with a problem under the policy in effect.
     // EIGH_DEVICE=gpu or EIGH_DEVICE=cpu forces the first part of the decision.
@@ -434,6 +447,11 @@ namespace metal_linalg {
             // Block Jacobi: each matrix spread over the grid. N <= 4096.
             void eigh_block_jacobi(const Matrices& a, bool lower, const EighOptions& opt,
                                    float* w, float* v, uint32_t* info);
+
+            // LAPACK's method with the tridiagonalization and the
+            // back-transformation on the GPU, one matrix at a time; any N.
+            // See eigh_tridiag.mm.
+            void eigh_tridiag(const Matrices& a, bool lower, float* w, float* v, uint32_t* info);
 
             // LAPACK on the CPU, one matrix at a time: ssyevd, or ssyevd_2stage
             // for eigenvalues alone (v == nullptr) from N = 128. `info` reports

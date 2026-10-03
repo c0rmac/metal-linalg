@@ -41,6 +41,12 @@ Every backend is also timed computing eigenvalues alone (backend names
 uses a faster method (LAPACK's two-stage reduction from N = 128). Stage 3 fits
 that boundary given the same GPU split.
 
+The `tridiag` backend (LAPACK's method with the reduction and the
+back-transformation on the GPU) replaces the CPU from a threshold N. Stage 4
+fits tridiag_min_n and values_tridiag_min_n on top of the finished rule; the
+earlier stages are scored without it, since no rule they choose between can
+pick it.
+
 and the report ends in a row to paste into kTuned[] in eigh.mm.
 
 RUNNING ON ANOTHER MAC
@@ -103,12 +109,14 @@ B_LIST = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096]
 N_QUICK = [4, 8, 16, 32, 64, 96, 128, 192, 256, 512]
 B_QUICK = [1, 4, 16, 64, 256, 1024, 4096]
 
-N_EXTRA = [768, 1024, 1536, 2048]   # added by --max-n
+N_EXTRA = [768, 1024, 1536, 2048, 3072, 4096]   # added by --max-n
 # Above 1024 only lone matrices and small batches are measured, with a larger
 # per-call budget: enough to see whether the GPU is still behind the CPU there,
 # so that gpu_max_n is a measured cap rather than the edge of the grid.
 LARGE_N = 1024
 LARGE_BATCHES = [1, 2, 4]
+HUGE_N = 2048          # above this, lone matrices only
+TRIDIAG_MIN_GRID_N = 128   # tridiag is timed from this N
 CAP_LARGE_MS = 8000.0
 
 # Candidate values for each constant. A value only changes behaviour when it
@@ -130,6 +138,8 @@ CURRENT = (8, 96, INF, INF, 64, 1024, 1)
 # The eigenvalues-alone boundary in effect, (gpu_max_n, min_bn, min_batch), or
 # None where the device has none of its own (it then follows CURRENT's).
 CURRENT_VALUES = None
+# The tridiag thresholds in effect, (with eigenvectors, eigenvalues alone); 0 = never.
+CURRENT_TRIDIAG = (0, 0)
 NO_LIMIT = 0xFFFFFFFF   # kEighNoLimit
 VALS = "_vals"
 
@@ -159,6 +169,10 @@ def policy_values(pol):
         return None
     gm = pol["values_gpu_max_n"]
     return (INF if gm >= NO_LIMIT else gm, pol["values_gpu_min_batch_times_n"], pol["values_gpu_min_batch"])
+
+
+def without_tridiag(times):
+    return {p: {k: v for k, v in tv.items() if k != "tridiag"} for p, tv in times.items()}
 
 
 def split_values(times):
@@ -192,26 +206,27 @@ def _route_fields(gm, mb, mbatch):
     return f"{'kEighNoLimit' if gm >= INF else gm}, {mb}, {mbatch}"
 
 
-def tuned_row(device, params, values=None):
+def tuned_row(device, params, values=None, tridiag=(0, 0)):
     """The line to paste into kTuned[] in eigh.mm. `values` is the
-    eigenvalues-alone boundary, or None (written as 0, 0, 0: as for eigenvectors)."""
+    eigenvalues-alone boundary, or None (written as 0, 0, 0: as for eigenvectors);
+    `tridiag` the two tridiag thresholds (0: never)."""
     s, bm, lo, bh, gm, mb, mbatch = params
     if lo >= INF or bh >= INF:
         lo, bh = 0, 0
     bm_s = str(1 << 30) if bm >= INF else str(bm)
     v = _route_fields(*values) if values else "0, 0, 0"
     return (f'{{"{device["name"]}", {device["gpu_cores"]},   {s}, {bm_s}, {lo}, {bh},   '
-            f'{_route_fields(gm, mb, mbatch)},   {v}}},')
+            f'{_route_fields(gm, mb, mbatch)},   {v},   {tridiag[0]}, {tridiag[1]}}},')
 
 
-def env_line(params, values=None):
+def env_line(params, values=None, tridiag=(0, 0)):
     s, bm, lo, bh, gm, mb, mbatch = params
-    extra = ""
+    extra = f" EIGH_TRIDIAG_MIN_N={tridiag[0]} EIGH_VALUES_TRIDIAG_MIN_N={tridiag[1]}"
     if values:
         vg, vm, vb = values
         if vm >= INF:
             vg, vm = 0, 0
-        extra = (f" EIGH_VALUES_GPU_MAX_N={NO_LIMIT if vg >= INF else vg} "
+        extra += (f" EIGH_VALUES_GPU_MAX_N={NO_LIMIT if vg >= INF else vg} "
                  f"EIGH_VALUES_GPU_MIN_BATCH_TIMES_N={vm} EIGH_VALUES_GPU_MIN_BATCH={vb}")
     if lo >= INF or bh >= INF:
         lo, bh = 0, 0
@@ -226,6 +241,8 @@ def env_line(params, values=None):
 def est_ms(backend, N, b):
     backend = backend[:-len(VALS)] if backend.endswith(VALS) else backend
     n3 = float(N) ** 3
+    if backend == "tridiag":    # serial over the batch; launches per column, then O(N^3)
+        return b * (0.5 + 0.025 * N + 7e-9 * n3) * SCALE.get(backend, 1.0)
     if backend in ("tg", "simd"):
         t = 0.3 + 1e-5 * n3 * max(1.0, b / 8.0)
     elif backend == "block":
@@ -248,6 +265,8 @@ def backends_for(N, b):
         return []
     if est_ms("cpu", N, b) <= cap:
         ks.append("cpu")
+    if N >= TRIDIAG_MIN_GRID_N and est_ms("tridiag", N, b) <= cap:
+        ks.append("tridiag")
     return ks + [k + VALS for k in ks]   # each again for eigenvalues alone
 
 
@@ -257,7 +276,7 @@ def point_grid(quick=False, max_n=512):
     Bs = B_QUICK if quick else B_LIST
     pts = []
     for N in Ns:
-        for b in (LARGE_BATCHES if N > LARGE_N else Bs):
+        for b in ([1] if N > HUGE_N else LARGE_BATCHES if N > LARGE_N else Bs):
             ks = backends_for(N, b)
             if ks:
                 pts.append((b, N, ks))
@@ -678,8 +697,35 @@ def _curve(score_fn, base, idx, grid):
     return out
 
 
+def tridiag_choice(params, th, N, b):
+    k = rule_choice(params, N, b)
+    return "tridiag" if (k == "cpu" and th and N >= th) else k
+
+
+def tridiag_points(times):
+    """The points where tridiag was timed: the region its threshold decides.
+    Scored over every point, the few large matrices it wins on by 2-6x would
+    move the geometric mean by less than the tolerance, and the threshold would
+    stay wherever it was."""
+    return {p: tv for p, tv in times.items() if "tridiag" in tv}
+
+
+def fit_tridiag(params, times, current, tol):
+    """Stage 4: the tridiag threshold given the whole rule `params`, over the
+    measured N from TRIDIAG_MIN_GRID_N (and 0, never). -> (chosen, scores).
+    `times` are the points where tridiag was timed."""
+    cands = [0] + sorted({N for (_, N) in times if N >= TRIDIAG_MIN_GRID_N})
+    scores = {th: _score3(evaluate(lambda N, b, th=th: tridiag_choice(params, th, N, b), times)) for th in cands}
+    best = min(g for g, _, _ in scores.values())
+    near = {th: v for th, v in scores.items() if v[0] <= best * (1 + tol)}
+    if current in near:
+        return current, scores
+    return min(near, key=lambda th: (near[th][1], -th if th else 0)), scores
+
+
 def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
-    times, vtimes = split_values(times)
+    times_full, vtimes_full = split_values(times)
+    times, vtimes = without_tridiag(times_full), without_tridiag(vtimes_full)
     configure_grids(times)
     single_pass = not any(len(v) >= 2 for v in repeats.values())
     res = {"device": device, "n_points": len(times), "single_pass": single_pass, "drift": drift_info,
@@ -799,6 +845,38 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
                         "eigh_boundary_test": _strip(evaluate(lambda N, b: rule_choice(params, N, b), vtest))},
         }
     res["values_chosen"] = list(values) if values else None
+
+    # ---- stage 4: the tridiag backend instead of the CPU ----
+    tridiag = [0, 0]
+    have_td = any("tridiag" in tv for tv in times_full.values())
+    if have_td:
+        s4 = {}
+        for which, full, rule_params, cur in (("vectors", times_full, params, CURRENT_TRIDIAG[0]),
+                                               ("values", vtimes_full, (split + values) if values else params,
+                                                CURRENT_TRIDIAG[1])):
+            if not full or not any("tridiag" in tv for tv in full.values()):
+                continue
+            full = tridiag_points(full)
+            th, scores = fit_tridiag(rule_params, full, cur, tol)
+            tr, te = split_points(full)
+            th_tr, _ = fit_tridiag(rule_params, tr, cur, tol)
+            fn = lambda N, b, t=th: tridiag_choice(rule_params, t, N, b)
+            s4[which] = {
+                "n_points": len(full),
+                "chosen": th,
+                "without": _strip(evaluate(lambda N, b: tridiag_choice(rule_params, 0, N, b), full)),
+                "with": _strip(evaluate(fn, full)),
+                "curve": [[t, v[0], v[1]] for t, v in sorted(scores.items())],
+                "holdout": {"train_points": len(tr), "test_points": len(te), "fitted": th_tr,
+                            "test": _strip(evaluate(lambda N, b: tridiag_choice(rule_params, th_tr, N, b), te)),
+                            "without_test": _strip(evaluate(lambda N, b: tridiag_choice(rule_params, 0, N, b), te))},
+                "speedup_vs_cpu": sorted([[N, b, tv["cpu"] / tv["tridiag"]] for (b, N), tv in full.items()
+                                          if "cpu" in tv and "tridiag" in tv], key=lambda x: (x[0], x[1])),
+            }
+            tridiag[0 if which == "vectors" else 1] = th
+        res["stage4"] = s4
+    res["tridiag_chosen"] = tridiag
+    res["current_tridiag"] = list(CURRENT_TRIDIAG)
     res["current_values"] = list(CURRENT_VALUES) if CURRENT_VALUES else None
 
     # ---- the whole rule ----
@@ -864,7 +942,8 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
     if str(device.get("source", "")).startswith("default:untuned-device"):
         warns.append("this device has no entry in kTuned[]: it is running the untuned default; "
                      "paste the row above into src/eigh.mm")
-    if tuple(params) != tuple(CURRENT) or (values and tuple(values) != tuple(CURRENT_VALUES or ())):
+    if (tuple(params) != tuple(CURRENT) or (values and tuple(values) != tuple(CURRENT_VALUES or ()))
+            or tuple(res.get("tridiag_chosen", (0, 0))) != tuple(CURRENT_TRIDIAG)):
         warns.append(f"the fitted policy differs from the one in effect ({device.get('source', 'unknown')}): "
                      f"update this device's row in kTuned[] in src/eigh.mm")
     res["warnings"] = warns
@@ -887,8 +966,11 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
     else:
         warns.append("no eigenvalues-alone timings (a run from before they were measured): the row's "
                       "values_* fields are 0, so eigvalsh follows eigh's boundary")
-    res["tuned_row"] = tuned_row(device, params, values)
-    res["env_line"] = env_line(params, values)
+    if not have_td:
+        warns.append("no tridiag timings (a run from before the backend existed): the row's tridiag "
+                     "thresholds are 0, so the backend stays off on this device")
+    res["tuned_row"] = tuned_row(device, params, values, tridiag)
+    res["env_line"] = env_line(params, values, tridiag)
     res["n_candidates"] = {"split": len(SIMD_MAXS) * len(BLOCK_MINS),
                            "routing": len(GPU_MAX_NS) * len(MIN_BNS) * len(MIN_BATCHES)}
     return res
@@ -1012,7 +1094,7 @@ def write_report(res, path):
     L.append("```cpp")
     L.append("// device, GPU cores,   simd_max_n, block_min_n, block_min_n_batched, block_min_batch,   "
              "gpu_max_n, gpu_min_batch_times_n, gpu_min_batch,   values_gpu_max_n, "
-             "values_gpu_min_batch_times_n, values_gpu_min_batch")
+             "values_gpu_min_batch_times_n, values_gpu_min_batch,   tridiag_min_n, values_tridiag_min_n")
     L.append(res["tuned_row"])
     L.append("```")
     L.append("")
@@ -1024,7 +1106,8 @@ def write_report(res, path):
     L.append("")
     src = d.get("source", "unknown")
     same = tuple(res["current"]) == tuple(res["chosen"]) and (res.get("values_chosen") is None or
-            res.get("current_values") == res["values_chosen"])
+            res.get("current_values") == res["values_chosen"]) and \
+        res.get("current_tridiag", [0, 0]) == res.get("tridiag_chosen", [0, 0])
     L.append(f"The policy in effect on this device came from `{src}`. " +
              ("It matches the fitted one." if same else
               "It differs from the fitted one; see the warnings."))
@@ -1169,6 +1252,30 @@ def write_report(res, path):
                  f"for eigh's boundary on the same points.")
         L.append("")
 
+    s4 = res.get("stage4")
+    if s4:
+        L.append("## Stage 4: the tridiag backend instead of the CPU")
+        L.append("")
+        L.append("Where the rule above chooses the CPU, the `tridiag` backend from a threshold N on "
+                 "(0: never), fitted over the measured N against the best of all backends, tridiag included, "
+                 "on the points where tridiag was timed (N >= 128, within the cost cap): the region the "
+                 "threshold decides.")
+        L.append("")
+        L.append("| | threshold | geomean regret | worst | without tridiag: geomean | worst | held out (fitted on half) |")
+        L.append("|---|---|---|---|---|---|---|")
+        for which, e in s4.items():
+            h = e["holdout"]
+            L.append(f"| {'with eigenvectors' if which == 'vectors' else 'eigenvalues alone'} | "
+                     f"{e['chosen'] or 'never'} | {e['with']['geomean']:.4f} | {e['with']['worst']:.2f}x | "
+                     f"{e['without']['geomean']:.4f} | {e['without']['worst']:.2f}x | "
+                     f"from {h['fitted'] or 'never'}: {h['test']['geomean']:.4f} vs {h['without_test']['geomean']:.4f} |")
+        L.append("")
+        for which, e in s4.items():
+            if e["speedup_vs_cpu"]:
+                L.append(f"tridiag over the CPU ({'with eigenvectors' if which == 'vectors' else 'eigenvalues alone'}), "
+                         "N x batch: " + ", ".join(f"{N}x{b} {r:.2f}x" for N, b, r in e["speedup_vs_cpu"]))
+                L.append("")
+
     L.append("## Noise floor")
     L.append("")
     nf = res["noise"]
@@ -1192,7 +1299,7 @@ def write_report(res, path):
 # ---------------------------------------------------------------------------
 
 def main():
-    global CURRENT, CURRENT_VALUES
+    global CURRENT, CURRENT_VALUES, CURRENT_TRIDIAG
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("binary", nargs="?", help="path to the built sweep_eigh")
@@ -1255,6 +1362,7 @@ def main():
             device = {"name": pol["device"], "gpu_cores": pol["gpu_cores"], "source": pol["source"]}
             CURRENT = policy_to_tuple(pol)
             CURRENT_VALUES = policy_values(pol)
+            CURRENT_TRIDIAG = (pol.get("tridiag_min_n", 0), pol.get("values_tridiag_min_n", 0))
         calibration = side.get("calibration")
         if calibration:
             SCALE.update(calibration["scale"])
@@ -1287,6 +1395,10 @@ def main():
         print(f"eigenvalues alone: values_gpu_max_n={_fmt_v(vg)} values_gpu_min_batch_times_n={_fmt_v(vm)} "
               f"values_gpu_min_batch={vb}   ({s3['chosen']['geomean']:.4f}x, worst {s3['chosen']['worst']:.2f}x; "
               f"with eigh's boundary {s3['eigh_boundary']['geomean']:.4f}x, worst {s3['eigh_boundary']['worst']:.2f}x)")
+    for which, s4 in (res.get("stage4") or {}).items():
+        print(f"tridiag ({which}): from N={s4['chosen'] or 'never'}   ({s4['with']['geomean']:.4f}x, worst "
+              f"{s4['with']['worst']:.2f}x; without it {s4['without']['geomean']:.4f}x, worst {s4['without']['worst']:.2f}x; "
+              f"held out {s4['holdout']['test']['geomean']:.4f}x vs {s4['holdout']['without_test']['geomean']:.4f}x)")
     print(f"\nkTuned[] row:  {res['tuned_row']}" +
           ("" if res["trustworthy"] else "     <-- indicative only, do not paste (see first warning)"))
     for w in res["warnings"]:

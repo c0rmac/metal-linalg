@@ -1,5 +1,33 @@
 # Changes
 
+## 2.5.0 (2026-10-03)
+
+- **eigh with eigenvectors on the GPU for large matrices: up to 6x faster.**
+  A new backend, `tridiag`, keeps LAPACK's method (Householder
+  tridiagonalization, the tridiagonal eigenproblem, back-transformation) and
+  runs its two expensive steps on the GPU: the reduction entirely on the GPU,
+  per column as small kernels and per panel as one GEMM, queued so the host
+  waits once per matrix; and the back-transformation as blocked GEMMs. The
+  tridiagonal eigenproblem stays on LAPACK. On an M5 Pro, one N x N with
+  eigenvectors: 1.1x the CPU at N = 1024, 2.0x at 2048, 2.9x at 3072, 4.8x at
+  4096, 5.9x at 8192 (18.7 s to 3.2 s). Accuracy as LAPACK's (residual and
+  orthogonality ~1e-6), any magnitude (power-of-two scaling), one triangle
+  read. See docs/eigh.md, "Backend 3".
+- **Routing**: `EighPolicy` gains `tridiag_min_n` and `values_tridiag_min_n`:
+  where the policy sends a call to the CPU, the tridiag backend takes it from
+  that N (0 = never, which devices without measurements keep).
+  `EighBackend::tridiag`, the name `"tridiag"` in the C, Python and Swift
+  routing functions, `EIGH_TRIDIAG_MIN_N` / `EIGH_VALUES_TRIDIAG_MIN_N`, and
+  `EIGH_DEVICE=tridiag` to force it. The C policy struct gains the two fields
+  at its end.
+- **Measured on the M5 Pro**: tridiag from N = 1024 with eigenvectors (on the
+  shapes where it was timed, 1.039x geomean regret against 1.175x without it;
+  held out 1.069x against 1.114x). For eigenvalues alone the CPU's two-stage
+  reduction stays ahead up to 2048 and tridiag is off.
+- The eigh sweep times the new backend (`tridiag`, `tridiag_vals`) and reaches
+  N = 4096 for lone matrices; `tune_eigh.py` fits the thresholds as stage 4,
+  on the points where the backend was timed, with a held-out check.
+
 ## 2.4.1 (2026-10-03)
 
 - **The committed shaders load on macOS 14 and 15 again.** The metallibs in

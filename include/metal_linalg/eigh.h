@@ -52,6 +52,8 @@ namespace metal_linalg {
                                      bool lower, const EighOptions& opt);
 
         EighResult eigh_cpu(const mlx::core::array& a, bool compute_vectors, bool lower);
+
+        EighResult eigh_tridiag(const mlx::core::array& a, bool compute_vectors, bool lower);
     }
 
 } // namespace metal_linalg

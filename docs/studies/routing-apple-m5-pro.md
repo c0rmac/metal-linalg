@@ -231,6 +231,30 @@ now a measured cap rather than the edge of the grid. eigh's own row is
 unchanged: combined with the earlier runs, its fitted values stay within the
 near-optimal region.
 
+## Update, 2026-10-03: the tridiag backend
+
+The eigh sweep now times the `tridiag` backend (GPU tridiagonalization and
+back-transformation, LAPACK's tridiagonal solver) and reaches N = 4096 for lone
+matrices
+([`20261003-d26059`](../results/apple-m5-pro-20gpu/20261003-d26059/eigh/report.md)).
+Stage 4 of the tuner fits where it replaces the CPU:
+
+```cpp
+// ..., values_gpu_max_n, values_gpu_min_batch_times_n, values_gpu_min_batch,   tridiag_min_n, values_tridiag_min_n
+{"Apple M5 Pro", 20,   0, 96, 0, 0,   1024, 512, 16,   256, 2048, 32,   1024, 0},
+```
+
+| tridiag over the CPU, one matrix | 512 | 768 | 1024 | 1536 | 2048 | 3072 |
+|---|---|---|---|---|---|---|
+| with eigenvectors | 0.69x | 0.81x | 1.13x | 1.47x | 1.93x | 2.73x |
+| eigenvalues alone | 0.40x | 0.54x | 0.68x | 0.85x | 0.93x | 1.13x |
+
+With eigenvectors it wins from N = 1024 at every batch measured (the GPU
+Jacobi backends take larger batches below 1024); the threshold is the same
+fitted on half the shapes, and scores 1.069x geomean regret on the other half
+against 1.114x without the backend. For eigenvalues alone the CPU's two-stage
+reduction stays ahead up to 2048, so the backend is off (0).
+
 ## Reproducing
 
 ```sh

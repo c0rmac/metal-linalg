@@ -156,7 +156,7 @@ public func qrBackend(rows: Int, cols: Int, batch: Int = 1) -> String {
     String(cString: metal_linalg_qr_backend(UInt32(clamping: rows), UInt32(clamping: cols), UInt32(clamping: batch)))
 }
 
-/// "cpu", "simd", "threadgroup" or "block".
+/// "cpu", "simd", "threadgroup", "block" or "tridiag".
 public func eighBackend(n: Int, batch: Int = 1) -> String {
     String(cString: metal_linalg_eigh_backend(UInt32(clamping: n), UInt32(clamping: batch)))
 }

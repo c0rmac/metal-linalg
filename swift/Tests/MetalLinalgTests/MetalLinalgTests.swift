@@ -50,6 +50,34 @@ final class MetalLinalgTests: XCTestCase {
         for i in 0..<w.count { XCTAssertEqual(wOnly[i], w[i], accuracy: 1e-4) }
     }
 
+    // The tridiag backend, forced by the policy, on sizes either side of a
+    // GPU panel (32 columns): it loads its own shader library and runs MPS.
+    func testEighTridiag() throws {
+        let measured = eighPolicy
+        defer { eighPolicy = measured }
+        var p = measured
+        p.gpu_max_n = 0              // never the Jacobi backends
+        p.tridiag_min_n = 1          // so every eigh is tridiag
+        p.values_tridiag_min_n = 1
+        eighPolicy = p
+        for n in [3, 70, 150] {
+            XCTAssertEqual(eighBackend(n: n, batch: 2), "tridiag")
+            let batch = 2
+            var a = values(batch * n * n, seed: UInt64(10 + n))
+            for b in 0..<batch { for i in 0..<n { for j in 0..<i { a[b * n * n + i * n + j] = a[b * n * n + j * n + i] } } }
+            let (w, v) = try eighAccelerated(a, batch: batch, n: n)
+            for b in 0..<batch {
+                let av = multiply(a[(b * n * n)..<((b + 1) * n * n)], v[(b * n * n)..<((b + 1) * n * n)], n, n, n)
+                for i in 0..<n {
+                    for j in 0..<n { XCTAssertEqual(av[i * n + j], Double(v[b * n * n + i * n + j] * w[b * n + j]), accuracy: 1e-3) }
+                    if i > 0 { XCTAssertLessThanOrEqual(w[b * n + i - 1], w[b * n + i]) }
+                }
+            }
+            let wOnly = try eigvalshAccelerated(a, batch: batch, n: n)
+            for i in 0..<w.count { XCTAssertEqual(wOnly[i], w[i], accuracy: 1e-3) }
+        }
+    }
+
     func testSVDTallAndWide() throws {
         for (m, n) in [(20, 7), (7, 20)] {
             let batch = 4, k = min(m, n)

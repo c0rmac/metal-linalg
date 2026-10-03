@@ -117,7 +117,7 @@ def qr_backend(m, n, batch=1):
 
 def eigh_backend(n, batch=1):
     """Which backend :func:`eigh` uses: ``"cpu"``, ``"simd"``,
-    ``"threadgroup"`` or ``"block"``."""
+    ``"threadgroup"``, ``"block"`` or ``"tridiag"``."""
     return _core.eigh_backend(n, batch)
 
 

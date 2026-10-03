@@ -27,7 +27,8 @@ RESULTS = os.path.join(ROOT, "docs", "results")
 OPS = {"qr": (["pass", "batch", "M", "N", "backend", "ok", "ms", "p25", "p75", "reps"],
               {"cpu", "unblocked", "reduced", "complete"}),
        "eigh": (["pass", "batch", "N", "backend", "ok", "ms", "p25", "p75", "reps"],
-                {"cpu", "simd", "tg", "block", "cpu_vals", "simd_vals", "tg_vals", "block_vals"}),
+                {"cpu", "simd", "tg", "block", "tridiag",
+                 "cpu_vals", "simd_vals", "tg_vals", "block_vals", "tridiag_vals"}),
        "svd": (["pass", "batch", "M", "N", "backend", "ok", "ms", "p25", "p75", "reps"],
                {"cpu", "jacobi", "block", "qr", "qrblock"})}
 TOP_FILES = {"submission.json", "summary.md", "qr.log", "eigh.log", "svd.log"}
