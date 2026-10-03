@@ -1,5 +1,29 @@
 # Changes
 
+## 2.4.1 (2026-10-03)
+
+- **The committed shaders load on macOS 14 and 15 again.** The metallibs in
+  `shaders/prebuilt/`, which Homebrew builds and the Swift package use, had
+  been compiled for macOS 26 (AIR v28), which older systems cannot read, so
+  the GPU paths of those installs could fail on macOS 14 and 15. Every shader
+  is now compiled for macOS 14 (AIR v26) whatever Mac builds it
+  (`METAL_LINALG_SHADER_MIN_MACOS`), and the committed copies are rebuilt.
+  The PyPI wheels were not affected: their shaders were compiled for
+  macOS 14 already.
+- **The shaders compile with Xcode 27's Metal compiler**, which rejects an
+  address space on a by-value parameter; three QR helpers take their tile by
+  `const` reference instead. Building from source with the Metal toolchain
+  installed failed before this.
+- **The Swift package builds on macOS 14.** It embedded the shaders with
+  C23's `#embed`, which the Xcode on macOS 14 does not support, so the
+  package did not compile there. `swift/CMetalLinalg/embedded_shaders.c` now
+  holds them as plain byte arrays, generated from `shaders/prebuilt/` by
+  `cmake/EmbedSwiftShaders.cmake` whenever those are refreshed.
+- CI: the wheels are installed and tested on macOS 14 before every PyPI
+  upload, and the Swift package's tests (prebuilt shaders, every kernel) run
+  on macOS 14 and 15 for every change to the shaders or the library, with a
+  check that its copy of the shaders matches `shaders/prebuilt/`.
+
 ## 2.4.0 (2026-10-02)
 
 - **`eigvalsh` has its own GPU-or-CPU boundary.** Since 2.3.0 the CPU
