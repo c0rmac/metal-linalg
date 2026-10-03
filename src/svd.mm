@@ -194,6 +194,10 @@ struct TunedEntry {
     unsigned    gpu_max_k;
     unsigned    gpu_min_batch_times_k;
     unsigned    gpu_min_batch;
+    // The bidiag backend instead of the CPU from these k; 0 = never, which rows
+    // measured before the backend existed leave.
+    unsigned    bidiag_min_k;
+    unsigned    values_bidiag_min_k;
     unsigned    calibration;   // kCalibration* (calibration.h); rows without it are current
 };
 
@@ -203,7 +207,7 @@ struct TunedEntry {
 // docs/studies/. The last row keeps the array non-empty and matches nothing.
 constexpr TunedEntry kTuned[] = {
 #include "tuned/svd.inc"
-    {"", 0,   0, 0,   0, 0, 0,   0, 0, 0,   0},
+    {"", 0,   0, 0,   0, 0, 0,   0, 0, 0,   0, 0,   0},
 };
 
 struct ResolvedPolicy {
@@ -238,6 +242,8 @@ ResolvedPolicy resolve_policy() {
             r.policy.gpu_max_k             = e.gpu_max_k;
             r.policy.gpu_min_batch_times_k = e.gpu_min_batch_times_k;
             r.policy.gpu_min_batch         = e.gpu_min_batch;
+            r.policy.bidiag_min_k          = e.bidiag_min_k;
+            r.policy.values_bidiag_min_k   = e.values_bidiag_min_k;
             r.source = detail::tuned_source_prefix(e.calibration) + r.device;
             detail::calibration_notice("SVD", e.calibration);
             break;
@@ -260,6 +266,8 @@ ResolvedPolicy resolve_policy() {
     over("SVD_GPU_MAX_K",             r.policy.gpu_max_k);
     over("SVD_GPU_MIN_BATCH_TIMES_K", r.policy.gpu_min_batch_times_k);
     over("SVD_GPU_MIN_BATCH",         r.policy.gpu_min_batch);
+    over("SVD_BIDIAG_MIN_K",          r.policy.bidiag_min_k);
+    over("SVD_VALUES_BIDIAG_MIN_K",   r.policy.values_bidiag_min_k);
     if (!env.empty()) r.source = "env:" + env;
     return r;
 }
@@ -636,9 +644,25 @@ bool svd_uses_gpu(unsigned m, unsigned n, unsigned batch) {
            batch >= p.gpu_min_batch;
 }
 
-SvdBackend svd_backend(unsigned m, unsigned n, unsigned batch) {
-    return svd_uses_gpu(m, n, batch) ? svd_gpu_backend(m, n, batch) : SvdBackend::cpu;
+namespace {
+
+// Where the rules send a call to the CPU: the bidiag backend instead, from the
+// policy's threshold (0 = never). SVD_DEVICE=cpu keeps the CPU;
+// SVD_DEVICE=bidiag forces this backend for every call.
+SvdBackend route(unsigned m, unsigned n, unsigned batch, bool vectors) {
+    if (const char* e = std::getenv("SVD_DEVICE"); e && std::string(e) == "bidiag") return SvdBackend::bidiag;
+    if (svd_uses_gpu(m, n, batch)) return svd_gpu_backend(m, n, batch);
+    if (const char* e = std::getenv("SVD_DEVICE"); e && std::string(e) == "cpu") return SvdBackend::cpu;
+    const SvdPolicy& p = policy_state().policy;
+    const unsigned from = vectors ? p.bidiag_min_k : p.values_bidiag_min_k;
+    return from != 0 && std::min(m, n) >= from ? SvdBackend::bidiag : SvdBackend::cpu;
 }
+
+} // namespace
+
+SvdBackend svd_backend(unsigned m, unsigned n, unsigned batch) { return route(m, n, batch, true); }
+
+SvdBackend svdvals_backend(unsigned m, unsigned n, unsigned batch) { return route(m, n, batch, false); }
 
 void core::svd(const Matrices& a, float* u, float* s, float* vt, uint32_t* info) {
     const unsigned m = a.rows, n = a.cols, batch = a.batch;
@@ -647,9 +671,12 @@ void core::svd(const Matrices& a, float* u, float* s, float* vt, uint32_t* info)
         return;
     }
     SvdOptions opt;
-    switch (svd_backend(m, n, batch)) {
+    switch (route(m, n, batch, u || vt)) {
         case SvdBackend::cpu:
             core::detail::svd_cpu(a, u, s, vt, info);
+            return;
+        case SvdBackend::bidiag:
+            core::detail::svd_bidiag(a, u, s, vt, info);
             return;
         case SvdBackend::block_jacobi:
             core::detail::svd_block_jacobi(a, opt, u, s, vt, info);

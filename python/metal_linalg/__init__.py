@@ -76,7 +76,7 @@ _calibration_warnings()
 __all__ = [
     "qr", "eigh", "eigvalsh", "svd", "svdvals",
     "device_name", "gpu_core_count",
-    "qr_backend", "eigh_backend", "eigvalsh_backend", "svd_backend",
+    "qr_backend", "eigh_backend", "eigvalsh_backend", "svd_backend", "svdvals_backend",
     "qr_policy", "eigh_policy", "svd_policy",
     "set_qr_policy", "set_eigh_policy", "set_svd_policy",
     "qr_policy_source", "eigh_policy_source", "svd_policy_source",
@@ -172,8 +172,14 @@ def eigvalsh_backend(n, batch=1):
 
 def svd_backend(m, n, batch=1):
     """Which backend :func:`svd` uses: ``"cpu"``, ``"jacobi"``,
-    ``"block_jacobi"``, ``"qr_jacobi"`` or ``"qr_block_jacobi"``."""
+    ``"block_jacobi"``, ``"qr_jacobi"``, ``"qr_block_jacobi"`` or ``"bidiag"``."""
     return _core.svd_backend(m, n, batch)
+
+
+def svdvals_backend(m, n, batch=1):
+    """Which backend :func:`svdvals` uses; as :func:`svd_backend`, with the
+    policy's ``values_bidiag_min_k`` for the bidiag backend."""
+    return _core.svdvals_backend(m, n, batch)
 
 
 def qr_policy():

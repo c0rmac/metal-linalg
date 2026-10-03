@@ -45,6 +45,7 @@ const char* name(ml::SvdBackend b) {
         case ml::SvdBackend::jacobi:       return "jacobi";
         case ml::SvdBackend::block_jacobi: return "block_jacobi";
         case ml::SvdBackend::qr_jacobi:    return "qr_jacobi";
+        case ml::SvdBackend::bidiag:       return "bidiag";
         default:                           return "qr_block_jacobi";
     }
 }
@@ -60,7 +61,7 @@ const char* name(ml::SvdBackend b) {
                        X(tridiag_min_n) X(values_tridiag_min_n)
 #define SVD_FIELDS(X) X(qr_min_rows) X(qr_min_k) X(block_min_k) X(block_min_k_batched)       \
                       X(block_min_batch) X(gpu_max_k) X(gpu_min_batch_times_k) X(gpu_min_batch) \
-                      X(gpu_cores)
+                      X(gpu_cores) X(bidiag_min_k) X(values_bidiag_min_k)
 
 #define TO_DICT(f) d[#f] = p.f;
 #define FROM_DICT(f) if (key == #f) { p.f = nb::cast<unsigned>(value); return; }
@@ -100,6 +101,8 @@ NB_MODULE(_core, m) {
         return name(ml::eigvalsh_backend(n, batch)); }, "n"_a, "batch"_a = 1);
     m.def("svd_backend", [](unsigned rows, unsigned cols, unsigned batch) {
         return name(ml::svd_backend(rows, cols, batch)); }, "m"_a, "n"_a, "batch"_a = 1);
+    m.def("svdvals_backend", [](unsigned rows, unsigned cols, unsigned batch) {
+        return name(ml::svdvals_backend(rows, cols, batch)); }, "m"_a, "n"_a, "batch"_a = 1);
 
     m.def("qr_policy_source", [] { return std::string(ml::qr_policy_source()); });
     m.def("eigh_policy_source", [] { return std::string(ml::eigh_policy_source()); });
