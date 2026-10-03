@@ -20,9 +20,12 @@ policy measured on the device it runs on. MLX's own `linalg::eigh` and
 `linalg::svd` run only on the CPU.
 
 > **Contributions welcome: measure your Mac.** The routing is only as good as
-> the measurements behind it, and every new chip needs its own. So far an M1
-> and an M5 Pro have been measured; every other Mac runs a cautious default
-> that misses much of what its GPU can do. If you have an Apple Silicon Mac,
+> the measurements behind it, and every new chip needs its own.
+> **[See which Macs are measured](https://c0rmac.github.io/metal-linalg/docs/measurements)**:
+> every Apple Silicon chip, colour-coded per decomposition (current, out of
+> date, or not measured yet). So far an M1 and an M5 Pro have been measured;
+> every other Mac runs a cautious default that misses much of what its GPU can
+> do. If you have an Apple Silicon Mac,
 > one command measures it (`python3 tuning/run.py`, about an hour of the
 > Mac's time) and produces a results folder to send as a pull request. Each
 > run improves the library for everyone with that Mac, and runs from several
@@ -31,6 +34,7 @@ policy measured on the device it runs on. MLX's own `linalg::eigh` and
 
 ## Contents
 
+- [Which Macs are measured](https://c0rmac.github.io/metal-linalg/docs/measurements) (the measurements page)
 - [Overview](#overview)
   - [What it provides](#what-it-provides)
   - [Platforms](#platforms)
