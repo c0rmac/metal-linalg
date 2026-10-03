@@ -1,5 +1,13 @@
 # Changes
 
+## Unreleased (tuning)
+
+- **The measurement sweeps fit the Mac's memory.** Every shape is skipped if
+  its estimated peak (six copies of its arrays) exceeds 35% of physical RAM,
+  so an 8 GB Mac no longer attempts SVD shapes of 2 GB per array, which could
+  swap or stop the run. On a 48 GB Mac the grids are unchanged.
+  `METAL_LINALG_TUNING_MEMORY_GB` overrides the budget; `run.py` prints it.
+
 ## 2.5.0 (2026-10-03)
 
 - **eigh with eigenvectors on the GPU for large matrices: up to 6x faster.**

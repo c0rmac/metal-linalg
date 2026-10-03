@@ -277,6 +277,8 @@ def point_grid(quick=False, max_n=512):
     pts = []
     for N in Ns:
         for b in ([1] if N > HUGE_N else LARGE_BATCHES if N > LARGE_N else Bs):
+            if not sub.fits_memory(b * N * N):     # see submissions.MEMORY_FRACTION
+                continue
             ks = backends_for(N, b)
             if ks:
                 pts.append((b, N, ks))

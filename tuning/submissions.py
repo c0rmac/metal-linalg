@@ -22,6 +22,7 @@ import os
 import re
 import secrets
 import statistics
+import subprocess
 import time
 from collections import defaultdict
 
@@ -31,6 +32,39 @@ from collections import defaultdict
 # an older epoch are then left out of the tables until a device is measured
 # again. Recorded in every submission.json by tuning/run.py.
 EPOCH = 1
+
+
+# Memory. A sweep must not allocate more than the Mac it runs on can hold: the
+# smallest Apple Silicon Macs have 8 GB, and a point that swaps measures the
+# disk, or stops the run. A point is measured only if its estimated peak --
+# FOOTPRINT_COPIES copies of its arrays (input, outputs, workspaces, the
+# correctness check), in float32 -- fits in MEMORY_FRACTION of physical RAM:
+# about 2.8 GB on an 8 GB Mac, 17 GB on a 48 GB one.
+# METAL_LINALG_TUNING_MEMORY_GB sets the budget instead.
+MEMORY_FRACTION = 0.35
+FOOTPRINT_COPIES = 6
+
+
+def physical_memory_bytes():
+    try:
+        out = subprocess.run(["sysctl", "-n", "hw.memsize"], capture_output=True, text=True).stdout
+        return int(out.strip())
+    except (OSError, ValueError):
+        return 0
+
+
+def memory_budget_bytes():
+    env = os.environ.get("METAL_LINALG_TUNING_MEMORY_GB")
+    if env:
+        return float(env) * 2 ** 30
+    mem = physical_memory_bytes()
+    return MEMORY_FRACTION * mem if mem else 2.8 * 2 ** 30   # unknown: as an 8 GB Mac
+
+
+def fits_memory(elements):
+    """Whether a point whose largest arrays hold `elements` floats in all fits
+    the memory budget."""
+    return elements * 4 * FOOTPRINT_COPIES <= memory_budget_bytes()
 
 
 def submission_of(raw_path):

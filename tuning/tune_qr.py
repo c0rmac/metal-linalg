@@ -136,6 +136,8 @@ def shape_grid(full=False):
             continue
         if b * max(M, N) ** 2 > MEM_CAP_SQUARE:
             continue
+        if not sub.fits_memory(b * (M * N + min(M, N) ** 2)):   # see submissions.MEMORY_FRACTION
+            continue
         out.append((b, M, N))
     return out
 

@@ -29,6 +29,15 @@ the curious. Contributors only need [`tuning.md`](tuning.md).
 `--quick` runs coarser grids, one pass each, into `build-tuning/quick/`: a
 smoke test of the pipeline, never a submission.
 
+
+**Memory.** Every sweep skips a shape whose estimated peak memory, six copies
+of its arrays in float32 (input, outputs, workspaces, the correctness check),
+exceeds 35% of the Mac's RAM: about 2.8 GB on an 8 GB Mac, 17 GB on a 48 GB
+one (`tuning/submissions.py`, `MEMORY_FRACTION`). A shape that swaps would
+time the disk, or stop the run. A smaller Mac therefore measures a smaller
+grid; the fitted thresholds are chosen among the shapes measured, as always.
+`METAL_LINALG_TUNING_MEMORY_GB=<n>` sets the budget instead.
+
 ## 2. Submissions
 
 ```
