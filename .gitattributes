@@ -1,0 +1,5 @@
+# Left out of `git archive`, and so of the release tarballs GitHub makes (what
+# Homebrew downloads): every submitted measurement run, raw timings and
+# reports. Nothing in the build reads them; the routing tables generated from
+# them are src/tuned/*.inc. They stay in the repository and its clones.
+docs/results/ export-ignore
