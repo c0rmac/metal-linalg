@@ -1,7 +1,8 @@
 # metal-linalg for Python
 
 QR, symmetric eigendecomposition and SVD for batches of matrices on Apple
-GPUs, on [MLX](https://github.com/ml-explore/mlx) arrays.
+GPUs, on [MLX](https://github.com/ml-explore/mlx) arrays. For PyTorch tensors,
+install [`metal-linalg-torch`](https://github.com/c0rmac/metal-linalg/blob/main/python-torch/README.md) instead.
 
 ```python
 import mlx.core as mx
@@ -85,7 +86,7 @@ After upgrading that MLX, reinstall the package the same way.
 Routing comes from measurements made on each kind of Mac. Where there are
 none for yours, or they are stale or incomplete, importing the package raises
 a `metal_linalg.CalibrationWarning` once per decomposition, saying so and how
-to measure your Mac (about an hour) and submit the results:
+to measure your Mac (about an hour and a half) and submit the results:
 
 ```python
 ml.calibration_status()     # {'qr': 'current', 'eigh': 'current', 'svd': 'stale'}

@@ -108,6 +108,11 @@ metal_linalg_status metal_linalg_svd(const float* a, uint32_t batch, uint32_t ro
 
 const char* metal_linalg_device_name(void) { return device_name(); }
 void metal_linalg_set_calibration_notices(int enabled) { set_calibration_notices(enabled != 0); }
+const char* metal_linalg_calibration_message(const char* decomposition) {
+    thread_local std::string msg;
+    msg = decomposition ? calibration_message(decomposition) : std::string();
+    return msg.c_str();
+}
 uint32_t    metal_linalg_gpu_core_count(void) { return gpu_core_count(); }
 
 const char* metal_linalg_qr_backend(uint32_t rows, uint32_t cols, uint32_t batch) {

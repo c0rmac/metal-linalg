@@ -68,6 +68,10 @@ const char* metal_linalg_device_name(void);
 /* Calibration notices on stderr (see set_calibration_notices in device.h):
  * on by default; 0 turns them off. METAL_LINALG_NO_CALIBRATION_NOTICE=1 also does. */
 void metal_linalg_set_calibration_notices(int enabled);
+/* The notice for decomposition "QR", "eigh" or "SVD" on this Mac, or "" if
+ * its calibration is current: for a binding that reports it its own way
+ * (Python warns). Valid until the next call on this thread. */
+const char* metal_linalg_calibration_message(const char* decomposition);
 uint32_t    metal_linalg_gpu_core_count(void);
 
 /* The backend a call of that shape uses under the policy in effect, by name:

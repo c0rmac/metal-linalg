@@ -82,6 +82,30 @@ final class MetalLinalgTests: XCTestCase {
 
     // The tridiag backend, forced by the policy, on sizes either side of a
     // GPU panel (32 columns): it loads its own shader library and runs MPS.
+    // Eigenvalues alone on the CPU, where from N = 128 LAPACK's two-stage
+    // driver is used when it can be trusted: macOS 14's gave values off by
+    // several percent, so it must agree with the eigenvalues of eigh here.
+    func testCPUEigenvaluesAlone() throws {
+        let measured = eighPolicy
+        defer { eighPolicy = measured }
+        var p = measured
+        p.gpu_max_n = 0; p.gpu_min_batch_times_n = 0
+        p.values_gpu_max_n = 0; p.values_gpu_min_batch_times_n = 0; p.values_gpu_min_batch = 1
+        p.tridiag_min_n = 0; p.values_tridiag_min_n = 0
+        eighPolicy = p
+        for n in [127, 128, 200, 300] {
+            XCTAssertEqual(eigvalshBackend(n: n), "cpu")
+            var a = values(n * n, seed: UInt64(40 + n))
+            for i in 0..<n { for j in 0..<i { a[i * n + j] = a[j * n + i] } }
+            let w = try eighAccelerated(a, n: n).0
+            let scale = w.map { abs($0) }.max()!
+            for uplo in [Uplo.lower, .upper] {
+                let wOnly = try eigvalshAccelerated(a, n: n, uplo: uplo)
+                for i in 0..<n { XCTAssertEqual(wOnly[i], w[i], accuracy: 1e-5 * scale, "N=\(n) \(uplo) i=\(i)") }
+            }
+        }
+    }
+
     func testEighTridiag() throws {
         let measured = eighPolicy
         defer { eighPolicy = measured }

@@ -29,7 +29,11 @@ on the CPU, eigenvectors come from `ssyevd`, and eigenvalues alone
 reduction (dense to band in matrix-matrix products, then band to
 tridiagonal), which on an M5 Pro is 1.2x faster at N = 1024, 3.8x at 4096
 and 5.7x at 8192 (2.6 s rather than 14.8 s for one 8192×8192). LAPACK's
-two-stage driver does not return eigenvectors.
+two-stage driver does not return eigenvectors. On macOS 14, Accelerate's
+`ssyevd_2stage` returns wrong eigenvalues (off by 1.5-7% of the largest),
+so there `ssyevd` is used at every N; on later releases the two-stage
+driver is used once it has matched `ssyevd` on a fixed matrix, checked once
+per process.
 Because the CPU's method differs, `eigvalsh` has its own GPU-or-CPU boundary
 (the policy's `values_gpu_*` fields), measured from eigenvalue-only timings;
 a device measured before it existed routes `eigvalsh` as `eigh`.
