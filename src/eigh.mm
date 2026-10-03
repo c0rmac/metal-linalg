@@ -171,6 +171,7 @@ struct TunedEntry {
     // measured before the backend existed leave.
     unsigned    ql_min_n;
     unsigned    ql_max_n;
+    unsigned    share_min_batch;   // 0 = never, which rows measured before 2.11.0 leave
     unsigned    calibration;   // kCalibration* (calibration.h); rows without it are current
 };
 
@@ -180,7 +181,7 @@ struct TunedEntry {
 // docs/studies/. The last row keeps the array non-empty and matches nothing.
 constexpr TunedEntry kTuned[] = {
 #include "tuned/eigh.inc"
-    {"", 0,   0, 0, 0, 0,   0, 0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0,   0},
+    {"", 0,   0, 0, 0, 0,   0, 0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0},
 };
 
 struct ResolvedPolicy {
@@ -225,6 +226,7 @@ ResolvedPolicy resolve_policy() {
             r.policy.values_tridiag_max_batch     = e.values_tridiag_max_batch;
             r.policy.ql_min_n                     = e.ql_min_n;
             r.policy.ql_max_n                     = e.ql_max_n;
+            r.policy.share_min_batch              = e.share_min_batch;
             r.source = detail::tuned_source_prefix(e.calibration) + r.device;
             detail::calibration_notice("eigh", e.calibration);
             break;
@@ -262,6 +264,7 @@ ResolvedPolicy resolve_policy() {
     over("EIGH_VALUES_TRIDIAG_MAX_BATCH",     r.policy.values_tridiag_max_batch);
     over("EIGH_QL_MIN_N",                     r.policy.ql_min_n);
     over("EIGH_QL_MAX_N",                     r.policy.ql_max_n);
+    over("EIGH_SHARE_MIN_BATCH",              r.policy.share_min_batch);
     if (!env.empty()) r.source = "env:" + env;
     return r;
 }
@@ -656,6 +659,40 @@ EighBackend eigh_backend(unsigned n, unsigned batch) { return route(n, batch, tr
 
 EighBackend eigvalsh_backend(unsigned n, unsigned batch) { return route(n, batch, false); }
 
+bool eigh_shares_batch(unsigned n, unsigned batch) {
+    const unsigned from = policy_state().policy.share_min_batch;
+    return from != 0 && batch >= from && eigh_backend(n, batch) == EighBackend::ql;
+}
+
+bool eigvalsh_shares_batch(unsigned n, unsigned batch) {
+    const unsigned from = policy_state().policy.share_min_batch;
+    return from != 0 && batch >= from && eigvalsh_backend(n, batch) == EighBackend::ql;
+}
+
+void core::detail::eigh_ql_shared(const Matrices& a, bool lower, float* w, float* v, uint32_t* info) {
+    const uint32_t n = a.cols;
+    if (a.rows != n) throw std::invalid_argument("[eigh] Input matrices must be square.");
+    if (n == 0 || a.batch == 0) {
+        if (info) std::fill(info, info + a.batch, 0u);
+        return;
+    }
+    const size_t per = (size_t)n * n;
+    auto sub = [&](uint32_t b0, uint32_t count) { return Matrices{a.data + b0 * per, count, n, n}; };
+    // The smallest GPU chunk worth a dispatch: eight matrices per core. The
+    // CPU's chunks are a few matrices per worker (share_batch).
+    const uint32_t cores = std::max(1u, gpu_core_count());
+    metal_linalg::detail::share_batch(
+        a.batch, 8 * cores, std::clamp(a.batch / (16 * std::max(1u, cpu_threads())), 1u, 16u),
+        [&](uint32_t b0, uint32_t count) {
+            core::detail::eigh_ql(sub(b0, count), lower, w + (size_t)b0 * n, v ? v + b0 * per : nullptr,
+                                  info ? info + b0 : nullptr);
+        },
+        [&](uint32_t b0, uint32_t count) {
+            core::detail::eigh_cpu(sub(b0, count), lower, w + (size_t)b0 * n, v ? v + b0 * per : nullptr,
+                                   info ? info + b0 : nullptr);
+        });
+}
+
 void core::eigh(const Matrices& a, bool lower, float* w, float* v, uint32_t* info) {
     if (a.rows != a.cols) {
         throw std::invalid_argument("[eigh] Input matrices must be square.");
@@ -675,7 +712,9 @@ void core::eigh(const Matrices& a, bool lower, float* w, float* v, uint32_t* inf
         return;
     }
     if (backend == EighBackend::ql) {
-        core::detail::eigh_ql(a, lower, w, v, info);
+        const unsigned from = policy_state().policy.share_min_batch;
+        if (from != 0 && batch >= from) core::detail::eigh_ql_shared(a, lower, w, v, info);
+        else                            core::detail::eigh_ql(a, lower, w, v, info);
         return;
     }
     // A Jacobi backend, as the policy splits them.

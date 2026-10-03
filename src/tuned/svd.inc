@@ -2,5 +2,5 @@
 // One row per device with usable runs; see docs/tuning.md. A last field
 // kCalibrationStale / kCalibrationIncomplete says the runs are not current
 // (tuning/kernels.py, docs/measurements.md).
-// apple-m5-pro-20gpu: 1 run (20261003-106b6c), current
-{"Apple M5 Pro", 20,   512, 32,   192, 64, 64,   48, 4096, 1, 64,   1024, 2048, 1, 1,   4, 56},
+// apple-m5-pro-20gpu: 1 run (20261003-c0878c), current
+{"Apple M5 Pro", 20,   512, 32,   192, 64, 64,   56, 16384, 1, 256,   56, 16384, 1, 56,   1024, 2048, 1, 1,   8, 80,   1024},

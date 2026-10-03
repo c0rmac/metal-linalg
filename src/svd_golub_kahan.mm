@@ -57,6 +57,16 @@ constexpr uint32_t kChaserThreads = 32;   // simdgroup 0 in overlap mode; kChase
 // 6% slower at 32 x 32, within noise below.
 constexpr uint32_t kOverlapMinK = 33;
 
+// From this k, the work is split in two dispatches (kPart in the shader): the
+// reduction, then the QR iteration in threadgroups with almost no threadgroup
+// memory, so that many matrices overlap their iterations. Measured on an M5
+// Pro: for singular values alone, where the iteration is most of the work,
+// 1.3x faster at 48 x 48 and 1.55x at 64 x 64, about even at 40; with vectors,
+// where forming Q and V in the matrix-sized threadgroups dominates, 9% faster
+// at 64 x 64 and 80 x 80, even or slightly slower below 56.
+constexpr uint32_t kSplitMinKValues  = 40;
+constexpr uint32_t kSplitMinKVectors = 60;
+
 // Threadgroup memory for B with m >= n rows, as laid out in
 // Svd_GolubKahan.metal; V lives in device memory.
 size_t tg_bytes(uint32_t m, uint32_t n) {
@@ -76,26 +86,32 @@ constexpr double kCoreMsPerMN2  = 4e-6;
 constexpr double kChunkBudgetMs = 750.0;   // wall time per command buffer
 
 struct Workspace {
+    uint32_t      capacity = 0;        // matrices the buffers hold
     id<MTLBuffer> s, u, vt, info, v;   // v: the kernel's V, [batch, K, K]
+    id<MTLBuffer> uw, hw;              // the split's U [batch, K, max(M, N)] and header [batch, 2K + 2]
 };
 
 struct Cache {
     MetalRuntime& rt = MetalRuntime::shared(METAL_LINALG_SHADER(Svd_GolubKahan), "svd_golub_kahan");
-    std::map<std::pair<bool, bool>, id<MTLComputePipelineState>>      pipelines;    // (vectors, overlap)
-    std::map<std::tuple<uint32_t, uint32_t, uint32_t>, Workspace>     workspaces;   // (batch, M, N)
+    std::map<std::tuple<bool, bool, uint32_t>, id<MTLComputePipelineState>> pipelines;   // (vectors, overlap, part)
+    std::map<std::pair<uint32_t, uint32_t>, Workspace>               workspaces;   // (M, N)
 
-    id<MTLComputePipelineState> pipeline(bool vectors, bool overlap) {
-        const auto key = std::make_pair(vectors, overlap);
+    id<MTLComputePipelineState> pipeline(bool vectors, bool overlap, uint32_t part = 0) {
+        const auto key = std::make_tuple(vectors, overlap, part);
         if (auto it = pipelines.find(key); it != pipelines.end()) return it->second;
         MTLFunctionConstantValues* cv = [[MTLFunctionConstantValues alloc] init];
         [cv setConstantValue:&vectors type:MTLDataTypeBool atIndex:0];
         [cv setConstantValue:&overlap type:MTLDataTypeBool atIndex:1];
+        [cv setConstantValue:&part type:MTLDataTypeUInt atIndex:2];
         return pipelines[key] = make_pipeline(rt.device, rt.library, @"svd_golub_kahan", cv);
     }
 
+    // Buffers for at least `batch` matrices of M x N: the latest shape's are
+    // kept and grown, so that the chunks of a shared batch (share_batch) and
+    // calls with varying batches reuse them.
     Workspace workspace(uint32_t batch, uint32_t M, uint32_t N) {
-        const auto key = std::make_tuple(batch, M, N);
-        if (auto it = workspaces.find(key); it != workspaces.end()) return it->second;
+        const auto key = std::make_pair(M, N);
+        if (auto it = workspaces.find(key); it != workspaces.end() && it->second.capacity >= batch) return it->second;
         const MTLResourceOptions opt = MTLResourceStorageModeShared;
         const size_t K = std::min(M, N), f = sizeof(float);
         auto buf = [&](size_t bytes) { return [rt.device newBufferWithLength:std::max<size_t>(16, bytes) options:opt]; };
@@ -105,6 +121,9 @@ struct Cache {
         w.vt   = buf((size_t)batch * K * N * f);
         w.info = buf((size_t)batch * sizeof(uint32_t));
         w.v    = buf((size_t)batch * K * K * f);
+        w.uw   = buf((size_t)batch * K * std::max(M, N) * f);
+        w.hw   = buf((size_t)batch * (2 * K + 2) * f);
+        w.capacity = batch;
         // One workspace per shape is kept; drop the rest so that a sweep over
         // many shapes does not hold them all.
         workspaces.clear();
@@ -198,6 +217,20 @@ void svd_golub_kahan(const Matrices& a, float* u_out, float* s_out, float* vt_ou
     id<MTLComputePipelineState> pso = cache.pipeline(vectors, overlap);
     const uint32_t threads = threads_for(m, n, vectors, overlap);
 
+    // From kSplitMinK, two dispatches (kPart in the shader): the reduction,
+    // then the QR iteration in threadgroups with almost no threadgroup memory.
+    // A pipeline that allows fewer threads than either needs keeps the fused
+    // kernel.
+    bool split = n >= (vectors ? kSplitMinKVectors : kSplitMinKValues);
+    id<MTLComputePipelineState> pso1 = nil, pso2 = nil;
+    const uint32_t threads1 = threads_for(m, n, vectors, false);
+    const uint32_t threads2 = vectors ? threads : kChaserThreads;
+    if (split) {
+        pso1 = cache.pipeline(vectors, false, 1);
+        pso2 = cache.pipeline(vectors, overlap, 2);
+        split = threads1 <= pso1.maxTotalThreadsPerThreadgroup && threads2 <= pso2.maxTotalThreadsPerThreadgroup;
+    }
+
     // Work per command buffer: a large batch is cut into chunks by a
     // conservative cost model, never smaller than the core count.
     unsigned cores = gpu_core_count();
@@ -218,7 +251,6 @@ void svd_golub_kahan(const Matrices& a, float* u_out, float* s_out, float* vt_ou
         const uint32_t bc = std::min(chunk, batch - b0);
         id<MTLCommandBuffer> cmd = [cache.rt.queue commandBuffer];
         id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
-        [enc setComputePipelineState:pso];
         [enc setBuffer:src     offset:(size_t)b0 * mat * f atIndex:0];
         [enc setBuffer:ws.s    offset:(size_t)b0 * K * f atIndex:1];
         [enc setBuffer:ws.u    offset:(size_t)b0 * M * K * f atIndex:2];
@@ -226,8 +258,21 @@ void svd_golub_kahan(const Matrices& a, float* u_out, float* s_out, float* vt_ou
         [enc setBuffer:ws.info offset:(size_t)b0 * sizeof(uint32_t) atIndex:4];
         [enc setBytes:&prm length:sizeof prm atIndex:5];
         [enc setBuffer:ws.v    offset:(size_t)b0 * K * K * f atIndex:6];
-        [enc setThreadgroupMemoryLength:tgm atIndex:0];
-        [enc dispatchThreadgroups:MTLSizeMake(bc, 1, 1) threadsPerThreadgroup:MTLSizeMake(threads, 1, 1)];
+        [enc setBuffer:ws.uw   offset:(size_t)b0 * K * m * f atIndex:7];
+        [enc setBuffer:ws.hw   offset:(size_t)b0 * (2 * K + 2) * f atIndex:8];
+        if (!split) {
+            [enc setComputePipelineState:pso];
+            [enc setThreadgroupMemoryLength:tgm atIndex:0];
+            [enc dispatchThreadgroups:MTLSizeMake(bc, 1, 1) threadsPerThreadgroup:MTLSizeMake(threads, 1, 1)];
+        } else {
+            // Serial dispatches in one encoder: part 2 sees part 1's writes.
+            [enc setComputePipelineState:pso1];
+            [enc setThreadgroupMemoryLength:tgm atIndex:0];
+            [enc dispatchThreadgroups:MTLSizeMake(bc, 1, 1) threadsPerThreadgroup:MTLSizeMake(threads1, 1, 1)];
+            [enc setComputePipelineState:pso2];
+            [enc setThreadgroupMemoryLength:tg_bytes(0, n) atIndex:0];
+            [enc dispatchThreadgroups:MTLSizeMake(bc, 1, 1) threadsPerThreadgroup:MTLSizeMake(threads2, 1, 1)];
+        }
         [enc endEncoding];
         [cmd commit];
         [cmd waitUntilCompleted];

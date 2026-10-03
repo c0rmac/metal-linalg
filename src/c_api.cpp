@@ -149,7 +149,7 @@ metal_linalg_eigh_policy metal_linalg_eigh_policy_get(void) {
             p.gpu_max_n, p.gpu_min_batch_times_n, p.gpu_min_batch, p.gpu_cores,
             p.values_gpu_max_n, p.values_gpu_min_batch_times_n, p.values_gpu_min_batch,
             p.tridiag_min_n, p.values_tridiag_min_n, p.ql_min_n, p.ql_max_n,
-            p.tridiag_max_batch, p.values_tridiag_max_batch};
+            p.tridiag_max_batch, p.values_tridiag_max_batch, p.share_min_batch};
 }
 
 metal_linalg_svd_policy metal_linalg_svd_policy_get(void) {
@@ -157,7 +157,9 @@ metal_linalg_svd_policy metal_linalg_svd_policy_get(void) {
     return {p.qr_min_rows, p.qr_min_k, p.block_min_k, p.block_min_k_batched, p.block_min_batch,
             p.gpu_max_k, p.gpu_min_batch_times_k, p.gpu_min_batch, p.gpu_cores,
             p.bidiag_min_k, p.values_bidiag_min_k, p.bidiag_max_batch, p.values_bidiag_max_batch,
-            p.gk_min_k, p.gk_max_k, p.gpu_max_l};
+            p.gk_min_k, p.gk_max_k, p.gpu_max_l,
+            p.values_gpu_max_k, p.values_gpu_min_batch_times_k, p.values_gpu_min_batch, p.values_gpu_max_l,
+            p.share_min_batch};
 }
 
 // The informational fields keep the detected values.
@@ -195,6 +197,7 @@ void metal_linalg_eigh_policy_set(const metal_linalg_eigh_policy* c) {
     p.ql_max_n                     = c->ql_max_n;
     p.tridiag_max_batch            = c->tridiag_max_batch;
     p.values_tridiag_max_batch     = c->values_tridiag_max_batch;
+    p.share_min_batch              = c->share_min_batch;
     set_eigh_policy(p);
 }
 
@@ -216,6 +219,11 @@ void metal_linalg_svd_policy_set(const metal_linalg_svd_policy* c) {
     p.gk_min_k                = c->gk_min_k;
     p.gk_max_k                = c->gk_max_k;
     p.gpu_max_l               = c->gpu_max_l;
+    p.values_gpu_max_k             = c->values_gpu_max_k;
+    p.values_gpu_min_batch_times_k = c->values_gpu_min_batch_times_k;
+    p.values_gpu_min_batch         = c->values_gpu_min_batch;
+    p.values_gpu_max_l             = c->values_gpu_max_l;
+    p.share_min_batch              = c->share_min_batch;
     set_svd_policy(p);
 }
 

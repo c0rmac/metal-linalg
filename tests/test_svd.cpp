@@ -497,6 +497,20 @@ int main() {
                                                          {600, 100}, {100, 600}, {1024, 1024}})
         run_bidiag("bidiag " + dims(1, M, N), random_matrix(1, M, N, 1000 + M * 3 + N));
     run_bidiag("bidiag " + dims(3, 150, 120), random_matrix(3, 150, 120, 1100));
+    // Batches are pipelined over two workspace slots: odd and even counts,
+    // through the QR first and the transpose.
+    run_bidiag("bidiag " + dims(4, 300, 80) + " (QR first)", random_matrix(4, 300, 80, 1101));
+    run_bidiag("bidiag " + dims(2, 70, 200) + " (wide)", random_matrix(2, 70, 200, 1102));
+    run_bidiag("bidiag " + dims(5, 40, 40), random_matrix(5, 40, 40, 1103));
+    {   // singular values alone, batched, == with vectors
+        array A = random_matrix(3, 160, 130, 1104);
+        SvdResult rv = detail::svd_bidiag(A, false), rw = detail::svd_bidiag(A, true);
+        eval({rv.S, rw.S});
+        ++g_checks;
+        const float d = max_abs(subtract(rv.S, rw.S)) / std::max(max_abs(rw.S), 1e-30f);
+        if (d > 2e-5f) fail("bidiag batch 3 values-only == with vectors", "differ by " + std::to_string(d));
+        else std::printf("  ok    %-44s |ds|=%.1e\n", "bidiag batch 3 values-only == with vectors", d);
+    }
     for (float s : {1e-30f, 1e20f, 1e37f}) {
         char label[64];
         std::snprintf(label, sizeof label, "bidiag scaled by %.0e 160x140", s);
@@ -629,6 +643,23 @@ int main() {
                             detail::svd_converged(w[2]);
             if (!ok) fail("golub_kahan NaN in one matrix of a batch", "not isolated");
             else std::printf("  ok    %-44s\n", "golub_kahan NaN in one matrix of a batch");
+        }
+        // A batch shared with the CPU path, directly and through the QR first.
+        {
+            array A = random_matrix(600, 24, 20, 2450);
+            SvdResult r = detail::svd_golub_kahan_shared(A, true);
+            eval({r.U, r.S, r.Vt, r.info});
+            check("golub_kahan shared with the CPU 600 x 24x20", A, r);
+            SvdResult rv = detail::svd_golub_kahan_shared(A, false);
+            eval({rv.S});
+            ++g_checks;
+            const float d = max_abs(subtract(rv.S, r.S)) / std::max(max_abs(r.S), 1e-30f);
+            if (d > 2e-5f) fail("golub_kahan shared values-only == with vectors", "differ by " + std::to_string(d));
+            else std::printf("  ok    %-44s |ds|=%.1e\n", "golub_kahan shared values-only == with vectors", d);
+            array B = random_matrix(100, 2000, 12, 2451);
+            SvdResult rb = detail::svd_golub_kahan_shared(B, true);
+            eval({rb.U, rb.S, rb.Vt, rb.info});
+            check("qr_golub_kahan shared with the CPU 100 x 2000x12", B, rb);
         }
         ++g_checks;
         try {
@@ -885,6 +916,32 @@ int main() {
             check("routed to qr_golub_kahan (64 x 4000x16)", B,
                   SvdResult{U2, S3, Vt2, full({64}, (uint32_t)(1u | (1u << 16)))});
         }
+        // svdvals' own GPU-or-CPU rule; values_gpu_min_batch = 0 follows svd's.
+        p.values_gpu_max_k = 16;  p.values_gpu_min_batch_times_k = 0;  p.values_gpu_min_batch = 1;
+        set_svd_policy(p);
+        expect("svdvals' own rule (k <= 16): 16x16 b4096 golub_kahan, 32x32 b4096 cpu while svd keeps the GPU",
+               svdvals_uses_gpu(16, 16, 4096) && !svdvals_uses_gpu(32, 32, 4096) && svd_uses_gpu(32, 32, 4096) &&
+               svdvals_backend(16, 16, 4096) == SvdBackend::golub_kahan &&
+               svdvals_backend(32, 32, 4096) == SvdBackend::cpu);
+        p.values_gpu_min_batch = 0;
+        set_svd_policy(p);
+        expect("values_gpu_min_batch = 0 -> as with vectors: 32x32 b4096 golub_kahan",
+               svdvals_uses_gpu(32, 32, 4096) && svdvals_backend(32, 32, 4096) == SvdBackend::golub_kahan);
+        // Sharing a batch with the CPU, from share_min_batch on, golub_kahan only.
+        p.share_min_batch = 512;
+        set_svd_policy(p);
+        expect("share_min_batch = 512: 32x32 b512 shared, b511 not, 49x49 b4096 (jacobi) not",
+               svd_shares_batch(32, 32, 512) && !svd_shares_batch(32, 32, 511) && !svd_shares_batch(49, 49, 4096) &&
+               svdvals_shares_batch(32, 32, 4096));
+        {
+            array A = random_matrix(700, 24, 24, 2602);
+            auto [U, S, Vt] = svd_accelerated(A);
+            eval({U, S, Vt});
+            check("routed, shared with the CPU (700 x 24x24)", A, SvdResult{U, S, Vt, full({700}, (uint32_t)(1u | (1u << 16)))});
+        }
+        p.share_min_batch = 0;
+        set_svd_policy(p);
+        expect("share_min_batch = 0 -> never", !svd_shares_batch(32, 32, 1 << 20));
         const unsigned kmax = metal_linalg::detail::svd_gk_max_k();
         p.gk_min_k = 1;  p.gk_max_k = kSvdNoLimit;
         set_svd_policy(p);

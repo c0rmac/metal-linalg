@@ -126,7 +126,8 @@ def spec(build_dir):
     rc, out = capture([os.path.join(build_dir, "sweep_qr"), "--policy"])
     if rc != 0:
         fail("Could not read the device from sweep_qr:\n" + out)
-    pol = json.loads(out.strip().splitlines()[-1])
+    # The JSON line, wherever a notice on stderr put it.
+    pol = json.loads(next(l for l in reversed(out.strip().splitlines()) if l.startswith("{")))
 
     def sysctl(name):
         rc, v = capture(["sysctl", "-n", name])
@@ -247,6 +248,9 @@ def write_summary(path, info):
 
 
 def main():
+    # The tools this starts would each say the Mac's calibration is out of
+    # date, which is why it is being measured.
+    os.environ["METAL_LINALG_NO_CALIBRATION_NOTICE"] = "1"
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--quick", action="store_true",
                     help="a short smoke test of the whole pipeline; not for submitting")

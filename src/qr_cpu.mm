@@ -1,6 +1,11 @@
 // QR on the CPU: LAPACK (Accelerate) sgeqrf and sorgqr, the matrices of a batch
 // spread over the cores (lapack_batches).
 // The route for calls too small to pay for a GPU launch; see QrPolicy.
+//
+// A wide matrix (M < N) is factored by its leading M x M block, A1 = Q R1,
+// and R2 = Q^T A2 by one matrix product: the same reflectors and the same R
+// as sgeqrf on the whole matrix, which Accelerate ran 10-40x slower (on an
+// M5 Pro one 64 x 2048 in 1.47 ms against 0.063 ms).
 #ifndef ACCELERATE_NEW_LAPACK
 #define ACCELERATE_NEW_LAPACK   // LAPACK's current interface; before any Accelerate header
 #endif
@@ -30,8 +35,11 @@ void qr_cpu(const Matrices& a, float* q_out, float* r_out) {
     // copy of itself first; that is also the fast route in Accelerate, whose
     // QR routines run at about twice the speed of its LQ ones (see the SVD's
     // CPU path). sgeqrf leaves R in the upper triangle, read off before
-    // sorgqr overwrites the copy with Q's K columns.
-    __LAPACK_int lm = (__LAPACK_int)M, ln = (__LAPACK_int)N, lk = (__LAPACK_int)K, err = 0;
+    // sorgqr overwrites the copy with Q's K columns. A wide matrix factors
+    // only its leading K x K block that way (see the top of the file).
+    const bool wide = M < N;
+    const uint32_t lcols = wide ? K : N;   // the columns LAPACK factors
+    __LAPACK_int lm = (__LAPACK_int)M, ln = (__LAPACK_int)lcols, lk = (__LAPACK_int)K, err = 0;
     const size_t per = (size_t)M * N;
 
     // Workspace size, by query (LAPACK reads no array during one).
@@ -51,7 +59,7 @@ void qr_cpu(const Matrices& a, float* q_out, float* r_out) {
     // Each chunk of the batch, on its own thread with its own workspace.
     lapack_batches(batch, per, [&](uint32_t b0, uint32_t b1) {
         __LAPACK_int lw = lwork, err = 0;
-        std::vector<float> work_a(per), tau(K), work(lwork);
+        std::vector<float> work_a((size_t)M * lcols), tau(K), work(lwork);
         for (uint32_t b = b0; b < b1; ++b) {
             float* qb = q_out + (size_t)b * M * K;
             float* rb = r_out + (size_t)b * K * N;
@@ -60,7 +68,13 @@ void qr_cpu(const Matrices& a, float* q_out, float* r_out) {
                 std::fill(rb, rb + (size_t)K * N, NAN);
                 continue;
             }
-            vDSP_mtrans(a.data + b * per, 1, work_a.data(), 1, N, M);   // column-major A, M x N
+            const float* ab = a.data + b * per;
+            if (!wide) {
+                vDSP_mtrans(ab, 1, work_a.data(), 1, N, M);   // column-major A, M x N
+            } else {
+                for (uint32_t j = 0; j < K; ++j)              // column-major A1, the leading K x K
+                    for (uint32_t i = 0; i < M; ++i) work_a[i + (size_t)j * M] = ab[(size_t)i * N + j];
+            }
             sgeqrf_(&lm, &ln, work_a.data(), &lm, tau.data(), work.data(), &lw, &err);
             if (err != 0) {
                 throw std::runtime_error("[qr] LAPACK sgeqrf failed on matrix " + std::to_string(b) +
@@ -68,8 +82,8 @@ void qr_cpu(const Matrices& a, float* q_out, float* r_out) {
                                          "x" + std::to_string(N) + "), info " +
                                          std::to_string((long long)err) + ".");
             }
-            for (uint32_t i = 0; i < K; ++i)          // R, row-major K x N, upper trapezoidal
-                for (uint32_t j = 0; j < N; ++j)
+            for (uint32_t i = 0; i < K; ++i)          // R, row-major K x N, upper trapezoidal (R1 if wide)
+                for (uint32_t j = 0; j < lcols; ++j)
                     rb[(size_t)i * N + j] = j >= i ? work_a[i + (size_t)j * M] : 0.0f;
             sorgqr_(&lm, &lk, &lk, work_a.data(), &lm, tau.data(), work.data(), &lw, &err);
             if (err != 0) {
@@ -78,6 +92,13 @@ void qr_cpu(const Matrices& a, float* q_out, float* r_out) {
                                          std::to_string((long long)err) + ".");
             }
             vDSP_mtrans(work_a.data(), 1, qb, 1, M, K);                   // row-major Q, M x K
+            if (wide) {
+                // R2 = Q^T A2, K x (N - K), into R's last columns: the
+                // column-major Q read row-major is Q^T.
+                cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, (__LAPACK_int)K, (__LAPACK_int)(N - K),
+                            (__LAPACK_int)K, 1.0f, work_a.data(), (__LAPACK_int)M, ab + K, (__LAPACK_int)N, 0.0f,
+                            rb + K, (__LAPACK_int)N);
+            }
         }
     });
 }

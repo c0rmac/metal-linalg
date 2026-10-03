@@ -208,12 +208,17 @@ except that the panel, which they factor on the CPU, stays on the GPU here:
 on Apple Silicon the round trip, not the panel's arithmetic, is what costs.
 
 Each matrix is scaled by a power of two first (exact), so magnitudes whose
-products over- or underflow float32 work as on the CPU; matrices are solved one
-after another, and only the requested triangle is read. Because the CPU path
-spreads a batch over every core, the backend wins only for a lone matrix or a
-few: the policy caps the batch (`tridiag_max_batch`, 2 on an M5 Pro; at
-N = 512 four matrices take 53 ms here and 10 ms on the CPU). With eigenvectors,
-on an M5 Pro, one $N \times N$ (eigh, then eigvalsh, against the CPU path):
+products over- or underflow float32 work as on the CPU, and only the requested
+triangle is read. A batch is pipelined over two workspace slots (since 2.11.0):
+while the CPU solves one matrix's tridiagonal problem, the GPU reduces the
+next, and while the GPU back-transforms one, the CPU solves the next. On an M5
+Pro, per matrix of 2048×2048 with eigenvectors, that is 117 ms alone, 84 ms in
+a batch of 4 and 79 ms in a batch of 8 (1.48x); the GPU then stays ahead of the
+CPU path up to batches of 8 at that size, where before it was ahead only up to
+2. Because the CPU path spreads a batch over every core, the backend still
+wins only for a lone matrix or a few, and the policy caps the batch
+(`tridiag_max_batch`). With eigenvectors, on an M5 Pro, one $N \times N$
+(eigh, then eigvalsh, against the CPU path):
 
 | $N$ | eigh: CPU | tridiag | speedup | eigvalsh: CPU | tridiag | speedup |
 |---|---|---|---|---|---|---|
@@ -310,6 +315,20 @@ ql_min_n <= N <= ql_max_n  ->  backend 4, ql      (eigh and eigvalsh alike)
 otherwise                  ->  the Jacobi split above
 ```
 
+**Sharing a batch with the CPU** (since 2.11.0). From a batch of
+`share_min_batch` (0: never), a batch that goes to `ql` is solved by the GPU
+and the CPU path at once: the GPU takes chunks from the front of the batch,
+cpu_threads() − 2 CPU workers take a few matrices at a time from the back with
+Accelerate's threading off, and they meet wherever their speeds put them, so
+no split has to be measured (`detail::share_batch` in
+`src/metal_runtime.mm`). Two cores are left to the GPU's host work: with a
+worker on every core the GPU's chunks took 5-7x their time alone. On an M5 Pro,
+against the faster of the two alone: 1.37x for 4096 matrices of 16×16, 1.47x
+for 256 of 48×48, 1.51x for 1024 of 64×64. Below a few hundred matrices the
+threads cost more than they save, which is what the fitted threshold
+(stage 1c of `tuning/tune_eigh.py`) says. `eigh_shares_batch(n, batch)` and
+`eigvalsh_shares_batch` report it; `EIGH_SHARE_MIN_BATCH` overrides it.
+
 All three split large batches across command buffers. macOS kills a
 command buffer that monopolises the GPU for more than a couple of seconds
 ("Impacting Interactivity"), so the host bounds each one with a conservative
@@ -353,41 +372,44 @@ up to 1.5x between runs, so treat ratios near 1 as ties.
 The M1 table above is from before 2.9.0, against MLX's CPU `eigh`, which
 solves a batch one matrix at a time on one core.
 
-On an Apple M5 Pro (20 GPU cores, 18 CPU cores) with 2.9.0, from the routing
-sweep in [`results/apple-m5-pro-20gpu/20261003-2d2c19/eigh/`](results/apple-m5-pro-20gpu/20261003-2d2c19/eigh/):
+On an Apple M5 Pro (20 GPU cores, 18 CPU cores) with 2.11.0, from the routing
+sweep in [`results/apple-m5-pro-20gpu/20261003-c0878c/eigh/`](results/apple-m5-pro-20gpu/20261003-c0878c/eigh/):
 min of two randomised passes, on mains, against the CPU path as the library
 runs it, a batch spread over all 18 cores. Each cell is the speedup of the
-fastest GPU backend over the CPU, with its time and name:
+fastest GPU backend over the CPU, with its time and name (`ql+CPU`: `ql`
+sharing the batch with the CPU path, see [Dispatch](#dispatch)):
 
 | N | batch 1 | batch 16 | batch 256 | batch 4096 |
 |---|---|---|---|---|
-| 4 | 0.01x (0.16 ms, simd) | 0.12x (0.15 ms, tg) | 0.59x (0.17 ms, simd) | **1.22x** (0.29 ms, ql) |
-| 8 | 0.03x (0.17 ms, simd) | 0.22x (0.18 ms, tg) | 0.64x (0.20 ms, tg) | **1.39x** (0.56 ms, simd) |
-| 16 | 0.04x (0.24 ms, tg) | 0.59x (0.24 ms, tg) | 0.86x (0.31 ms, ql) | **1.57x** (1.65 ms, ql) |
-| 32 | 0.10x (0.33 ms, tg) | 0.38x (0.37 ms, tg) | **1.08x** (0.63 ms, ql) | **1.78x** (5.42 ms, ql) |
-| 64 | 0.12x (1.24 ms, tg) | 0.23x (1.28 ms, tg) | 0.69x (3.92 ms, ql) | 0.86x (45.4 ms, ql) |
-| 128 | 0.08x (5.77 ms, block) | 0.12x (6.35 ms, block) | 0.25x (42.3 ms, block) | 0.22x (665 ms, block) |
-| 256 | 0.19x (11.7 ms, block) | 0.17x (20.5 ms, block) | 0.14x (323 ms, block) | -- |
-| 512 | 0.30x (30.0 ms, block) | 0.12x (134 ms, block) | -- | -- |
-| 1024 | 0.40x (101 ms, block) | 0.11x (1.17 s, block) | -- | -- |
+| 4 | 0.01x (0.15 ms, ql) | 0.11x (0.16 ms, simd) | 0.66x (0.17 ms, tg) | **1.19x** (0.29 ms, ql) |
+| 8 | 0.02x (0.20 ms, ql) | 0.22x (0.19 ms, simd) | 0.64x (0.20 ms, tg) | **1.36x** (0.56 ms, simd) |
+| 16 | 0.04x (0.23 ms, tg) | 0.26x (0.24 ms, tg) | 0.84x (0.31 ms, ql) | **1.80x** (1.44 ms, ql+CPU) |
+| 32 | 0.11x (0.33 ms, tg) | 0.39x (0.37 ms, tg) | **1.08x** (0.63 ms, ql) | **2.07x** (4.51 ms, ql+CPU) |
+| 64 | 0.12x (1.25 ms, tg) | 0.22x (1.27 ms, tg) | 0.90x (2.90 ms, ql+CPU) | **1.58x** (23.4 ms, ql+CPU) |
+| 128 | 0.09x (5.79 ms, block) | 0.12x (6.54 ms, block) | 0.25x (40.4 ms, block) | 0.22x (654.3 ms, block) |
+| 256 | 0.20x (11.6 ms, block) | 0.17x (20.4 ms, block) | 0.14x (313.5 ms, block) | -- |
+| 512 | 0.30x (29.9 ms, block) | 0.13x (124.4 ms, block) | -- | -- |
+| 1024 | 0.40x (100.9 ms, block) | 0.10x (1.13 s, block) | -- | -- |
 
 Against a CPU that uses its cores the GPU's region is small: large batches
-of matrices up to N = 48, where `ql` is up to 1.8x faster than the CPU, and
+of matrices up to N = 64, where `ql`, shared with the CPU from about 1024
+matrices, is up to 2.1x faster than the CPU alone, and
 one large matrix, which the `tridiag` backend takes (backend 3; 1.45x at
 N = 1536, 1.9x at 2048, 4.6x at 4096). Without `ql` the GPU would win almost
 nowhere: at 4096 matrices of 32×32 the whole-matrix Jacobi kernel takes
-16.8 ms and the CPU 9.6 ms. `ql` against the best Jacobi kernel, and against
-the CPU:
+16.8 ms and the CPU 9.6 ms. `ql`, alone and sharing the batch with the CPU,
+against the best Jacobi kernel and against the CPU:
 
-| N | batch | ql | best Jacobi | CPU | Jacobi / ql | CPU / ql |
-|---|---|---|---|---|---|---|
-| 16 | 4096 | 1.65 ms | 2.42 ms | 2.59 ms | 1.47x | 1.57x |
-| 24 | 4096 | 3.24 ms | 7.55 ms | 5.91 ms | 2.33x | 1.83x |
-| 32 | 256 | 0.63 ms | 1.60 ms | 0.68 ms | 2.55x | 1.08x |
-| 32 | 4096 | 5.42 ms | 16.8 ms | 9.63 ms | 3.11x | 1.78x |
-| 48 | 1024 | 4.81 ms | 15.2 ms | 5.71 ms | 3.15x | 1.19x |
-| 48 | 4096 | 17.4 ms | 60.5 ms | 23.0 ms | 3.48x | 1.32x |
-| 64 | 4096 | 45.4 ms | 97.9 ms | 38.9 ms | 2.16x | 0.86x |
+| N | batch | ql | shared with the CPU | best Jacobi | CPU | Jacobi / ql | CPU / ql | CPU / shared |
+|---|---|---|---|---|---|---|---|---|
+| 16 | 4096 | 1.64 ms | 1.44 ms | 2.39 ms | 2.60 ms | 1.45x | 1.58x | 1.80x |
+| 24 | 4096 | 3.21 ms | 2.65 ms | 7.50 ms | 5.78 ms | 2.34x | 1.80x | 2.18x |
+| 32 | 256 | 0.63 ms | 0.77 ms | 1.61 ms | 0.69 ms | 2.54x | 1.08x | 0.89x |
+| 32 | 4096 | 5.38 ms | 4.51 ms | 16.5 ms | 9.34 ms | 3.06x | 1.74x | 2.07x |
+| 48 | 1024 | 4.84 ms | 3.93 ms | 15.2 ms | 5.79 ms | 3.14x | 1.20x | 1.47x |
+| 48 | 4096 | 17.1 ms | 11.6 ms | 59.5 ms | 22.2 ms | 3.49x | 1.30x | 1.92x |
+| 64 | 1024 | 11.6 ms | 6.81 ms | 24.9 ms | 10.1 ms | 2.15x | 0.87x | 1.48x |
+| 64 | 4096 | 44.7 ms | 23.4 ms | 95.8 ms | 37.0 ms | 2.15x | 0.83x | 1.58x |
 
 For a lone small matrix and small batches `ql` is slower than the
 whole-matrix kernel (0.63x at 32×32 alone), whose many threads per matrix
@@ -442,16 +464,18 @@ rather than constants:
 | GPU | cores | simd up to | block from | ql for | GPU iff | tridiag | status |
 |---|---|---|---|---|---|---|---|
 | Apple M1 | 8 | N = 8 | N = 96 | never | N <= 64 and batch * N >= 1024 | never | measured before 2.9.0 (incomplete) — see [`studies/eigh-routing-apple-m1.md`](studies/eigh-routing-apple-m1.md) |
-| Apple M5 Pro | 20 | never | N = 96 | N = 12-64 | N <= 48 and batch * N >= 8192 | from N = 1536, batch <= 2 | measured — run [`20261003-2d2c19`](results/apple-m5-pro-20gpu/20261003-2d2c19/eigh/report.md) |
+| Apple M5 Pro | 20 | never | N = 96 | N = 12-64, shared with the CPU from batch 1024 | N <= 48 and batch * N >= 8192 (eigvalsh: batch * N >= 16384) | from N = 1536, batch <= 2 | measured — run [`20261003-c0878c`](results/apple-m5-pro-20gpu/20261003-c0878c/eigh/report.md) |
 | anything else | — | N = 8 | N = 96 | never | N <= 64 and batch * N >= 1024 | never | **untuned default** |
 
 The M5 Pro row is the first measured against the CPU path that spreads a
 batch over every core (2.9.0). Against it the GPU keeps two regions: large
 batches of matrices up to N = 48 (batch × N at least 8192, so 256 matrices of
-32×32 or 1024 of 8×8), on the `ql` backend from N = 12, and one or two large
-matrices on `tridiag`. Eigenvalues alone never go to the GPU: the CPU's
-eigenvalue paths are fast enough that the GPU did not win anywhere it was
-measured, except `tridiag` for one matrix from N = 3072. Before 2.9.0 the
+32×32 or 1024 of 8×8), on the `ql` backend from N = 12, shared with the
+CPU path from 1024 matrices (since 2.11.0), and one or two large matrices on
+`tridiag`. Eigenvalues alone go to the GPU from twice the batch (batch × N at
+least 16384), shared likewise; before 2.11.0 they never did, the CPU's
+eigenvalue paths being faster than the GPU alone everywhere measured except
+`tridiag` for one matrix from N = 3072. Before 2.9.0 the
 same machine routed batches up to N = 1024 to the GPU, measured against one
 CPU core ([study](studies/routing-apple-m5-pro.md)); against every core that
 routing is 1.71x slower than the oracle on geometric mean, worst 14x, and

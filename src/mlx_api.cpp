@@ -211,6 +211,12 @@ EighResult eigh_ql(const mx::array& a, bool compute_vectors, bool lower) {
     });
 }
 
+EighResult eigh_ql_shared(const mx::array& a, bool compute_vectors, bool lower) {
+    return run_eigh(a, compute_vectors, "eigh", [&](const core::Matrices& m, float* w, float* v, uint32_t* info) {
+        core::detail::eigh_ql_shared(m, lower, w, v, info);
+    });
+}
+
 EighResult eigh_cpu(const mx::array& a, bool compute_vectors, bool lower) {
     return run_eigh(a, compute_vectors, "eigh", [&](const core::Matrices& m, float* w, float* v, uint32_t* info) {
         core::detail::eigh_cpu(m, lower, w, v, info);
@@ -241,6 +247,10 @@ SvdResult svd_bidiag(const mx::array& a, bool compute_uv) {
 
 SvdResult svd_golub_kahan(const mx::array& a, bool compute_uv) {
     return run_svd(a, compute_uv, "svd", core::detail::svd_golub_kahan);
+}
+
+SvdResult svd_golub_kahan_shared(const mx::array& a, bool compute_uv) {
+    return run_svd(a, compute_uv, "svd", core::detail::svd_golub_kahan_shared);
 }
 
 SvdResult svd_cpu(const mx::array& a, bool compute_uv) {

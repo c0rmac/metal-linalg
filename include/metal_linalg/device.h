@@ -25,7 +25,9 @@ namespace metal_linalg {
     // METAL_LINALG_CPU_THREADS=n; 0 restores the default, and 1 solves a
     // batch one matrix after another. The tuned GPU-or-CPU boundaries were
     // measured with every core, so a cap moves the real boundary toward the
-    // GPU without moving the policy.
+    // GPU without moving the policy. A batch shared between the GPU and the
+    // CPU (share_min_batch in the eigh and SVD policies) runs the CPU's side
+    // on two threads fewer, leaving cores for the GPU's host work.
     void     set_cpu_threads(unsigned n);
     unsigned cpu_threads();
 

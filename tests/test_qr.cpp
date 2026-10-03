@@ -166,6 +166,11 @@ int main() {
     run("2048x64 (tall)",  detail::qr_cpu, random_matrix(1, 2048, 64, 96));
     run("batch 32 x 8x8",  detail::qr_cpu, random_matrix(32, 8, 8, 97));
     run("batch 4 x 100x60",detail::qr_cpu, random_matrix(4, 100, 60, 98));
+    // Wide: the leading block's QR, then R2 = Q^T A2 (see qr_cpu.mm).
+    run("64x2048 (wide)",  detail::qr_cpu, random_matrix(1, 64, 2048, 99));
+    run("batch 5 x 30x45 (wide)", detail::qr_cpu, random_matrix(5, 30, 45, 100));
+    run("1x7 (wide)",      detail::qr_cpu, random_matrix(1, 1, 7, 101));
+    run("rank 3 of 40x90 (wide)", detail::qr_cpu, matmul(random_matrix(1, 40, 3, 102), random_matrix(1, 3, 90, 103)));
     // A batch is spread over cpu_threads() threads; one thread must agree.
     {
         array A = random_matrix(41, 48, 20, 99);

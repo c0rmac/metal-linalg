@@ -4,7 +4,8 @@
 //   backends: cpu (the library's CPU path, LAPACK ssyevd, the batch over every core), simd,
 //             tg (whole-matrix kernel in each execution mode), block (block Jacobi), tridiag
 //             (the hybrid backend, eigh_tridiag.mm), ql (tridiagonalization and QL, one
-//             threadgroup per matrix, eigh_ql.mm; N up to its device limit); each also as <name>_vals,
+//             threadgroup per matrix, eigh_ql.mm; N up to its device limit), ql_share (ql and the
+//             CPU path sharing the batch, share_min_batch); each also as <name>_vals,
 //             eigenvalues alone (eigvalsh: the CPU path is then LAPACK ssyevd_2stage
 //             from N = 128), which has its own GPU-or-CPU boundary
 //   out:   batch,N,backend,ok,ms,p25,p75,reps   (one row per backend)
@@ -118,6 +119,13 @@ std::pair<array, array> solve_ql(const array& A) {
 std::pair<array, array> vals_ql(const array& A) {
     array w = detail::eigh_ql(A, false, true).eigenvalues; return {w, w};
 }
+std::pair<array, array> solve_ql_share(const array& A) {
+    EighResult r = detail::eigh_ql_shared(A, true, true);
+    return {r.eigenvalues, r.eigenvectors};
+}
+std::pair<array, array> vals_ql_share(const array& A) {
+    array w = detail::eigh_ql_shared(A, false, true).eigenvalues; return {w, w};
+}
 std::pair<array, array> vals_block(const array& A) {
     EighOptions o; o.mode = EighOptions::Mode::block;
     array w = detail::eigh_block_jacobi(A, false, true, o).eigenvalues; return {w, w};
@@ -217,18 +225,18 @@ int main(int argc, char** argv) {
                     "\"values_gpu_min_batch_times_n\": %u, \"values_gpu_min_batch\": %u, "
                     "\"tridiag_min_n\": %u, \"values_tridiag_min_n\": %u, "
                     "\"ql_min_n\": %u, \"ql_max_n\": %u, \"ql_limit\": %u, \"cpu_threads\": %u, "
-                    "\"tridiag_max_batch\": %u, \"values_tridiag_max_batch\": %u}\n",
+                    "\"tridiag_max_batch\": %u, \"values_tridiag_max_batch\": %u, \"share_min_batch\": %u}\n",
                     device_name(), p.gpu_cores, eigh_policy_source(),
                     p.simd_max_n, p.block_min_n, p.block_min_n_batched, p.block_min_batch,
                     p.gpu_max_n, p.gpu_min_batch_times_n, p.gpu_min_batch,
                     p.values_gpu_max_n, p.values_gpu_min_batch_times_n, p.values_gpu_min_batch,
                     p.tridiag_min_n, p.values_tridiag_min_n, p.ql_min_n, p.ql_max_n,
                     metal_linalg::detail::eigh_ql_max_n(), cpu_threads(),
-                    p.tridiag_max_batch, p.values_tridiag_max_batch);
+                    p.tridiag_max_batch, p.values_tridiag_max_batch, p.share_min_batch);
         return 0;
     }
     if (argc != 4) {
-        std::fprintf(stderr, "usage: %s <batch> <N> <cpu|simd|tg|block|tridiag|ql>[_vals][,...]\n"
+        std::fprintf(stderr, "usage: %s <batch> <N> <cpu|simd|tg|block|tridiag|ql|ql_share>[_vals][,...]\n"
                              "       %s --policy\n", argv[0], argv[0]);
         return 2;
     }
@@ -253,6 +261,8 @@ int main(int argc, char** argv) {
         else if (name == "tridiag_vals") solvers.push_back({name, vals_tridiag, false});
         else if (name == "ql")           solvers.push_back({name, solve_ql});
         else if (name == "ql_vals")      solvers.push_back({name, vals_ql, false});
+        else if (name == "ql_share")      solvers.push_back({name, solve_ql_share});
+        else if (name == "ql_share_vals") solvers.push_back({name, vals_ql_share, false});
         else if (!name.empty()) { std::fprintf(stderr, "unknown backend: %s\n", name.c_str()); return 2; }
         pos = comma + 1;
     }

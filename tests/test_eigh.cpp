@@ -553,10 +553,14 @@ int main() {
             check("tridiag upper, junk below 200x200", add(triu(S), tril(junk, -1)),
                   tri(add(triu(S), tril(junk, -1)), true, false), false);
         }
-        // A batch, solved one matrix after another.
+        // A batch, pipelined over two workspace slots: odd and even counts.
         {
             array A = random_symmetric(3, 150, 1300);
             check("tridiag batch 3 x 150x150", A, tri(A, true, true));
+            array B = random_symmetric(4, 70, 1301);
+            check("tridiag batch 4 x 70x70", B, tri(B, true, true));
+            EighResult bv = tri(B, false, true);
+            check("tridiag batch 4 x 70x70 values only", B, bv, true, false);
         }
         // Magnitudes a float32 product would over- or underflow without scaling.
         for (float s : {1e-30f, 1e-20f, 1e20f, 1e37f}) {
@@ -649,6 +653,21 @@ int main() {
             array A = random_symmetric(3000, 24, 2310);
             check("ql 3000 x 24x24, 1 ms per command buffer", A, ql(A, true, true));
             unsetenv("EIGH_CHUNK_MS");
+        }
+        // A batch shared with the CPU path: the GPU's chunks from the front,
+        // the CPU's from the back; every matrix solved once, either way.
+        {
+            auto shared = [](const array& A, bool vectors) {
+                EighResult r = detail::eigh_ql_shared(A, vectors, true);
+                eval({r.eigenvalues, r.eigenvectors, r.info});
+                return r;
+            };
+            array A = random_symmetric(700, 24, 2320);
+            check("ql shared with the CPU 700 x 24x24", A, shared(A, true));
+            EighResult rv = shared(A, false);
+            check("ql shared with the CPU, values only 700 x 24x24", A, rv, true, false);
+            array B = random_symmetric(3, 40, 2321);
+            check("ql shared with the CPU 3 x 40x40", B, shared(B, true));
         }
         // Magnitudes a float32 product would over- or underflow without scaling.
         for (float s : {1e-30f, 1e-20f, 1e20f, 1e37f}) {
@@ -945,7 +964,14 @@ int main() {
                 const float d = max_abs(subtract(w, w_ref)) / std::max(frobenius(A), 1.0f);
                 expect("eigvalsh routed to ql (16 x 30x30) == LAPACK", d < kEigTol, "differ by " + std::to_string(d));
             }
+            // Sharing a batch with the CPU, from share_min_batch on, ql only.
+            q.share_min_batch = 256;
+            set_eigh_policy(q);
+            expect("share_min_batch = 256: N=30 b256 shared, b255 not; eigvalsh too",
+                   eigh_shares_batch(30, 256) && !eigh_shares_batch(30, 255) && eigvalsh_shares_batch(30, 256));
+            api("routed to ql, shared with the CPU (300 x 30x30)", random_symmetric(300, 30, 842));
             set_eigh_policy(known);
+            expect("share_min_batch unset -> never", !eigh_shares_batch(30, 1 << 20));
         }
 
         setenv("EIGH_DEVICE", "cpu", 1);

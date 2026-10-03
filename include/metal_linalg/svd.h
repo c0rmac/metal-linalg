@@ -56,6 +56,8 @@ namespace metal_linalg {
         // Shapes that metal_linalg::detail::svd_gk_fits(); `info` counts QR
         // steps. With the QR first: svd_qr_jacobi with Kernel::golub_kahan.
         SvdResult svd_golub_kahan(const mlx::core::array& a, bool compute_uv);
+        // golub_kahan and the CPU path sharing one batch (SvdPolicy::share_min_batch).
+        SvdResult svd_golub_kahan_shared(const mlx::core::array& a, bool compute_uv);
     }
 
 } // namespace metal_linalg

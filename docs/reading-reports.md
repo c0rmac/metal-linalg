@@ -211,6 +211,18 @@ included, and checked on held-out points against leaving it off. Stage 1
 itself chooses among the Jacobi kernels only, so its crossovers mean what
 they did before these backends existed.
 
+**Stage 1c** fits `share_min_batch`: from which batch a batch that goes to
+`ql` (eigh) or `gk` (SVD) is shared with the CPU path, the two solving it at
+once. It is scored against the best GPU backend, the shared one (`ql_share`,
+`gk_share`) included, on the points where that was timed (batches from 64)
+and the backend is the GPU's choice. Sharing only pays from a batch large
+enough to keep both busy; below it the threads cost more than they save.
+
+**Stage 2b** (SVD) fits the GPU/CPU boundary again for singular values alone
+(`svdvals`): both sides skip the vectors, by different amounts, so the
+boundary moves. It is scored on the `gk_vals` and `cpu_vals` timings where `gk`
+is the GPU's choice, against stage 2's rule applied as is.
+
 **Stage 2** fits the GPU/CPU boundary given stage 1's choice, scored against
 the best of all backends.
 

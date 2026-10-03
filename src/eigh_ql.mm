@@ -67,13 +67,14 @@ constexpr double kCoreMsPerN3   = 4e-6;
 constexpr double kChunkBudgetMs = 750.0;   // wall time per command buffer
 
 struct Workspace {
+    uint32_t      capacity = 0;   // matrices the buffers hold
     id<MTLBuffer> vals, vecs, info;
 };
 
 struct Cache {
     MetalRuntime& rt = MetalRuntime::shared(METAL_LINALG_SHADER(Eigh_QL), "eigh_ql");
     std::map<std::pair<bool, bool>, id<MTLComputePipelineState>> pipelines;  // (vectors, overlap)
-    std::map<std::pair<uint32_t, uint32_t>, Workspace>        workspaces;   // (batch, n)
+    std::map<uint32_t, Workspace>                             workspaces;   // by n
 
     id<MTLComputePipelineState> pipeline(bool vectors, bool overlap) {
         const auto key = std::make_pair(vectors, overlap);
@@ -84,18 +85,21 @@ struct Cache {
         return pipelines[key] = make_pipeline(rt.device, rt.library, @"eigh_ql", cv);
     }
 
+    // Buffers for at least `batch` matrices of order n: the latest order's are
+    // kept and grown, so that the chunks of a shared batch (share_batch) and
+    // calls with varying batches reuse them.
     Workspace workspace(uint32_t batch, uint32_t n) {
-        const auto key = std::make_pair(batch, n);
-        if (auto it = workspaces.find(key); it != workspaces.end()) return it->second;
+        if (auto it = workspaces.find(n); it != workspaces.end() && it->second.capacity >= batch) return it->second;
         const MTLResourceOptions opt = MTLResourceStorageModeShared;
         Workspace w;
         w.vals = [rt.device newBufferWithLength:std::max<size_t>(16, (size_t)batch * n * sizeof(float)) options:opt];
         w.vecs = [rt.device newBufferWithLength:std::max<size_t>(16, (size_t)batch * n * n * sizeof(float)) options:opt];
         w.info = [rt.device newBufferWithLength:std::max<size_t>(16, (size_t)batch * sizeof(uint32_t)) options:opt];
+        w.capacity = batch;
         // One workspace per shape is kept; drop the rest so that a sweep over
         // many shapes does not hold them all.
         workspaces.clear();
-        return workspaces[key] = w;
+        return workspaces[n] = w;
     }
 
     static Cache& shared() {

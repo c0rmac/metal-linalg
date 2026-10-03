@@ -30,8 +30,28 @@ CPU for large batches up to 48×48 (run
 It, too, needed a routing term: the CPU's QR-first path wins tall matrices
 however small k is, so the SVD's GPU-or-CPU rule caps the long side
 (`gpu_max_l`), as QR's now has a lower bound on k (`gpu_min_k`) for the
-smallest matrices, which the parallel CPU wins at any batch. Two things
-learned while building the `ql` kernel correct this study:
+smallest matrices, which the parallel CPU wins at any batch.
+
+**And in 2.11.0** items 2 and 4a were built, and 4b and 4c were not:
+
+- *Item 2, the CPU and the GPU on one batch*, as `share_min_batch`
+  (`detail::share_batch`). Not by a measured split but dynamically: the GPU
+  takes chunks from the front of the batch, CPU workers from the back, until
+  they meet. A static split at the best fraction got within 10-20% of the
+  harmonic sum, and the first dynamic version did not get near it, for a reason
+  this study missed: the GPU's chunks have host work of their own (the input
+  scan and copies, waiting on completion), and with a CPU worker on every core
+  they took 5-7x their time alone. With two cores left to it, sharing is
+  1.4-1.7x faster than either side alone where the two are close, measured
+  (the estimate here was 1.03-1.7x).
+- *Item 4a, pipelining batches of large matrices*, in `tridiag` and `bidiag`:
+  1.48x (eigh) and 1.66x (SVD) per matrix of 2048×2048 in batches of 8,
+  within the estimate.
+- *Items 4b and 4c* were left: fewer dispatches per column would mean
+  reworking both reduction kernels for an estimated 1.25x at the largest
+  sizes, and a parallel divide and conquer is a CPU solver of its own.
+
+Two things learned while building the `ql` kernel correct this study:
 
 - *The register-resident layout suggested in section 4 would not have helped.*
   A matrix's state is about $N^2$ floats wherever it lives, and Apple's GPUs
@@ -99,9 +119,9 @@ Ranked by value for effort:
 | # | change | gain | evidence | effort |
 |---|---|---|---|---|
 | 1 | CPU path parallel over the batch, then re-measure the routing | eigh 1.7-8.5x, SVD 1.7-4.3x, QR up to 2x over today on batched shapes from 32×32; 7.5-15x on batched shapes already on the CPU | measured | small |
-| 2 | split a batch between CPU and GPU when their speeds are close | 1.03-1.7x over the better device | measured (coarse split search) | moderate |
+| 2 | split a batch between CPU and GPU when their speeds are close | 1.03-1.7x over the better device | measured (coarse split search); built in 2.11.0 (1.4-1.7x) | moderate |
 | 3 | batched tridiagonal-QL eigensolver kernel, then its SVD counterpart | at N = 24-32, 3-4x over today's GPU kernel and up to 2.3x over the 18-core CPU (1.1-1.8x at N = 8-16); N = 48-64 needs a register-resident layout | prototype measured at N ≤ 64; both built (2.9.0, 2.10.0) | substantial |
-| 4a | pipeline batches of large matrices (CPU solve of one, GPU reduction of the next) | 1.4-1.7x for batches | estimated from measured steps | small-moderate |
+| 4a | pipeline batches of large matrices (CPU solve of one, GPU reduction of the next) | 1.4-1.7x for batches | estimated from measured steps; built in 2.11.0 (1.48x, 1.66x) | small-moderate |
 | 4b | fewer dispatches per column in the GPU reductions | 1.25-1.6x at N = 2048-4096, and a lower `tridiag`/`bidiag` crossover | estimated | moderate |
 | 4c | parallel divide and conquer (Accelerate exports `slaed*`, `slasd*`) | 1.3-1.45x at N = 4096 | estimated | high |
 | 4d | two-stage reduction with the first stage on the GPU | 1.4-1.6x for `eigvalsh` at large N; `svdvals` by analogy | estimated from measured CPU steps (symmetric case only) | high |
