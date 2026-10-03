@@ -163,6 +163,18 @@ jobs:
           cp -r python-torch/tests "$RUNNER_TEMP/torch-tests"
           cd "$RUNNER_TEMP"
           "$RUNNER_TEMP/venv/bin/python" -c "import metal_linalg_torch as mlt, torch; print(mlt.__version__, torch.__version__, mlt.device_name())"
+          METAL_LINALG_NO_CALIBRATION_NOTICE=1 "$RUNNER_TEMP/venv/bin/python" - <<'PYEOF' || true
+          import torch, metal_linalg_torch as mlt
+          print("DIAG", mlt.eigh_policy())
+          mlt.set_eigh_policy(gpu_max_n=0, gpu_min_batch_times_n=0, values_gpu_max_n=0, values_gpu_min_batch_times_n=0, tridiag_min_n=0, values_tridiag_min_n=0)
+          torch.manual_seed(0)
+          for n in (64, 100, 127, 128, 129, 200, 300, 600):
+              a = torch.randn(n, n, dtype=torch.float64); s = (a + a.mT).float()
+              ref = torch.linalg.eigvalsh(s.double())
+              for up in ("L", "U"):
+                  w = mlt.eigvalsh(s, UPLO=up).double(); L = mlt.eigh(s, UPLO=up).eigenvalues.double()
+                  print("DIAG", n, up, mlt.eigvalsh_backend(n), f"vals {((w-ref).abs().max()/ref.abs().max()).item():.2e}", f"eigh {((L-ref).abs().max()/ref.abs().max()).item():.2e}")
+          PYEOF
           # CPU tensors only: on these virtual Macs torch 2.4's MPS reports itself
           # available, then fails to allocate a few hundred bytes. (The suite passes
           # with MPS and torch 2.4 on real hardware; the job above covers MPS.)
