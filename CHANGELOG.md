@@ -14,9 +14,15 @@
   address space on a by-value parameter; three QR helpers take their tile by
   `const` reference instead. Building from source with the Metal toolchain
   installed failed before this.
+- **The Swift package builds on macOS 14.** It embedded the shaders with
+  C23's `#embed`, which the Xcode on macOS 14 does not support, so the
+  package did not compile there. `swift/CMetalLinalg/embedded_shaders.c` now
+  holds them as plain byte arrays, generated from `shaders/prebuilt/` by
+  `cmake/EmbedSwiftShaders.cmake` whenever those are refreshed.
 - CI: the wheels are installed and tested on macOS 14 before every PyPI
   upload, and the Swift package's tests (prebuilt shaders, every kernel) run
-  on macOS 14 and 15 for every change to the shaders or the library.
+  on macOS 14 and 15 for every change to the shaders or the library, with a
+  check that its copy of the shaders matches `shaders/prebuilt/`.
 
 ## 2.4.0 (2026-10-02)
 

@@ -16,10 +16,11 @@ on:
       - "swift/**"
       - "Package.swift"
       - "CMakeLists.txt"
+      - "cmake/**"
       - ".github/workflows/compat.yml"
   push:
     branches: [main]
-    paths: ["shaders/**", ".github/workflows/compat.yml"]
+    paths: ["shaders/**", "swift/**", "cmake/**", ".github/workflows/compat.yml"]
   workflow_dispatch:
 
 permissions:
@@ -40,6 +41,11 @@ jobs:
           for f in shaders/prebuilt/*.metallib; do
             echo "$f: $(strings "$f" | grep -o -E 'air64[a-z0-9_]*-apple-macos[x]?[0-9.]*' | sort -u)"
           done
+      - name: The Swift package's copy of the shaders matches shaders/prebuilt
+        run: |
+          cmake -DROOT="$PWD" -DOUTPUT="$RUNNER_TEMP/embedded_shaders.c" -P cmake/EmbedSwiftShaders.cmake
+          diff -q swift/CMetalLinalg/embedded_shaders.c "$RUNNER_TEMP/embedded_shaders.c" ||
+            { echo "::error::swift/CMetalLinalg/embedded_shaders.c is stale: run update_prebuilt_shaders"; exit 1; }
       - name: Swift package tests (prebuilt shaders, every kernel)
         env:
           METAL_LINALG_NO_MLX: "1"

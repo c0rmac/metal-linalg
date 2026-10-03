@@ -164,6 +164,8 @@ if (NOT METAL_LINALG_USE_PREBUILT_SHADERS)
     add_custom_target(update_prebuilt_shaders
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_ml_metallibs}
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/prebuilt/"
+        COMMAND ${CMAKE_COMMAND} -DROOT=${CMAKE_CURRENT_SOURCE_DIR}
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedSwiftShaders.cmake"
         DEPENDS ${_ml_metallibs}
         COMMENT "Refreshing shaders/prebuilt/ from this build"
         VERBATIM)
