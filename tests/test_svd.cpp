@@ -196,6 +196,12 @@ void run_qr_block(const std::string& label, const array& A) {
     check(label, A, r);
 }
 
+void run_bidiag(const std::string& label, const array& A) {
+    SvdResult r = detail::svd_bidiag(A, true);
+    eval({r.U, r.S, r.Vt, r.info});
+    check(label, A, r);
+}
+
 void run_cpu(const std::string& label, const array& A) {
     SvdResult r = detail::svd_cpu(A, true);
     eval({r.U, r.S, r.Vt, r.info});
@@ -461,6 +467,57 @@ int main() {
     run_cpu(dims(6, 90, 30),             random_matrix(6, 90, 30, 964));
     run_cpu("rank one 30x20",            matmul(random_matrix(1, 30, 1, 965), random_matrix(1, 1, 20, 966)));
 
+    // The bidiag backend reduces on the GPU in panels of 32 columns while more
+    // than 33 remain, LAPACK takes the rest; a matrix at least twice as tall
+    // as wide and 64 wide goes through a QR first; a wide one is its transpose.
+    std::printf("\n[ backend: bidiag ]\n");
+    for (auto [M, N] : std::vector<std::pair<int, int>>{{1, 1}, {3, 3}, {33, 33}, {34, 34}, {35, 35},
+                                                         {65, 64}, {64, 65}, {100, 97}, {129, 130},
+                                                         {300, 300}, {513, 500}, {300, 20}, {20, 300},
+                                                         {600, 100}, {100, 600}, {1024, 1024}})
+        run_bidiag("bidiag " + dims(1, M, N), random_matrix(1, M, N, 1000 + M * 3 + N));
+    run_bidiag("bidiag " + dims(3, 150, 120), random_matrix(3, 150, 120, 1100));
+    for (float s : {1e-30f, 1e20f, 1e37f}) {
+        char label[64];
+        std::snprintf(label, sizeof label, "bidiag scaled by %.0e 160x140", s);
+        run_bidiag(label, multiply(random_matrix(1, 160, 140, 1200), array(s / 5.0f)));
+    }
+    run_bidiag("bidiag rank one 200x150", matmul(random_matrix(1, 200, 1, 1300), random_matrix(1, 1, 150, 1301)));
+    run_bidiag("bidiag zero 120x100", zeros({120, 100}));
+    run_bidiag("bidiag identity 100x100", eye(100));
+    {
+        std::vector<float> spec(90);
+        for (int i = 0; i < 90; ++i) spec[i] = i < 40 ? 3.0f : 1e-3f * (90 - i);
+        run_bidiag("bidiag repeated and tiny values 150x90", with_singular_values(150, 90, spec));
+    }
+    {   // singular values alone == with vectors
+        array A = random_matrix(1, 300, 260, 1400);
+        SvdResult rv = detail::svd_bidiag(A, false), rw = detail::svd_bidiag(A, true);
+        eval({rv.S, rw.S});
+        ++g_checks;
+        const float d = max_abs(subtract(rv.S, rw.S)) / std::max(max_abs(rw.S), 1e-30f);
+        // LAPACK computes them by different methods (dqds, divide and conquer),
+        // so they agree to float32 precision, not bit for bit.
+        if (d > 2e-5f) fail("bidiag values-only == with vectors", "differ by " + std::to_string(d));
+        else std::printf("  ok    %-44s |ds|=%.1e\n", "bidiag values-only == with vectors", d);
+    }
+    {   // NaN in one matrix of a batch
+        const int M = 70, N = 50;
+        array A = random_matrix(2, M, N, 1500);
+        eval({A});
+        std::vector<float> data(A.data<float>(), A.data<float>() + 2 * M * N);
+        data[(size_t)M * N + 7] = NAN;
+        SvdResult r = detail::svd_bidiag(from_values(data, {2, M, N}), true);
+        array info = reshape(r.info, {-1});
+        array s1 = slice(r.S, {1, 0}, {2, N}), s0 = slice(r.S, {0, 0}, {1, N});
+        eval({info, s0, s1});
+        ++g_checks;
+        const bool ok = all(isnan(s1)).item<bool>() && !has_non_finite(s0) &&
+                        !detail::svd_converged(info.data<uint32_t>()[1]) && detail::svd_converged(info.data<uint32_t>()[0]);
+        if (!ok) fail("bidiag NaN in one matrix of a batch", "not isolated");
+        else std::printf("  ok    %-44s\n", "bidiag NaN in one matrix of a batch");
+    }
+
     // -------------------------------------------------------------------------
     // Routing policy. Device-tuned, so nothing here may assume the values
     // measured on any one GPU: each check installs the policy it needs, and
@@ -604,6 +661,45 @@ int main() {
                back.gpu_max_k == original.gpu_max_k &&
                back.gpu_min_batch_times_k == original.gpu_min_batch_times_k &&
                back.gpu_min_batch == original.gpu_min_batch);
+    }
+
+    // The bidiag backend replaces the CPU from its thresholds; 0 = never.
+    std::printf("\n[ routing: bidiag ]\n");
+    {
+        const SvdPolicy original = svd_policy();
+        auto expect = [&](const std::string& label, bool ok) {
+            ++g_checks;
+            if (ok) std::printf("  ok    %s\n", label.c_str()); else fail(label, "");
+        };
+        unsetenv("SVD_DEVICE");
+        SvdPolicy p = original;
+        p.gpu_max_k = 0;              // the CPU unless bidiag
+        p.bidiag_min_k = 0;
+        p.values_bidiag_min_k = 0;
+        set_svd_policy(p);
+        expect("thresholds 0 -> never (4096x4096 -> cpu)",
+               svd_backend(4096, 4096, 1) == SvdBackend::cpu && svdvals_backend(4096, 4096, 1) == SvdBackend::cpu);
+        p.bidiag_min_k = 256;
+        p.values_bidiag_min_k = 1024;
+        set_svd_policy(p);
+        expect("bidiag_min_k = 256: k=255 cpu, k=256 bidiag (tall 2000x256 too)",
+               svd_backend(255, 400, 1) == SvdBackend::cpu && svd_backend(256, 400, 1) == SvdBackend::bidiag &&
+               svd_backend(2000, 256, 1) == SvdBackend::bidiag);
+        expect("values_bidiag_min_k = 1024: svdvals k=512 cpu, k=1024 bidiag",
+               svdvals_backend(512, 512, 1) == SvdBackend::cpu && svdvals_backend(1024, 1024, 1) == SvdBackend::bidiag);
+        {
+            array A = random_matrix(1, 400, 300, 1600);
+            auto [U, S, Vt] = svd_accelerated(A);
+            eval({U, S, Vt});
+            check("routed to bidiag (400x300)", A, SvdResult{U, S, Vt, full({}, (uint32_t)(1u | (1u << 16)))});
+        }
+        setenv("SVD_DEVICE", "cpu", 1);
+        expect("SVD_DEVICE=cpu keeps the CPU over bidiag", svd_backend(4096, 4096, 1) == SvdBackend::cpu);
+        setenv("SVD_DEVICE", "bidiag", 1);
+        expect("SVD_DEVICE=bidiag forces it", svd_backend(16, 16, 4096) == SvdBackend::bidiag &&
+                                              svdvals_backend(8, 8, 1) == SvdBackend::bidiag);
+        unsetenv("SVD_DEVICE");
+        set_svd_policy(original);
     }
 
     // -------------------------------------------------------------------------

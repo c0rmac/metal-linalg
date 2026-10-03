@@ -229,6 +229,10 @@ SvdResult svd_qr_jacobi(const mx::array& a, bool compute_uv, const SvdOptions& o
     });
 }
 
+SvdResult svd_bidiag(const mx::array& a, bool compute_uv) {
+    return run_svd(a, compute_uv, "svd", core::detail::svd_bidiag);
+}
+
 SvdResult svd_cpu(const mx::array& a, bool compute_uv) {
     return run_svd(a, compute_uv, "svd", core::detail::svd_cpu);
 }

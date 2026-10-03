@@ -133,6 +133,18 @@ int main(void) {
               metal_linalg_eigh_backend(512, 1));
         CHECK(strcmp(metal_linalg_eigh_backend(128, 1), "cpu") == 0, "tridiag below its threshold");
         metal_linalg_eigh_policy_set(&measured);
+        /* The bidiag SVD backend instead of the CPU, and svdvals' own threshold. */
+        const metal_linalg_svd_policy svd_measured = metal_linalg_svd_policy_get();
+        metal_linalg_svd_policy sp = svd_measured;
+        sp.gpu_max_k = 0;
+        sp.bidiag_min_k = 256;
+        sp.values_bidiag_min_k = 0;
+        metal_linalg_svd_policy_set(&sp);
+        CHECK(strcmp(metal_linalg_svd_backend(512, 512, 1), "bidiag") == 0, "bidiag_min_k = 256: 512x512 routes to %s",
+              metal_linalg_svd_backend(512, 512, 1));
+        CHECK(strcmp(metal_linalg_svdvals_backend(512, 512, 1), "cpu") == 0, "values_bidiag_min_k = 0 still bidiag");
+        metal_linalg_svd_policy_set(&svd_measured);
+        metal_linalg_eigh_policy_set(&measured);
         CHECK(metal_linalg_eigh_policy_get().gpu_max_n == measured.gpu_max_n, "policy not restored");
     }
 

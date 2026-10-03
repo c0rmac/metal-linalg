@@ -49,6 +49,7 @@ array random_matrix(int batch, int M, int N) {
 struct Solver {
     std::string name;
     SvdResult (*fn)(const array&);
+    bool vectors = true;   // false: singular values alone (svdvals), checked against MLX's CPU svd
 };
 
 SvdOptions with_kernel(SvdOptions::Kernel k) {
@@ -66,9 +67,29 @@ SvdResult solve_qr(const array& A) {
 SvdResult solve_qr_block(const array& A) {
     return detail::svd_qr_jacobi(A, true, with_kernel(SvdOptions::Kernel::block));
 }
+SvdResult solve_bidiag(const array& A)  { return detail::svd_bidiag(A, true); }
+// Singular values alone, as svdvals runs them.
+SvdResult vals_cpu(const array& A)      { return detail::svd_cpu(A, false); }
+SvdResult vals_bidiag(const array& A)   { return detail::svd_bidiag(A, false); }
+
+// Singular values alone: the largest error against MLX's CPU svd, relative to S_max.
+float values_error(const Solver& s, const array& A) {
+    try {
+        array S = s.fn(A).S;
+        array ref = linalg::svd(A, false, Device::cpu)[0];
+        array e = max(abs(subtract(S, ref)));
+        array top = max(abs(ref));
+        eval({e, top});
+        const float err = e.item<float>();
+        return std::isfinite(err) ? err / std::max(top.item<float>(), 1e-30f) : INFINITY;
+    } catch (const std::exception&) {
+        return INFINITY;
+    }
+}
 
 // Relative reconstruction error, or infinity if the backend cannot run here.
 float correctness(const Solver& s, const array& A) {
+    if (!s.vectors) return values_error(s, A);
     try {
         SvdResult r = s.fn(A);
         eval({r.U, r.S, r.Vt});
@@ -97,17 +118,17 @@ double quantile(const std::vector<double>& sorted, double q) {
 }
 
 Timing time_ms(const Solver& s, const array& A, double budget_ms = 150.0, int max_reps = 25) {
-    for (int i = 0; i < 2; ++i) {
+    auto run = [&] {
         SvdResult r = s.fn(A);
-        eval({r.U, r.S, r.Vt});
-    }
+        if (s.vectors) eval({r.U, r.S, r.Vt}); else eval({r.S});
+    };
+    for (int i = 0; i < 2; ++i) run();
     std::vector<double> samples;
     double total = 0.0;
     int min_reps = 5;
     while ((int)samples.size() < max_reps && (total < budget_ms || (int)samples.size() < min_reps)) {
         auto t0 = std::chrono::high_resolution_clock::now();
-        SvdResult r = s.fn(A);
-        eval({r.U, r.S, r.Vt});
+        run();
         auto t1 = std::chrono::high_resolution_clock::now();
         const double dt = std::chrono::duration<double, std::milli>(t1 - t0).count();
         samples.push_back(dt);
@@ -136,15 +157,17 @@ int main(int argc, char** argv) {
         std::printf("{\"device\": \"%s\", \"gpu_cores\": %u, \"source\": \"%s\", "
                     "\"qr_min_rows\": %u, \"qr_min_k\": %u, "
                     "\"block_min_k\": %u, \"block_min_k_batched\": %u, \"block_min_batch\": %u, "
-                    "\"gpu_max_k\": %u, \"gpu_min_batch_times_k\": %u, \"gpu_min_batch\": %u}\n",
+                    "\"gpu_max_k\": %u, \"gpu_min_batch_times_k\": %u, \"gpu_min_batch\": %u, "
+                    "\"bidiag_min_k\": %u, \"values_bidiag_min_k\": %u}\n",
                     device_name(), p.gpu_cores, svd_policy_source(),
                     p.qr_min_rows, p.qr_min_k,
                     p.block_min_k, p.block_min_k_batched, p.block_min_batch,
-                    p.gpu_max_k, p.gpu_min_batch_times_k, p.gpu_min_batch);
+                    p.gpu_max_k, p.gpu_min_batch_times_k, p.gpu_min_batch,
+                    p.bidiag_min_k, p.values_bidiag_min_k);
         return 0;
     }
     if (argc != 5) {
-        std::fprintf(stderr, "usage: %s <batch> <M> <N> <cpu|jacobi|block|qr|qrblock>[,...]\n"
+        std::fprintf(stderr, "usage: %s <batch> <M> <N> <cpu|jacobi|block|qr|qrblock|bidiag|cpu_vals|bidiag_vals>[,...]\n"
                              "       %s --policy\n", argv[0], argv[0]);
         return 2;
     }
@@ -163,6 +186,9 @@ int main(int argc, char** argv) {
         else if (name == "block")   solvers.push_back({name, solve_block});
         else if (name == "qr")      solvers.push_back({name, solve_qr});
         else if (name == "qrblock") solvers.push_back({name, solve_qr_block});
+        else if (name == "bidiag")      solvers.push_back({name, solve_bidiag});
+        else if (name == "cpu_vals")    solvers.push_back({name, vals_cpu, false});
+        else if (name == "bidiag_vals") solvers.push_back({name, vals_bidiag, false});
         else if (!name.empty()) { std::fprintf(stderr, "unknown backend: %s\n", name.c_str()); return 2; }
         pos = comma + 1;
     }

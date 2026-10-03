@@ -23,6 +23,7 @@ let coreSources = [
     "src/eigh_tridiag.mm",
     "src/svd.mm",
     "src/svd_block_jacobi.mm",
+    "src/svd_bidiag.mm",
     "src/c_api.cpp",
     "swift/CMetalLinalg/embedded_shaders.c",
 ]

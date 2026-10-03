@@ -1,5 +1,34 @@
 # Changes
 
+## 2.7.0 (2026-10-03)
+
+- **SVD of large matrices on the GPU: up to 1.95x faster (1.88x for `svdvals`) at 4096×4096 on an M5 Pro.** A new backend,
+  `bidiag`, keeps LAPACK's method (Householder bidiagonalization, `sbdsdc`
+  divide and conquer, back-transformation) and moves the reduction and the
+  back-transformation to the GPU: the panels of `sgebrd` as Metal kernels
+  (`Svd_Bidiag.metal`) queued without a round trip per column, the trailing
+  updates and the blocked back-transforms as MPS GEMMs. Tall input is reduced
+  by QR first, wide input goes through its transpose. Where the routing
+  chooses the CPU it is used from `bidiag_min_k` on, and for `svdvals` from
+  `values_bidiag_min_k` on, both measured per device (0 = never, the default
+  for unmeasured Macs). See [docs/svd.md](docs/svd.md).
+- New: `svdvals_backend(m, n, batch)` (C++, C `metal_linalg_svdvals_backend`,
+  Python `svdvals_backend`, Swift `svdvalsBackend`); `SvdPolicy` gains
+  `bidiag_min_k` and `values_bidiag_min_k`; environment variables
+  `SVD_BIDIAG_MIN_K`, `SVD_VALUES_BIDIAG_MIN_K` and `SVD_DEVICE=bidiag`.
+- Tuning: the SVD sweep times `bidiag`, and the CPU and `bidiag` again for
+  singular values alone, up to 4096×4096 (`run.py` passes `--max-k 4096`);
+  `tune_svd.py` fits the two thresholds in a third stage with a held-out
+  check. Runs from before 2.7.0 are *incomplete* for the SVD: valid, with
+  `bidiag` off until remeasured. The M5 Pro is remeasured.
+- README: "Where the GPU wins" shows the large-matrix backends (eigh's
+  `tridiag`, the SVD's `bidiag`) next to the batched kernels; a lone large
+  matrix is no longer the CPU's at every size.
+- A full measurement now takes about an hour and a half (the SVD sweep about
+  50 minutes, up from 27).
+- The measurements page lists every M5 variant (M5 8/10-core, M5 Pro 16/20,
+  M5 Max 32/40, M5 Ultra 64/80).
+
 ## 2.6.0 (2026-10-03)
 
 - **Which measurements are current is tracked, per decomposition.** A

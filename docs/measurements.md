@@ -11,9 +11,9 @@ metal-linalg routes every call by measurements made on each kind of Mac. This pa
 | 🟠 | **stale** | measured on older kernels; still used, as the best available, until remeasured |
 | 🔴 | **not measured** | the untuned default: safe, but it misses GPU wins |
 
-**Have one of these Macs?** One command measures it, in about an hour, and a pull request submits it: [how to contribute](https://github.com/c0rmac/metal-linalg/blob/main/CONTRIBUTING.md). Every run improves the library for everyone with that chip; the library prints a notice on chips that need one.
+**Have one of these Macs?** One command measures it, in about an hour and a half, and a pull request submits it: [how to contribute](https://github.com/c0rmac/metal-linalg/blob/main/CONTRIBUTING.md). Every run improves the library for everyone with that chip; the library prints a notice on chips that need one.
 
-2 current, 2 incomplete, 1 stale and 109 not measured, over 38 chip configurations and 3 decompositions.
+3 current, 2 incomplete, 0 stale and 109 not measured, over 38 chip configurations and 3 decompositions.
 
 ## By chip
 
@@ -57,7 +57,7 @@ metal-linalg routes every call by measurements made on each kind of Mac. This pa
 <tr><td>Apple M5</td><td>8</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td></tr>
 <tr><td>Apple M5</td><td>10</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td></tr>
 <tr><td>Apple M5 Pro</td><td>16</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td></tr>
-<tr><td>Apple M5 Pro</td><td>20</td><td style="background:#dcfce7;color:#1c1917">🟢 <b>current</b><br>3 runs, latest 2026-10-02</td><td style="background:#dcfce7;color:#1c1917">🟢 <b>current</b><br>4 runs, latest 2026-10-03</td><td style="background:#ffedd5;color:#1c1917">🟠 <b>stale</b><br>2 runs, latest 2026-10-01<br>kernel version 1, now 2: still used</td></tr>
+<tr><td>Apple M5 Pro</td><td>20</td><td style="background:#dcfce7;color:#1c1917">🟢 <b>current</b><br>3 runs, latest 2026-10-02</td><td style="background:#dcfce7;color:#1c1917">🟢 <b>current</b><br>4 runs, latest 2026-10-03</td><td style="background:#dcfce7;color:#1c1917">🟢 <b>current</b><br>1 run, latest 2026-10-03<br>measured with 2.7.0</td></tr>
 <tr><td>Apple M5 Max</td><td>32</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td></tr>
 <tr><td>Apple M5 Max</td><td>40</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td></tr>
 <tr><td>Apple M5 Ultra</td><td>64</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td></tr>
@@ -72,10 +72,11 @@ Every run under [`docs/results/`](https://github.com/c0rmac/metal-linalg/tree/ma
 |---|---|---|---|---|---|---|---|---|---|
 | legacy | Apple M1 | 8 | not recorded | MacBook Pro (13-inch, M1, 2020) | ? | before 2.6 | used | used | — |
 | 20261003-d26059 | Apple M5 Pro | 20 | 2026-10-03 | MacBook Pro (16-inch, M5 Pro) | 27.0.1 | before 2.6 | — | used | — |
+| 20261003-064803 | Apple M5 Pro | 20 | 2026-10-03 | MacBook Pro (16-inch, M5 Pro) | 27.0.1 | 2.7.0 | — | — | used |
 | 20261002-9d19ba | Apple M5 Pro | 20 | 2026-10-02 | MacBook Pro (16-inch, M5 Pro) | 27.0.1 | before 2.6 | used | — | — |
 | 20261002-153352 | Apple M5 Pro | 20 | 2026-10-02 | MacBook Pro (16-inch, M5 Pro) | 27.0.1 | before 2.6 | — | used | — |
-| 20261001-c76e82 | Apple M5 Pro | 20 | 2026-10-01 | MacBook Pro (16-inch, M5 Pro) | 27.0.1 | before 2.6 | used | used | used (stale) |
-| 20260930-27b6c2 | Apple M5 Pro | 20 | 2026-09-30 | MacBook Pro (16-inch, M5 Pro) | 26.6 | before 2.6 | used | used | used (stale) |
+| 20261001-c76e82 | Apple M5 Pro | 20 | 2026-10-01 | MacBook Pro (16-inch, M5 Pro) | 27.0.1 | before 2.6 | used | used | measured at kernel version 1; superseded |
+| 20260930-27b6c2 | Apple M5 Pro | 20 | 2026-09-30 | MacBook Pro (16-inch, M5 Pro) | 26.6 | before 2.6 | used | used | measured at kernel version 1; superseded |
 
 ## Kernel versions
 

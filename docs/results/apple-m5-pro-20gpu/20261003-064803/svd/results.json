@@ -5889,7 +5889,7 @@
  "tuned_row": "{\"Apple M5 Pro\", 20,   512, 32,   192, 64, 64,   1024, 256, 4,   2048, 2048},",
  "env_line": "SVD_QR_MIN_ROWS=512 SVD_QR_MIN_K=32 SVD_BLOCK_MIN_K=192 SVD_BLOCK_MIN_K_BATCHED=64 SVD_BLOCK_MIN_BATCH=64 SVD_GPU_MAX_K=1024 SVD_GPU_MIN_BATCH_TIMES_K=256 SVD_GPU_MIN_BATCH=4 SVD_BIDIAG_MIN_K=2048 SVD_VALUES_BIDIAG_MIN_K=2048",
  "raw": [
-  "docs/results/apple-m5-pro-20gpu/20261003-064803/svd/raw.csv"
+  "/Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261003-064803/svd/raw.csv"
  ],
  "submissions": [
   "20261003-064803"

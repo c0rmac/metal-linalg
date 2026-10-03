@@ -167,9 +167,15 @@ public func eigvalshBackend(n: Int, batch: Int = 1) -> String {
     String(cString: metal_linalg_eigvalsh_backend(UInt32(clamping: n), UInt32(clamping: batch)))
 }
 
-/// "cpu", "jacobi", "block_jacobi", "qr_jacobi" or "qr_block_jacobi".
+/// "cpu", "jacobi", "block_jacobi", "qr_jacobi", "qr_block_jacobi" or "bidiag".
 public func svdBackend(rows: Int, cols: Int, batch: Int = 1) -> String {
     String(cString: metal_linalg_svd_backend(UInt32(clamping: rows), UInt32(clamping: cols), UInt32(clamping: batch)))
+}
+
+/// The backend `svdvalsAccelerated` uses: as `svdBackend`, with the policy's
+/// `values_bidiag_min_k` for the bidiag backend.
+public func svdvalsBackend(rows: Int, cols: Int, batch: Int = 1) -> String {
+    String(cString: metal_linalg_svdvals_backend(UInt32(clamping: rows), UInt32(clamping: cols), UInt32(clamping: batch)))
 }
 
 /// The routing policies, field for field as in include/metal_linalg/core.h.

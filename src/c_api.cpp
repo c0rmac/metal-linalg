@@ -65,6 +65,7 @@ const char* name(SvdBackend b) {
         case SvdBackend::block_jacobi:    return "block_jacobi";
         case SvdBackend::qr_jacobi:       return "qr_jacobi";
         case SvdBackend::qr_block_jacobi: return "qr_block_jacobi";
+        case SvdBackend::bidiag:          return "bidiag";
         default:                          return "cpu";
     }
 }
@@ -121,6 +122,9 @@ const char* metal_linalg_eigvalsh_backend(uint32_t n, uint32_t batch) {
 const char* metal_linalg_svd_backend(uint32_t rows, uint32_t cols, uint32_t batch) {
     return name(svd_backend(rows, cols, batch));
 }
+const char* metal_linalg_svdvals_backend(uint32_t rows, uint32_t cols, uint32_t batch) {
+    return name(svdvals_backend(rows, cols, batch));
+}
 
 metal_linalg_qr_policy metal_linalg_qr_policy_get(void) {
     const QrPolicy p = qr_policy();
@@ -140,7 +144,8 @@ metal_linalg_eigh_policy metal_linalg_eigh_policy_get(void) {
 metal_linalg_svd_policy metal_linalg_svd_policy_get(void) {
     const SvdPolicy p = svd_policy();
     return {p.qr_min_rows, p.qr_min_k, p.block_min_k, p.block_min_k_batched, p.block_min_batch,
-            p.gpu_max_k, p.gpu_min_batch_times_k, p.gpu_min_batch, p.gpu_cores};
+            p.gpu_max_k, p.gpu_min_batch_times_k, p.gpu_min_batch, p.gpu_cores,
+            p.bidiag_min_k, p.values_bidiag_min_k};
 }
 
 // The informational fields keep the detected values.
@@ -185,6 +190,8 @@ void metal_linalg_svd_policy_set(const metal_linalg_svd_policy* c) {
     p.gpu_max_k             = c->gpu_max_k;
     p.gpu_min_batch_times_k = c->gpu_min_batch_times_k;
     p.gpu_min_batch         = c->gpu_min_batch;
+    p.bidiag_min_k          = c->bidiag_min_k;
+    p.values_bidiag_min_k   = c->values_bidiag_min_k;
     set_svd_policy(p);
 }
 

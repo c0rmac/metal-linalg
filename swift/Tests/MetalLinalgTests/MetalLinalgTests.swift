@@ -50,6 +50,36 @@ final class MetalLinalgTests: XCTestCase {
         for i in 0..<w.count { XCTAssertEqual(wOnly[i], w[i], accuracy: 1e-4) }
     }
 
+    // The bidiag SVD backend, forced by the policy: square, tall (QR first)
+    // and wide, so its shader library and the QR it calls are exercised.
+    func testSVDBidiag() throws {
+        let measured = svdPolicy
+        defer { svdPolicy = measured }
+        var p = measured
+        p.gpu_max_k = 0
+        p.bidiag_min_k = 1
+        p.values_bidiag_min_k = 1
+        svdPolicy = p
+        for (rows, cols) in [(70, 70), (300, 80), (60, 150)] {
+            XCTAssertEqual(svdBackend(rows: rows, cols: cols), "bidiag")
+            let a = values(rows * cols, seed: UInt64(rows + cols))
+            let (u, s, vt) = try svdAccelerated(a, batch: 1, rows: rows, cols: cols)
+            let k = min(rows, cols)
+            var maxErr = 0.0
+            for i in 0..<rows {
+                for j in 0..<cols {
+                    var sum = 0.0
+                    for t in 0..<k { sum += Double(u[i * k + t]) * Double(s[t]) * Double(vt[t * cols + j]) }
+                    maxErr = max(maxErr, abs(sum - Double(a[i * cols + j])))
+                }
+            }
+            XCTAssertLessThan(maxErr, 1e-3)
+            for t in 1..<k { XCTAssertGreaterThanOrEqual(s[t - 1], s[t]) }
+            let sOnly = try svdvalsAccelerated(a, batch: 1, rows: rows, cols: cols)
+            for t in 0..<k { XCTAssertEqual(sOnly[t], s[t], accuracy: 1e-3) }
+        }
+    }
+
     // The tridiag backend, forced by the policy, on sizes either side of a
     // GPU panel (32 columns): it loads its own shader library and runs MPS.
     func testEighTridiag() throws {

@@ -255,6 +255,42 @@ fitted on half the shapes, and scores 1.069x geomean regret on the other half
 against 1.114x without the backend. For eigenvalues alone the CPU's two-stage
 reduction stays ahead up to 2048, so the backend is off (0).
 
+## Update, 2026-10-03: the bidiag backend, and the SVD remeasured
+
+The SVD's measurements were stale (kernel version 1: from before QR, which
+the QR-preconditioned backends call, routed small problems to the CPU). A new
+SVD-only run
+([`20261003-064803`](../results/apple-m5-pro-20gpu/20261003-064803/svd/report.md),
+`python3 tuning/run.py --only svd`) remeasures the four Jacobi backends and
+the CPU, and times the new `bidiag` backend (GPU bidiagonalization and
+back-transformation, LAPACK's bidiagonal solver), with vectors and for
+singular values alone, up to 4096×4096 for lone matrices. Stage 3 of the
+tuner fits where it replaces the CPU:
+
+```cpp
+// ..., gpu_max_k, gpu_min_batch_times_k, gpu_min_batch,   bidiag_min_k, values_bidiag_min_k
+{"Apple M5 Pro", 20,   512, 32,   192, 64, 64,   1024, 256, 4,   2048, 2048},
+```
+
+The GPU split is unchanged; the CPU boundary moves from batch × k >= 512 to
+256 (1.0364 geomean regret against 1.0389 for the old row, worst 1.83x
+against 2.43x).
+
+| bidiag over the CPU, one matrix | 512 | 1024 | 1536 | 2048 | 3072 | 4096 |
+|---|---|---|---|---|---|---|
+| with vectors | 0.65x | 1.02x | 1.12x | 1.43x | 1.83x | 1.95x |
+| singular values alone | 0.41x | 0.75x | 0.89x | 1.16x | 1.65x | 1.88x |
+
+With vectors it breaks even at 1024 and wins from 1536, by 5-12% there
+(batches of 1 to 4); the fit places the threshold at 2048: 1024, 1536 and
+2048 all score within the 0.5% tolerance with the same worst case, and the
+tie goes to the larger threshold, which keeps the backend off where it gains
+only a few percent. Fitted
+on half the shapes it gives the same 2048, scoring 1.0099 geomean regret on
+the other half against 1.0229 without the backend. For singular values alone
+it wins from 2048 too, where the eigensolver's CPU two-stage reduction keeps
+`eigvalsh` on the CPU: the SVD's CPU path has no two-stage driver.
+
 ## Reproducing
 
 ```sh

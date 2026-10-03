@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Measure this Mac for metal-linalg: all three decompositions, one command.
 
-    python3 tuning/run.py              # about an hour; leave the Mac alone
+    python3 tuning/run.py              # about 90 minutes; leave the Mac alone
     python3 tuning/run.py --quick      # a 15-minute smoke test, not a submission
-    python3 tuning/run.py --only qr    # one decomposition (qr ~3 min, eigh ~25, svd ~35)
+    python3 tuning/run.py --only qr    # one decomposition (qr ~3 min, eigh ~25, svd ~50)
 
 Checks that the Mac is fit to measure, builds the tools, runs the correctness
 tests, then the QR, eigensolver and SVD sweeps one after another, and writes
@@ -42,7 +42,7 @@ import tune_eigh as te      # noqa: E402  machine state checks
 SWEEPS = [
     ("qr",   "tune_qr.py",   "sweep_qr",   [], []),
     ("eigh", "tune_eigh.py", "sweep_eigh", ["--max-n", "4096"], ["--quick"]),
-    ("svd",  "tune_svd.py",  "sweep_svd",  ["--max-k", "1024"], ["--quick"]),
+    ("svd",  "tune_svd.py",  "sweep_svd",  ["--max-k", "4096"], ["--quick"]),
 ]
 TESTS = ["test_qr", "test_eigh", "test_svd"]
 REPO_URL = "https://github.com/c0rmac/metal-linalg"
@@ -287,7 +287,7 @@ def main():
     info.update({"status": "running", "conditions": {"start": conditions()}, "results": {}, "minutes": {}})
     json.dump(info, open(os.path.join(out, "submission.json"), "w"), indent=1)
 
-    minutes = {"qr": (2, 3), "eigh": (8, 25), "svd": (8, 35)}
+    minutes = {"qr": (2, 3), "eigh": (8, 25), "svd": (8, 50)}
     total = str(sum(minutes[op][0 if args.quick else 1] for op in only))
     info["memory_budget_gb"] = round(sub.memory_budget_bytes() / 2 ** 30, 1)
     say(f"\nMemory: shapes are capped to {info['memory_budget_gb']} GB at peak "

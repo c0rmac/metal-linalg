@@ -387,7 +387,7 @@ to a backend that takes seconds. A GPU with more cores than an M1 will want a
 higher `gpu_max_n` than this, as the M5 Pro row shows.
 
 **To measure another Mac**, run `python3 tuning/run.py`, which measures all
-three decompositions in one go (about an hour); see [`tuning.md`](tuning.md).
+three decompositions in one go (about an hour and a half); see [`tuning.md`](tuning.md).
 The eigensolver part works as follows.
 
 The conditions matter more here than for QR, because one of the four backends

@@ -52,6 +52,7 @@ namespace metal_linalg {
         SvdResult svd_block_jacobi(const mlx::core::array& a, bool compute_uv, const SvdOptions& opt);
         SvdResult svd_qr_jacobi(const mlx::core::array& a, bool compute_uv, const SvdOptions& opt);
         SvdResult svd_cpu(const mlx::core::array& a, bool compute_uv);
+        SvdResult svd_bidiag(const mlx::core::array& a, bool compute_uv);
     }
 
 } // namespace metal_linalg

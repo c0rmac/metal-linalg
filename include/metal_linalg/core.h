@@ -296,6 +296,16 @@ namespace metal_linalg {
 
         // Device this was resolved against; informational.
         unsigned gpu_cores = 0;
+
+        // --- the bidiag backend instead of the CPU ---
+        // Where the rules above choose the CPU, k >= bidiag_min_k (with
+        // singular vectors) or k >= values_bidiag_min_k (singular values
+        // alone) uses the bidiag backend instead: LAPACK's method with the
+        // bidiagonalization and the back-transformations on the GPU, faster
+        // than the CPU for one large matrix (on an M5 Pro 2x at 4096 x 4096).
+        // 0 means never, which is what a device without measurements has.
+        unsigned bidiag_min_k        = 0;
+        unsigned values_bidiag_min_k = 0;
     };
 
     constexpr unsigned kSvdNoLimit = 0xFFFFFFFFu;
@@ -307,7 +317,10 @@ namespace metal_linalg {
     const char* svd_policy_source();
     void        set_svd_policy(const SvdPolicy& p);
 
-    enum class SvdBackend { cpu, jacobi, block_jacobi, qr_jacobi, qr_block_jacobi };
+    // bidiag: the hybrid large-k backend (bidiagonalization and
+    // back-transformations on the GPU, the bidiagonal SVD on the CPU); last,
+    // so the others keep their numbers.
+    enum class SvdBackend { cpu, jacobi, block_jacobi, qr_jacobi, qr_block_jacobi, bidiag };
 
     // What an SVD call does with a problem under the policy in effect.
     // SVD_DEVICE=gpu or SVD_DEVICE=cpu forces the first part of the decision.
@@ -316,8 +329,12 @@ namespace metal_linalg {
     // The GPU backend the policy picks, regardless of the CPU routing.
     SvdBackend svd_gpu_backend(unsigned m, unsigned n, unsigned batch);
 
-    // True iff svd_backend(m, n, batch) is a GPU backend.
+    // True iff svd_backend(m, n, batch) is one of the Jacobi GPU backends.
     bool svd_uses_gpu(unsigned m, unsigned n, unsigned batch);
+
+    // What a call for singular values alone (svdvals) does: as svd_backend,
+    // with values_bidiag_min_k for the bidiag backend.
+    SvdBackend svdvals_backend(unsigned m, unsigned n, unsigned batch);
 
     // -------------------------------------------------------------------------
     // Options of the lower-level entry points, for tests and tuning
@@ -474,6 +491,12 @@ namespace metal_linalg {
             // For tall matrices.
             void svd_qr_jacobi(const Matrices& a, const SvdOptions& opt,
                                float* u, float* s, float* vt, uint32_t* info);
+
+            // LAPACK's method with the bidiagonalization and the
+            // back-transformations on the GPU, one matrix at a time; any shape
+            // (a wide matrix as its transpose, a much taller one after a QR).
+            // See svd_bidiag.mm.
+            void svd_bidiag(const Matrices& a, float* u, float* s, float* vt, uint32_t* info);
 
             // LAPACK on the CPU, one matrix at a time: sgesdd, after a QR for
             // a matrix at least twice as tall as wide. `info` reports every

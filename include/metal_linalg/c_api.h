@@ -73,12 +73,13 @@ uint32_t    metal_linalg_gpu_core_count(void);
 /* The backend a call of that shape uses under the policy in effect, by name:
  *   QR    "cpu", "unblocked", "streaming_reduced"
  *   eigh  "cpu", "simd", "threadgroup", "block", "tridiag"
- *   SVD   "cpu", "jacobi", "block_jacobi", "qr_jacobi", "qr_block_jacobi"
+ *   SVD   "cpu", "jacobi", "block_jacobi", "qr_jacobi", "qr_block_jacobi", "bidiag"
  * The strings are static. */
 const char* metal_linalg_qr_backend(uint32_t rows, uint32_t cols, uint32_t batch);
 const char* metal_linalg_eigh_backend(uint32_t n, uint32_t batch);
 const char* metal_linalg_eigvalsh_backend(uint32_t n, uint32_t batch);   /* eigenvalues alone */
 const char* metal_linalg_svd_backend(uint32_t rows, uint32_t cols, uint32_t batch);
+const char* metal_linalg_svdvals_backend(uint32_t rows, uint32_t cols, uint32_t batch);   /* values alone */
 
 /* The routing policies, field for field as in core.h, which says what each
  * field does. A policy is resolved on first use from the tuned table, then
@@ -124,6 +125,8 @@ typedef struct metal_linalg_svd_policy {
     uint32_t gpu_min_batch_times_k;
     uint32_t gpu_min_batch;
     uint32_t gpu_cores;
+    uint32_t bidiag_min_k;          /* the bidiag backend instead of the CPU from this k; */
+    uint32_t values_bidiag_min_k;   /* 0: never */
 } metal_linalg_svd_policy;
 
 metal_linalg_qr_policy   metal_linalg_qr_policy_get(void);

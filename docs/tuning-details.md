@@ -18,8 +18,8 @@ the curious. Contributors only need [`tuning.md`](tuning.md).
    | step | harness | measures | time on an M5 Pro |
    |---|---|---|---|
    | QR | `tuning/tune_qr.py` | both GPU backends on 143 shapes, square, tall, wide and near-square | 2 min |
-   | eigh | `tuning/tune_eigh.py --max-n 1024` | CPU, the whole-matrix kernel in both modes, block Jacobi; N from 2 to 1024, batch 1 to 4096 | 12 min |
-   | SVD | `tuning/tune_svd.py --max-k 1024` | CPU, both kernels, each with and without QR; square k up to 1024 and tall shapes, batch 1 to 4096 | 27 min |
+   | eigh | `tuning/tune_eigh.py --max-n 4096` | CPU, the whole-matrix kernel in both modes, block Jacobi, tridiag, each again for eigenvalues alone; N from 2 to 4096, batch 1 to 4096 (small batches above 1024) | 25 min |
+   | SVD | `tuning/tune_svd.py --max-k 4096` | CPU, both Jacobi kernels, each with and without QR, square k up to 1024 and tall shapes, batch 1 to 4096; bidiag and the CPU, with and without vectors, from k = 128 up to 4096 (small batches above 1024) | 50 min |
 
    Each runs two passes in random order, so thermal drift is not mistaken for
    a size effect and a noise floor can be measured.
@@ -165,9 +165,13 @@ where `tridiag` was timed.
 
 **SVD** (`src/svd.mm`): device name, GPU cores, then `qr_min_rows`,
 `qr_min_k`, `block_min_k`, `block_min_k_batched`, `block_min_batch`,
-`gpu_max_k`, `gpu_min_batch_times_k` and `gpu_min_batch`, as documented on
-`SvdPolicy` in `include/metal_linalg/svd.h`: whether to precondition with QR,
-which kernel, then the CPU boundary in the eigensolver's form.
+`gpu_max_k`, `gpu_min_batch_times_k` and `gpu_min_batch`, then
+`bidiag_min_k` and `values_bidiag_min_k`, as documented on `SvdPolicy` in
+`include/metal_linalg/core.h`: whether to precondition with QR, which kernel,
+then the CPU boundary in the eigensolver's form, then where the `bidiag`
+backend takes over from the CPU, with vectors and for singular values alone
+(0: never, which a run from before the backend existed gives); stage 3 of
+`tune_svd.py` fits them on the points where `bidiag` was timed.
 
 ## 5. Reading a report
 
@@ -203,8 +207,8 @@ them:
 ```sh
 cmake --build build --target sweep_qr sweep_eigh sweep_svd
 python3 tuning/tune_qr.py   build/sweep_qr                 # writes qr-tune-results/
-python3 tuning/tune_eigh.py build/sweep_eigh --max-n 1024  # writes eigh-tune-results/
-python3 tuning/tune_svd.py  build/sweep_svd  --max-k 1024  # writes svd-tune-results/
+python3 tuning/tune_eigh.py build/sweep_eigh --max-n 4096  # writes eigh-tune-results/
+python3 tuning/tune_svd.py  build/sweep_svd  --max-k 4096  # writes svd-tune-results/
 ```
 
 | option | harness | use |
@@ -212,7 +216,7 @@ python3 tuning/tune_svd.py  build/sweep_svd  --max-k 1024  # writes svd-tune-res
 | `--out DIR` | all | where to write |
 | `--passes N` | all | more than two passes, for a noisy machine |
 | `--full` | QR | a denser grid, about three times longer |
-| `--max-n`, `--max-k` | eigh, SVD | the largest size on the grid (default 512; 768 and 1024 added up to this) |
+| `--max-n`, `--max-k` | eigh, SVD | the largest size on the grid (default 512; larger sizes up to 4096 added up to this) |
 | `--quick` | eigh, SVD | one pass on a coarse grid; a smoke test only |
 | `--limit S` | all | per-point timeout in seconds |
 
@@ -287,6 +291,8 @@ in the policy source.
 | `SVD_BLOCK_MIN_K` | SVD: the short side from which the block kernel is used |
 | `SVD_BLOCK_MIN_K_BATCHED`, `SVD_BLOCK_MIN_BATCH` | SVD: batch-dependent block crossover, 0 for off |
 | `SVD_GPU_MAX_K`, `SVD_GPU_MIN_BATCH_TIMES_K`, `SVD_GPU_MIN_BATCH` | SVD: the GPU/CPU boundary |
+| `SVD_BIDIAG_MIN_K`, `SVD_VALUES_BIDIAG_MIN_K` | SVD: the bidiag backend instead of the CPU from this k (0: never) |
+| `SVD_DEVICE=bidiag` | SVD: every call on the bidiag backend |
 | `SVD_DEVICE=gpu` or `cpu` | SVD: bypass the GPU/CPU boundary |
 
 **Programmatic overrides.** `set_qr_policy()`, `set_eigh_policy()` and

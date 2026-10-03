@@ -26,8 +26,8 @@ policy measured on the device it runs on. MLX's own `linalg::eigh` and
 > date, or not measured yet). So far an M1 and an M5 Pro have been measured;
 > every other Mac runs a cautious default that misses much of what its GPU can
 > do. If you have an Apple Silicon Mac,
-> one command measures it (`python3 tuning/run.py`, about an hour of the
-> Mac's time) and produces a results folder to send as a pull request. Each
+> one command measures it (`python3 tuning/run.py`, about an hour and a
+> half of the Mac's time) and produces a results folder to send as a pull request. Each
 > run improves the library for everyone with that Mac, and runs from several
 > people with the same Mac are combined. Contributions are what keep the
 > library up to date as Apple ships new chips: [how to contribute](CONTRIBUTING.md).
@@ -76,7 +76,7 @@ policy measured on the device it runs on. MLX's own `linalg::eigh` and
 |---|---|---|---|---|
 | QR | `qr_accelerated` | Householder in one threadgroup per matrix; grid-parallel blocked Householder | LAPACK `sgeqrf`, `sorgqr` | [docs/qr.md](docs/qr.md) |
 | symmetric eigendecomposition | `eigh_accelerated`, `eigvalsh_accelerated` | whole-matrix Jacobi; block Jacobi; Householder tridiagonalization for large N (with LAPACK's tridiagonal solver) | LAPACK `ssyevd`; `ssyevd_2stage` for eigenvalues alone from N = 128 | [docs/eigh.md](docs/eigh.md) |
-| thin SVD | `svd_accelerated`, `svdvals_accelerated` | whole-matrix one-sided Jacobi; block one-sided Jacobi; either after QR for tall input | LAPACK `sgesdd` | [docs/svd.md](docs/svd.md) |
+| thin SVD | `svd_accelerated`, `svdvals_accelerated` | whole-matrix one-sided Jacobi; block one-sided Jacobi; either after QR for tall input; Householder bidiagonalization for large k (with LAPACK's bidiagonal solver) | LAPACK `sgesdd` | [docs/svd.md](docs/svd.md) |
 
 Input is any batch shape `[..., M, N]`, any real dtype (computed in float32),
 any magnitude from 1e-30 to 1e+37, rank-deficient or not. The eigensolver and
@@ -97,7 +97,8 @@ The same solvers and routing, from four places, each on an Apple Silicon Mac:
 
 ### Where the GPU wins
 
-For batches. On an Apple M5 Pro, the best GPU kernel against the CPU:
+In two places: batches, and large matrices. For batches, on an Apple M5 Pro,
+the best GPU kernel against the CPU:
 
 | | lone matrix | batch 16 | batch 256 | batch 4096 |
 |---|---|---|---|---|
@@ -108,9 +109,27 @@ For batches. On an Apple M5 Pro, the best GPU kernel against the CPU:
 | SVD 2048×64 | 0.59x | 6.2x | 10.1x | GPU only |
 | SVD 512×512 | 0.51x | 1.68x | — | — |
 
-A single matrix is faster on the CPU at every size measured, up to 4096×4096,
-on every device so far, so the routing keeps it there; batches of up to
-1024×1024 go to the GPU. The full tables are in the per-solver docs.
+Small and medium matrices on their own are faster on the CPU, so the routing
+keeps them there; batches of up to 1024×1024 go to the GPU.
+
+For one large matrix the Jacobi kernels lose to LAPACK, so eigh and the SVD
+each have a backend that keeps LAPACK's method and moves its
+memory-bound reduction (to tridiagonal or bidiagonal form) and its
+back-transformation to the GPU, leaving the small tridiagonal or bidiagonal
+problem to LAPACK. On the M5 Pro, one N×N matrix against the CPU:
+
+| | 1024 | 2048 | 3072 | 4096 |
+|---|---|---|---|---|
+| eigh, with eigenvectors | 1.14x | 1.98x | 2.86x | 4.83x |
+| eigvalsh, eigenvalues alone | 0.66x | 0.92x | 1.18x | 1.17x |
+| SVD, with vectors | 1.02x | 1.43x | 1.83x | 1.95x |
+| svdvals, singular values alone | 0.75x | 1.16x | 1.65x | 1.88x |
+
+Each is used from the size where the routing sweep found it ahead on that
+Mac, so these too are measured per device: on the M5 Pro from N = 1024 for
+eigh, from 2048 for the SVD and svdvals, and not for eigvalsh, whose gain,
+under 1.2x and only above N ≈ 3000, did not carry the fit. The full tables are in the
+per-solver docs.
 
 QR follows the same pattern: on the M5 Pro, 4 matrices of 64×64 take 0.13 ms in
 LAPACK and 1.04 ms on the GPU, so small batches go to the CPU too.
@@ -125,7 +144,7 @@ the Metal device name and GPU core count:
 | device | QR | eigh | SVD |
 |---|---|---|---|
 | Apple M1, 8 GPU cores | measured (incomplete) | measured (incomplete) | untuned |
-| Apple M5 Pro, 20 GPU cores | measured | measured | measured (stale) |
+| Apple M5 Pro, 20 GPU cores | measured | measured | measured |
 | anything else | untuned default | untuned default | untuned default |
 
 Every chip, and what is current: [the measurements page](https://c0rmac.github.io/metal-linalg/docs/measurements).
