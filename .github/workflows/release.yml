@@ -140,12 +140,15 @@ jobs:
   pypi-torch:
     # The PyTorch package, metal-linalg-torch, a PyPI project of its own with
     # its own trusted publisher (CONTRIBUTING.md, "Releases"). A separate job,
-    # so that a failure here never holds back the MLX package.
+    # so that a failure here never holds back the MLX package. Its own
+    # environment too: PyPI tells publishers apart by repository, workflow
+    # and environment, and with `pypi` the token it issues is for
+    # metal-linalg's publisher, which cannot upload metal-linalg-torch.
     needs: [release, wheels]
     if: ${{ !cancelled() && needs.wheels.result == 'success' }}
     runs-on: ubuntu-latest
     environment:
-      name: pypi
+      name: pypi-torch
       url: https://pypi.org/project/metal-linalg-torch/
     permissions:
       contents: write

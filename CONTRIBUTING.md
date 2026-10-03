@@ -196,9 +196,11 @@ new one and set the secret again.
 
 Step 4 uses PyPI's trusted publishing, so no PyPI token is stored anywhere.
 To set it up once, on [pypi.org](https://pypi.org/manage/account/publishing/),
-add a (pending) trusted publisher for each of the projects `metal-linalg`
-and `metal-linalg-torch`, both with owner `c0rmac`, repository
-`metal-linalg`, workflow `release.yml`, environment `pypi`. If an upload
+add a (pending) trusted publisher for each of the projects, both with owner
+`c0rmac`, repository `metal-linalg` and workflow `release.yml`: for
+`metal-linalg` the environment `pypi`, for `metal-linalg-torch` the
+environment `pypi-torch`. (The environments must differ: PyPI tells
+publishers apart by them.) If an upload
 fails, rerun the PyPI steps for the release with **Actions > Release > Run
 workflow**, `pypi_version` set to its version; files already on PyPI are
 skipped.
