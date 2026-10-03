@@ -163,4 +163,7 @@ jobs:
           cp -r python-torch/tests "$RUNNER_TEMP/torch-tests"
           cd "$RUNNER_TEMP"
           "$RUNNER_TEMP/venv/bin/python" -c "import metal_linalg_torch as mlt, torch; print(mlt.__version__, torch.__version__, mlt.device_name())"
-          "$RUNNER_TEMP/venv/bin/python" -m unittest discover -s torch-tests -v
+          # CPU tensors only: on these virtual Macs torch 2.4's MPS reports itself
+          # available, then fails to allocate a few hundred bytes. (The suite passes
+          # with MPS and torch 2.4 on real hardware; the job above covers MPS.)
+          METAL_LINALG_TEST_NO_MPS=1 "$RUNNER_TEMP/venv/bin/python" -m unittest discover -s torch-tests -v

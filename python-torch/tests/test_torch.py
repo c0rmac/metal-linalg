@@ -8,6 +8,7 @@ errors and gradients, and that the custom operators compile.
 """
 
 import math
+import os
 import threading
 import unittest
 import warnings
@@ -20,7 +21,7 @@ def _mps_works():
     """MPS as reported, and doing arithmetic correctly: on some virtual Macs
     (CI's macOS 14 runners with older torch) it is reported available but
     fails to allocate or multiplies wrongly."""
-    if not torch.backends.mps.is_available():
+    if not torch.backends.mps.is_available() or os.environ.get("METAL_LINALG_TEST_NO_MPS"):
         return False
     try:
         a = torch.randn(64, 64)
