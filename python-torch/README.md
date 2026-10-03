@@ -23,7 +23,7 @@ Mac it runs on:
 ```python
 mlt.device_name()                      # 'Apple M5 Pro'
 mlt.eigh_policy_source()               # 'tuned:Apple M5 Pro'
-mlt.eigh_backend(512, 64)              # 'block': 64 matrices of 512x512 go to the GPU
+mlt.eigh_backend(32, 4096)             # 'ql': 4096 matrices of 32x32 go to the GPU
 mlt.svd_backend(4096, 4096)            # 'bidiag': GPU bidiagonalization, LAPACK's solver
 mlt.set_eigh_policy(gpu_min_batch=1)   # override the measured policy
 ```
@@ -99,21 +99,24 @@ as well when their input requires grad, since the gradient needs them.
 
 ## Performance
 
-Against `torch.linalg` on an M5 Pro with PyTorch 2.14 (best of five; the
+Against `torch.linalg` on an M5 Pro with PyTorch 2.14 and metal-linalg 2.9 (best of five; the
 same tensors on MPS for torch's MPS path and for this package, copies
 included):
 
 | | torch, CPU | torch, MPS | metal-linalg-torch |
 |---|---|---|---|
-| QR, 1024 × 128×128 | 160 ms | 1040 ms | 23 ms |
-| SVD, 256 × 128×64 | 61 ms | 12 ms | 10 ms |
-| SVD, 4096 × 32×32 | 196 ms | 27 ms | 27 ms |
-| eigh, 4096 × 16×16 | 28 ms | 5.6 ms | 3.9 ms |
-| eigh, one 2048×2048 | 259 ms | 244 ms | 121 ms |
-| SVD, one 4096×4096 | 3.58 s | 3.59 s | 1.79 s |
+| QR, 1024 × 128×128 | 161 ms | 1070 ms | 21 ms |
+| SVD, 256 × 128×64 | 64 ms | 11 ms | 6.5 ms |
+| SVD, 4096 × 32×32 | 208 ms | 27 ms | 19 ms |
+| eigh, 4096 × 16×16 | 37 ms | 5.3 ms | 2.0 ms |
+| eigh, one 2048×2048 | 239 ms | 241 ms | 120 ms |
+| SVD, one 4096×4096 | 3.60 s | 3.62 s | 1.82 s |
 
-PyTorch's own MPS kernels are close for small matrices in batches; the gains
-are in QR and in large matrices, where torch falls back to the CPU. Which
+It is ahead on every row: 1.4-2.7x over PyTorch's MPS kernels for batches of
+small matrices (two of those rows now run on the library's CPU path, which
+spreads a batch over every core, so routing an MPS tensor to the CPU can
+still be the fast choice), and 2-50x in QR and in large matrices, where torch
+falls back to the CPU. Which
 backend a shape gets on your Mac: `mlt.svd_backend(m, n, batch)` and its
 siblings.
 

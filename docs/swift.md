@@ -64,8 +64,8 @@ goes through the library's C API rather than its MLX C++ one.
 ```swift
 deviceName                              // "Apple M5 Pro"
 eighPolicySource                        // "tuned:Apple M5 Pro"
-eighBackend(n: 512, batch: 64)          // "block": a batch of large matrices goes to the GPU
-eighBackend(n: 512, batch: 1)           // "cpu": a lone matrix is faster on the CPU
+eighBackend(n: 32, batch: 4096)         // "ql": a large batch of small matrices goes to the GPU
+eighBackend(n: 512, batch: 64)          // "cpu": the CPU's cores win a batch of mid-size ones
 
 var p = eighPolicy                      // replace the measured policy
 p.gpu_min_batch = 1

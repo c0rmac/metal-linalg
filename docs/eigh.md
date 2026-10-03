@@ -16,13 +16,13 @@ requested triangle is read, so the input need not be exactly symmetric. Batch
 dimensions are arbitrary. Non-finite input yields NaN output rather than an
 exception, as LAPACK does.
 
-**Routing.** Two Metal backends cover the size range (see
+**Routing.** Four Metal backends cover the size range (see
 [Dispatch](#dispatch)), but Accelerate's LAPACK on the CPU is quick (a single
-512×512 in 18 ms on an M1), so the public functions run on the GPU only where
-it was measured faster, and call LAPACK (Accelerate) on the CPU
-otherwise: on an M1 for
-`N <= 64` with `batch * N >= 1024`, on an M5 Pro for `N <= 1024` with
-`batch * N >= 512` and at least 16 matrices. The boundary is part of the
+512×512 in 18 ms on an M1), and since 2.9.0 a batch is spread over every CPU
+core, so the public functions run on the GPU only where it was measured
+faster, and call LAPACK (Accelerate) on the CPU otherwise: on an M5 Pro for
+large batches of matrices up to N = 48 (`batch * N >= 8192`), and for one or
+two matrices from N = 1536 on the `tridiag` backend. The boundary is part of the
 per-device policy (see [Tuning](#tuning));
 on the CPU, eigenvectors come from `ssyevd`, and eigenvalues alone
 (`eigvalsh`) from N = 128 come from `ssyevd_2stage`, the two-stage
@@ -209,8 +209,11 @@ on Apple Silicon the round trip, not the panel's arithmetic, is what costs.
 
 Each matrix is scaled by a power of two first (exact), so magnitudes whose
 products over- or underflow float32 work as on the CPU; matrices are solved one
-after another, and only the requested triangle is read. With eigenvectors, on
-an M5 Pro, one $N \times N$ (eigh, then eigvalsh, against the CPU path):
+after another, and only the requested triangle is read. Because the CPU path
+spreads a batch over every core, the backend wins only for a lone matrix or a
+few: the policy caps the batch (`tridiag_max_batch`, 2 on an M5 Pro; at
+N = 512 four matrices take 53 ms here and 10 ms on the CPU). With eigenvectors,
+on an M5 Pro, one $N \times N$ (eigh, then eigvalsh, against the CPU path):
 
 | $N$ | eigh: CPU | tridiag | speedup | eigvalsh: CPU | tridiag | speedup |
 |---|---|---|---|---|---|---|
@@ -226,6 +229,52 @@ uses the two-stage reduction, and the GPU path gains only a little, from about
 $N = 3000$. Accuracy matches LAPACK's: residual and orthogonality about
 $10^{-6}$ at every size tested, eigenvalues within $3 \times 10^{-7}$ of
 LAPACK's relative to $\|A\|_F$.
+
+## Backend 4: tridiagonalization and QL in one threadgroup (`Eigh_QL.metal`)
+
+The Jacobi kernels do several times the flops of LAPACK's method: about
+$9N^3$ per sweep, over 7 sweeps at $N = 64$, against roughly $5$-$10N^3$ in
+all for Householder tridiagonalization, implicit QL and the eigenvectors. Once
+the CPU path spread a batch over every core (2.9.0), that difference decided
+most batched calls in the CPU's favour, so the `ql` backend
+(`src/eigh_ql.mm`) runs LAPACK's method on the GPU, one threadgroup per
+matrix, the whole matrix in threadgroup memory:
+
+1. **Load and scale**: the requested triangle, mirrored, scaled by a power of
+   two as in the other kernels; a non-finite entry gives NaN output for that
+   matrix and the `info` flag.
+2. **Tridiagonalization** (`ssytd2`): thread $i$ owns row $i$ and keeps its
+   whole row of the trailing matrix, so each column's product $p = \tau A v$
+   and the symmetric rank-2 update are row-local; three barriers per column.
+3. **Q**, formed in place from the reflectors by backward accumulation
+   (`sorg2r`).
+4. **Implicit QL** with shifts on $(d, e)$, the method of EISPACK's `tql2`.
+   The objection that kept QL off the GPU, about $N^2$ dependent rotations
+   each needing a barrier, holds only if they are applied one at a time. The
+   QL iteration reads only $(d, e)$, never the eigenvectors, so one thread
+   runs it and records a sweep's rotations, and then every thread applies the
+   whole recorded sequence to its own row of $Z$: rows are independent, so a
+   sweep costs one barrier. From $N = 33$ the iteration runs on a simdgroup of
+   its own and computes the next sweep while the rows apply this one (9-13%
+   faster from $N = 48$ on an M5 Pro; 4-11% slower at 16 to 32, where the extra
+   simdgroup costs more in matrices per core than it saves).
+5. **Output**: eigenvalues ascending by a rank sort, eigenvectors permuted
+   to match.
+
+The matrix in threadgroup memory bounds $N$ at 87 with 32 KB, and the memory
+is sized for the $N$ of the call, which matters: the QL iteration is a chain
+of dependent operations, so the kernel's speed is set by how many matrices
+share a core, and that is set by threadgroup memory (sizing it for $N = 32$
+rather than a fixed 64 made the same kernel 3x faster at $N = 32$). For the
+same reason the kernel is built with fast math, unlike the Jacobi kernels: an
+IEEE-mode (`precise::`) division or square root anywhere in it made the
+compiler build the whole kernel that way, 1.4x slower. What needs the
+accuracy, the Householder vectors and the shift, takes one Newton step after
+the fast operation; each rotation comes from one reciprocal square root, and
+the non-finite check reads the bits. The accuracy is that of the other
+backends: across $N = 1 \ldots 87$, residual and orthogonality at most
+$1.5 \times 10^{-6}$ relative to $\|A\|_F$ and eigenvalues within
+$8 \times 10^{-7}$ of LAPACK's.
 
 ## Dispatch
 
@@ -249,7 +298,19 @@ by the policy and switched off. The M5 Pro repeats both findings: block from
 at batch 256) reached 93% against the same bar. Launch-parameter tuning for
 each backend is in [`studies/eigh-launch-parameters-apple-m1.md`](studies/eigh-launch-parameters-apple-m1.md).
 
-Both backends split large batches across command buffers. macOS kills a
+Inside a window of N, `[ql_min_n, ql_max_n]`, the `ql` backend (backend 4,
+below) replaces whichever Jacobi backend the split would pick. The window is
+fitted per device on top of the split (stage 1b of `tuning/tune_eigh.py`),
+is clipped to the largest N the backend takes on the device (87 with 32 KB of
+threadgroup memory), and is off (`ql_max_n = 0`) on a device without
+measurements:
+
+```
+ql_min_n <= N <= ql_max_n  ->  backend 4, ql      (eigh and eigvalsh alike)
+otherwise                  ->  the Jacobi split above
+```
+
+All three split large batches across command buffers. macOS kills a
 command buffer that monopolises the GPU for more than a couple of seconds
 ("Impacting Interactivity"), so the host bounds each one with a conservative
 cost model, never going below one matrix per core.
@@ -289,30 +350,49 @@ up to 1.5x between runs, so treat ratios near 1 as ties.
 | 512 | block | 0.31x (92.9 ms) | 0.44x (1150 ms) | -- | -- |
 | 1024 | block | 0.33x (585 ms) | -- | -- | -- |
 
-The same on an Apple M5 Pro (20 GPU cores, 18 CPU cores), from the routing
-sweep in [`results/apple-m5-pro-20gpu/20260930-27b6c2/eigh/`](results/apple-m5-pro-20gpu/20260930-27b6c2/eigh/):
-min of two randomised passes, idle machine on mains, against the same thin CPU
-path. The cell names the GPU backend that won at that point (`tg` is backend 1
-in threadgroup mode; simd mode never won on this device).
+The M1 table above is from before 2.9.0, against MLX's CPU `eigh`, which
+solves a batch one matrix at a time on one core.
+
+On an Apple M5 Pro (20 GPU cores, 18 CPU cores) with 2.9.0, from the routing
+sweep in [`results/apple-m5-pro-20gpu/20261003-2d2c19/eigh/`](results/apple-m5-pro-20gpu/20261003-2d2c19/eigh/):
+min of two randomised passes, on mains, against the CPU path as the library
+runs it, a batch spread over all 18 cores. Each cell is the speedup of the
+fastest GPU backend over the CPU, with its time and name:
 
 | N | batch 1 | batch 16 | batch 256 | batch 4096 |
 |---|---|---|---|---|
-| 4 | 0.10x (0.25 ms, tg) | 0.18x (0.18 ms, tg) | **1.21x** (0.20 ms, tg) | **11.8x** (0.29 ms, tg) |
-| 8 | 0.10x (0.19 ms, tg) | 0.31x (0.18 ms, tg) | **3.31x** (0.21 ms, tg) | **19.9x** (0.54 ms, tg) |
-| 16 | 0.10x (0.25 ms, tg) | 0.67x (0.25 ms, tg) | **6.51x** (0.37 ms, tg) | **15.9x** (2.40 ms, tg) |
-| 32 | 0.14x (0.34 ms, tg) | **1.34x** (0.38 ms, tg) | **5.53x** (1.60 ms, tg) | **8.58x** (16.5 ms, tg) |
-| 64 | 0.09x (1.90 ms, tg) | **1.14x** (1.93 ms, tg) | **3.96x** (8.82 ms, block) | **5.56x** (101 ms, block) |
-| 128 | 0.08x (6.42 ms, block) | **1.08x** (7.10 ms, block) | **2.87x** (42.5 ms, block) | **2.84x** (686 ms, block) |
-| 256 | 0.19x (12.2 ms, block) | **1.68x** (20.8 ms, block) | **1.72x** (323 ms, block) | -- |
-| 512 | 0.30x (30.2 ms, block) | **1.10x** (128 ms, block) | -- | -- |
-| 1024 | 0.40x (100 ms, block) | GPU only (1150 ms) | -- | -- |
+| 4 | 0.01x (0.16 ms, simd) | 0.12x (0.15 ms, tg) | 0.59x (0.17 ms, simd) | **1.22x** (0.29 ms, ql) |
+| 8 | 0.03x (0.17 ms, simd) | 0.22x (0.18 ms, tg) | 0.64x (0.20 ms, tg) | **1.39x** (0.56 ms, simd) |
+| 16 | 0.04x (0.24 ms, tg) | 0.59x (0.24 ms, tg) | 0.86x (0.31 ms, ql) | **1.57x** (1.65 ms, ql) |
+| 32 | 0.10x (0.33 ms, tg) | 0.38x (0.37 ms, tg) | **1.08x** (0.63 ms, ql) | **1.78x** (5.42 ms, ql) |
+| 64 | 0.12x (1.24 ms, tg) | 0.23x (1.28 ms, tg) | 0.69x (3.92 ms, ql) | 0.86x (45.4 ms, ql) |
+| 128 | 0.08x (5.77 ms, block) | 0.12x (6.35 ms, block) | 0.25x (42.3 ms, block) | 0.22x (665 ms, block) |
+| 256 | 0.19x (11.7 ms, block) | 0.17x (20.5 ms, block) | 0.14x (323 ms, block) | -- |
+| 512 | 0.30x (30.0 ms, block) | 0.12x (134 ms, block) | -- | -- |
+| 1024 | 0.40x (101 ms, block) | 0.11x (1.17 s, block) | -- | -- |
 
-The shape of the result is the M1's, with the GPU's region much larger: the
-block backend is 3x faster than on the M1 at N = 512 (30 ms against 93) and
-wins from batch 16 up to N = 512, and small batched matrices reach 20x. A
-single matrix is still the CPU's at every size, and stays so as far as it was
-measured: 0.41x at N = 1536, 0.48x at 4096 (4.9 s against 2.4 s). Both
-methods are O(N³) and Accelerate on 18 CPU cores has the better constant.
+Against a CPU that uses its cores the GPU's region is small: large batches
+of matrices up to N = 48, where `ql` is up to 1.8x faster than the CPU, and
+one large matrix, which the `tridiag` backend takes (backend 3; 1.45x at
+N = 1536, 1.9x at 2048, 4.6x at 4096). Without `ql` the GPU would win almost
+nowhere: at 4096 matrices of 32×32 the whole-matrix Jacobi kernel takes
+16.8 ms and the CPU 9.6 ms. `ql` against the best Jacobi kernel, and against
+the CPU:
+
+| N | batch | ql | best Jacobi | CPU | Jacobi / ql | CPU / ql |
+|---|---|---|---|---|---|---|
+| 16 | 4096 | 1.65 ms | 2.42 ms | 2.59 ms | 1.47x | 1.57x |
+| 24 | 4096 | 3.24 ms | 7.55 ms | 5.91 ms | 2.33x | 1.83x |
+| 32 | 256 | 0.63 ms | 1.60 ms | 0.68 ms | 2.55x | 1.08x |
+| 32 | 4096 | 5.42 ms | 16.8 ms | 9.63 ms | 3.11x | 1.78x |
+| 48 | 1024 | 4.81 ms | 15.2 ms | 5.71 ms | 3.15x | 1.19x |
+| 48 | 4096 | 17.4 ms | 60.5 ms | 23.0 ms | 3.48x | 1.32x |
+| 64 | 4096 | 45.4 ms | 97.9 ms | 38.9 ms | 2.16x | 0.86x |
+
+For a lone small matrix and small batches `ql` is slower than the
+whole-matrix kernel (0.63x at 32×32 alone), whose many threads per matrix
+shorten a lone matrix's critical path, but those calls go to the CPU, which
+is 10-100x faster than either.
 
 What the block backend changed, same run on the M1, whole-matrix kernel vs block:
 
@@ -359,21 +439,24 @@ block crossover with core count and launch latency. So the library ships a
 table of measured policies, keyed on the Metal device name and GPU core count,
 rather than constants:
 
-| GPU | cores | simd up to | block from | GPU iff | status |
-|---|---|---|---|---|---|
-| Apple M1 | 8 | N = 8 | N = 96 | N <= 64 and batch * N >= 1024 | measured — see [`studies/eigh-routing-apple-m1.md`](studies/eigh-routing-apple-m1.md) |
-| Apple M5 Pro | 20 | never | N = 96 | N <= 1024, batch * N >= 512 and batch >= 16 | measured — see [`studies/routing-apple-m5-pro.md`](studies/routing-apple-m5-pro.md) |
-| anything else | — | N = 8 | N = 96 | N <= 64 and batch * N >= 1024 | **untuned default** |
+| GPU | cores | simd up to | block from | ql for | GPU iff | tridiag | status |
+|---|---|---|---|---|---|---|---|
+| Apple M1 | 8 | N = 8 | N = 96 | never | N <= 64 and batch * N >= 1024 | never | measured before 2.9.0 (incomplete) — see [`studies/eigh-routing-apple-m1.md`](studies/eigh-routing-apple-m1.md) |
+| Apple M5 Pro | 20 | never | N = 96 | N = 12-64 | N <= 48 and batch * N >= 8192 | from N = 1536, batch <= 2 | measured — run [`20261003-2d2c19`](results/apple-m5-pro-20gpu/20261003-2d2c19/eigh/report.md) |
+| anything else | — | N = 8 | N = 96 | never | N <= 64 and batch * N >= 1024 | never | **untuned default** |
 
-The two measured devices show what moves and what does not. The block
-crossover is 96 on both. The GPU/CPU boundary is not: on the M5 Pro the GPU
-stays ahead of the CPU up to the largest N measured, 1024 (the M1's cap is
-64), at up to 20x for batches of small matrices. What does not move is that a
-lone matrix is faster on the CPU at every size, on both devices, up to 4096 on
-the M5 Pro. The M1's product rule already keeps lone matrices off its GPU,
-whose cap is 64; on the M5 Pro that needs a third constant, a minimum batch of
-16, which is why the policy has one. Simd mode, which wins on the M1 up to
-N = 8, never wins on the M5 Pro.
+The M5 Pro row is the first measured against the CPU path that spreads a
+batch over every core (2.9.0). Against it the GPU keeps two regions: large
+batches of matrices up to N = 48 (batch × N at least 8192, so 256 matrices of
+32×32 or 1024 of 8×8), on the `ql` backend from N = 12, and one or two large
+matrices on `tridiag`. Eigenvalues alone never go to the GPU: the CPU's
+eigenvalue paths are fast enough that the GPU did not win anywhere it was
+measured, except `tridiag` for one matrix from N = 3072. Before 2.9.0 the
+same machine routed batches up to N = 1024 to the GPU, measured against one
+CPU core ([study](studies/routing-apple-m5-pro.md)); against every core that
+routing is 1.71x slower than the oracle on geometric mean, worst 14x, and
+the new row 1.003x. The block crossover, 96, is unchanged, and simd mode
+still never wins on the M5 Pro.
 
 The GPU/CPU rule is `N <= gpu_max_n`, `batch * N >= gpu_min_batch_times_n` and
 `batch >= gpu_min_batch`; the last is 1 (no minimum) on the M1. Eigenvalues
@@ -455,6 +538,9 @@ To probe another GPU without a rebuild:
 | `EIGH_GPU_MAX_N`, `EIGH_GPU_MIN_BATCH_TIMES_N`, `EIGH_GPU_MIN_BATCH` | the GPU/CPU boundary |
 | `EIGH_VALUES_GPU_MAX_N`, `EIGH_VALUES_GPU_MIN_BATCH_TIMES_N`, `EIGH_VALUES_GPU_MIN_BATCH` | the GPU/CPU boundary for eigenvalues alone (`eigvalsh`) |
 | `EIGH_TRIDIAG_MIN_N`, `EIGH_VALUES_TRIDIAG_MIN_N` | the tridiag backend instead of the CPU from this N (0: never) |
+| `EIGH_TRIDIAG_MAX_BATCH`, `EIGH_VALUES_TRIDIAG_MAX_BATCH` | ... only for batches up to this (0: any) |
+| `EIGH_QL_MIN_N`, `EIGH_QL_MAX_N` | the ql backend on the GPU for N in this window (`EIGH_QL_MAX_N=0`: never) |
+| `METAL_LINALG_CPU_THREADS=<n>` | CPU threads a batch is spread over (default: every core; all three decompositions) |
 | `EIGH_DEVICE=gpu` / `cpu` / `tridiag` | bypass the GPU/CPU boundary; `tridiag` forces that backend |
 | `EIGH_MODE=simd` / `threadgroup` | force the execution mode of backend 1 |
 | `EIGH_INNER_SWEEPS=<k>` | scalar sweeps per block subproblem |
@@ -471,14 +557,18 @@ cmake --build build --target test_eigh
 ./build/test_eigh          # or: ctest --test-dir build
 ```
 
-135 checks: both backends and both modes of backend 1 across
+About 250 checks: every backend, and both modes of backend 1, across
 $N = 1 \ldots 512$ (odd sizes, sizes straddling the 16-block and 32-group
-boundaries, several thread and inner-sweep counts), batched and 4-D inputs,
+boundaries, several thread and inner-sweep counts; for `ql` every simdgroup
+boundary up to its limit, 87, and the switch to a chaser of its own at 33),
+the `tridiag` backend to 1024, batched and 4-D inputs, a batch split over
+many command buffers,
 both triangles with junk in the other, transposed and unaligned views, integer
 input, structured spectra (identity, zero, diagonal, repeated, $10^{-4}$ to
 $10^4$, negative definite, rank one), scaling from $10^{-30}$ to $10^{37}$,
-NaN input alone and inside a batch, and the error paths. Every eigenvalue is
-also compared against LAPACK. The routing policy is tested without assuming
+NaN input alone and inside a batch, and the error paths. The CPU path is
+checked spread over every thread against one thread, with a NaN kept in its
+own matrix. Every eigenvalue is also compared against LAPACK. The routing policy is tested without assuming
 any device's values: each check installs the policy it needs, forces every
 size onto each backend in turn through the public function, and restores the
 device's own policy at the end.

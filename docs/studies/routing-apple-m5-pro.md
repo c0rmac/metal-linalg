@@ -1,5 +1,14 @@
 # Routing on an Apple M5 Pro
 
+> **Superseded for routing by 2.9.0.** Every GPU-against-CPU comparison here is
+> against the CPU path as it was then, which solved a batch one matrix at a
+> time on one core. From 2.9.0 the CPU path spreads a batch over every core
+> (7.5-15x faster for batches of small matrices on this machine), so the
+> GPU-or-CPU boundaries below no longer hold; the M5 Pro rows now come from run
+> `20261003-2d2c19` and later ([results](../results/apple-m5-pro-20gpu/)). The
+> kernel crossovers among GPU backends, and the method, are unaffected. Why the
+> change was made: [performance-headroom-apple-m5-pro.md](performance-headroom-apple-m5-pro.md).
+
 The measurements behind the Apple M5 Pro rows of `kTuned[]` in `src/qr.mm`,
 `src/eigh.mm` and `src/svd.mm`: the first device measured for all three
 solvers, and the first SVD row on any device. The machine has a 20-core GPU,

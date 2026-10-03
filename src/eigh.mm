@@ -26,6 +26,7 @@ using metal_linalg::detail::MetalRuntime;
 using metal_linalg::detail::Part;
 using metal_linalg::detail::copy_out;
 using metal_linalg::detail::input_buffer;
+using metal_linalg::detail::lapack_batches;
 using metal_linalg::detail::make_pipeline;
 using metal_linalg::detail::pad_up;
 using metal_linalg::detail::scan;
@@ -162,6 +163,14 @@ struct TunedEntry {
     // rows measured before the backend existed leave.
     unsigned    tridiag_min_n;
     unsigned    values_tridiag_min_n;
+    // ... for batches of at most this many matrices; 0 = any batch, which
+    // rows measured before the CPU path used every core leave.
+    unsigned    tridiag_max_batch;
+    unsigned    values_tridiag_max_batch;
+    // The ql backend for N in [ql_min_n, ql_max_n]; 0, 0 = never, which rows
+    // measured before the backend existed leave.
+    unsigned    ql_min_n;
+    unsigned    ql_max_n;
     unsigned    calibration;   // kCalibration* (calibration.h); rows without it are current
 };
 
@@ -171,7 +180,7 @@ struct TunedEntry {
 // docs/studies/. The last row keeps the array non-empty and matches nothing.
 constexpr TunedEntry kTuned[] = {
 #include "tuned/eigh.inc"
-    {"", 0,   0, 0, 0, 0,   0, 0, 0,   0, 0, 0,   0, 0,   0},
+    {"", 0,   0, 0, 0, 0,   0, 0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0,   0},
 };
 
 struct ResolvedPolicy {
@@ -212,6 +221,10 @@ ResolvedPolicy resolve_policy() {
             r.policy.values_gpu_min_batch         = e.values_gpu_min_batch;
             r.policy.tridiag_min_n                = e.tridiag_min_n;
             r.policy.values_tridiag_min_n         = e.values_tridiag_min_n;
+            r.policy.tridiag_max_batch            = e.tridiag_max_batch;
+            r.policy.values_tridiag_max_batch     = e.values_tridiag_max_batch;
+            r.policy.ql_min_n                     = e.ql_min_n;
+            r.policy.ql_max_n                     = e.ql_max_n;
             r.source = detail::tuned_source_prefix(e.calibration) + r.device;
             detail::calibration_notice("eigh", e.calibration);
             break;
@@ -245,6 +258,10 @@ ResolvedPolicy resolve_policy() {
     over("EIGH_VALUES_GPU_MIN_BATCH",         r.policy.values_gpu_min_batch);
     over("EIGH_TRIDIAG_MIN_N",                r.policy.tridiag_min_n);
     over("EIGH_VALUES_TRIDIAG_MIN_N",         r.policy.values_tridiag_min_n);
+    over("EIGH_TRIDIAG_MAX_BATCH",            r.policy.tridiag_max_batch);
+    over("EIGH_VALUES_TRIDIAG_MAX_BATCH",     r.policy.values_tridiag_max_batch);
+    over("EIGH_QL_MIN_N",                     r.policy.ql_min_n);
+    over("EIGH_QL_MAX_N",                     r.policy.ql_max_n);
     if (!env.empty()) r.source = "env:" + env;
     return r;
 }
@@ -512,16 +529,6 @@ void eigh_cpu(const Matrices& a, bool lower, float* w_out, float* v_out, uint32_
     if (two_stage) uplo = 'L';
     const char* routine = two_stage ? "ssyevd_2stage" : "ssyevd";
     const size_t per = (size_t)n * n;
-    std::vector<float> work_a(per);
-    __LAPACK_int N = (__LAPACK_int)n, lwork = -1, liwork = -1, err = 0;
-    float lwork_query = 0.0f;
-    __LAPACK_int liwork_query = 0;
-    syevd(&jobz, &uplo, &N, work_a.data(), &N, w_out, &lwork_query, &lwork,
-          &liwork_query, &liwork, &err);
-    lwork  = std::max<__LAPACK_int>(1, (__LAPACK_int)std::ceil(lwork_query));
-    liwork = std::max<__LAPACK_int>(1, liwork_query);
-    std::vector<float>        work(lwork);
-    std::vector<__LAPACK_int> iwork(liwork);
 
     // Non-finite input gives NaN for that matrix, as on the GPU, rather than
     // whatever LAPACK makes of it. Only the triangle that is read counts.
@@ -529,26 +536,41 @@ void eigh_cpu(const Matrices& a, bool lower, float* w_out, float* v_out, uint32_
     std::vector<char>  finite(batch);
     scan(a, lower ? Part::lower : Part::upper, amax.data(), finite.data());
 
-    for (uint32_t b = 0; b < batch; ++b) {
-        float* w = w_out + (size_t)b * n;
-        if (!finite[b]) {
-            std::fill(w, w + n, NAN);
-            if (v_out) std::fill(v_out + b * per, v_out + (b + 1) * per, NAN);
-            if (info_out) info_out[b] = 1u << 17;
-            continue;
+    // Each chunk of the batch, on its own thread with its own workspace.
+    lapack_batches(batch, per, [&](uint32_t b0, uint32_t b1) {
+        char jz = jobz, ul = uplo;
+        std::vector<float> work_a(per);
+        __LAPACK_int N = (__LAPACK_int)n, lwork = -1, liwork = -1, err = 0;
+        float lwork_query = 0.0f;
+        __LAPACK_int liwork_query = 0;
+        syevd(&jz, &ul, &N, work_a.data(), &N, w_out, &lwork_query, &lwork,
+              &liwork_query, &liwork, &err);
+        lwork  = std::max<__LAPACK_int>(1, (__LAPACK_int)std::ceil(lwork_query));
+        liwork = std::max<__LAPACK_int>(1, liwork_query);
+        std::vector<float>        work(lwork);
+        std::vector<__LAPACK_int> iwork(liwork);
+
+        for (uint32_t b = b0; b < b1; ++b) {
+            float* w = w_out + (size_t)b * n;
+            if (!finite[b]) {
+                std::fill(w, w + n, NAN);
+                if (v_out) std::fill(v_out + b * per, v_out + (b + 1) * per, NAN);
+                if (info_out) info_out[b] = 1u << 17;
+                continue;
+            }
+            if (transpose_in) vDSP_mtrans(a.data + b * per, 1, work_a.data(), 1, n, n);
+            else              std::memcpy(work_a.data(), a.data + b * per, per * sizeof(float));
+            syevd(&jz, &ul, &N, work_a.data(), &N, w, work.data(), &lwork,
+                  iwork.data(), &liwork, &err);
+            if (err != 0) {
+                throw std::runtime_error(std::string("[eigh] LAPACK ") + routine + " failed on matrix " +
+                                         std::to_string(b) + " of " + std::to_string(batch) + " (N=" +
+                                         std::to_string(n) + "), info " + std::to_string((long long)err) + ".");
+            }
+            if (v_out) vDSP_mtrans(work_a.data(), 1, v_out + b * per, 1, n, n);
+            if (info_out) info_out[b] = 1u | (1u << 16);
         }
-        if (transpose_in) vDSP_mtrans(a.data + b * per, 1, work_a.data(), 1, n, n);
-        else              std::memcpy(work_a.data(), a.data + b * per, per * sizeof(float));
-        syevd(&jobz, &uplo, &N, work_a.data(), &N, w, work.data(), &lwork,
-              iwork.data(), &liwork, &err);
-        if (err != 0) {
-            throw std::runtime_error(std::string("[eigh] LAPACK ") + routine + " failed on matrix " + std::to_string(b) +
-                                     " of " + std::to_string(batch) + " (N=" + std::to_string(n) +
-                                     "), info " + std::to_string((long long)err) + ".");
-        }
-        if (v_out) vDSP_mtrans(work_a.data(), 1, v_out + b * per, 1, n, n);
-        if (info_out) info_out[b] = 1u | (1u << 16);
-    }
+    });
 }
 
 } // namespace core::detail
@@ -563,6 +585,9 @@ void set_eigh_policy(const EighPolicy& p) {
 
 EighBackend eigh_gpu_backend(unsigned n, unsigned batch) {
     const EighPolicy& p = policy_state().policy;
+    if (p.ql_max_n && n >= p.ql_min_n && n <= std::min(p.ql_max_n, detail::eigh_ql_max_n())) {
+        return EighBackend::ql;
+    }
     if (n >= p.block_min_n) return EighBackend::block;
     if (p.block_min_batch && n >= p.block_min_n_batched && batch >= p.block_min_batch) {
         return EighBackend::block;
@@ -599,9 +624,10 @@ bool eigvalsh_uses_gpu(unsigned n, unsigned batch) {
 namespace {
 
 // Where the rules send a call to the CPU: the tridiag backend instead, from
-// the policy's threshold (0 = never). EIGH_DEVICE=cpu keeps the CPU;
-// EIGH_DEVICE=tridiag forces this backend for every call.
-EighBackend cpu_side(unsigned n, bool vectors) {
+// the policy's threshold (0 = never) and up to its batch cap (0 = none).
+// EIGH_DEVICE=cpu keeps the CPU; EIGH_DEVICE=tridiag forces this backend for
+// every call.
+EighBackend cpu_side(unsigned n, unsigned batch, bool vectors) {
     if (const char* e = std::getenv("EIGH_DEVICE")) {
         const std::string s = e;
         if (s == "cpu") return EighBackend::cpu;
@@ -609,7 +635,8 @@ EighBackend cpu_side(unsigned n, bool vectors) {
     }
     const EighPolicy& p = policy_state().policy;
     const unsigned from = vectors ? p.tridiag_min_n : p.values_tridiag_min_n;
-    return from != 0 && n >= from ? EighBackend::tridiag : EighBackend::cpu;
+    const unsigned cap  = vectors ? p.tridiag_max_batch : p.values_tridiag_max_batch;
+    return from != 0 && n >= from && (cap == 0 || batch <= cap) ? EighBackend::tridiag : EighBackend::cpu;
 }
 
 bool forced_tridiag() {
@@ -620,7 +647,7 @@ bool forced_tridiag() {
 EighBackend route(unsigned n, unsigned batch, bool vectors) {
     if (forced_tridiag()) return EighBackend::tridiag;
     const bool gpu = vectors ? eigh_uses_gpu(n, batch) : eigvalsh_uses_gpu(n, batch);
-    return gpu ? eigh_gpu_backend(n, batch) : cpu_side(n, vectors);
+    return gpu ? eigh_gpu_backend(n, batch) : cpu_side(n, batch, vectors);
 }
 
 } // namespace
@@ -645,6 +672,10 @@ void core::eigh(const Matrices& a, bool lower, float* w, float* v, uint32_t* inf
     }
     if (backend == EighBackend::tridiag) {
         core::detail::eigh_tridiag(a, lower, w, v, info);
+        return;
+    }
+    if (backend == EighBackend::ql) {
+        core::detail::eigh_ql(a, lower, w, v, info);
         return;
     }
     // A Jacobi backend, as the policy splits them.

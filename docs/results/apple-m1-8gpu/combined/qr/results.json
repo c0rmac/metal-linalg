@@ -85,21 +85,21 @@
       1024
     ],
     "pooled": [
-      1.1142,
-      1.0654,
+      1.1117,
+      1.066,
       1.0375,
-      1.0177,
-      1.0177,
-      1.0122,
-      1.0122,
-      1.0159,
-      1.019,
-      1.0342,
-      1.0407,
-      1.0685,
-      1.0705,
-      1.1164,
-      1.1236
+      1.0179,
+      1.0179,
+      1.0124,
+      1.0124,
+      1.0162,
+      1.0193,
+      1.0347,
+      1.0413,
+      1.0696,
+      1.0716,
+      1.1184,
+      1.1257
     ],
     "pooled_worst": [
       3.694,
@@ -119,21 +119,21 @@
       3.259
     ],
     "square": [
-      1.124,
-      1.0641,
-      1.0388,
-      1.0159,
-      1.0159,
-      1.0099,
-      1.0099,
-      1.0052,
-      1.0052,
+      1.1157,
+      1.0659,
+      1.0392,
+      1.0168,
+      1.0168,
+      1.0104,
+      1.0104,
       1.0055,
       1.0055,
-      1.0105,
-      1.0167,
-      1.0242,
-      1.0461
+      1.0058,
+      1.0058,
+      1.0111,
+      1.0177,
+      1.0256,
+      1.0487
     ],
     "tall": [
       1.0887,
@@ -191,98 +191,98 @@
     "lo": 352,
     "hi": 384,
     "chosen": 384,
-    "best_geomean": 1.0122,
+    "best_geomean": 1.0124,
     "tolerance": 0.003
   },
   "cost_of_missing": [
     {
       "threshold": 128,
-      "geomean": 1.1142,
-      "excess_pct": 10.08,
+      "geomean": 1.1117,
+      "excess_pct": 9.81,
       "in_band": false
     },
     {
       "threshold": 192,
-      "geomean": 1.0654,
-      "excess_pct": 5.26,
+      "geomean": 1.066,
+      "excess_pct": 5.29,
       "in_band": false
     },
     {
       "threshold": 256,
       "geomean": 1.0375,
-      "excess_pct": 2.5,
+      "excess_pct": 2.48,
       "in_band": false
     },
     {
       "threshold": 288,
-      "geomean": 1.0177,
+      "geomean": 1.0179,
       "excess_pct": 0.54,
       "in_band": false
     },
     {
       "threshold": 320,
-      "geomean": 1.0177,
+      "geomean": 1.0179,
       "excess_pct": 0.54,
       "in_band": false
     },
     {
       "threshold": 352,
-      "geomean": 1.0122,
+      "geomean": 1.0124,
       "excess_pct": 0.0,
       "in_band": true
     },
     {
       "threshold": 384,
-      "geomean": 1.0122,
+      "geomean": 1.0124,
       "excess_pct": 0.0,
       "in_band": true
     },
     {
       "threshold": 416,
-      "geomean": 1.0159,
-      "excess_pct": 0.37,
+      "geomean": 1.0162,
+      "excess_pct": 0.38,
       "in_band": false
     },
     {
       "threshold": 448,
-      "geomean": 1.019,
-      "excess_pct": 0.67,
+      "geomean": 1.0193,
+      "excess_pct": 0.68,
       "in_band": false
     },
     {
       "threshold": 480,
-      "geomean": 1.0342,
-      "excess_pct": 2.17,
+      "geomean": 1.0347,
+      "excess_pct": 2.2,
       "in_band": false
     },
     {
       "threshold": 512,
-      "geomean": 1.0407,
-      "excess_pct": 2.82,
+      "geomean": 1.0413,
+      "excess_pct": 2.85,
       "in_band": false
     },
     {
       "threshold": 576,
-      "geomean": 1.0685,
-      "excess_pct": 5.56,
+      "geomean": 1.0696,
+      "excess_pct": 5.65,
       "in_band": false
     },
     {
       "threshold": 640,
-      "geomean": 1.0705,
-      "excess_pct": 5.76,
+      "geomean": 1.0716,
+      "excess_pct": 5.85,
       "in_band": false
     },
     {
       "threshold": 768,
-      "geomean": 1.1164,
-      "excess_pct": 10.29,
+      "geomean": 1.1184,
+      "excess_pct": 10.47,
       "in_band": false
     },
     {
       "threshold": 1024,
-      "geomean": 1.1236,
-      "excess_pct": 11.01,
+      "geomean": 1.1257,
+      "excess_pct": 11.19,
       "in_band": false
     }
   ],
@@ -544,7 +544,7 @@
   },
   "rules": [
     {
-      "geomean": 1.1105,
+      "geomean": 1.1124,
       "worst": 3.627,
       "worst_shape": [
         4,
@@ -552,18 +552,18 @@
         256
       ],
       "over_tie": 115,
-      "n": 378,
-      "total": 1.0262,
+      "n": 372,
+      "total": 1.0285,
       "label": "original 5-rule heuristic",
       "per_region": {
-        "square": 1.0632,
+        "square": 1.0669,
         "tall": 1.0631,
         "wide": 1.39,
         "near-square": 1.1261
       }
     },
     {
-      "geomean": 1.0735,
+      "geomean": 1.0747,
       "worst": 2.311,
       "worst_shape": [
         1,
@@ -571,37 +571,37 @@
         512
       ],
       "over_tie": 86,
-      "n": 378,
-      "total": 1.0218,
+      "n": 372,
+      "total": 1.0237,
       "label": "max(M,N) >= 512",
       "per_region": {
-        "square": 1.0055,
+        "square": 1.0058,
         "tall": 1.0941,
         "wide": 1.249,
         "near-square": 1.0398
       }
     },
     {
-      "geomean": 1.1962,
+      "geomean": 1.1948,
       "worst": 9.897,
       "worst_shape": [
         16,
         2048,
         64
       ],
-      "over_tie": 156,
-      "n": 378,
-      "total": 1.1223,
+      "over_tie": 153,
+      "n": 372,
+      "total": 1.1121,
       "label": "K = min(M,N) >= 128",
       "per_region": {
-        "square": 1.124,
+        "square": 1.1157,
         "tall": 1.3231,
         "wide": 1.1017,
         "near-square": 1.1341
       }
     },
     {
-      "geomean": 1.0122,
+      "geomean": 1.0124,
       "worst": 1.361,
       "worst_shape": [
         1,
@@ -609,11 +609,11 @@
         32
       ],
       "over_tie": 21,
-      "n": 378,
-      "total": 1.003,
+      "n": 372,
+      "total": 1.0033,
       "label": "M >= 384  (chosen)",
       "per_region": {
-        "square": 1.0099,
+        "square": 1.0104,
         "tall": 1.0132,
         "wide": 1.001,
         "near-square": 1.021
@@ -624,19 +624,19 @@
     {
       "feature": "M (rows)",
       "best_threshold": 352,
-      "geomean": 1.0122,
+      "geomean": 1.0124,
       "worst": 1.361
     },
     {
       "feature": "max(M, N)",
       "best_threshold": 352,
-      "geomean": 1.0438,
+      "geomean": 1.0445,
       "worst": 2.311
     },
     {
       "feature": "K = min(M, N)",
       "best_threshold": 256,
-      "geomean": 1.1832,
+      "geomean": 1.1858,
       "worst": 9.897
     }
   ],
@@ -644,25 +644,25 @@
     {
       "name": "batch-dependent split",
       "form": "M >= (352 if batch < 2 else 352)",
-      "train_geomean": 1.0109,
-      "test_geomean": 1.0135,
+      "train_geomean": 1.011,
+      "test_geomean": 1.0137,
       "test_worst": 1.361,
       "justified": false
     },
     {
       "name": "narrow-N special case",
       "form": "M >= 448 or (N <= 64 and M >= 224)",
-      "train_geomean": 1.0092,
-      "test_geomean": 1.0195,
+      "train_geomean": 1.0086,
+      "test_geomean": 1.0206,
       "test_worst": 1.842,
       "justified": false
     }
   ],
   "baseline_held_out": {
-    "geomean": 1.0135,
+    "geomean": 1.0137,
     "worst": 1.361
   },
-  "ktuned_entry": "{\"Apple M1\", 8, 384, 384, 16,   kQrNoLimit, 0, 1},",
+  "ktuned_entry": "{\"Apple M1\", 8, 384, 384, 16,   kQrNoLimit, 0, 1,   0, 0},",
   "submissions": [
     "legacy"
   ]

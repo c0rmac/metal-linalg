@@ -75,7 +75,7 @@ _calibration_warnings()
 
 __all__ = [
     "qr", "eigh", "eigvalsh", "svd", "svdvals",
-    "device_name", "gpu_core_count",
+    "device_name", "gpu_core_count", "cpu_threads", "set_cpu_threads",
     "qr_backend", "eigh_backend", "eigvalsh_backend", "svd_backend", "svdvals_backend",
     "qr_policy", "eigh_policy", "svd_policy",
     "set_qr_policy", "set_eigh_policy", "set_svd_policy",
@@ -152,6 +152,19 @@ def gpu_core_count():
     return _core.gpu_core_count()
 
 
+def cpu_threads():
+    """How many CPU threads the CPU paths spread a batch over: every core by
+    default. A lone matrix keeps Accelerate's own threading."""
+    return _core.cpu_threads()
+
+
+def set_cpu_threads(n):
+    """Caps :func:`cpu_threads`, for a program that runs several solves at once
+    on threads of its own; 0 restores every core. ``METAL_LINALG_CPU_THREADS``
+    sets it from the environment."""
+    _core.set_cpu_threads(int(n))
+
+
 def qr_backend(m, n, batch=1):
     """Which backend :func:`qr` uses for ``batch`` matrices of ``m x n``:
     ``"cpu"``, ``"unblocked"`` or ``"streaming_reduced"``."""
@@ -160,7 +173,7 @@ def qr_backend(m, n, batch=1):
 
 def eigh_backend(n, batch=1):
     """Which backend :func:`eigh` uses: ``"cpu"``, ``"simd"``,
-    ``"threadgroup"``, ``"block"`` or ``"tridiag"``."""
+    ``"threadgroup"``, ``"block"``, ``"tridiag"`` or ``"ql"``."""
     return _core.eigh_backend(n, batch)
 
 

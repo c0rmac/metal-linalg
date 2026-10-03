@@ -4,6 +4,7 @@
 #include <metal_linalg/device.h>
 #include "calibration.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -11,6 +12,7 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <thread>
 
 namespace metal_linalg {
 namespace {
@@ -65,6 +67,28 @@ const Device& device() {
 
 const char* device_name()    { return device().name.c_str(); }
 unsigned    gpu_core_count() { return device().cores; }
+
+namespace {
+std::atomic<unsigned> g_cpu_threads{0};   // 0: the default
+
+unsigned default_cpu_threads() {
+    static const unsigned n = [] {
+        if (const char* s = std::getenv("METAL_LINALG_CPU_THREADS")) {
+            const long v = std::strtol(s, nullptr, 10);
+            if (v > 0) return (unsigned)v;
+        }
+        return std::max(1u, std::thread::hardware_concurrency());
+    }();
+    return n;
+}
+} // namespace
+
+void set_cpu_threads(unsigned n) { g_cpu_threads = n; }
+
+unsigned cpu_threads() {
+    const unsigned n = g_cpu_threads;
+    return n ? n : default_cpu_threads();
+}
 
 namespace {
 std::atomic<bool> g_notices{true};

@@ -54,6 +54,9 @@ namespace metal_linalg {
         EighResult eigh_cpu(const mlx::core::array& a, bool compute_vectors, bool lower);
 
         EighResult eigh_tridiag(const mlx::core::array& a, bool compute_vectors, bool lower);
+
+        // N <= metal_linalg::detail::eigh_ql_max_n(); `info` counts QL iterations.
+        EighResult eigh_ql(const mlx::core::array& a, bool compute_vectors, bool lower);
     }
 
 } // namespace metal_linalg

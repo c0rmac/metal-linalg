@@ -1,5 +1,66 @@
 # Changes
 
+## 2.9.0 (2026-10-03)
+
+- **The CPU path spreads a batch over every core.** QR, eigh and the SVD on
+  the CPU solved a batch one matrix at a time, so a batch used one core: they
+  now give each core whole matrices, with Accelerate's own threading off
+  inside them. On an M5 Pro (18 cores) a batch of small or mid-size matrices
+  is 7.5-15x faster than before (eigh, 2048 of 64×64: 284 ms to 19 ms), and
+  even two 2048×2048 matrices are 1.55x faster than one after the other with
+  Accelerate's threading. A lone matrix is unchanged. `set_cpu_threads(n)`
+  (C: `metal_linalg_set_cpu_threads`, Python and torch: `set_cpu_threads`,
+  Swift: `cpuThreads`) or `METAL_LINALG_CPU_THREADS=n` caps the cores used,
+  for a program that runs several solves at once; `cpu_threads()` reports it.
+  Every GPU-or-CPU boundary was measured against the one-core path, so the
+  routing has been re-measured (run `20261003-2d2c19`): the kernel versions of
+  all three decompositions moved (tuning/kernels.py), and earlier runs,
+  including the M1's, are now stale. On the M5 Pro most batches now go to the
+  CPU, and calls the old routing sent to the GPU are faster: against 2.8.x,
+  eigh 1.5-8x (512×512, batch 16: 129 ms to 16 ms), the SVD 1.65-4.2x, QR up to
+  2x, over the shapes in the study below; one QR shape measured, 1000 of
+  256×128, is 7% slower, a near-tie the fitted rule gives to the CPU. The
+  PyTorch table in the README was re-measured: metal-linalg-torch is now
+  ahead of torch's MPS kernels on every row (eigh of 4096 16×16 matrices:
+  2.0 ms, torch on MPS 5.3 ms). The QR sweep measures batches of 256 and 1024
+  for 64×64 to 256×256, where the boundary now runs.
+- **A new batched eigensolver kernel, `ql`.** LAPACK's method on the GPU,
+  one threadgroup per matrix with the matrix in threadgroup memory
+  (N <= 87): Householder tridiagonalization, then implicit QL, whose
+  rotations one thread records a sweep at a time and every thread applies to
+  its own row of the eigenvectors, so a sweep costs one barrier rather than
+  one per rotation. It does several times fewer flops than the Jacobi
+  kernels: on an M5 Pro 2-3.5x faster than the whole-matrix Jacobi kernel from
+  N = 24 in batches, and up to 1.8x faster than the 18-core CPU for large
+  batches up to N = 48 (4096 of 32×32: 5.4 ms, Jacobi 16.8 ms, CPU 9.6 ms), the
+  region where the M5 Pro now uses the GPU. Same accuracy as the other backends
+  (residual and orthogonality about 1e-6). The policy has
+  a window for it, `ql_min_n` .. `ql_max_n` (`EIGH_QL_MIN_N`,
+  `EIGH_QL_MAX_N`), fitted per device; it is off on devices without
+  measurements. `eigh_backend()` reports `"ql"`, and `detail::eigh_ql`
+  runs it directly.
+- **Two routing terms the faster CPU path needs.** QR: a large-matrix clause,
+  `gpu_large_min_k` and `gpu_large_max_batch` (`QR_GPU_LARGE_MIN_K`,
+  `QR_GPU_LARGE_MAX_BATCH`): the CPU path now wins batches of small and
+  mid-size matrices, while one large matrix is still about 2x faster on the
+  GPU, and one product rule cannot say both. eigh and the SVD: batch caps for
+  the `tridiag` and `bidiag` backends (`tridiag_max_batch`,
+  `values_tridiag_max_batch`, `bidiag_max_batch`, `values_bidiag_max_batch`,
+  and `EIGH_`/`SVD_`-prefixed variables), which solve a batch one matrix after
+  another and lose to the CPU beyond a few matrices. All are fitted per device;
+  0 means never (the clause) or any batch (the caps), which is what devices
+  without measurements have.
+- The C API's policy structs gain these fields at their ends:
+  `metal_linalg_eigh_policy` `ql_min_n`, `ql_max_n`, `tridiag_max_batch`,
+  `values_tridiag_max_batch`; `metal_linalg_svd_policy` `bidiag_max_batch`,
+  `values_bidiag_max_batch`; `metal_linalg_qr_policy` `gpu_large_min_k`,
+  `gpu_large_max_batch`.
+- `benchmark_eigh` compares every GPU backend, `ql` included, with the
+  library's CPU path rather than MLX's one-core `eigh`.
+- [docs/studies/performance-headroom-apple-m5-pro.md](docs/studies/performance-headroom-apple-m5-pro.md):
+  the measurements behind both changes, and what else was measured and
+  dropped.
+
 ## 2.8.1 (2026-10-03)
 
 - Release tarballs (what Homebrew downloads) leave out `docs/results/`, every

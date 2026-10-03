@@ -151,12 +151,21 @@ public var deviceName: String { String(cString: metal_linalg_device_name()) }
 /// Its GPU core count; 0 if it could not be read.
 public var gpuCoreCount: Int { Int(metal_linalg_gpu_core_count()) }
 
+/// CPU threads the CPU paths spread a batch over: every core by default. Cap it
+/// for a program that runs several solves at once on threads of its own;
+/// setting 0 restores every core. `METAL_LINALG_CPU_THREADS` sets it from the
+/// environment.
+public var cpuThreads: Int {
+    get { Int(metal_linalg_cpu_threads()) }
+    set { metal_linalg_set_cpu_threads(UInt32(clamping: newValue)) }
+}
+
 /// The backend a call of that shape uses: "cpu", "unblocked" or "streaming_reduced".
 public func qrBackend(rows: Int, cols: Int, batch: Int = 1) -> String {
     String(cString: metal_linalg_qr_backend(UInt32(clamping: rows), UInt32(clamping: cols), UInt32(clamping: batch)))
 }
 
-/// "cpu", "simd", "threadgroup", "block" or "tridiag".
+/// "cpu", "simd", "threadgroup", "block", "tridiag" or "ql".
 public func eighBackend(n: Int, batch: Int = 1) -> String {
     String(cString: metal_linalg_eigh_backend(UInt32(clamping: n), UInt32(clamping: batch)))
 }

@@ -74,9 +74,15 @@ void metal_linalg_set_calibration_notices(int enabled);
 const char* metal_linalg_calibration_message(const char* decomposition);
 uint32_t    metal_linalg_gpu_core_count(void);
 
+/* CPU threads the CPU paths spread a batch over (see set_cpu_threads in
+ * device.h): every core by default; 0 restores that, and
+ * METAL_LINALG_CPU_THREADS=n sets it from the environment. */
+void     metal_linalg_set_cpu_threads(uint32_t n);
+uint32_t metal_linalg_cpu_threads(void);
+
 /* The backend a call of that shape uses under the policy in effect, by name:
  *   QR    "cpu", "unblocked", "streaming_reduced"
- *   eigh  "cpu", "simd", "threadgroup", "block", "tridiag"
+ *   eigh  "cpu", "simd", "threadgroup", "block", "tridiag", "ql"
  *   SVD   "cpu", "jacobi", "block_jacobi", "qr_jacobi", "qr_block_jacobi", "bidiag"
  * The strings are static. */
 const char* metal_linalg_qr_backend(uint32_t rows, uint32_t cols, uint32_t batch);
@@ -101,6 +107,8 @@ typedef struct metal_linalg_qr_policy {
     uint32_t gpu_min_batch;
     uint32_t gpu_cores;
     uint32_t concurrent_matrices;
+    uint32_t gpu_large_min_k;       /* the GPU also from this k (0: never), */
+    uint32_t gpu_large_max_batch;   /* for batches up to this (0: any) */
 } metal_linalg_qr_policy;
 
 typedef struct metal_linalg_eigh_policy {
@@ -117,6 +125,10 @@ typedef struct metal_linalg_eigh_policy {
     uint32_t values_gpu_min_batch;
     uint32_t tridiag_min_n;          /* the tridiag backend instead of the CPU from this N; */
     uint32_t values_tridiag_min_n;   /* 0: never */
+    uint32_t ql_min_n;               /* the ql backend on the GPU for N in [ql_min_n, ql_max_n]; */
+    uint32_t ql_max_n;               /* ql_max_n = 0: never */
+    uint32_t tridiag_max_batch;          /* tridiag only for batches up to this; */
+    uint32_t values_tridiag_max_batch;   /* 0: any batch */
 } metal_linalg_eigh_policy;
 
 typedef struct metal_linalg_svd_policy {
@@ -131,6 +143,8 @@ typedef struct metal_linalg_svd_policy {
     uint32_t gpu_cores;
     uint32_t bidiag_min_k;          /* the bidiag backend instead of the CPU from this k; */
     uint32_t values_bidiag_min_k;   /* 0: never */
+    uint32_t bidiag_max_batch;          /* bidiag only for batches up to this; */
+    uint32_t values_bidiag_max_batch;   /* 0: any batch */
 } metal_linalg_svd_policy;
 
 metal_linalg_qr_policy   metal_linalg_qr_policy_get(void);

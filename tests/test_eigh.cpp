@@ -602,6 +602,164 @@ int main() {
     }
 
     // -------------------------------------------------------------------------
+    // ql: one threadgroup per matrix, the matrix in threadgroup memory. The
+    // sizes straddle the simdgroup boundaries (32, 64) and the switch to a
+    // chaser simdgroup of its own (N = 33), up to the largest N the device's
+    // threadgroup memory takes.
+    // -------------------------------------------------------------------------
+    std::printf("\n[ ql backend (N <= %u on this device) ]\n", metal_linalg::detail::eigh_ql_max_n());
+    {
+        const int max_n = (int)metal_linalg::detail::eigh_ql_max_n();
+        auto ql = [](const array& A, bool vectors, bool lower) {
+            EighResult r = detail::eigh_ql(A, vectors, lower);
+            eval({r.eigenvalues, r.eigenvectors, r.info});
+            return r;
+        };
+        for (int n : {1, 2, 3, 4, 7, 8, 16, 31, 32, 33, 34, 47, 48, 63, 64, 65, 80, 86, 87}) {
+            if (n > max_n) continue;
+            array A = random_symmetric(5, n, 2000 + n);
+            check("ql 5 x " + std::to_string(n) + "x" + std::to_string(n), A, ql(A, true, true));
+        }
+        // Eigenvalues alone, against the same matrices with eigenvectors.
+        for (int n : {1, 9, 33, 64}) {
+            if (n > max_n) continue;
+            array A = random_symmetric(4, n, 2100 + n);
+            EighResult rv = ql(A, false, true), rw = ql(A, true, true);
+            check("ql values only 4 x " + std::to_string(n) + "x" + std::to_string(n), A, rv, true, false);
+            const float d = max_abs(subtract(rv.eigenvalues, rw.eigenvalues)) / std::max(frobenius(A), 1.0f);
+            ++g_checks;
+            if (d > 1e-6f) fail("ql values-only == with vectors", "differ by " + std::to_string(d));
+        }
+        // One triangle read: junk in the other, both ways.
+        {
+            const int n = 40;
+            array S = random_symmetric(1, n, 2200);
+            array junk = full({n, n}, 1e30f);
+            check("ql lower, junk above 40x40", add(tril(S), triu(junk, 1)),
+                  ql(add(tril(S), triu(junk, 1)), true, true), true);
+            check("ql upper, junk below 40x40", add(triu(S), tril(junk, -1)),
+                  ql(add(triu(S), tril(junk, -1)), true, false), false);
+        }
+        // Batch dimensions beyond one, and a batch big enough to need several
+        // command buffers when each is given a millisecond.
+        check("ql batch [2,3] x 20x20", reshape(random_symmetric(6, 20, 2300), {2, 3, 20, 20}),
+              ql(reshape(random_symmetric(6, 20, 2300), {2, 3, 20, 20}), true, true));
+        {
+            setenv("EIGH_CHUNK_MS", "1", 1);
+            array A = random_symmetric(3000, 24, 2310);
+            check("ql 3000 x 24x24, 1 ms per command buffer", A, ql(A, true, true));
+            unsetenv("EIGH_CHUNK_MS");
+        }
+        // Magnitudes a float32 product would over- or underflow without scaling.
+        for (float s : {1e-30f, 1e-20f, 1e20f, 1e37f}) {
+            array A = multiply(random_symmetric(2, 50, 2400), array(s / 5.0f));
+            char label[64];
+            std::snprintf(label, sizeof label, "ql scaled by %.0e 2 x 50x50", s);
+            check(label, A, ql(A, true, true));
+        }
+        // Structured spectra: trivial reflectors, repeated, clustered, graded,
+        // rank one, negative definite.
+        check("ql zero matrix 30x30", zeros({30, 30}), ql(zeros({30, 30}), true, true));
+        check("ql identity 45x45", eye(45), ql(eye(45), true, true));
+        {
+            std::vector<float> dvals(60);
+            for (int i = 0; i < 60; ++i) dvals[i] = (float)(i % 7) - 3.0f;
+            array D = diag(from_values(dvals, {60}));
+            check("ql diagonal 60x60", D, ql(D, true, true));
+            std::vector<float> rep(64), graded(48), cluster(40), neg(32);
+            for (int i = 0; i < 64; ++i) rep[i] = i < 48 ? 1.0f : 2.0f + i;
+            for (int i = 0; i < 48; ++i) graded[i] = std::pow(10.0f, -4.0f + 8.0f * i / 47.0f);
+            for (int i = 0; i < 40; ++i) cluster[i] = 1.0f + 1e-6f * i;
+            for (int i = 0; i < 32; ++i) neg[i] = -1.0f - i;
+            array R = with_spectrum(rep);   // a fresh random basis each call: build it once
+            check("ql repeated eigenvalues 64x64", R, ql(R, true, true));
+            array G = with_spectrum(graded);
+            check("ql graded spectrum 1e-4..1e4 48x48", G, ql(G, true, true));
+            array C = with_spectrum(cluster);
+            check("ql clustered eigenvalues 40x40", C, ql(C, true, true));
+            array Nn = with_spectrum(neg);
+            check("ql negative definite 32x32", Nn, ql(Nn, true, true));
+            check("ql rank one (ones) 50x50", full({50, 50}, 1.0f), ql(full({50, 50}, 1.0f), true, true));
+        }
+        // A NaN in one matrix of a batch: that matrix NaN and flagged, the rest intact.
+        {
+            const int n = 33;
+            std::vector<float> data(3 * n * n);
+            array S = random_symmetric(3, n, 2500);
+            eval({S});
+            std::copy(S.data<float>(), S.data<float>() + 3 * n * n, data.begin());
+            data[(size_t)n * n + 5 * n + 3] = NAN;     // matrix 1, lower triangle
+            array A = from_values(data, {3, n, n});
+            EighResult r = ql(A, true, true);
+            array info = reshape(r.info, {-1});
+            array w1 = slice(r.eigenvalues, {1, 0}, {2, n});
+            array rest = concatenate({slice(r.eigenvalues, {0, 0}, {1, n}), slice(r.eigenvalues, {2, 0}, {3, n})});
+            eval({info, w1, rest});
+            ++g_checks;
+            const uint32_t* iw = info.data<uint32_t>();
+            const bool nan1 = all(isnan(w1)).item<bool>(), fin = !has_non_finite(rest);
+            const bool flags = detail::eigh_nonfinite(iw[1]) && detail::eigh_converged(iw[0]) &&
+                               detail::eigh_converged(iw[2]);
+            if (!(nan1 && fin && flags)) fail("ql NaN in one matrix of a batch", "not isolated");
+            else std::printf("  ok    %-44s\n", "ql NaN in one matrix of a batch");
+        }
+        // Beyond the threadgroup memory: an error, not a wrong answer.
+        ++g_checks;
+        try {
+            detail::eigh_ql(random_symmetric(1, max_n + 1, 2600), true, true);
+            fail("ql N beyond its limit", "did not throw");
+        } catch (const std::invalid_argument&) {
+            std::printf("  ok    %-44s\n", ("ql N=" + std::to_string(max_n + 1) + " throws invalid_argument").c_str());
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // The CPU path spreads a batch over cpu_threads() threads. One thread and
+    // every thread must agree, and a NaN must stay in its own matrix.
+    // -------------------------------------------------------------------------
+    std::printf("\n[ CPU path: a batch over %u threads ]\n", cpu_threads());
+    {
+        const unsigned threads = cpu_threads();
+        ++g_checks;
+        set_cpu_threads(3);
+        const bool set_ok = cpu_threads() == 3;
+        set_cpu_threads(0);
+        if (!set_ok || cpu_threads() != threads || threads < 1) fail("set_cpu_threads(3), then 0", "not honoured");
+        else std::printf("  ok    %-44s\n", "set_cpu_threads(3), then 0 restores the default");
+        for (int n : {6, 70}) {
+            array A = random_symmetric(41, n, 2700 + n);
+            EighResult all_threads = detail::eigh_cpu(A, true, true);
+            set_cpu_threads(1);
+            EighResult one = detail::eigh_cpu(A, true, true);
+            set_cpu_threads(0);
+            eval({all_threads.eigenvalues, all_threads.eigenvectors, one.eigenvalues, one.eigenvectors});
+            check("CPU 41 x " + std::to_string(n) + "x" + std::to_string(n) + ", every thread", A, all_threads);
+            const float d = max_abs(subtract(all_threads.eigenvalues, one.eigenvalues)) / frobenius(A);
+            ++g_checks;
+            if (d > 1e-6f) fail("CPU one thread == every thread", "differ by " + std::to_string(d));
+            else std::printf("  ok    %-44s |dw|=%.1e\n", ("CPU one thread == every thread, N=" + std::to_string(n)).c_str(), d);
+        }
+        {
+            const int n = 12, batch = 64;
+            array S = random_symmetric(batch, n, 2800);
+            eval({S});
+            std::vector<float> data(S.data<float>(), S.data<float>() + (size_t)batch * n * n);
+            data[(size_t)37 * n * n + 4 * n + 1] = NAN;   // matrix 37, lower triangle
+            array A = from_values(data, {batch, n, n});
+            EighResult r = detail::eigh_cpu(A, true, true);
+            array w = r.eigenvalues;
+            eval({w, r.info});
+            const float* wp = w.data<float>();
+            bool ok = true;
+            for (int b = 0; b < batch; ++b)
+                for (int i = 0; i < n; ++i) ok = ok && (std::isnan(wp[b * n + i]) == (b == 37));
+            ++g_checks;
+            if (!ok || !detail::eigh_nonfinite(r.info.data<uint32_t>()[37])) fail("CPU NaN in matrix 37 of 64", "not isolated");
+            else std::printf("  ok    %-44s\n", "CPU NaN in matrix 37 of 64 stays there");
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // CPU eigenvalues alone: the two-stage reduction from N = 128, the
     // one-stage one below. Each is checked against a known spectrum and
     // against the eigenvalues of the one-stage path with eigenvectors.
@@ -737,6 +895,17 @@ int main() {
                 const float d = max_abs(subtract(w, w_ref)) / std::max(frobenius(A), 1.0f);
                 expect("eigvalsh routed to tridiag (1100x1100) == LAPACK", d < kEigTol, "differ by " + std::to_string(d));
             }
+            {
+                EighPolicy c = t;
+                c.tridiag_max_batch = 2;
+                c.values_tridiag_max_batch = 1;
+                set_eigh_policy(c);
+                expect("tridiag_max_batch = 2: N=300 b2 tridiag, b3 cpu; values cap 1: eigvalsh N=1024 b2 cpu",
+                       eigh_backend(300, 2) == EighBackend::tridiag && eigh_backend(300, 3) == EighBackend::cpu &&
+                       eigvalsh_backend(1024, 1) == EighBackend::tridiag &&
+                       eigvalsh_backend(1024, 2) == EighBackend::cpu);
+                set_eigh_policy(t);
+            }
             setenv("EIGH_DEVICE", "cpu", 1);
             expect("EIGH_DEVICE=cpu keeps the CPU over tridiag", eigh_backend(4096, 1) == EighBackend::cpu);
             setenv("EIGH_DEVICE", "tridiag", 1);
@@ -744,6 +913,38 @@ int main() {
                    eigh_backend(8, 4096) == EighBackend::tridiag && eigvalsh_backend(8, 1) == EighBackend::tridiag);
             api("EIGH_DEVICE=tridiag, 64 x 16x16", random_symmetric(64, 16, 832));
             unsetenv("EIGH_DEVICE");
+            set_eigh_policy(known);
+        }
+
+        // The ql window overrides the Jacobi split inside [ql_min_n, ql_max_n],
+        // clipped to what the backend takes on the device.
+        {
+            expect("ql window unset -> never", eigh_gpu_backend(32, 1024) != EighBackend::ql);
+            EighPolicy q = known;
+            q.ql_min_n = 8;
+            q.ql_max_n = 48;
+            set_eigh_policy(q);
+            expect("ql window [8, 48]: N=7 not ql, N=8 and N=48 ql, N=49 not ql",
+                   eigh_gpu_backend(7, 64) != EighBackend::ql && eigh_gpu_backend(8, 64) == EighBackend::ql &&
+                   eigh_gpu_backend(48, 64) == EighBackend::ql && eigh_gpu_backend(49, 64) != EighBackend::ql);
+            expect("ql only where the GPU rule applies (N=40 b=1 -> cpu)", eigh_backend(40, 1) == EighBackend::cpu);
+            q.ql_max_n = 100000;
+            set_eigh_policy(q);
+            const unsigned lim = metal_linalg::detail::eigh_ql_max_n();
+            expect("ql window clipped to the device's limit (" + std::to_string(lim) + ")",
+                   eigh_gpu_backend(lim, 64) == EighBackend::ql && eigh_gpu_backend(lim + 1, 64) != EighBackend::ql);
+            q.gpu_max_n = kEighNoLimit;
+            q.gpu_min_batch_times_n = 0;
+            set_eigh_policy(q);
+            api("routed to ql (16 x 30x30)", random_symmetric(16, 30, 840));
+            {
+                array A = random_symmetric(16, 30, 841);
+                array w = eigvalsh_accelerated(A);
+                array w_ref = linalg::eigvalsh(A, "L", Device::cpu);
+                eval({w, w_ref});
+                const float d = max_abs(subtract(w, w_ref)) / std::max(frobenius(A), 1.0f);
+                expect("eigvalsh routed to ql (16 x 30x30) == LAPACK", d < kEigTol, "differ by " + std::to_string(d));
+            }
             set_eigh_policy(known);
         }
 

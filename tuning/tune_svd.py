@@ -113,6 +113,8 @@ CURRENT = (512, 64, 192, INF, INF, 64, 1024, 1)
 N_SPLIT = 5              # the first five are the GPU split, the rest the CPU routing
 # The bidiag thresholds in effect, (with vectors, singular values alone); 0 = never.
 CURRENT_BIDIAG = (0, 0)
+# Their batch caps, the same way round; 0 = any batch.
+CURRENT_BIDIAG_CAP = (0, 0)
 
 CAP_MS = 2500.0
 SCALE = {"jacobi": 1.0, "block": 1.0, "qr": 1.0, "qrblock": 1.0, "cpu": 1.0, "bidiag": 1.0}
@@ -299,20 +301,22 @@ def _cxx(params):
     return (r, a, bm, lo, bh, "kSvdNoLimit" if gm >= INF else gm, mb, mbatch)
 
 
-def tuned_row(device, params, bidiag=(0, 0)):
-    """The line for kTuned[] in svd.mm; `bidiag` the two bidiag thresholds (0: never)."""
+def tuned_row(device, params, bidiag=(0, 0), bidiag_cap=(0, 0)):
+    """The line for kTuned[] in svd.mm; `bidiag` the two bidiag thresholds (0: never),
+    `bidiag_cap` their batch caps (0: any batch)."""
     r, a, bm, lo, bh, gm, mb, mbatch = _cxx(params)
     return (f'{{"{device["name"]}", {device["gpu_cores"]},   {r}, {a},   {bm}, {lo}, {bh},   '
-            f'{gm}, {mb}, {mbatch},   {bidiag[0]}, {bidiag[1]}}},')
+            f'{gm}, {mb}, {mbatch},   {bidiag[0]}, {bidiag[1]}, {bidiag_cap[0]}, {bidiag_cap[1]}}},')
 
 
-def env_line(params, bidiag=(0, 0)):
+def env_line(params, bidiag=(0, 0), bidiag_cap=(0, 0)):
     r, a, bm, lo, bh, gm, mb, mbatch = _cxx(params)
     gm = NO_LIMIT if gm == "kSvdNoLimit" else gm
     return (f"SVD_QR_MIN_ROWS={r} SVD_QR_MIN_K={a} SVD_BLOCK_MIN_K={bm} "
             f"SVD_BLOCK_MIN_K_BATCHED={lo} SVD_BLOCK_MIN_BATCH={bh} "
             f"SVD_GPU_MAX_K={gm} SVD_GPU_MIN_BATCH_TIMES_K={mb} SVD_GPU_MIN_BATCH={mbatch} "
-            f"SVD_BIDIAG_MIN_K={bidiag[0]} SVD_VALUES_BIDIAG_MIN_K={bidiag[1]}")
+            f"SVD_BIDIAG_MIN_K={bidiag[0]} SVD_VALUES_BIDIAG_MIN_K={bidiag[1]} "
+            f"SVD_BIDIAG_MAX_BATCH={bidiag_cap[0]} SVD_VALUES_BIDIAG_MAX_BATCH={bidiag_cap[1]}")
 
 
 # ---------------------------------------------------------------------------
@@ -337,23 +341,35 @@ def rule_choice(params, M, N, b):
     return gpu_choice(params[:N_SPLIT], M, N, b)
 
 
+def _th_cap(th):
+    """A threshold k, or (threshold, batch cap) with cap 0 for any batch."""
+    return th if isinstance(th, tuple) else (th, 0)
+
+
 def bidiag_choice(params, th, M, N, b):
+    th, cap = _th_cap(th)
     k = rule_choice(params, M, N, b)
-    return "bidiag" if (k == "cpu" and th and min(M, N) >= th) else k
+    return "bidiag" if (k == "cpu" and th and min(M, N) >= th and (not cap or b <= cap)) else k
 
 
 def fit_bidiag(choice, times, current, tol):
     """Stage 3: a bidiag threshold over the measured k from BIDIAG_MIN_GRID_K
-    (and 0, never), scored on `times`, the points where bidiag was timed: over
-    every point, the few large matrices it wins on would move the geometric
-    mean by less than the tolerance. `choice(th, M, N, b)`. -> (chosen, scores)."""
-    cands = [0] + sorted({min(M, N) for (_, M, N) in times if min(M, N) >= BIDIAG_MIN_GRID_K})
-    scores = {th: te._score3(evaluate(lambda M, N, b, th=th: choice(th, M, N, b), times)) for th in cands}
+    (and 0, never), with a batch cap over the measured batches (and 0, any):
+    the backend solves a batch one matrix after another, while the CPU path
+    spreads one over every core. Scored on `times`, the points where bidiag
+    was timed: over every point, the few large matrices it wins on would move
+    the geometric mean by less than the tolerance. `choice((th, cap), M, N, b)`.
+    -> ((threshold, cap), scores)."""
+    ths = sorted({min(M, N) for (_, M, N) in times if min(M, N) >= BIDIAG_MIN_GRID_K})
+    caps = [0] + sorted({b for (b, _, _) in times})
+    cands = [(0, 0)] + [(th, cap) for th in ths for cap in caps]
+    scores = {c: te._score3(evaluate(lambda M, N, b, c=c: choice(c, M, N, b), times)) for c in cands}
     best = min(g for g, _, _ in scores.values())
-    near = {th: v for th, v in scores.items() if v[0] <= best * (1 + tol)}
+    near = {c: v for c, v in scores.items() if v[0] <= best * (1 + tol)}
+    current = tuple(current)
     if current in near:
         return current, scores
-    return min(near, key=lambda th: (near[th][1], -th if th else 0)), scores
+    return min(near, key=lambda c: (near[c][1], -c[0] if c[0] else 0, c[1] if c[1] else INF)), scores
 
 
 def evaluate(choice_fn, times):
@@ -618,33 +634,39 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
     res["stage2"] = s2
 
     # ---- stage 3: the bidiag backend instead of the CPU
-    bidiag = [0, 0]
+    bidiag, bidiag_cap = [0, 0], [0, 0]
     s3 = {}
     for which, full, cur, choice in (
-            ("vectors", vtimes, CURRENT_BIDIAG[0], lambda th, M, N, b: bidiag_choice(params, th, M, N, b)),
+            ("vectors", vtimes, (CURRENT_BIDIAG[0], CURRENT_BIDIAG_CAP[0]),
+             lambda th, M, N, b: bidiag_choice(params, th, M, N, b)),
             # svdvals follows the same GPU rule; where that says CPU, bidiag from its own threshold
             ("values", {p: tv for p, tv in valtimes.items() if rule_choice(params, *p[1:], p[0]) == "cpu"},
-             CURRENT_BIDIAG[1], lambda th, M, N, b: "bidiag" if th and min(M, N) >= th else "cpu")):
+             (CURRENT_BIDIAG[1], CURRENT_BIDIAG_CAP[1]),
+             lambda th, M, N, b: "bidiag" if (_th_cap(th)[0] and min(M, N) >= _th_cap(th)[0] and
+                                              (not _th_cap(th)[1] or b <= _th_cap(th)[1])) else "cpu")):
         if not full:
             continue
         th, scores = fit_bidiag(choice, full, cur, tol)
         tr, ts = split_points(full)
         th_tr, _ = fit_bidiag(choice, tr, cur, tol) if tr else (th, None)
         s3[which] = {
-            "n_points": len(full), "chosen": th,
+            "n_points": len(full), "chosen": th[0], "cap": th[1],
             "without": _strip(evaluate(lambda M, N, b: choice(0, M, N, b), full)),
             "with": _strip(evaluate(lambda M, N, b, t=th: choice(t, M, N, b), full)),
             "curve": [[t, v[0], v[1]] for t, v in sorted(scores.items())],
-            "holdout": {"train_points": len(tr), "test_points": len(ts), "fitted": th_tr,
+            "holdout": {"train_points": len(tr), "test_points": len(ts), "fitted": list(th_tr),
                         "test": _strip(evaluate(lambda M, N, b: choice(th_tr, M, N, b), ts)),
                         "without_test": _strip(evaluate(lambda M, N, b: choice(0, M, N, b), ts))},
             "speedup_vs_cpu": sorted([[M, N, b, tv["cpu"] / tv["bidiag"]] for (b, M, N), tv in full.items()],
                                      key=lambda x: (min(x[0], x[1]), x[0], x[2])),
         }
-        bidiag[0 if which == "vectors" else 1] = th
+        bidiag[0 if which == "vectors" else 1] = th[0]
+        bidiag_cap[0 if which == "vectors" else 1] = th[1]
     res["stage3"] = s3
     res["bidiag_chosen"] = bidiag
     res["current_bidiag"] = list(CURRENT_BIDIAG)
+    res["bidiag_cap_chosen"] = bidiag_cap
+    res["current_bidiag_cap"] = list(CURRENT_BIDIAG_CAP)
 
     res["chosen"] = list(params)
     res["rules"] = {"current": _strip(score_rule(tuple(CURRENT), times)),
@@ -714,12 +736,13 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
     if not s3:
         warns.append("no bidiag timings (a run from before the backend existed): the row's bidiag "
                      "thresholds are 0, never; rerun the sweep with a current sweep_svd")
-    if tuple(params) != tuple(CURRENT) or tuple(bidiag) != tuple(CURRENT_BIDIAG):
+    if (tuple(params) != tuple(CURRENT) or tuple(bidiag) != tuple(CURRENT_BIDIAG)
+            or tuple(bidiag_cap) != tuple(CURRENT_BIDIAG_CAP)):
         warns.append(f"the fitted policy differs from the one in effect ({device.get('source', 'unknown')})")
     res["warnings"] = warns
     res["noise"] = te.noise_floor(repeats)
-    res["tuned_row"] = tuned_row(device, params, bidiag)
-    res["env_line"] = env_line(params, bidiag)
+    res["tuned_row"] = tuned_row(device, params, bidiag, bidiag_cap)
+    res["env_line"] = env_line(params, bidiag, bidiag_cap)
     return res
 
 
@@ -789,7 +812,7 @@ def write_report(res, path):
           else "**Indicative only; do not paste this row.** See the warnings below.", "",
           "```cpp", "// device, GPU cores,   qr_min_rows, qr_min_k,   block_min_k, block_min_k_batched, "
           "block_min_batch,   gpu_max_k, gpu_min_batch_times_k, gpu_min_batch,   "
-          "bidiag_min_k, values_bidiag_min_k",
+          "bidiag_min_k, values_bidiag_min_k, bidiag_max_batch, values_bidiag_max_batch",
           res["tuned_row"], "```", "", "To try it without rebuilding:", "", "```sh", res["env_line"], "```", "",
           f"The policy in effect on this device came from `{d.get('source', 'unknown')}`. "
           f"Against the best measured backend at every point the fitted rule scores "
@@ -877,19 +900,21 @@ def write_report(res, path):
     if s3:
         L += ["## Stage 3: the bidiag backend instead of the CPU", "",
               "Where the rule above chooses the CPU, the `bidiag` backend (GPU bidiagonalization, then "
-              "LAPACK's bidiagonal solve) from a threshold k = min(M, N) on (0: never), fitted on the "
+              "LAPACK's bidiagonal solve) from a threshold k = min(M, N) on (0: never), for batches up to "
+              "a cap (0: any; it solves a batch one matrix after another, the CPU path spreads one over "
+              "every core), fitted on the "
               "points where bidiag was timed (k >= 128, within the cost cap): the region the threshold "
               "decides. With vectors it is scored against the best of all backends, bidiag included; "
               "for singular values alone (`svdvals`), bidiag against the CPU at the points where the "
               "rule chooses the CPU.", "",
-              "| | threshold | geomean regret | worst | without bidiag: geomean | worst | held out (fitted on half) |",
-              "|---|---|---|---|---|---|---|"]
+              "| | threshold | batch cap | geomean regret | worst | without bidiag: geomean | worst | held out (fitted on half) |",
+              "|---|---|---|---|---|---|---|---|"]
         for which, e in s3.items():
             h = e["holdout"]
             L.append(f"| {'with vectors' if which == 'vectors' else 'singular values alone'} | "
-                     f"{e['chosen'] or 'never'} | {e['with']['geomean']:.4f} | {e['with']['worst']:.2f}x | "
-                     f"{e['without']['geomean']:.4f} | {e['without']['worst']:.2f}x | "
-                     f"from {h['fitted'] or 'never'}: {h['test']['geomean']:.4f} vs "
+                     f"{e['chosen'] or 'never'} | {e.get('cap') or 'any'} | {e['with']['geomean']:.4f} | "
+                     f"{e['with']['worst']:.2f}x | {e['without']['geomean']:.4f} | {e['without']['worst']:.2f}x | "
+                     f"{te._fmt_td(h['fitted'])}: {h['test']['geomean']:.4f} vs "
                      f"{h['without_test']['geomean']:.4f} |")
         L.append("")
         for which, e in s3.items():
@@ -913,7 +938,7 @@ def write_report(res, path):
 # ---------------------------------------------------------------------------
 
 def main():
-    global CURRENT, CURRENT_BIDIAG
+    global CURRENT, CURRENT_BIDIAG, CURRENT_BIDIAG_CAP
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("binary", nargs="?", help="path to the built sweep_svd")
     ap.add_argument("--out", default="svd-tune-results", help="output directory")
@@ -971,6 +996,7 @@ def main():
             device = {"name": pol["device"], "gpu_cores": pol["gpu_cores"], "source": pol["source"]}
             CURRENT = policy_to_tuple(pol)
             CURRENT_BIDIAG = (pol.get("bidiag_min_k", 0), pol.get("values_bidiag_min_k", 0))
+            CURRENT_BIDIAG_CAP = (pol.get("bidiag_max_batch", 0), pol.get("values_bidiag_max_batch", 0))
         calibration = side.get("calibration")
         if calibration:
             SCALE.update(calibration["scale"])
@@ -997,7 +1023,7 @@ def main():
     print(f"in effect ({device['source']}): {res['rules']['current']['geomean']:.4f}x, "
           f"worst {res['rules']['current']['worst']:.2f}x")
     for which, s3 in res.get("stage3", {}).items():
-        print(f"bidiag ({which}): from k={s3['chosen'] or 'never'}   ({s3['with']['geomean']:.4f}x, worst "
+        print(f"bidiag ({which}): {te._fmt_td((s3['chosen'], s3.get('cap', 0)))}   ({s3['with']['geomean']:.4f}x, worst "
               f"{s3['with']['worst']:.2f}x; without {s3['without']['geomean']:.4f}x)")
     print(f"\nkTuned[] row:  {res['tuned_row']}" +
           ("" if res["trustworthy"] else "     <-- indicative only, do not paste (see warnings)"))

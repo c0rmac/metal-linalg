@@ -10,23 +10,30 @@
 namespace ml = metal_linalg;
 
 const char* name(ml::QrBackend b) {
-    return b == ml::QrBackend::unblocked ? "GPU, one threadgroup per matrix" : "GPU, grid-parallel";
+    switch (b) {
+        case ml::QrBackend::cpu:       return "CPU (Accelerate LAPACK, a batch over every core)";
+        case ml::QrBackend::unblocked: return "GPU, one threadgroup per matrix";
+        default:                       return "GPU, grid-parallel";
+    }
 }
 const char* name(ml::EighBackend b) {
     switch (b) {
-        case ml::EighBackend::cpu:         return "CPU (MLX / Accelerate)";
-        case ml::EighBackend::simd:        return "GPU, whole-matrix kernel, one simdgroup";
-        case ml::EighBackend::threadgroup: return "GPU, whole-matrix kernel, one threadgroup";
-        default:                           return "GPU, block Jacobi";
+        case ml::EighBackend::cpu:         return "CPU (Accelerate LAPACK, a batch over every core)";
+        case ml::EighBackend::simd:        return "GPU, whole-matrix Jacobi, one simdgroup";
+        case ml::EighBackend::threadgroup: return "GPU, whole-matrix Jacobi, one threadgroup";
+        case ml::EighBackend::block:       return "GPU, block Jacobi";
+        case ml::EighBackend::ql:          return "GPU, tridiagonalization and QL, one threadgroup";
+        default:                           return "GPU tridiagonalization, LAPACK's tridiagonal solver";
     }
 }
 const char* name(ml::SvdBackend b) {
     switch (b) {
-        case ml::SvdBackend::cpu:             return "CPU (MLX / Accelerate)";
+        case ml::SvdBackend::cpu:             return "CPU (Accelerate LAPACK, a batch over every core)";
         case ml::SvdBackend::jacobi:          return "GPU, whole-matrix kernel";
         case ml::SvdBackend::block_jacobi:    return "GPU, block kernel";
         case ml::SvdBackend::qr_jacobi:       return "GPU, QR then whole-matrix kernel";
-        default:                              return "GPU, QR then block kernel";
+        case ml::SvdBackend::qr_block_jacobi: return "GPU, QR then block kernel";
+        default:                              return "GPU bidiagonalization, LAPACK's bidiagonal solver";
     }
 }
 
@@ -39,6 +46,7 @@ int main() {
     std::printf("qr   2048 x 256,   batch 4      -> %s\n", name(ml::qr_backend(2048, 256, 4)));
     std::printf("eigh 32 x 32,      batch 4096   -> %s\n", name(ml::eigh_backend(32, 4096)));
     std::printf("eigh 512 x 512,    batch 64     -> %s\n", name(ml::eigh_backend(512, 64)));
+    std::printf("eigh 2048 x 2048,  batch 1      -> %s\n", name(ml::eigh_backend(2048, 1)));
     std::printf("eigh 512 x 512,    batch 1      -> %s\n", name(ml::eigh_backend(512, 1)));
     std::printf("svd  1024 x 64,    batch 64     -> %s\n", name(ml::svd_backend(1024, 64, 64)));
     std::printf("svd  256 x 256,    batch 16     -> %s\n", name(ml::svd_backend(256, 256, 16)));

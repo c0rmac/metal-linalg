@@ -55,6 +55,7 @@ const char* name(EighBackend b) {
         case EighBackend::threadgroup: return "threadgroup";
         case EighBackend::block:       return "block";
         case EighBackend::tridiag:     return "tridiag";
+        case EighBackend::ql:          return "ql";
         default:                       return "cpu";
     }
 }
@@ -114,6 +115,8 @@ const char* metal_linalg_calibration_message(const char* decomposition) {
     return msg.c_str();
 }
 uint32_t    metal_linalg_gpu_core_count(void) { return gpu_core_count(); }
+void        metal_linalg_set_cpu_threads(uint32_t n) { set_cpu_threads(n); }
+uint32_t    metal_linalg_cpu_threads(void) { return cpu_threads(); }
 
 const char* metal_linalg_qr_backend(uint32_t rows, uint32_t cols, uint32_t batch) {
     return name(qr_backend(rows, cols, batch));
@@ -135,7 +138,7 @@ metal_linalg_qr_policy metal_linalg_qr_policy_get(void) {
     const QrPolicy p = qr_policy();
     return {p.m_crossover_small_batch, p.m_crossover_large_batch, p.batch_threshold,
             p.gpu_max_k, p.gpu_min_batch_times_k, p.gpu_min_batch,
-            p.gpu_cores, p.concurrent_matrices};
+            p.gpu_cores, p.concurrent_matrices, p.gpu_large_min_k, p.gpu_large_max_batch};
 }
 
 metal_linalg_eigh_policy metal_linalg_eigh_policy_get(void) {
@@ -143,14 +146,15 @@ metal_linalg_eigh_policy metal_linalg_eigh_policy_get(void) {
     return {p.simd_max_n, p.block_min_n, p.block_min_n_batched, p.block_min_batch,
             p.gpu_max_n, p.gpu_min_batch_times_n, p.gpu_min_batch, p.gpu_cores,
             p.values_gpu_max_n, p.values_gpu_min_batch_times_n, p.values_gpu_min_batch,
-            p.tridiag_min_n, p.values_tridiag_min_n};
+            p.tridiag_min_n, p.values_tridiag_min_n, p.ql_min_n, p.ql_max_n,
+            p.tridiag_max_batch, p.values_tridiag_max_batch};
 }
 
 metal_linalg_svd_policy metal_linalg_svd_policy_get(void) {
     const SvdPolicy p = svd_policy();
     return {p.qr_min_rows, p.qr_min_k, p.block_min_k, p.block_min_k_batched, p.block_min_batch,
             p.gpu_max_k, p.gpu_min_batch_times_k, p.gpu_min_batch, p.gpu_cores,
-            p.bidiag_min_k, p.values_bidiag_min_k};
+            p.bidiag_min_k, p.values_bidiag_min_k, p.bidiag_max_batch, p.values_bidiag_max_batch};
 }
 
 // The informational fields keep the detected values.
@@ -163,6 +167,8 @@ void metal_linalg_qr_policy_set(const metal_linalg_qr_policy* c) {
     p.gpu_max_k               = c->gpu_max_k;
     p.gpu_min_batch_times_k   = c->gpu_min_batch_times_k;
     p.gpu_min_batch           = c->gpu_min_batch;
+    p.gpu_large_min_k         = c->gpu_large_min_k;
+    p.gpu_large_max_batch     = c->gpu_large_max_batch;
     set_qr_policy(p);
 }
 
@@ -181,6 +187,10 @@ void metal_linalg_eigh_policy_set(const metal_linalg_eigh_policy* c) {
     p.values_gpu_min_batch         = c->values_gpu_min_batch;
     p.tridiag_min_n                = c->tridiag_min_n;
     p.values_tridiag_min_n         = c->values_tridiag_min_n;
+    p.ql_min_n                     = c->ql_min_n;
+    p.ql_max_n                     = c->ql_max_n;
+    p.tridiag_max_batch            = c->tridiag_max_batch;
+    p.values_tridiag_max_batch     = c->values_tridiag_max_batch;
     set_eigh_policy(p);
 }
 
@@ -197,6 +207,8 @@ void metal_linalg_svd_policy_set(const metal_linalg_svd_policy* c) {
     p.gpu_min_batch         = c->gpu_min_batch;
     p.bidiag_min_k          = c->bidiag_min_k;
     p.values_bidiag_min_k   = c->values_bidiag_min_k;
+    p.bidiag_max_batch        = c->bidiag_max_batch;
+    p.values_bidiag_max_batch = c->values_bidiag_max_batch;
     set_svd_policy(p);
 }
 

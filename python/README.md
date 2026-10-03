@@ -21,8 +21,8 @@ LAPACK on the CPU, by a policy measured on the Mac it runs on:
 ```python
 ml.device_name()                      # 'Apple M5 Pro'
 ml.eigh_policy_source()               # 'tuned:Apple M5 Pro'
-ml.eigh_backend(512, 64)              # 'block': 64 matrices of 512x512 go to the GPU
-ml.eigh_backend(512, 1)               # 'cpu': one matrix is faster on the CPU
+ml.eigh_backend(32, 4096)             # 'ql': 4096 matrices of 32x32 go to the GPU
+ml.eigh_backend(512, 64)              # 'cpu': the CPU's cores win 64 of 512x512
 ml.set_eigh_policy(gpu_min_batch=1)   # override the measured policy
 ```
 

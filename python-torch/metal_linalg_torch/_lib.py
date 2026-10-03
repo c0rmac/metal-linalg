@@ -43,6 +43,8 @@ _svd = _fn("metal_linalg_svd", ctypes.c_int, _f32p, _u32, _u32, _u32, _f32p, _f3
 
 device_name = _fn("metal_linalg_device_name", _cstr)
 gpu_core_count = _fn("metal_linalg_gpu_core_count", _u32)
+cpu_threads = _fn("metal_linalg_cpu_threads", _u32)
+set_cpu_threads = _fn("metal_linalg_set_cpu_threads", None, _u32)
 set_calibration_notices = _fn("metal_linalg_set_calibration_notices", None, ctypes.c_int)
 calibration_message = _fn("metal_linalg_calibration_message", _cstr, _cstr)
 
@@ -63,14 +65,16 @@ def _struct(name, fields):
 
 # Field for field as in c_api.h, which says what each does.
 QR_FIELDS = ("m_crossover_small_batch", "m_crossover_large_batch", "batch_threshold",
-             "gpu_max_k", "gpu_min_batch_times_k", "gpu_min_batch", "gpu_cores", "concurrent_matrices")
+             "gpu_max_k", "gpu_min_batch_times_k", "gpu_min_batch", "gpu_cores", "concurrent_matrices",
+             "gpu_large_min_k", "gpu_large_max_batch")
 EIGH_FIELDS = ("simd_max_n", "block_min_n", "block_min_n_batched", "block_min_batch",
                "gpu_max_n", "gpu_min_batch_times_n", "gpu_min_batch", "gpu_cores",
                "values_gpu_max_n", "values_gpu_min_batch_times_n", "values_gpu_min_batch",
-               "tridiag_min_n", "values_tridiag_min_n")
+               "tridiag_min_n", "values_tridiag_min_n", "ql_min_n", "ql_max_n",
+               "tridiag_max_batch", "values_tridiag_max_batch")
 SVD_FIELDS = ("qr_min_rows", "qr_min_k", "block_min_k", "block_min_k_batched", "block_min_batch",
               "gpu_max_k", "gpu_min_batch_times_k", "gpu_min_batch", "gpu_cores",
-              "bidiag_min_k", "values_bidiag_min_k")
+              "bidiag_min_k", "values_bidiag_min_k", "bidiag_max_batch", "values_bidiag_max_batch")
 # Read back but ignored when set.
 INFORMATIONAL = {"gpu_cores", "concurrent_matrices"}
 

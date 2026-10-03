@@ -120,11 +120,12 @@ int main(int argc, char** argv) {
         std::printf("{\"device\": \"%s\", \"gpu_cores\": %u, \"source\": \"%s\", "
                     "\"m_crossover_small_batch\": %u, \"m_crossover_large_batch\": %u, "
                     "\"batch_threshold\": %u, \"gpu_max_k\": %u, \"gpu_min_batch_times_k\": %u, "
-                    "\"gpu_min_batch\": %u, \"concurrent_matrices\": %u}\n",
+                    "\"gpu_min_batch\": %u, \"concurrent_matrices\": %u, "
+                    "\"gpu_large_min_k\": %u, \"gpu_large_max_batch\": %u}\n",
                     device_name(), p.gpu_cores, qr_policy_source(),
                     p.m_crossover_small_batch, p.m_crossover_large_batch, p.batch_threshold,
                     p.gpu_max_k, p.gpu_min_batch_times_k, p.gpu_min_batch,
-                    p.concurrent_matrices);
+                    p.concurrent_matrices, p.gpu_large_min_k, p.gpu_large_max_batch);
         return 0;
     }
     if (argc != 5) {
