@@ -8,10 +8,11 @@
 
 QR decomposition, symmetric eigendecomposition and singular value
 decomposition for batches of matrices on Apple GPUs, for
-[MLX](https://github.com/ml-explore/mlx) and for plain float buffers. A C++
-library, installed with Homebrew or built from source inside your own
-project, with Python bindings for `mlx.core` arrays, a C API, and a Swift
-package (on `[Float]`, and on mlx-swift's `MLXArray`).
+[MLX](https://github.com/ml-explore/mlx), [PyTorch](https://pytorch.org) and
+plain float buffers. A C++ library, installed with Homebrew or built from
+source inside your own project, with Python packages for `mlx.core` arrays
+and for `torch` tensors, a C API, and a Swift package (on `[Float]`, and on
+mlx-swift's `MLXArray`).
 
 Each solver has several Metal kernels, one per regime (small matrices in large
 batches, large matrices spread over the whole GPU, long thin matrices), and
@@ -46,14 +47,15 @@ policy measured on the device it runs on. MLX's own `linalg::eigh` and
   - [Use it in a CMake project](#use-it-in-a-cmake-project)
   - [Quick start](#quick-start)
 - [Python](#python)
+  - [MLX or PyTorch](#mlx-or-pytorch)
+  - [With MLX](#with-mlx)
+  - [With PyTorch](#with-pytorch)
+- [Swift](#swift)
   - [Install](#install)
   - [Quick start](#quick-start-1)
-- [Swift](#swift)
+- [C and Objective-C](#c-and-objective-c)
   - [Install](#install-1)
   - [Quick start](#quick-start-2)
-- [C and Objective-C](#c-and-objective-c)
-  - [Install](#install-2)
-  - [Quick start](#quick-start-3)
   - [Objective-C](#objective-c)
 - [Examples](#examples)
   - [Orthonormal bases with QR](#orthonormal-bases-with-qr)
@@ -86,12 +88,13 @@ rest of its batch intact. The QR and SVD factors are the thin ones,
 
 ### Platforms
 
-The same solvers and routing, from four places, each on an Apple Silicon Mac:
+The same solvers and routing, from five places, each on an Apple Silicon Mac:
 
 | platform | works on | install | |
 |---|---|---|---|
 | C++ | MLX arrays (`mlx::core::array`) | Homebrew, or CMake from source | [C++](#c) |
-| Python | MLX arrays (`mlx.core.array`) | `pip` | [Python](#python) |
+| Python, MLX | MLX arrays (`mlx.core.array`) | `pip install metal-linalg` | [With MLX](#with-mlx) |
+| Python, PyTorch | `torch` tensors, on the CPU or MPS | `pip install metal-linalg-torch` | [With PyTorch](#with-pytorch) |
 | Swift | `[Float]`, or mlx-swift's `MLXArray` | Swift Package Manager | [Swift](#swift) |
 | C and Objective-C | plain float buffers, no MLX | as for C++ | [C and Objective-C](#c-and-objective-c) |
 
@@ -295,7 +298,20 @@ with, the GPU as the default MLX device.
 
 ## Python
 
-### Install
+### MLX or PyTorch
+
+There are two Python packages, with the same solvers and routing; install the
+one for the arrays you use:
+
+| you use | install | import |
+|---|---|---|
+| MLX (`mlx.core.array`) | `pip install metal-linalg` | `import metal_linalg as ml` |
+| PyTorch (`torch.Tensor`) | `pip install metal-linalg-torch` | `import metal_linalg_torch as mlt` |
+
+They are independent: the PyTorch package neither installs nor loads MLX,
+and the MLX package does not need torch. Both can be installed side by side.
+
+### With MLX
 
 ```bash
 pip install metal-linalg
@@ -306,8 +322,6 @@ Prebuilt wheels for Apple Silicon Macs on macOS 14 or later, Python 3.10 to
 at present), since it shares MLX's library and arrays; pip installs that
 `mlx` with it. [python/README.md](python/README.md) covers building from
 source, and against Homebrew's MLX.
-
-### Quick start
 
 ```python
 import mlx.core as mx
@@ -322,6 +336,50 @@ ml.eigh_backend(512, 1)      # 'cpu': which backend a shape gets on this Mac
 
 Inputs may be `mx.array`, NumPy arrays or nested lists; outputs are float32
 `mx.array`. `ml.eigvalsh` and `ml.svdvals` return the values alone.
+
+### With PyTorch
+
+```bash
+pip install metal-linalg-torch
+```
+
+One prebuilt wheel for Apple Silicon Macs on macOS 14 or later, for every
+Python from 3.10 and every PyTorch from 2.4: it calls the library's C API and
+is compiled against neither, so it pins nothing and upgrading torch never
+breaks it.
+
+```python
+import torch
+import metal_linalg_torch as mlt
+
+a = torch.randn(1000, 64, 32, device="mps")   # or on the CPU
+Q, R = mlt.qr(a)                              # like torch.linalg.qr
+U, S, Vh = mlt.svd(a)                         # thin factors, like torch.linalg.svd(a, full_matrices=False)
+L, V = mlt.eigh(a.mT @ a)                     # like torch.linalg.eigh
+mlt.svd_backend(4096, 4096)                   # 'bidiag': which backend a shape gets on this Mac
+```
+
+The functions mirror their `torch.linalg` namesakes (arguments, result types,
+the input's device), support autograd with torch's own formulas, and compile
+with `torch.compile`: they are the custom operators
+`torch.ops.metal_linalg.*`. Computation is in float32. Against `torch.linalg`
+on an M5 Pro with PyTorch 2.14 (best of five; the same tensors on MPS for
+torch's MPS path and for this package, copies included):
+
+| | torch, CPU | torch, MPS | metal-linalg-torch |
+|---|---|---|---|
+| QR, 1024 × 128×128 | 160 ms | 1040 ms | 23 ms |
+| SVD, 256 × 128×64 | 61 ms | 12 ms | 10 ms |
+| SVD, 4096 × 32×32 | 196 ms | 27 ms | 27 ms |
+| eigh, 4096 × 16×16 | 28 ms | 5.6 ms | 3.9 ms |
+| eigh, one 2048×2048 | 259 ms | 244 ms | 121 ms |
+| SVD, one 4096×4096 | 3.58 s | 3.59 s | 1.79 s |
+
+PyTorch's own MPS kernels are close for small matrices in batches; the gains
+are in QR and in large matrices, where torch falls back to the CPU.
+
+[python-torch/README.md](python-torch/README.md) has the details: what differs
+from `torch.linalg`, gradients, and MPS tensors.
 
 ## Swift
 
@@ -511,7 +569,7 @@ API and 45 on the C API) cover every backend directly and through the router,
 shapes around every kernel boundary, batches, transposed views, structured
 and rank-deficient input, magnitudes from 1e-30 to 1e+37, NaN inside a batch
 (eigh, SVD), and the routing policies without assuming any device's values.
-The Python and Swift packages have their own tests; see their guides.
+The Python (MLX and PyTorch) and Swift packages have their own tests; see their guides.
 
 ### Repository layout
 
@@ -520,7 +578,8 @@ The Python and Swift packages have their own tests; see their guides.
 | `include/metal_linalg/` | the public headers |
 | `src/` | host code: routing policies, the Metal runtime, one driver per backend, the MLX and C layers |
 | `shaders/` | the Metal kernels; `prebuilt/` holds their compiled metallibs |
-| `python/` | the Python package: bindings, the `metal_linalg` module, its tests |
+| `python/` | the Python package for MLX: bindings, the `metal_linalg` module, its tests |
+| `python-torch/` | the Python package for PyTorch: the `metal_linalg_torch` module over the C API, its tests |
 | `Package.swift`, `swift/` | the Swift package: the C module map, the embedded shaders, the Swift API and its tests |
 | `examples/` | small self-checking programs, one per use case |
 | `tests/` | correctness tests |
@@ -533,7 +592,8 @@ The Python and Swift packages have their own tests; see their guides.
 - [QR](docs/qr.md), [symmetric eigensolver](docs/eigh.md),
   [SVD](docs/svd.md): algorithms, kernels, routing, accuracy, performance
 - Other languages: [C](docs/c-api.md), [Swift](docs/swift.md),
-  [Objective-C](docs/objective-c.md), [Python](python/README.md)
+  [Objective-C](docs/objective-c.md), Python with [MLX](python/README.md) or
+  [PyTorch](python-torch/README.md)
 - [Contributing](CONTRIBUTING.md): measuring your Mac and sending the results;
   [the measurement reference](docs/tuning.md), [how the measurements work](docs/tuning-details.md)
   and [how to read a measurement report](docs/reading-reports.md)

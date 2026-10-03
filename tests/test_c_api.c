@@ -94,6 +94,18 @@ int main(void) {
         CHECK(metal_linalg_qr(NULL, 0, 2, 2, NULL, NULL) == METAL_LINALG_OK, "an empty batch should need no buffers");
     }
 
+    /* The calibration notice as a string: "" when current, else the message
+     * the library would print; never NULL, and NULL input gives "". */
+    {
+        (void)metal_linalg_svd_policy_source();   /* resolves the policy */
+        const char* msg = metal_linalg_calibration_message("SVD");
+        const char* src = metal_linalg_svd_policy_source();
+        CHECK(msg != NULL, "calibration_message returned NULL");
+        CHECK((strncmp(src, "tuned:", 6) == 0) == (msg[0] == 0) || strncmp(src, "env:", 4) == 0 ||
+              strcmp(src, "user") == 0, "calibration message '%s' for policy source '%s'", msg, src);
+        CHECK(metal_linalg_calibration_message(NULL)[0] == 0, "calibration_message(NULL) not empty");
+    }
+
     /* Routing and policies. */
     {
         CHECK(strlen(metal_linalg_qr_backend(64, 64, 10)) > 0, "qr backend name");

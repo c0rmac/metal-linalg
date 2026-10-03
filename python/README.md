@@ -1,7 +1,8 @@
 # metal-linalg for Python
 
 QR, symmetric eigendecomposition and SVD for batches of matrices on Apple
-GPUs, on [MLX](https://github.com/ml-explore/mlx) arrays.
+GPUs, on [MLX](https://github.com/ml-explore/mlx) arrays. For PyTorch tensors,
+install [`metal-linalg-torch`](https://github.com/c0rmac/metal-linalg/blob/main/python-torch/README.md) instead.
 
 ```python
 import mlx.core as mx

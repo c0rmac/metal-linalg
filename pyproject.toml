@@ -13,7 +13,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "metal-linalg"
-version = "2.7.0"
+version = "2.8.0"
 description = "QR, symmetric eigendecomposition and SVD for batches of matrices on Apple GPUs, for MLX"
 readme = "python/README.md"
 requires-python = ">=3.10"
@@ -39,7 +39,7 @@ minimum-version = "0.10"
 cmake.version = ">=3.25"
 cmake.build-type = "Release"
 wheel.packages = ["python/metal_linalg"]
-sdist.exclude = ["build*", "cmake-build-*", "docs", "benchmarks", "tuning", "swift",
+sdist.exclude = ["build*", "cmake-build-*", "docs", "benchmarks", "tuning", "swift", "python-torch",
                  "examples", "tests", ".github", "Package.swift"]
 
 [tool.scikit-build.cmake.define]

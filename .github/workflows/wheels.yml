@@ -2,7 +2,9 @@ name: Python wheels
 
 # Builds the Python package's sdist and one wheel per CPython (3.10 to 3.14),
 # checks each wheel's linkage (python/check_wheel.py), installs it into a
-# fresh environment with plain pip and runs python/tests against it.
+# fresh environment with plain pip and runs python/tests against it. Then the
+# same for the PyTorch package (python-torch/): one py3-none wheel, tested
+# with the newest torch and, on macOS 14, the oldest it supports.
 #
 # On a pull request this only checks that the package builds. The Release
 # workflow calls it at the new tag and publishes what it built to PyPI.
@@ -21,6 +23,7 @@ on:
       - "src/**"
       - "shaders/**"
       - "python/**"
+      - "python-torch/**"
       - ".github/workflows/wheels.yml"
   workflow_dispatch:
   workflow_call:
@@ -100,3 +103,64 @@ jobs:
           cd "$RUNNER_TEMP"
           "$RUNNER_TEMP/venv/bin/python" -c "import metal_linalg as ml, mlx.core as mx; print(ml.__version__, mx.__version__, mx.metal.is_available() and ml.device_name())"
           "$RUNNER_TEMP/venv/bin/python" -m unittest discover -s tests -v
+
+  torch:
+    # The PyTorch package: one wheel for every Python and every torch, since
+    # it loads the library with ctypes and is compiled against neither.
+    runs-on: macos-15
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Build the wheel
+        run: |
+          uv build python-torch --wheel --out-dir dist-torch
+          ls -l dist-torch
+
+      - name: Check the wheel
+        run: python3 python-torch/check_wheel.py dist-torch/*.whl
+
+      - name: Install it with pip beside the newest torch and test it
+        run: |
+          cp -r python-torch/tests "$RUNNER_TEMP/torch-tests"
+          for py in 3.10 3.14; do
+            uv venv --seed --python "$py" "$RUNNER_TEMP/tvenv-$py"
+            "$RUNNER_TEMP/tvenv-$py/bin/pip" install dist-torch/*.whl
+            (cd "$RUNNER_TEMP" && "$RUNNER_TEMP/tvenv-$py/bin/python" -c \
+              "import metal_linalg_torch as mlt, torch; print(mlt.__version__, torch.__version__, torch.backends.mps.is_available(), mlt.device_name())" \
+              && "$RUNNER_TEMP/tvenv-$py/bin/python" -m unittest discover -s torch-tests -v)
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-torch-dist
+          path: dist-torch/
+          if-no-files-found: error
+
+  torch-oldest:
+    # The wheel on macOS 14 with torch 2.4, the oldest torch it supports.
+    needs: torch
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-torch-dist
+          path: dist-torch/
+      - name: Install the wheel with torch 2.4 on macOS 14 and test it
+        run: |
+          sw_vers
+          uv venv --seed --python 3.12 "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install dist-torch/*.whl "torch==2.4.1" "numpy<2"
+          cp -r python-torch/tests "$RUNNER_TEMP/torch-tests"
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/venv/bin/python" -c "import metal_linalg_torch as mlt, torch; print(mlt.__version__, torch.__version__, mlt.device_name())"
+          "$RUNNER_TEMP/venv/bin/python" -m unittest discover -s torch-tests -v

@@ -154,8 +154,9 @@ Releases are automatic. Every update to `main` that changes the library
 
 1. **The version.** The one in `CMakeLists.txt`'s `project()` is released as
    it is if it has no tag yet; otherwise the patch number goes up by one, and
-   the workflow commits the new version (`CMakeLists.txt`, `pyproject.toml`)
-   to `main`. To start a minor or major version, set it in both files by hand.
+   the workflow commits the new version (`CMakeLists.txt`, `pyproject.toml`,
+   `python-torch/pyproject.toml`) to `main`. To start a minor or major
+   version, set it in all three files by hand.
 2. **The release.** A `vX.Y.Z` tag and a GitHub release, with that version's
    `CHANGELOG.md` section as notes when there is one. GitHub attaches the
    source tarball, which is what Homebrew builds.
@@ -165,7 +166,11 @@ Releases are automatic. Every update to `main` that changes the library
 4. **PyPI.** [wheels.yml](.github/workflows/wheels.yml) builds the sdist
    and a wheel per Python (3.10 to 3.14) at the new tag, checks and tests
    them, and they are attached to the GitHub release and published to
-   [PyPI](https://pypi.org/project/metal-linalg/).
+   [PyPI](https://pypi.org/project/metal-linalg/). It also builds the
+   PyTorch package's one wheel and tests it with the newest torch and, on
+   macOS 14, with torch 2.4; a separate job publishes it to
+   [PyPI](https://pypi.org/project/metal-linalg-torch/) as
+   `metal-linalg-torch`.
 
 A pull request that adds measurements is released once the Tuned policies
 workflow has turned them into tables.
@@ -191,10 +196,12 @@ new one and set the secret again.
 
 Step 4 uses PyPI's trusted publishing, so no PyPI token is stored anywhere.
 To set it up once, on [pypi.org](https://pypi.org/manage/account/publishing/),
-add a (pending) trusted publisher for the project `metal-linalg`: owner
-`c0rmac`, repository `metal-linalg`, workflow `release.yml`, environment
-`pypi`. If an upload fails, rerun just that step for the release with
-**Actions > Release > Run workflow**, `pypi_version` set to its version.
+add a (pending) trusted publisher for each of the projects `metal-linalg`
+and `metal-linalg-torch`, both with owner `c0rmac`, repository
+`metal-linalg`, workflow `release.yml`, environment `pypi`. If an upload
+fails, rerun the PyPI steps for the release with **Actions > Release > Run
+workflow**, `pypi_version` set to its version; files already on PyPI are
+skipped.
 
 ### When measurements go stale
 

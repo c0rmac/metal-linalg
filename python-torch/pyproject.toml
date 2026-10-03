@@ -1,0 +1,53 @@
+# The PyTorch package, metal_linalg_torch, published to PyPI as metal-linalg-torch.
+#
+# It holds the library's buffer core (no MLX) as one shared library and calls
+# it through the C API with ctypes, so it is not compiled against torch or
+# against a Python: one wheel serves every torch from 2.4 and every Python
+# from 3.10. The MLX package is ../pyproject.toml; the two share the source
+# tree and the version (.github/release.py sets both).
+
+[build-system]
+requires = ["scikit-build-core>=0.11"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "metal-linalg-torch"
+version = "2.8.0"
+description = "QR, symmetric eigendecomposition and SVD for batches of matrices on Apple GPUs, for PyTorch"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["torch>=2.4"]
+license = "MIT"
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: GPU",
+    "Intended Audience :: Science/Research",
+    "Operating System :: MacOS :: MacOS X",
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Mathematics",
+]
+
+[project.urls]
+Homepage = "https://github.com/c0rmac/metal-linalg"
+Documentation = "https://github.com/c0rmac/metal-linalg/blob/main/python-torch/README.md"
+Changelog = "https://github.com/c0rmac/metal-linalg/blob/main/CHANGELOG.md"
+
+[tool.scikit-build]
+minimum-version = "0.10"
+cmake.version = ">=3.25"
+cmake.build-type = "Release"
+# The library's CMake project is the repository root.
+cmake.source-dir = ".."
+wheel.packages = ["metal_linalg_torch"]
+# Pure Python over a C library: one wheel per platform, not per Python.
+wheel.py-api = "py3"
+
+[tool.scikit-build.cmake.define]
+METAL_LINALG_BUILD_PYTHON_TORCH = "ON"
+METAL_LINALG_WITH_MLX = "OFF"
+METAL_LINALG_BUILD_TESTS = "OFF"
+METAL_LINALG_BUILD_EXAMPLES = "OFF"
+# Like the MLX package's wheels, and like torch's own: macOS 14 and later.
+CMAKE_OSX_DEPLOYMENT_TARGET = "14.0"
+CMAKE_OSX_ARCHITECTURES = "arm64"
