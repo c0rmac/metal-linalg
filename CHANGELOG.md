@@ -1,5 +1,12 @@
 # Changes
 
+## 2.8.1 (2026-10-03)
+
+- Release tarballs (what Homebrew downloads) leave out `docs/results/`, every
+  submitted measurement run: 0.7 MB rather than 1.3 MB, and no longer growing
+  with each run. The routing tables built from them are unchanged, and the
+  runs stay in the repository.
+
 ## 2.8.0 (2026-10-03)
 
 - **PyTorch support: `pip install metal-linalg-torch`.** A second Python
