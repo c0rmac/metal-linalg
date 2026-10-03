@@ -279,6 +279,9 @@ def main():
 
     minutes = {"qr": (2, 3), "eigh": (8, 25), "svd": (8, 35)}
     total = str(sum(minutes[op][0 if args.quick else 1] for op in only))
+    info["memory_budget_gb"] = round(sub.memory_budget_bytes() / 2 ** 30, 1)
+    say(f"\nMemory: shapes are capped to {info['memory_budget_gb']} GB at peak "
+        f"({int(sub.MEMORY_FRACTION * 100)}% of this Mac's RAM), so nothing swaps.")
     say(f"\nMeasuring {info['device']['name']} ({info['device']['gpu_cores']} GPU cores): about {total} "
         f"minutes. Leave the Mac alone until it finishes.\nWriting to {os.path.relpath(out, ROOT)}/\n")
     for op, harness, binary, options, quick_options in sweeps:

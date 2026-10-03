@@ -147,6 +147,8 @@ def point_grid(quick=False, max_k=512):
     pts = []
     for M, N in shapes:
         for b in (B_QUICK if quick else B_LIST):
+            if not te.sub.fits_memory(b * (M * N + N * N)):   # see submissions.MEMORY_FRACTION
+                continue
             ks = backends_for(M, N, b)
             if ks:
                 pts.append((b, M, N, ks))
