@@ -54,7 +54,7 @@ def _op_cell(res, op):
     if st["state"] == "stale":
         lines.append(f"kernel version {st['epoch']}, now {st['current_epoch']}: still used")
     if st["state"] == "incomplete":
-        missing = sorted({kernels.ADDED.get(b, b) for b in st["missing"]})
+        missing = sorted({kernels.added(op, b) for b in st["missing"]})
         lines.append("never timed " + "; ".join(missing) + ": off until remeasured")
     return _cell(st["state"], lines)
 
@@ -107,7 +107,7 @@ def render(per_device):
          f"| {STATES['stale'][0]} | **stale** | measured on older kernels; still used, as the best "
          "available, until remeasured |",
          f"| {STATES['none'][0]} | **not measured** | the untuned default: safe, but it misses GPU wins |", "",
-         f"**Have one of these Macs?** One command measures it, in about an hour, and a pull request "
+         f"**Have one of these Macs?** One command measures it, in about an hour and a half, and a pull request "
          f"submits it: [how to contribute]({REPO}/blob/main/CONTRIBUTING.md). Every run improves the "
          f"library for everyone with that chip; the library prints a notice on chips that need one.", "",
          f"{counts['current']} current, {counts['incomplete']} incomplete, {counts['stale']} stale and "

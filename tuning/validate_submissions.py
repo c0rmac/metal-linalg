@@ -30,7 +30,7 @@ OPS = {"qr": (["pass", "batch", "M", "N", "backend", "ok", "ms", "p25", "p75", "
                 {"cpu", "simd", "tg", "block", "tridiag",
                  "cpu_vals", "simd_vals", "tg_vals", "block_vals", "tridiag_vals"}),
        "svd": (["pass", "batch", "M", "N", "backend", "ok", "ms", "p25", "p75", "reps"],
-               {"cpu", "jacobi", "block", "qr", "qrblock"})}
+               {"cpu", "jacobi", "block", "qr", "qrblock", "bidiag", "cpu_vals", "bidiag_vals"})}
 TOP_FILES = {"submission.json", "summary.md", "qr.log", "eigh.log", "svd.log"}
 OP_FILES = {"raw.csv", "results.json", "report.md", "policy.json"}
 ID = re.compile(r"^\d{8}-[0-9a-f]{6}$")

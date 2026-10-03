@@ -43,7 +43,7 @@ REQUIRED = {
     "qr": {"unblocked", "reduced", "cpu"},
     "eigh": {"cpu", "simd", "tg", "block", "tridiag",
              "cpu_vals", "simd_vals", "tg_vals", "block_vals", "tridiag_vals"},
-    "svd": {"cpu", "jacobi", "block", "qr", "qrblock"},
+    "svd": {"cpu", "jacobi", "block", "qr", "qrblock", "bidiag", "cpu_vals", "bidiag_vals"},
 }
 
 # Backends added after a decomposition's first measurements, and when: what
@@ -56,7 +56,18 @@ ADDED = {
     "block_vals": "the eigenvalue-only paths (2.4.0)",
     "tridiag": "the tridiag backend (2.5.0)",
     "tridiag_vals": "the tridiag backend (2.5.0)",
+    "bidiag": "the bidiag backend (2.7.0)",
+    "bidiag_vals": "the bidiag backend (2.7.0)",
 }
+# Where a backend name means something else for one decomposition.
+ADDED_FOR = {
+    "svd": {"cpu_vals": "the singular-value-only paths (2.7.0)"},
+}
+
+
+def added(op, backend):
+    """What an incomplete `op` run that never timed `backend` is missing, in words."""
+    return ADDED_FOR.get(op, {}).get(backend) or ADDED.get(backend, backend)
 
 _QR = ["shaders/QR_", "src/qr"]
 _JACOBI = ["shaders/eigh_jacobi_common.h", "shaders/block_jacobi_common.h"]

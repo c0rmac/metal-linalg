@@ -148,6 +148,18 @@ class Routing(unittest.TestCase):
             with mx.stream(mx.cpu):
                 self.assertLess(mx.max(mx.abs(s @ v - v * w[None, :])).item() / mx.max(mx.abs(s)).item(), 1e-4)
             ml.set_eigh_policy(tridiag_min_n=0)
+            # the bidiag SVD backend, with svdvals' own threshold
+            svd_measured = ml.svd_policy()
+            try:
+                ml.set_svd_policy(gpu_max_k=0, bidiag_min_k=256, values_bidiag_min_k=0)
+                self.assertEqual(ml.svd_backend(400, 300), "bidiag")
+                self.assertEqual(ml.svdvals_backend(400, 300), "cpu")
+                a = mx.random.normal((400, 300))
+                u, s, vt = ml.svd(a)
+                with mx.stream(mx.cpu):
+                    self.assertLess(mx.max(mx.abs((u * s[None, :]) @ vt - a)).item(), 1e-4)
+            finally:
+                ml.set_svd_policy(svd_measured)
             ml.set_eigh_policy(values_gpu_max_n=64, values_gpu_min_batch_times_n=0, values_gpu_min_batch=1)
             self.assertNotEqual(ml.eigvalsh_backend(8, 4096), "cpu")
             self.assertEqual(ml.eigh_backend(8, 4096), "cpu")
