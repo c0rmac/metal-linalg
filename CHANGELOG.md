@@ -15,6 +15,14 @@
   1024 128×128 matrices 7x faster than torch on the CPU and 45x faster than
   on MPS; one 4096×4096 SVD 2x faster than either. See
   [python-torch/README.md](python-torch/README.md).
+- **Fix: wrong eigenvalues from `eigvalsh` on macOS 14** (since 2.5.0, every
+  binding). For N >= 128 on the CPU path, eigenvalues alone came from
+  Accelerate's `ssyevd_2stage`, which on macOS 14 returns values off by 1.5-7%
+  of the largest. The two-stage driver is now used only from macOS 15, and
+  only once it has matched `ssyevd` on a fixed matrix (checked once per
+  process); otherwise `ssyevd`, as for N < 128. `eigh`, macOS 15 and later,
+  and the GPU paths were not affected. The Swift tests, which CI runs on
+  macOS 14, now check it.
 - C API: `metal_linalg_calibration_message(what)`, the calibration notice as
   a string, for bindings that report it their own way.
 - The README's Python section covers both packages, and which to install.

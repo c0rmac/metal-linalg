@@ -438,6 +438,49 @@ void eigh_jacobi(const Matrices& a, bool lower, const EighOptions& opt,
 // The smallest n whose eigenvalues alone go through the two-stage reduction.
 constexpr uint32_t kEighTwoStageMinN = 128;
 
+// Whether LAPACK's two-stage driver can be trusted here. Accelerate's
+// ssyevd_2stage gives wrong eigenvalues on macOS 14 (off by 1.5-7% of the
+// largest for every N from 128, on GitHub's macOS 14 runners) and right ones
+// on 15 and later; ssyevd is right on both. So it is used from macOS 15 only,
+// and only once it has matched ssyevd on a fixed matrix, checked once per
+// process (well under a millisecond), in case another release regresses.
+bool two_stage_trusted() {
+    static const bool trusted = [] {
+        if (@available(macOS 15.0, *)) {
+        } else {
+            return false;
+        }
+        const __LAPACK_int n = 160;
+        std::vector<float> a((size_t)n * n);
+        for (__LAPACK_int i = 0; i < n; ++i)
+            for (__LAPACK_int j = 0; j < n; ++j)
+                a[(size_t)i * n + j] = std::cos(0.37f * float(i + j)) + 1.0f / float(1 + std::abs(i - j)) +
+                                       (i == j ? 0.05f * float(i) : 0.0f);
+        auto values = [&](auto syevd, float* w) {
+            std::vector<float> m(a);
+            char jobz = 'N', uplo = 'L';
+            __LAPACK_int N = n, lwork = -1, liwork = -1, err = 0, liq = 0;
+            float lq = 0.0f;
+            syevd(&jobz, &uplo, &N, m.data(), &N, w, &lq, &lwork, &liq, &liwork, &err);
+            lwork = std::max<__LAPACK_int>(1, (__LAPACK_int)std::ceil(lq));
+            liwork = std::max<__LAPACK_int>(1, liq);
+            std::vector<float> work(lwork);
+            std::vector<__LAPACK_int> iwork(liwork);
+            syevd(&jobz, &uplo, &N, m.data(), &N, w, work.data(), &lwork, iwork.data(), &liwork, &err);
+            return err == 0;
+        };
+        std::vector<float> w1(n), w2(n);
+        if (!values(ssyevd_, w1.data()) || !values(ssyevd_2stage_, w2.data())) return false;
+        float d = 0.0f, scale = 0.0f;
+        for (__LAPACK_int i = 0; i < n; ++i) {
+            d = std::max(d, std::fabs(w1[i] - w2[i]));
+            scale = std::max(scale, std::fabs(w1[i]));
+        }
+        return d <= 1e-4f * scale;
+    }();
+    return trusted;
+}
+
 void eigh_cpu(const Matrices& a, bool lower, float* w_out, float* v_out, uint32_t* info_out) {
     const uint32_t n = a.cols, batch = a.batch;
     if (a.rows != n) {
@@ -459,7 +502,7 @@ void eigh_cpu(const Matrices& a, bool lower, float* w_out, float* v_out, uint32_
     // half, falls far behind as n grows: on an M5 Pro 1.2x faster at
     // n = 1024, 4x at 4096, 6x at 8192, and level from 128 down to 32.
     // LAPACK's two-stage driver does not compute eigenvectors.
-    const bool two_stage = !v_out && n >= kEighTwoStageMinN;
+    const bool two_stage = !v_out && n >= kEighTwoStageMinN && two_stage_trusted();
     auto syevd = two_stage ? ssyevd_2stage_ : ssyevd_;
     // The two-stage reduction runs about 1.5x faster on the lower triangle
     // than the upper (and loses to one-stage at N = 1024 on the upper), so it
