@@ -24,7 +24,7 @@ The optimum is flat from **480 to 512** rows (every threshold within 0.3% of the
 Paste into `kTuned[]` in `src/qr.mm`:
 
 ```c
-    {"Apple M5 Pro", 20, 512, 512, 16,   8, 10240, 1,   1024, 4},
+    {"Apple M5 Pro", 20, 512, 512, 16,   8, 10240, 1, 0,   1024, 4},
 ```
 
 ### Cost of missing the band

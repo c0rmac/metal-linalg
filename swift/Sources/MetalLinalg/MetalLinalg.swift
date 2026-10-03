@@ -176,7 +176,8 @@ public func eigvalshBackend(n: Int, batch: Int = 1) -> String {
     String(cString: metal_linalg_eigvalsh_backend(UInt32(clamping: n), UInt32(clamping: batch)))
 }
 
-/// "cpu", "jacobi", "block_jacobi", "qr_jacobi", "qr_block_jacobi" or "bidiag".
+/// "cpu", "jacobi", "block_jacobi", "qr_jacobi", "qr_block_jacobi", "bidiag",
+/// "golub_kahan" or "qr_golub_kahan".
 public func svdBackend(rows: Int, cols: Int, batch: Int = 1) -> String {
     String(cString: metal_linalg_svd_backend(UInt32(clamping: rows), UInt32(clamping: cols), UInt32(clamping: batch)))
 }

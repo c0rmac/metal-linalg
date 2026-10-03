@@ -123,9 +123,10 @@ class Routing(unittest.TestCase):
 
     def test_backend_names(self):
         self.assertIn(ml.qr_backend(64, 64, 100), {"cpu", "unblocked", "streaming_reduced"})
-        self.assertIn(ml.eigh_backend(32, 4096), {"cpu", "simd", "threadgroup", "block", "tridiag"})
+        self.assertIn(ml.eigh_backend(32, 4096), {"cpu", "simd", "threadgroup", "block", "tridiag", "ql"})
         self.assertIn(ml.svd_backend(1024, 64, 64),
-                      {"cpu", "jacobi", "block_jacobi", "qr_jacobi", "qr_block_jacobi"})
+                      {"cpu", "jacobi", "block_jacobi", "qr_jacobi", "qr_block_jacobi",
+                       "golub_kahan", "qr_golub_kahan"})
 
     def test_policy_override(self):
         measured = ml.eigh_policy()
@@ -158,6 +159,14 @@ class Routing(unittest.TestCase):
                 u, s, vt = ml.svd(a)
                 with mx.stream(mx.cpu):
                     self.assertLess(mx.max(mx.abs((u * s[None, :]) @ vt - a)).item(), 1e-4)
+                # the golub_kahan window, on the GPU
+                ml.set_svd_policy(gpu_max_k=64, gpu_min_batch_times_k=0, gpu_min_batch=1, gk_min_k=8, gk_max_k=48)
+                self.assertEqual(ml.svd_backend(40, 24, 16), "golub_kahan")
+                self.assertEqual(ml.svd_backend(40, 49, 16), "jacobi")
+                a = mx.random.normal((16, 40, 24))
+                u, s, vt = ml.svd(a)
+                with mx.stream(mx.cpu):
+                    self.assertLess(mx.max(mx.abs((u * s[..., None, :]) @ vt - a)).item(), 1e-4)
             finally:
                 ml.set_svd_policy(svd_measured)
             ml.set_eigh_policy(values_gpu_max_n=64, values_gpu_min_batch_times_n=0, values_gpu_min_batch=1)

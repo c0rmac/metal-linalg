@@ -662,7 +662,7 @@
     "geomean": 1.0137,
     "worst": 1.361
   },
-  "ktuned_entry": "{\"Apple M1\", 8, 384, 384, 16,   kQrNoLimit, 0, 1,   0, 0},",
+  "ktuned_entry": "{\"Apple M1\", 8, 384, 384, 16,   kQrNoLimit, 0, 1, 0,   0, 0},",
   "submissions": [
     "legacy"
   ]

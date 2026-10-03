@@ -36,6 +36,7 @@ struct TunedEntry {
     unsigned    gpu_max_k;
     unsigned    gpu_min_batch_times_k;
     unsigned    gpu_min_batch;
+    unsigned    gpu_min_k;             // 0 = no lower bound, which rows from before it leave
     // Large matrices on the GPU from this k, for batches up to the cap (0:
     // any); 0, 0 = never, which rows from before the clause leave.
     unsigned    gpu_large_min_k;
@@ -49,7 +50,7 @@ struct TunedEntry {
 // docs/studies/. The last row keeps the array non-empty and matches nothing.
 constexpr TunedEntry kTuned[] = {
 #include "tuned/qr.inc"
-    {"", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+    {"", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 };
 
 struct ResolvedPolicy {
@@ -100,6 +101,7 @@ ResolvedPolicy resolve() {
                     r.policy.gpu_max_k             = e.gpu_max_k;
                     r.policy.gpu_min_batch_times_k = e.gpu_min_batch_times_k;
                     r.policy.gpu_min_batch         = e.gpu_min_batch;
+                    r.policy.gpu_min_k             = e.gpu_min_k;
                 }
                 r.policy.gpu_large_min_k     = e.gpu_large_min_k;
                 r.policy.gpu_large_max_batch = e.gpu_large_max_batch;
@@ -143,6 +145,7 @@ ResolvedPolicy resolve() {
     over("QR_GPU_MAX_K",             r.policy.gpu_max_k);
     over("QR_GPU_MIN_BATCH_TIMES_K", r.policy.gpu_min_batch_times_k);
     over("QR_GPU_MIN_BATCH",         r.policy.gpu_min_batch);
+    over("QR_GPU_MIN_K",             r.policy.gpu_min_k);
     over("QR_GPU_LARGE_MIN_K",       r.policy.gpu_large_min_k);
     over("QR_GPU_LARGE_MAX_BATCH",   r.policy.gpu_large_max_batch);
     if (!env.empty()) r.source = "env:" + env;
@@ -204,8 +207,8 @@ bool qr_uses_gpu(unsigned m, unsigned n, unsigned batch) {
         (p.gpu_large_max_batch == 0 || batch <= p.gpu_large_max_batch)) {
         return true;
     }
-    return k <= p.gpu_max_k && (unsigned long long)batch * k >= p.gpu_min_batch_times_k &&
-           batch >= p.gpu_min_batch;
+    return k >= p.gpu_min_k && k <= p.gpu_max_k &&
+           (unsigned long long)batch * k >= p.gpu_min_batch_times_k && batch >= p.gpu_min_batch;
 }
 
 QrBackend qr_backend(unsigned m, unsigned n, unsigned batch) {

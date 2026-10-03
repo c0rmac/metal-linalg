@@ -1,0 +1,52 @@
+  grid coverage: near-square 29, square 82, tall 44, wide 30
+  185 shapes x 3 backends x 2 passes = 1110 timed runs
+    25/1110  elapsed 0.1m  eta 2.3m
+    50/1110  elapsed 0.1m  eta 3.2m
+    75/1110  elapsed 0.2m  eta 3.0m
+    100/1110  elapsed 0.4m  eta 4.0m
+    125/1110  elapsed 0.5m  eta 3.7m
+    150/1110  elapsed 0.5m  eta 3.5m
+    175/1110  elapsed 0.6m  eta 3.4m
+    200/1110  elapsed 0.7m  eta 3.3m
+    225/1110  elapsed 0.9m  eta 3.6m
+    250/1110  elapsed 1.0m  eta 3.3m
+    275/1110  elapsed 1.0m  eta 3.1m
+    300/1110  elapsed 1.1m  eta 3.0m
+    325/1110  elapsed 1.2m  eta 2.9m
+    350/1110  elapsed 1.3m  eta 2.9m
+    375/1110  elapsed 1.4m  eta 2.7m
+    400/1110  elapsed 1.5m  eta 2.7m
+    425/1110  elapsed 1.6m  eta 2.5m
+    450/1110  elapsed 1.7m  eta 2.4m
+    475/1110  elapsed 1.9m  eta 2.5m
+    500/1110  elapsed 1.9m  eta 2.3m
+    525/1110  elapsed 2.0m  eta 2.2m
+    550/1110  elapsed 2.1m  eta 2.1m
+    575/1110  elapsed 2.2m  eta 2.0m
+    600/1110  elapsed 2.3m  eta 1.9m
+    625/1110  elapsed 2.4m  eta 1.8m
+    650/1110  elapsed 2.4m  eta 1.7m
+    675/1110  elapsed 2.5m  eta 1.6m
+    700/1110  elapsed 2.5m  eta 1.5m
+    725/1110  elapsed 2.6m  eta 1.4m
+    750/1110  elapsed 2.7m  eta 1.3m
+    775/1110  elapsed 2.8m  eta 1.2m
+    800/1110  elapsed 2.9m  eta 1.1m
+    825/1110  elapsed 3.0m  eta 1.0m
+    850/1110  elapsed 3.2m  eta 1.0m
+    875/1110  elapsed 3.2m  eta 0.9m
+    900/1110  elapsed 3.3m  eta 0.8m
+    925/1110  elapsed 3.5m  eta 0.7m
+    950/1110  elapsed 3.5m  eta 0.6m
+    975/1110  elapsed 3.6m  eta 0.5m
+    1000/1110  elapsed 3.6m  eta 0.4m
+    1025/1110  elapsed 3.7m  eta 0.3m
+    1050/1110  elapsed 3.9m  eta 0.2m
+    1075/1110  elapsed 4.0m  eta 0.1m
+    1100/1110  elapsed 4.1m  eta 0.0m
+    1110/1110  elapsed 4.2m  eta 0.0m
+
+  band 480..512   ship M >= 512   (1.0177x geomean regret)
+  CPU routing: GPU iff 128 <= k <= 192, batch*k >= 16384, batch >= 1, or k >= 1024 and batch <= 4   (1.0365x vs 2.2466x always GPU, worst 3.33x)
+  kTuned entry:  {"Apple M5 Pro", 20, 512, 512, 16,   192, 16384, 1, 128,   1024, 4},
+  -> /Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261003-af087d/qr/report.md, /Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261003-af087d/qr/results.json, /Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261003-af087d/qr/raw.csv

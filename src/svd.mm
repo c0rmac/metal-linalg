@@ -195,6 +195,7 @@ struct TunedEntry {
     unsigned    gpu_max_k;
     unsigned    gpu_min_batch_times_k;
     unsigned    gpu_min_batch;
+    unsigned    gpu_max_l;             // kSvdNoLimit in rows from before 2.10.0
     // The bidiag backend instead of the CPU from these k; 0 = never, which rows
     // measured before the backend existed leave.
     unsigned    bidiag_min_k;
@@ -203,6 +204,10 @@ struct TunedEntry {
     // rows measured before the CPU path used every core leave.
     unsigned    bidiag_max_batch;
     unsigned    values_bidiag_max_batch;
+    // The golub_kahan window; 0, 0 = never, which rows measured before the
+    // backend existed leave.
+    unsigned    gk_min_k;
+    unsigned    gk_max_k;
     unsigned    calibration;   // kCalibration* (calibration.h); rows without it are current
 };
 
@@ -212,7 +217,7 @@ struct TunedEntry {
 // docs/studies/. The last row keeps the array non-empty and matches nothing.
 constexpr TunedEntry kTuned[] = {
 #include "tuned/svd.inc"
-    {"", 0,   0, 0,   0, 0, 0,   0, 0, 0,   0, 0, 0, 0,   0},
+    {"", 0,   0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0,   0},
 };
 
 struct ResolvedPolicy {
@@ -247,10 +252,13 @@ ResolvedPolicy resolve_policy() {
             r.policy.gpu_max_k             = e.gpu_max_k;
             r.policy.gpu_min_batch_times_k = e.gpu_min_batch_times_k;
             r.policy.gpu_min_batch         = e.gpu_min_batch;
+            r.policy.gpu_max_l             = e.gpu_max_l;
             r.policy.bidiag_min_k          = e.bidiag_min_k;
             r.policy.values_bidiag_min_k   = e.values_bidiag_min_k;
             r.policy.bidiag_max_batch        = e.bidiag_max_batch;
             r.policy.values_bidiag_max_batch = e.values_bidiag_max_batch;
+            r.policy.gk_min_k              = e.gk_min_k;
+            r.policy.gk_max_k              = e.gk_max_k;
             r.source = detail::tuned_source_prefix(e.calibration) + r.device;
             detail::calibration_notice("SVD", e.calibration);
             break;
@@ -273,10 +281,13 @@ ResolvedPolicy resolve_policy() {
     over("SVD_GPU_MAX_K",             r.policy.gpu_max_k);
     over("SVD_GPU_MIN_BATCH_TIMES_K", r.policy.gpu_min_batch_times_k);
     over("SVD_GPU_MIN_BATCH",         r.policy.gpu_min_batch);
+    over("SVD_GPU_MAX_L",             r.policy.gpu_max_l);
     over("SVD_BIDIAG_MIN_K",          r.policy.bidiag_min_k);
     over("SVD_VALUES_BIDIAG_MIN_K",   r.policy.values_bidiag_min_k);
     over("SVD_BIDIAG_MAX_BATCH",        r.policy.bidiag_max_batch);
     over("SVD_VALUES_BIDIAG_MAX_BATCH", r.policy.values_bidiag_max_batch);
+    over("SVD_GK_MIN_K",              r.policy.gk_min_k);
+    over("SVD_GK_MAX_K",              r.policy.gk_max_k);
     if (!env.empty()) r.source = "env:" + env;
     return r;
 }
@@ -512,14 +523,17 @@ void svd_qr_jacobi(const Matrices& a, const SvdOptions& opt,
     inner.effective_rows = std::max<unsigned>(opt.effective_rows, l);
     const bool block = opt.kernel == SvdOptions::Kernel::block ||
                        (opt.kernel == SvdOptions::Kernel::automatic && wants_block(k, batch));
-    auto kernel = block ? svd_block_jacobi : svd_jacobi;
+    auto kernel = [&](const Matrices& m, float* u, float* s, float* vt, uint32_t* info) {
+        if (opt.kernel == SvdOptions::Kernel::golub_kahan) svd_golub_kahan(m, u, s, vt, info);
+        else (block ? svd_block_jacobi : svd_jacobi)(m, inner, u, s, vt, info);
+    };
     const Matrices rm{r.data(), batch, k, k};
     if (!compute_uv) {
-        kernel(rm, inner, nullptr, s_out, nullptr, info_out);
+        kernel(rm, nullptr, s_out, nullptr, info_out);
         return;
     }
     HostBuffer ur((size_t)batch * k * k);
-    kernel(rm, inner, ur.data(), s_out, vt_out, info_out);
+    kernel(rm, ur.data(), s_out, vt_out, info_out);
     if (u_out) batched_matmul(q.data(), ur.data(), u_out, batch, l, k, k);
 }
 
@@ -643,6 +657,11 @@ void set_svd_policy(const SvdPolicy& p) {
 SvdBackend svd_gpu_backend(unsigned m, unsigned n, unsigned batch) {
     const SvdPolicy& p = policy_state().policy;
     const unsigned long long k = std::min(m, n), l = std::max(m, n);
+    // The golub_kahan window, clipped to what the backend takes here: on the
+    // matrix itself where it fits, else on the factor of a QR.
+    if (p.gk_max_k != 0 && k >= p.gk_min_k && k <= std::min(p.gk_max_k, detail::svd_gk_max_k())) {
+        return detail::svd_gk_fits(m, n) ? SvdBackend::golub_kahan : SvdBackend::qr_golub_kahan;
+    }
     const bool precondition = l >= p.qr_min_rows && k >= p.qr_min_k && l >= 2 * k;
     const bool block = wants_block((unsigned)k, batch);
     if (precondition) return block ? SvdBackend::qr_block_jacobi : SvdBackend::qr_jacobi;
@@ -656,9 +675,9 @@ bool svd_uses_gpu(unsigned m, unsigned n, unsigned batch) {
         if (s == "cpu") return false;
     }
     const SvdPolicy& p = policy_state().policy;
-    const unsigned k = std::min(m, n);
-    return k <= p.gpu_max_k && (unsigned long long)batch * k >= p.gpu_min_batch_times_k &&
-           batch >= p.gpu_min_batch;
+    const unsigned k = std::min(m, n), l = std::max(m, n);
+    return k <= p.gpu_max_k && l <= p.gpu_max_l &&
+           (unsigned long long)batch * k >= p.gpu_min_batch_times_k && batch >= p.gpu_min_batch;
 }
 
 namespace {
@@ -706,6 +725,13 @@ void core::svd(const Matrices& a, float* u, float* s, float* vt, uint32_t* info)
             return;
         case SvdBackend::qr_block_jacobi:
             opt.kernel = SvdOptions::Kernel::block;
+            core::detail::svd_qr_jacobi(a, opt, u, s, vt, info);
+            return;
+        case SvdBackend::golub_kahan:
+            core::detail::svd_golub_kahan(a, u, s, vt, info);
+            return;
+        case SvdBackend::qr_golub_kahan:
+            opt.kernel = SvdOptions::Kernel::golub_kahan;
             core::detail::svd_qr_jacobi(a, opt, u, s, vt, info);
             return;
         default:
