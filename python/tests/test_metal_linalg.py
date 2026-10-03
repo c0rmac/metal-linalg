@@ -162,7 +162,7 @@ class Routing(unittest.TestCase):
                 # the golub_kahan window, on the GPU
                 ml.set_svd_policy(gpu_max_k=64, gpu_min_batch_times_k=0, gpu_min_batch=1, gk_min_k=8, gk_max_k=48)
                 self.assertEqual(ml.svd_backend(40, 24, 16), "golub_kahan")
-                self.assertEqual(ml.svd_backend(40, 49, 16), "jacobi")
+                self.assertEqual(ml.svd_backend(60, 49, 16), "jacobi")   # k = 49, past the window
                 a = mx.random.normal((16, 40, 24))
                 u, s, vt = ml.svd(a)
                 with mx.stream(mx.cpu):
