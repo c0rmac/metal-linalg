@@ -172,19 +172,30 @@ the CPU, with eigenvectors and without (0: never, which a run from before the
 backend existed gives), for batches up to the two caps after them (0: any
 batch; the backend solves a batch one matrix after another, the CPU path
 spreads one over every core); stage 4 of `tune_eigh.py` fits each threshold
-with its cap on the points where `tridiag` was timed. The very last two are the window of N in which the
-`ql` backend replaces the Jacobi backend the first four pick (`0, 0`: never,
-which a run from before 2.9.0 gives); stage 1b fits it over the finished split,
-against the best GPU backend, on the points where `ql` was timed (N up to the
-device's limit, 87 with 32 KB of threadgroup memory).
+with its cap on the points where `tridiag` was timed (the backend pipelines a
+batch over two slots since 2.11.0, so the caps grew). Then the window of N in
+which the `ql` backend replaces the Jacobi backend the first four pick (`0, 0`:
+never, which a run from before 2.9.0 gives); stage 1b fits it over the finished
+split, against the best GPU backend, on the points where `ql` was timed (N up
+to the device's limit, 87 with 32 KB of threadgroup memory). The very last is
+`share_min_batch`: from this batch, a batch that goes to `ql` is shared with
+the CPU path, the GPU and the CPU solving it at once (0: never, which a run
+from before 2.11.0 gives); stage 1c fits it against the best GPU backend, the
+shared one (`ql_share`, timed from batch 64) included.
 
 **SVD** (`src/svd.mm`): device name, GPU cores, then `qr_min_rows`,
 `qr_min_k`, `block_min_k`, `block_min_k_batched`, `block_min_batch`,
-`gpu_max_k`, `gpu_min_batch_times_k` and `gpu_min_batch`, then
-`bidiag_min_k`, `values_bidiag_min_k`, `bidiag_max_batch` and
-`values_bidiag_max_batch`, as documented on `SvdPolicy` in
+`gpu_max_k`, `gpu_min_batch_times_k`, `gpu_min_batch` and `gpu_max_l`, then
+the same four for singular values alone (`values_gpu_max_k`,
+`values_gpu_min_batch_times_k`, `values_gpu_min_batch`, `values_gpu_max_l`;
+`values_gpu_min_batch = 0`, which a run from before 2.11.0 gives, means "as
+with vectors"), then `bidiag_min_k`, `values_bidiag_min_k`, `bidiag_max_batch`
+and `values_bidiag_max_batch`, then `gk_min_k` and `gk_max_k`, then
+`share_min_batch`, as documented on `SvdPolicy` in
 `include/metal_linalg/core.h`: whether to precondition with QR, which kernel,
-then the CPU boundary in the eigensolver's form, then where the `bidiag`
+then the CPU boundary in the eigensolver's form (with a cap on the long side,
+`l = max(M, N)`), and again for `svdvals` (stage 2b of `tune_svd.py`, fitted on
+`gk_vals` and `cpu_vals` where `gk` is timed), then where the `bidiag`
 backend takes over from the CPU, with vectors and for singular values alone
 (0: never, which a run from before the backend existed gives), and up to which
 batch (0: any; as `tridiag`, it solves a batch one matrix after another);
@@ -195,7 +206,8 @@ which a run from before 2.10.0 gives). Stage 1b of `tune_svd.py` fits it over
 the Jacobi split, against the best GPU backend, on the points where `gk` was
 timed (k up to the device's limit, 83 with 32 KB of threadgroup memory), as
 `tune_eigh.py` fits the `ql` window; the CPU boundary is then fitted with it
-in place.
+in place. And `share_min_batch`, as for the eigensolver: from this batch a
+`golub_kahan` batch is shared with the CPU path (stage 1c, on `gk_share`).
 
 ## 5. Reading a report
 
@@ -312,6 +324,7 @@ in the policy source.
 | `EIGH_TRIDIAG_MIN_N`, `EIGH_VALUES_TRIDIAG_MIN_N` | eigensolver: the tridiag backend instead of the CPU from this N (0: never) |
 | `EIGH_TRIDIAG_MAX_BATCH`, `EIGH_VALUES_TRIDIAG_MAX_BATCH` | eigensolver: the tridiag backend only for batches up to this (0: any) |
 | `EIGH_QL_MIN_N`, `EIGH_QL_MAX_N` | eigensolver: the ql backend on the GPU for N in this window (`EIGH_QL_MAX_N=0`: never) |
+| `EIGH_SHARE_MIN_BATCH` | eigensolver: a ql batch shared with the CPU from this batch (0: never) |
 | `METAL_LINALG_CPU_THREADS` | every decomposition: CPU threads a batch is spread over (default: every core) |
 | `EIGH_DEVICE=tridiag` | eigensolver: every call on the tridiag backend |
 | `EIGH_DEVICE=gpu` or `cpu` | eigensolver: bypass the GPU/CPU boundary |
@@ -322,6 +335,8 @@ in the policy source.
 | `SVD_BIDIAG_MIN_K`, `SVD_VALUES_BIDIAG_MIN_K` | SVD: the bidiag backend instead of the CPU from this k (0: never) |
 | `SVD_BIDIAG_MAX_BATCH`, `SVD_VALUES_BIDIAG_MAX_BATCH` | SVD: the bidiag backend only for batches up to this (0: any) |
 | `SVD_GK_MIN_K`, `SVD_GK_MAX_K` | SVD: the golub_kahan backend on the GPU for k in this window (`SVD_GK_MAX_K=0`: never) |
+| `SVD_SHARE_MIN_BATCH` | SVD: a golub_kahan batch shared with the CPU from this batch (0: never) |
+| `SVD_VALUES_GPU_MAX_K`, `SVD_VALUES_GPU_MIN_BATCH_TIMES_K`, `SVD_VALUES_GPU_MIN_BATCH`, `SVD_VALUES_GPU_MAX_L` | SVD, singular values alone: the GPU/CPU boundary (`SVD_VALUES_GPU_MIN_BATCH=0`: as with vectors) |
 | `SVD_DEVICE=bidiag` | SVD: every call on the bidiag backend |
 | `SVD_DEVICE=gpu` or `cpu` | SVD: bypass the GPU/CPU boundary |
 

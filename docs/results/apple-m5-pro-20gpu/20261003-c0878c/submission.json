@@ -1,0 +1,138 @@
+{
+ "id": "20261003-c0878c",
+ "date": "2026-10-03",
+ "device": {
+  "name": "Apple M5 Pro",
+  "gpu_cores": 20,
+  "slug": "apple-m5-pro-20gpu"
+ },
+ "machine": {
+  "product_name": "MacBook Pro (16-inch, M5 Pro)",
+  "model_identifier": "Mac17,8",
+  "built_in_display": "3456 x 2234"
+ },
+ "cpu": {
+  "cores": 18,
+  "per_level": [
+   6,
+   12
+  ]
+ },
+ "memory_gb": 48,
+ "macos": "27.0.1",
+ "macos_build": "26A434",
+ "mlx": "0.32.1",
+ "metal_linalg": "eaa5554+changes",
+ "quick": false,
+ "epoch": 1,
+ "epochs": {
+  "qr": 3,
+  "eigh": 3,
+  "svd": 5
+ },
+ "library_version": "2.11.0",
+ "status": "complete",
+ "conditions": {
+  "start": {
+   "load_1m": 4.111328125,
+   "cpus": 18,
+   "power": "mains",
+   "low_power_mode": 0,
+   "busy_processes": 0,
+   "power_mode": "automatic",
+   "thermal": [
+    "Note: No thermal warning level has been recorded",
+    "Note: No performance warning level has been recorded",
+    "Note: No CPU power status has been recorded"
+   ],
+   "battery_percent": 80,
+   "charger_watts": 140,
+   "charger": "140W USB-C Power Adapter"
+  },
+  "after_qr": {
+   "load_1m": 3.88037109375,
+   "cpus": 18,
+   "power": "mains",
+   "low_power_mode": 0,
+   "busy_processes": 0,
+   "power_mode": "automatic",
+   "thermal": [
+    "Note: No thermal warning level has been recorded",
+    "Note: No performance warning level has been recorded",
+    "Note: No CPU power status has been recorded"
+   ],
+   "battery_percent": 80,
+   "charger_watts": 140,
+   "charger": "140W USB-C Power Adapter"
+  },
+  "after_eigh": {
+   "load_1m": 4.97705078125,
+   "cpus": 18,
+   "power": "mains",
+   "low_power_mode": 0,
+   "busy_processes": 0,
+   "power_mode": "automatic",
+   "thermal": [
+    "Note: No thermal warning level has been recorded",
+    "Note: No performance warning level has been recorded",
+    "Note: No CPU power status has been recorded"
+   ],
+   "battery_percent": 80,
+   "charger_watts": 140,
+   "charger": "140W USB-C Power Adapter"
+  },
+  "after_svd": {
+   "load_1m": 3.06494140625,
+   "cpus": 18,
+   "power": "mains",
+   "low_power_mode": 0,
+   "busy_processes": 0,
+   "power_mode": "automatic",
+   "thermal": [
+    "Note: No thermal warning level has been recorded",
+    "Note: No performance warning level has been recorded",
+    "Note: No CPU power status has been recorded"
+   ],
+   "battery_percent": 80,
+   "charger_watts": 140,
+   "charger": "140W USB-C Power Adapter"
+  }
+ },
+ "results": {
+  "qr": {
+   "trustworthy": true,
+   "row": "{\"Apple M5 Pro\", 20, 512, 512, 16,   192, 40960, 1, 128,   1024, 4},",
+   "why": null,
+   "probe_drift": null
+  },
+  "eigh": {
+   "trustworthy": true,
+   "row": "{\"Apple M5 Pro\", 20,   0, 96, 0, 0,   48, 8192, 1,   48, 16384, 1,   1536, 3072, 2, 1,   12, 64,   1024},",
+   "why": null,
+   "probe_drift": {
+    "tg": 1.0009120694,
+    "block": 1.00642916524,
+    "cpu": 0.987231543021
+   }
+  },
+  "svd": {
+   "trustworthy": true,
+   "row": "{\"Apple M5 Pro\", 20,   512, 32,   192, 64, 64,   56, 16384, 1, 256,   56, 16384, 1, 56,   1024, 2048, 1, 1,   8, 80,   1024},",
+   "why": null,
+   "probe_drift": {
+    "jacobi": 1.00836168107,
+    "block": 0.949128918035,
+    "qr": 0.992076476018,
+    "qrblock": 1.01607548719,
+    "cpu": 0.962544366643,
+    "gk": 1.0116213082
+   }
+  }
+ },
+ "minutes": {
+  "qr": 4.2,
+  "eigh": 28.3,
+  "svd": 56.2
+ },
+ "memory_budget_gb": 16.8
+}

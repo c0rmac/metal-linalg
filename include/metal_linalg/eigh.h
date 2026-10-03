@@ -57,6 +57,8 @@ namespace metal_linalg {
 
         // N <= metal_linalg::detail::eigh_ql_max_n(); `info` counts QL iterations.
         EighResult eigh_ql(const mlx::core::array& a, bool compute_vectors, bool lower);
+        // eigh_ql and the CPU path sharing one batch (EighPolicy::share_min_batch).
+        EighResult eigh_ql_shared(const mlx::core::array& a, bool compute_vectors, bool lower);
     }
 
 } // namespace metal_linalg

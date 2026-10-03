@@ -1,5 +1,64 @@
 # Changes
 
+## 2.11.0 (2026-10-04)
+
+- **A batch shared between the GPU and the CPU.** From a batch of
+  `share_min_batch` (eigh and SVD policies, `EIGH_SHARE_MIN_BATCH`,
+  `SVD_SHARE_MIN_BATCH`), a batch the batched GPU kernels (`ql`,
+  `golub_kahan`) get is solved by the GPU and the CPU path at once: the GPU
+  takes chunks from the front, cpu_threads() - 2 workers a few matrices at a
+  time from the back, and they meet wherever their speeds put them, with no
+  split to measure. On an M5 Pro, against the faster of the two alone: SVD
+  1.4-1.7x for large batches of 16×16 to 64×64, eigh 1.4-1.5x. Two cores are
+  left to the GPU's host work: with a worker on every core, the GPU's chunks
+  took 5-7x their time alone. `svd_shares_batch()`, `svdvals_shares_batch()`,
+  `eigh_shares_batch()` and `eigvalsh_shares_batch()` report it.
+- **svdvals has its own GPU-or-CPU rule** (`values_gpu_max_k`,
+  `values_gpu_min_batch_times_k`, `values_gpu_min_batch`, `values_gpu_max_l`;
+  `SVD_VALUES_GPU_*`), as eigvalsh has. 2.10.0 applied the vectors' rule to
+  singular values alone, and on an M5 Pro ran batches of 40×40 to 48×48 on the
+  GPU at up to 1.5x the CPU's time. `svdvals_uses_gpu()` reports it.
+- **QR of a wide matrix on the CPU is 10-40x faster**: it is factored by its
+  leading square block and one matrix product (the same reflectors and R as
+  `sgeqrf` on the whole matrix, which Accelerate ran slowly). One 64×2048 in
+  0.09 ms instead of 1.47. This closes the gap 2.10.0 noted, where the GPU was
+  2-3x faster for small batches of wide matrices but the routing sent them to
+  the CPU: the CPU is now the faster one by far.
+- **golub_kahan is faster on tall matrices and for singular values alone.**
+  Columns are summed by groups of lanes instead of one thread each (256×16
+  1.4x, 128×32 1.2x, squares about 1.1x), and from k = 40 (singular values
+  alone) or 60 (with vectors) the QR iteration runs as a second dispatch with
+  almost no threadgroup memory (singular values alone 1.3x at 48×48, 1.55x at
+  64×64). Its workspace is kept and grown per shape, rather than reallocated
+  for every batch size.
+- **The large-matrix backends pipeline a batch.** `tridiag` (eigh) and
+  `bidiag` (SVD) overlap one matrix's CPU solve with the next one's GPU
+  reduction and back-transformation: per matrix of 2048×2048, eigh 1.48x and
+  the SVD 1.66x faster in batches of 8, so the GPU stays ahead of the CPU for
+  larger batches of large matrices than before.
+- **Re-measured on the M5 Pro** (run `20261003-c0878c`, all three
+  decompositions). eigh and the SVD share batches with the CPU from 1024
+  matrices; eigvalsh now goes to the GPU for large batches (batch × N from
+  16384), which it never did before; the SVD's GPU region grew to k <= 56 and
+  a long side of 256 (from 48 and 64), its golub_kahan window to k = 8 .. 80,
+  and svdvals got its own rule. Against the best backend at each point
+  measured, the SVD row scores 1.027 geometric-mean regret (2.10.0's row on the
+  same points: 1.039). Large batches against the CPU alone: the SVD of 4096
+  matrices of 48×48 1.81x (2.10.0: 1.24x), eigh of 4096 of 32×32 2.07x (1.78x);
+  through torch, the SVD of 4096 32×32 matrices in 7.7 ms (2.10.0: 9.2 ms;
+  torch on MPS: 27 ms).
+- `tuning/run.py` turns the calibration notice off for the tools it runs: a
+  Mac whose QR measurements were stale could not be measured (the notice
+  broke the JSON it reads).
+- The C API's policy structs gain these fields at their ends:
+  `metal_linalg_svd_policy` `values_gpu_max_k`, `values_gpu_min_batch_times_k`,
+  `values_gpu_min_batch`, `values_gpu_max_l`, `share_min_batch`;
+  `metal_linalg_eigh_policy` `share_min_batch`.
+- Kernel versions: QR 3 (the wide CPU path), eigh 3 (tridiag pipelining),
+  SVD 5 (golub_kahan and bidiag changes); the harnesses time `gk_vals`,
+  `gk_share`, `gk_share_vals`, `ql_share` and `ql_share_vals`, and fit
+  `share_min_batch` (stage 1c) and the SVD's values rule (stage 2b).
+
 ## 2.10.0 (2026-10-03)
 
 - **A new batched SVD kernel, `golub_kahan`.** The SVD counterpart of 2.9.0's

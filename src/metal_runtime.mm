@@ -15,9 +15,11 @@
 #endif
 
 #include <atomic>
+#include <chrono>
 #include <cfloat>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
@@ -26,6 +28,7 @@
 #include <new>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 #include <unistd.h>
 
@@ -237,9 +240,17 @@ bool can_single_thread_blas() {
     return false;
 }
 
+// Set on share_batch's CPU workers, each of which is already one of the
+// cores' worth: lapack_batches then solves its matrices on the calling thread.
+thread_local bool tls_share_worker = false;
+
 } // namespace
 
 void lapack_batches(uint32_t batch, size_t per, const std::function<void(uint32_t, uint32_t)>& f) {
+    if (tls_share_worker) {
+        f(0, batch);   // single-threaded already (share_batch)
+        return;
+    }
     const uint32_t threads = std::min<uint32_t>(cpu_threads(), batch);
     if (threads <= 1 || (!can_single_thread_blas() && per > kUnthreadedMaxFloats)) {
         f(0, batch);
@@ -264,6 +275,95 @@ void lapack_batches(uint32_t batch, size_t per, const std::function<void(uint32_
             }
         }
     });
+    if (error) std::rethrow_exception(error);
+}
+
+void share_batch(uint32_t batch, uint32_t gpu_chunk, uint32_t cpu_chunk,
+                 const std::function<void(uint32_t, uint32_t)>& gpu,
+                 const std::function<void(uint32_t, uint32_t)>& cpu) {
+    using clock = std::chrono::steady_clock;
+    gpu_chunk = std::max(gpu_chunk, 1u);
+    cpu_chunk = std::max(cpu_chunk, 1u);
+    std::mutex            m;
+    uint32_t              front = 0, back = batch;   // [front, back) is unclaimed
+    std::atomic<uint32_t> cpu_done{0};
+    std::atomic<bool>     failed{false};
+    std::exception_ptr    error;
+    auto fail = [&] {
+        std::lock_guard<std::mutex> lock(m);
+        if (!error) error = std::current_exception();
+        failed = true;
+    };
+
+    // The CPU: one worker per thread, each a core's worth, solving a few
+    // matrices at a time with Accelerate's threading off; two threads fewer
+    // than cpu_threads(), because the GPU's side needs a core for its own host
+    // work (the input scan and copies, waiting on the GPU). With a worker on
+    // every core, the GPU's chunks took 5-7x their time alone on an M5 Pro, and
+    // sharing was slower than the GPU alone; with two cores left, 1.3-1.5x
+    // faster.
+    const uint32_t threads = std::max(1u, cpu_threads());
+    const uint32_t workers = can_single_thread_blas() ? std::max(1u, threads > 2 ? threads - 2 : 1u) : 1u;
+    std::vector<std::thread> pool;
+    pool.reserve(workers);
+    for (uint32_t w = 0; w < workers; ++w) {
+        pool.emplace_back([&] {
+            SingleThreadedBlas single;
+            tls_share_worker = can_single_thread_blas();
+            try {
+                while (!failed) {
+                    uint32_t b0, count;
+                    {
+                        std::lock_guard<std::mutex> lock(m);
+                        if (back <= front) break;
+                        count = std::min(cpu_chunk, back - front);
+                        back -= count;
+                        b0 = back;
+                    }
+                    cpu(b0, count);
+                    cpu_done += count;
+                }
+            } catch (...) {
+                fail();
+            }
+            tls_share_worker = false;
+        });
+    }
+
+    // The GPU, on this thread: a quarter of the batch first; then, from the
+    // two rates measured so far, the share of what is left that it would
+    // finish as the CPU finishes the rest, until nothing is left.
+    const auto start = clock::now();
+    double gpu_seconds = 0.0;
+    uint32_t gpu_done = 0;
+    try {
+        while (!failed) {
+            uint32_t b0, count;
+            {
+                std::lock_guard<std::mutex> lock(m);
+                if (back <= front) break;
+                const uint32_t left = back - front;
+                if (gpu_done == 0) {
+                    count = std::max(left / 4, std::min(left, gpu_chunk));
+                } else {
+                    const double elapsed = std::chrono::duration<double>(clock::now() - start).count();
+                    const double rg = gpu_done / std::max(gpu_seconds, 1e-9);
+                    const double rc = cpu_done.load() / std::max(elapsed, 1e-9);
+                    count = (uint32_t)std::ceil(left * rg / (rg + rc));
+                    count = std::min(left, std::max(count, std::min(left, gpu_chunk / 4 + 1)));
+                }
+                b0 = front;
+                front += count;
+            }
+            const auto t0 = clock::now();
+            gpu(b0, count);
+            gpu_seconds += std::chrono::duration<double>(clock::now() - t0).count();
+            gpu_done += count;
+        }
+    } catch (...) {
+        fail();
+    }
+    for (std::thread& t : pool) t.join();
     if (error) std::rethrow_exception(error);
 }
 

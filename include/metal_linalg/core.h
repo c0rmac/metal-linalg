@@ -201,6 +201,13 @@ namespace metal_linalg {
         // with 32 KB of threadgroup memory).
         unsigned ql_min_n = 0;
         unsigned ql_max_n = 0;
+
+        // From this batch on, a batch the ql backend gets is shared with the
+        // CPU path: the GPU takes chunks from the front, the CPU from the
+        // back, at once, each the share its speed earns (on an M5 Pro 1.4-1.7x
+        // faster than either alone where they are close). 0 means never,
+        // which is what a device without measurements has.
+        unsigned share_min_batch = 0;
     };
 
     // The policy in effect. Resolved once, on first use.
@@ -234,6 +241,11 @@ namespace metal_linalg {
     // The same for eigenvalues alone (eigvalsh), under the values_* boundary.
     EighBackend eigvalsh_backend(unsigned n, unsigned batch);
     bool eigvalsh_uses_gpu(unsigned n, unsigned batch);
+
+    // True iff an eigh call (eigvalsh: eigh_shares_batch_values) of this
+    // shape shares its batch between the GPU and the CPU (share_min_batch).
+    bool eigh_shares_batch(unsigned n, unsigned batch);
+    bool eigvalsh_shares_batch(unsigned n, unsigned batch);
 
     // -------------------------------------------------------------------------
     // Options of the lower-level entry points, for tests and tuning
@@ -282,7 +294,8 @@ namespace metal_linalg {
     // k = min(M, N) and l = max(M, N):
     //
     //   GPU or CPU     GPU iff k <= gpu_max_k, l <= gpu_max_l, batch * k >=
-    //                  gpu_min_batch_times_k and batch >= gpu_min_batch
+    //                  gpu_min_batch_times_k and batch >= gpu_min_batch (for
+    //                  singular values alone, the values_* constants)
     //   precondition   with this library's QR iff l >= qr_min_rows, k >= qr_min_k and
     //                  l >= 2k; the kernel then runs on the k x k factor
     //   kernel         block Jacobi iff k >= block_min_k, or k >= block_min_k_batched
@@ -339,6 +352,21 @@ namespace metal_linalg {
         // GPU's (1.65x); a cap on k alone cannot say both.
         unsigned gpu_max_l             = 0xFFFFFFFFu;
 
+        // --- GPU or CPU for singular values alone (svdvals) ---
+        // The same rule with constants of its own. Both sides skip the
+        // vectors, by different amounts: the CPU path accumulates no
+        // rotations and skips the back-transformation, while the GPU's
+        // reduction, most of its work, stays. On an M5 Pro the GPU wins
+        // large batches of 16 x 16 for singular values alone by 1.4x, and
+        // loses 48 x 48 by 1.5x, which it wins with vectors.
+        // values_gpu_min_batch = 0 means "as with vectors": a device
+        // measured before these fields existed, or a policy that does not set
+        // them.
+        unsigned values_gpu_max_k             = 0;
+        unsigned values_gpu_min_batch_times_k = 0;
+        unsigned values_gpu_min_batch         = 0;
+        unsigned values_gpu_max_l             = 0xFFFFFFFFu;
+
         // Device this was resolved against; informational.
         unsigned gpu_cores = 0;
 
@@ -369,6 +397,11 @@ namespace metal_linalg {
         // (detail::svd_gk_max_k(), 83 with 32 KB of threadgroup memory).
         unsigned gk_min_k = 0;
         unsigned gk_max_k = 0;
+
+        // From this batch on, a batch the golub_kahan backend gets is shared
+        // with the CPU path, as EighPolicy::share_min_batch describes. 0 means
+        // never, which is what a device without measurements has.
+        unsigned share_min_batch = 0;
     };
 
     constexpr unsigned kSvdNoLimit = 0xFFFFFFFFu;
@@ -398,6 +431,14 @@ namespace metal_linalg {
     // True iff svd_backend(m, n, batch) is one of the GPU backends other than
     // bidiag (the Jacobi and golub_kahan ones).
     bool svd_uses_gpu(unsigned m, unsigned n, unsigned batch);
+
+    // The same for singular values alone (svdvals), under the values_* rule.
+    bool svdvals_uses_gpu(unsigned m, unsigned n, unsigned batch);
+
+    // True iff an SVD call (svdvals: svdvals_shares_batch) of this shape
+    // shares its batch between the GPU and the CPU (share_min_batch).
+    bool svd_shares_batch(unsigned m, unsigned n, unsigned batch);
+    bool svdvals_shares_batch(unsigned m, unsigned n, unsigned batch);
 
     // What a call for singular values alone (svdvals) does: as svd_backend,
     // with values_bidiag_min_k for the bidiag backend.
@@ -556,6 +597,10 @@ namespace metal_linalg {
             // eigh_ql.mm.
             void eigh_ql(const Matrices& a, bool lower, float* w, float* v, uint32_t* info);
 
+            // eigh_ql and eigh_cpu on one batch at once, sharing it as
+            // EighPolicy::share_min_batch describes, whatever the policy.
+            void eigh_ql_shared(const Matrices& a, bool lower, float* w, float* v, uint32_t* info);
+
             // LAPACK on the CPU: ssyevd, or ssyevd_2stage for eigenvalues
             // alone (v == nullptr) from N = 128, the matrices of a batch
             // spread over cpu_threads() threads. `info` reports every finite
@@ -592,6 +637,11 @@ namespace metal_linalg {
             // counts QR steps where the Jacobi backends count sweeps. See
             // svd_golub_kahan.mm.
             void svd_golub_kahan(const Matrices& a, float* u, float* s, float* vt, uint32_t* info);
+
+            // golub_kahan (after the QR where the shape does not fit) and
+            // svd_cpu on one batch at once, sharing it as
+            // EighPolicy::share_min_batch describes, whatever the policy.
+            void svd_golub_kahan_shared(const Matrices& a, float* u, float* s, float* vt, uint32_t* info);
 
             // LAPACK on the CPU: sgesdd, after a QR for a matrix at least
             // twice as tall as wide, the matrices of a batch spread over

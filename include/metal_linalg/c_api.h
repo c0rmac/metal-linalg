@@ -131,6 +131,7 @@ typedef struct metal_linalg_eigh_policy {
     uint32_t ql_max_n;               /* ql_max_n = 0: never */
     uint32_t tridiag_max_batch;          /* tridiag only for batches up to this; */
     uint32_t values_tridiag_max_batch;   /* 0: any batch */
+    uint32_t share_min_batch;        /* a ql batch shared with the CPU from this batch (0: never) */
 } metal_linalg_eigh_policy;
 
 typedef struct metal_linalg_svd_policy {
@@ -150,6 +151,11 @@ typedef struct metal_linalg_svd_policy {
     uint32_t gk_min_k;              /* the golub_kahan backend on the GPU for k in [gk_min_k, gk_max_k]; */
     uint32_t gk_max_k;              /* gk_max_k = 0: never */
     uint32_t gpu_max_l;             /* the GPU only up to this max(M, N) (0xFFFFFFFF: no cap) */
+    uint32_t values_gpu_max_k;              /* the GPU-or-CPU rule for singular values alone; */
+    uint32_t values_gpu_min_batch_times_k;  /* values_gpu_min_batch = 0: as with vectors */
+    uint32_t values_gpu_min_batch;
+    uint32_t values_gpu_max_l;
+    uint32_t share_min_batch;       /* a golub_kahan batch shared with the CPU from this batch (0: never) */
 } metal_linalg_svd_policy;
 
 metal_linalg_qr_policy   metal_linalg_qr_policy_get(void);

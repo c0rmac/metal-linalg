@@ -1,0 +1,45 @@
+device: Apple M5 Pro (20 GPU cores), policy from tuned-stale:Apple M5 Pro
+cost model scale: jacobi x0.10, block x0.25, qr x0.18, qrblock x0.22, cpu x0.08, bidiag x1.00, gk x0.39
+sweep -> /Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261003-c0878c/svd/raw.csv
+  303 points, 2145 backend timings per pass x 2 passes
+    20/606  elapsed 3.0m  eta 88.6m
+    40/606  elapsed 5.3m  eta 74.9m
+    60/606  elapsed 5.7m  eta 52.1m
+    80/606  elapsed 6.8m  eta 44.6m
+    100/606  elapsed 8.7m  eta 43.9m
+    120/606  elapsed 10.4m  eta 42.1m
+    140/606  elapsed 13.1m  eta 43.7m
+    160/606  elapsed 16.0m  eta 44.6m
+    180/606  elapsed 16.7m  eta 39.4m
+    200/606  elapsed 18.4m  eta 37.3m
+    220/606  elapsed 20.0m  eta 35.0m
+    240/606  elapsed 22.9m  eta 35.0m
+    260/606  elapsed 24.2m  eta 32.2m
+    280/606  elapsed 25.6m  eta 29.8m
+    300/606  elapsed 28.1m  eta 28.6m
+    320/606  elapsed 30.1m  eta 26.9m
+    340/606  elapsed 32.3m  eta 25.3m
+    360/606  elapsed 33.5m  eta 22.9m
+    380/606  elapsed 35.1m  eta 20.9m
+    400/606  elapsed 36.7m  eta 18.9m
+    420/606  elapsed 37.9m  eta 16.8m
+    440/606  elapsed 38.9m  eta 14.7m
+    460/606  elapsed 41.4m  eta 13.2m
+    480/606  elapsed 42.7m  eta 11.2m
+    500/606  elapsed 44.0m  eta 9.3m
+    520/606  elapsed 45.2m  eta 7.5m
+    540/606  elapsed 47.5m  eta 5.8m
+    560/606  elapsed 49.4m  eta 4.1m
+    580/606  elapsed 53.0m  eta 2.4m
+    600/606  elapsed 55.9m  eta 0.6m
+    606/606  elapsed 56.1m  eta 0.0m
+Traceback (most recent call last):
+  File "/Users/cormac/Documents/Projects/metal-linalg/tuning/tune_svd.py", line 1347, in <module>
+    main()
+  File "/Users/cormac/Documents/Projects/metal-linalg/tuning/tune_svd.py", line 1310, in main
+    write_report(res, os.path.join(args.out, "report.md"))
+  File "/Users/cormac/Documents/Projects/metal-linalg/tuning/tune_svd.py", line 1096, in write_report
+    _surface(res["surface"], "best_gpu"), "", _surface(res["surface"], "rule_gpu"), ""]
+  File "/Users/cormac/Documents/Projects/metal-linalg/tuning/tune_svd.py", line 999, in _surface
+    row.append(f"    {letter[c[key]]}")
+KeyError: 'gk_share'

@@ -99,24 +99,25 @@ as well when their input requires grad, since the gradient needs them.
 
 ## Performance
 
-Against `torch.linalg` on an M5 Pro with PyTorch 2.14 and metal-linalg 2.10 (best of five; the
+Against `torch.linalg` on an M5 Pro with PyTorch 2.14 and metal-linalg 2.11 (best of five; the
 same tensors on MPS for torch's MPS path and for this package, copies
 included):
 
 | | torch, CPU | torch, MPS | metal-linalg-torch |
 |---|---|---|---|
-| QR, 1024 × 128×128 | 161 ms | 1080 ms | 22 ms |
-| SVD, 256 × 128×64 | 65 ms | 11 ms | 6.9 ms |
-| SVD, 4096 × 32×32 | 211 ms | 27 ms | 9.2 ms |
-| eigh, 4096 × 16×16 | 35 ms | 5.3 ms | 2.0 ms |
-| eigh, one 2048×2048 | 244 ms | 246 ms | 120 ms |
-| SVD, one 4096×4096 | 3.60 s | 3.62 s | 1.81 s |
+| QR, 1024 × 128×128 | 161 ms | 1030 ms | 24 ms |
+| SVD, 256 × 128×64 | 65 ms | 11 ms | 7.2 ms |
+| SVD, 4096 × 32×32 | 217 ms | 27 ms | 7.7 ms |
+| eigh, 4096 × 16×16 | 35 ms | 5.3 ms | 1.9 ms |
+| eigh, one 2048×2048 | 241 ms | 242 ms | 121 ms |
+| SVD, one 4096×4096 | 3.54 s | 3.56 s | 1.77 s |
 
-It is ahead on every row: 1.6-2.9x over PyTorch's MPS kernels for batches of
+It is ahead on every row: 1.5-3.5x over PyTorch's MPS kernels for batches of
 small matrices (the SVD of 256 matrices of 128×64 runs on the library's CPU
 path, which spreads a batch over every core, so routing an MPS tensor to the
-CPU can still be the fast choice), and 2-50x in QR and in large matrices,
-where torch falls back to the CPU. Which
+CPU can still be the fast choice; the two batches of 4096 run on the GPU and
+the CPU at once), and 2-40x in QR and in large matrices, where torch falls
+back to the CPU. Which
 backend a shape gets on your Mac: `mlt.svd_backend(m, n, batch)` and its
 siblings.
 

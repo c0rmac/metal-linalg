@@ -27,7 +27,7 @@ measurements). The library reports the state at run time
 and docs/measurements.md shows it for every chip.
 """
 
-KERNEL_EPOCHS = {"qr": 2, "eigh": 2, "svd": 4}
+KERNEL_EPOCHS = {"qr": 3, "eigh": 3, "svd": 5}
 
 # (decomposition, epoch, library version, date, why)
 HISTORY = [
@@ -49,13 +49,24 @@ HISTORY = [
     ("svd", 4, "2.10.0", "2026-10-03",
      "QR keeps the smallest matrices on the CPU at any batch (gpu_min_k), which moves the timings "
      "of the QR-preconditioned backends"),
+    ("qr", 3, "2.11.0", "2026-10-03",
+     "the CPU path factors a wide matrix by its leading square block and one matrix product, "
+     "10-40x faster than sgeqrf on the whole matrix"),
+    ("eigh", 3, "2.11.0", "2026-10-03",
+     "the tridiag backend pipelines a batch over two slots (CPU solve of one matrix while the GPU "
+     "reduces the next), 1.4-1.5x per matrix for batches of 2048 x 2048"),
+    ("svd", 5, "2.11.0", "2026-10-03",
+     "golub_kahan splits its column sums over lanes (1.2-1.4x on tall matrices) and runs the QR "
+     "iteration as a second dispatch from k = 40 (singular values alone) or 60; the bidiag backend "
+     "pipelines a batch over two slots (1.5-1.7x per matrix for batches of 2048 x 2048)"),
 ]
 
 REQUIRED = {
     "qr": {"unblocked", "reduced", "cpu"},
-    "eigh": {"cpu", "simd", "tg", "block", "tridiag", "ql",
-             "cpu_vals", "simd_vals", "tg_vals", "block_vals", "tridiag_vals", "ql_vals"},
-    "svd": {"cpu", "jacobi", "block", "qr", "qrblock", "bidiag", "gk", "cpu_vals", "bidiag_vals"},
+    "eigh": {"cpu", "simd", "tg", "block", "tridiag", "ql", "ql_share",
+             "cpu_vals", "simd_vals", "tg_vals", "block_vals", "tridiag_vals", "ql_vals", "ql_share_vals"},
+    "svd": {"cpu", "jacobi", "block", "qr", "qrblock", "bidiag", "gk", "gk_share", "cpu_vals", "bidiag_vals",
+            "gk_vals", "gk_share_vals"},
 }
 
 # Backends added after a decomposition's first measurements, and when: what
@@ -73,6 +84,11 @@ ADDED = {
     "ql": "the ql backend (2.9.0)",
     "ql_vals": "the ql backend (2.9.0)",
     "gk": "the golub_kahan backend (2.10.0)",
+    "gk_vals": "the GPU-or-CPU rule for singular values alone (2.11.0)",
+    "gk_share": "sharing a batch between the GPU and the CPU (2.11.0)",
+    "gk_share_vals": "sharing a batch between the GPU and the CPU (2.11.0)",
+    "ql_share": "sharing a batch between the GPU and the CPU (2.11.0)",
+    "ql_share_vals": "sharing a batch between the GPU and the CPU (2.11.0)",
 }
 # Where a backend name means something else for one decomposition.
 ADDED_FOR = {

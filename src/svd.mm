@@ -196,6 +196,12 @@ struct TunedEntry {
     unsigned    gpu_min_batch_times_k;
     unsigned    gpu_min_batch;
     unsigned    gpu_max_l;             // kSvdNoLimit in rows from before 2.10.0
+    // The same for singular values alone; 0, 0, 0, kSvdNoLimit = as with
+    // vectors, which rows measured before 2.11.0 leave.
+    unsigned    values_gpu_max_k;
+    unsigned    values_gpu_min_batch_times_k;
+    unsigned    values_gpu_min_batch;
+    unsigned    values_gpu_max_l;
     // The bidiag backend instead of the CPU from these k; 0 = never, which rows
     // measured before the backend existed leave.
     unsigned    bidiag_min_k;
@@ -208,6 +214,7 @@ struct TunedEntry {
     // backend existed leave.
     unsigned    gk_min_k;
     unsigned    gk_max_k;
+    unsigned    share_min_batch;       // 0 = never, which rows measured before 2.11.0 leave
     unsigned    calibration;   // kCalibration* (calibration.h); rows without it are current
 };
 
@@ -217,7 +224,7 @@ struct TunedEntry {
 // docs/studies/. The last row keeps the array non-empty and matches nothing.
 constexpr TunedEntry kTuned[] = {
 #include "tuned/svd.inc"
-    {"", 0,   0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0,   0},
+    {"", 0,   0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0},
 };
 
 struct ResolvedPolicy {
@@ -253,12 +260,17 @@ ResolvedPolicy resolve_policy() {
             r.policy.gpu_min_batch_times_k = e.gpu_min_batch_times_k;
             r.policy.gpu_min_batch         = e.gpu_min_batch;
             r.policy.gpu_max_l             = e.gpu_max_l;
+            r.policy.values_gpu_max_k             = e.values_gpu_max_k;
+            r.policy.values_gpu_min_batch_times_k = e.values_gpu_min_batch_times_k;
+            r.policy.values_gpu_min_batch         = e.values_gpu_min_batch;
+            r.policy.values_gpu_max_l             = e.values_gpu_max_l;
             r.policy.bidiag_min_k          = e.bidiag_min_k;
             r.policy.values_bidiag_min_k   = e.values_bidiag_min_k;
             r.policy.bidiag_max_batch        = e.bidiag_max_batch;
             r.policy.values_bidiag_max_batch = e.values_bidiag_max_batch;
             r.policy.gk_min_k              = e.gk_min_k;
             r.policy.gk_max_k              = e.gk_max_k;
+            r.policy.share_min_batch       = e.share_min_batch;
             r.source = detail::tuned_source_prefix(e.calibration) + r.device;
             detail::calibration_notice("SVD", e.calibration);
             break;
@@ -282,12 +294,17 @@ ResolvedPolicy resolve_policy() {
     over("SVD_GPU_MIN_BATCH_TIMES_K", r.policy.gpu_min_batch_times_k);
     over("SVD_GPU_MIN_BATCH",         r.policy.gpu_min_batch);
     over("SVD_GPU_MAX_L",             r.policy.gpu_max_l);
+    over("SVD_VALUES_GPU_MAX_K",             r.policy.values_gpu_max_k);
+    over("SVD_VALUES_GPU_MIN_BATCH_TIMES_K", r.policy.values_gpu_min_batch_times_k);
+    over("SVD_VALUES_GPU_MIN_BATCH",         r.policy.values_gpu_min_batch);
+    over("SVD_VALUES_GPU_MAX_L",             r.policy.values_gpu_max_l);
     over("SVD_BIDIAG_MIN_K",          r.policy.bidiag_min_k);
     over("SVD_VALUES_BIDIAG_MIN_K",   r.policy.values_bidiag_min_k);
     over("SVD_BIDIAG_MAX_BATCH",        r.policy.bidiag_max_batch);
     over("SVD_VALUES_BIDIAG_MAX_BATCH", r.policy.values_bidiag_max_batch);
     over("SVD_GK_MIN_K",              r.policy.gk_min_k);
     over("SVD_GK_MAX_K",              r.policy.gk_max_k);
+    over("SVD_SHARE_MIN_BATCH",       r.policy.share_min_batch);
     if (!env.empty()) r.source = "env:" + env;
     return r;
 }
@@ -668,16 +685,38 @@ SvdBackend svd_gpu_backend(unsigned m, unsigned n, unsigned batch) {
     return block ? SvdBackend::block_jacobi : SvdBackend::jacobi;
 }
 
-bool svd_uses_gpu(unsigned m, unsigned n, unsigned batch) {
+namespace {
+
+// SVD_DEVICE=gpu or cpu decides alone; -1 when it does not say.
+int forced_device() {
     if (const char* e = std::getenv("SVD_DEVICE")) {
         const std::string s = e;
-        if (s == "gpu") return true;
-        if (s == "cpu") return false;
+        if (s == "gpu") return 1;
+        if (s == "cpu") return 0;
     }
-    const SvdPolicy& p = policy_state().policy;
+    return -1;
+}
+
+bool gpu_rule(unsigned m, unsigned n, unsigned batch, unsigned max_k, unsigned min_bk, unsigned min_batch,
+              unsigned max_l) {
     const unsigned k = std::min(m, n), l = std::max(m, n);
-    return k <= p.gpu_max_k && l <= p.gpu_max_l &&
-           (unsigned long long)batch * k >= p.gpu_min_batch_times_k && batch >= p.gpu_min_batch;
+    return k <= max_k && l <= max_l && (unsigned long long)batch * k >= min_bk && batch >= min_batch;
+}
+
+} // namespace
+
+bool svd_uses_gpu(unsigned m, unsigned n, unsigned batch) {
+    if (const int f = forced_device(); f >= 0) return f == 1;
+    const SvdPolicy& p = policy_state().policy;
+    return gpu_rule(m, n, batch, p.gpu_max_k, p.gpu_min_batch_times_k, p.gpu_min_batch, p.gpu_max_l);
+}
+
+bool svdvals_uses_gpu(unsigned m, unsigned n, unsigned batch) {
+    if (const int f = forced_device(); f >= 0) return f == 1;
+    const SvdPolicy& p = policy_state().policy;
+    if (p.values_gpu_min_batch == 0) return svd_uses_gpu(m, n, batch);   // not measured apart
+    return gpu_rule(m, n, batch, p.values_gpu_max_k, p.values_gpu_min_batch_times_k, p.values_gpu_min_batch,
+                    p.values_gpu_max_l);
 }
 
 namespace {
@@ -687,7 +726,7 @@ namespace {
 // SVD_DEVICE=bidiag forces this backend for every call.
 SvdBackend route(unsigned m, unsigned n, unsigned batch, bool vectors) {
     if (const char* e = std::getenv("SVD_DEVICE"); e && std::string(e) == "bidiag") return SvdBackend::bidiag;
-    if (svd_uses_gpu(m, n, batch)) return svd_gpu_backend(m, n, batch);
+    if (vectors ? svd_uses_gpu(m, n, batch) : svdvals_uses_gpu(m, n, batch)) return svd_gpu_backend(m, n, batch);
     if (const char* e = std::getenv("SVD_DEVICE"); e && std::string(e) == "cpu") return SvdBackend::cpu;
     const SvdPolicy& p = policy_state().policy;
     const unsigned from = vectors ? p.bidiag_min_k : p.values_bidiag_min_k;
@@ -702,6 +741,57 @@ SvdBackend svd_backend(unsigned m, unsigned n, unsigned batch) { return route(m,
 
 SvdBackend svdvals_backend(unsigned m, unsigned n, unsigned batch) { return route(m, n, batch, false); }
 
+namespace {
+
+bool shares(SvdBackend b, unsigned batch) {
+    const unsigned from = policy_state().policy.share_min_batch;
+    return from != 0 && batch >= from && (b == SvdBackend::golub_kahan || b == SvdBackend::qr_golub_kahan);
+}
+
+// The smallest GPU chunk worth a dispatch: eight matrices per core. The CPU's
+// chunks are a few matrices per worker (share_batch).
+uint32_t gpu_share_chunk(uint32_t) {
+    return 8 * std::max(1u, gpu_core_count());
+}
+
+} // namespace
+
+bool svd_shares_batch(unsigned m, unsigned n, unsigned batch) { return shares(svd_backend(m, n, batch), batch); }
+
+bool svdvals_shares_batch(unsigned m, unsigned n, unsigned batch) {
+    return shares(svdvals_backend(m, n, batch), batch);
+}
+
+void core::detail::svd_golub_kahan_shared(const Matrices& a, float* u, float* s, float* vt, uint32_t* info) {
+    const uint32_t M = a.rows, N = a.cols, K = std::min(M, N);
+    if (K == 0 || a.batch == 0) {
+        if (info) std::fill(info, info + a.batch, 0u);
+        return;
+    }
+    const bool direct = metal_linalg::detail::svd_gk_fits(M, N);
+    auto part = [&](uint32_t b0, uint32_t count) {
+        return std::make_tuple(Matrices{a.data + (size_t)b0 * M * N, count, M, N},
+                               u ? u + (size_t)b0 * M * K : nullptr, s + (size_t)b0 * K,
+                               vt ? vt + (size_t)b0 * K * N : nullptr, info ? info + b0 : nullptr);
+    };
+    metal_linalg::detail::share_batch(
+        a.batch, gpu_share_chunk(a.batch), std::clamp(a.batch / (16 * std::max(1u, cpu_threads())), 1u, 16u),
+        [&](uint32_t b0, uint32_t count) {
+            auto [m, pu, ps, pvt, pi] = part(b0, count);
+            if (direct) {
+                svd_golub_kahan(m, pu, ps, pvt, pi);
+            } else {
+                SvdOptions opt;
+                opt.kernel = SvdOptions::Kernel::golub_kahan;
+                svd_qr_jacobi(m, opt, pu, ps, pvt, pi);
+            }
+        },
+        [&](uint32_t b0, uint32_t count) {
+            auto [m, pu, ps, pvt, pi] = part(b0, count);
+            svd_cpu(m, pu, ps, pvt, pi);
+        });
+}
+
 void core::svd(const Matrices& a, float* u, float* s, float* vt, uint32_t* info) {
     const unsigned m = a.rows, n = a.cols, batch = a.batch;
     if (m == 0 || n == 0 || batch == 0) {
@@ -709,7 +799,12 @@ void core::svd(const Matrices& a, float* u, float* s, float* vt, uint32_t* info)
         return;
     }
     SvdOptions opt;
-    switch (route(m, n, batch, u || vt)) {
+    const SvdBackend backend = route(m, n, batch, u || vt);
+    if (shares(backend, batch)) {
+        core::detail::svd_golub_kahan_shared(a, u, s, vt, info);
+        return;
+    }
+    switch (backend) {
         case SvdBackend::cpu:
             core::detail::svd_cpu(a, u, s, vt, info);
             return;

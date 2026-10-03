@@ -11,7 +11,8 @@
 //                      threadgroup per matrix (svd_golub_kahan.mm): on the
 //                      matrix itself where it fits, else on R after this
 //                      library's QR, as svd.mm routes it; k up to its device limit
-//             cpu_vals, bidiag_vals, gk_vals   the same for singular values alone
+//             gk_share golub_kahan and the CPU path sharing the batch (share_min_batch)
+//             cpu_vals, bidiag_vals, gk_vals, gk_share_vals   the same for singular values alone
 //   out:   batch,M,N,backend,ok,ms,p25,p75,reps   (one row per backend)
 //
 //   usage: sweep_svd --policy
@@ -85,6 +86,9 @@ SvdResult gk(const array& A, bool uv) {
 }
 SvdResult solve_gk(const array& A)      { return gk(A, true); }
 SvdResult vals_gk(const array& A)       { return gk(A, false); }
+// The same, its batch shared with the CPU path (share_min_batch).
+SvdResult solve_gk_share(const array& A) { return detail::svd_golub_kahan_shared(A, true); }
+SvdResult vals_gk_share(const array& A)  { return detail::svd_golub_kahan_shared(A, false); }
 
 // Singular values alone: the largest error against MLX's CPU svd, relative to S_max.
 float values_error(const Solver& s, const array& A) {
@@ -174,17 +178,21 @@ int main(int argc, char** argv) {
                     "\"gpu_max_k\": %u, \"gpu_min_batch_times_k\": %u, \"gpu_min_batch\": %u, \"gpu_max_l\": %u, "
                     "\"bidiag_min_k\": %u, \"values_bidiag_min_k\": %u, "
                     "\"bidiag_max_batch\": %u, \"values_bidiag_max_batch\": %u, "
-                    "\"gk_min_k\": %u, \"gk_max_k\": %u, \"gk_limit\": %u}\n",
+                    "\"gk_min_k\": %u, \"gk_max_k\": %u, \"gk_limit\": %u, "
+                    "\"values_gpu_max_k\": %u, \"values_gpu_min_batch_times_k\": %u, "
+                    "\"values_gpu_min_batch\": %u, \"values_gpu_max_l\": %u, \"share_min_batch\": %u}\n",
                     device_name(), p.gpu_cores, svd_policy_source(),
                     p.qr_min_rows, p.qr_min_k,
                     p.block_min_k, p.block_min_k_batched, p.block_min_batch,
                     p.gpu_max_k, p.gpu_min_batch_times_k, p.gpu_min_batch, p.gpu_max_l,
                     p.bidiag_min_k, p.values_bidiag_min_k, p.bidiag_max_batch, p.values_bidiag_max_batch,
-                    p.gk_min_k, p.gk_max_k, metal_linalg::detail::svd_gk_max_k());
+                    p.gk_min_k, p.gk_max_k, metal_linalg::detail::svd_gk_max_k(),
+                    p.values_gpu_max_k, p.values_gpu_min_batch_times_k, p.values_gpu_min_batch,
+                    p.values_gpu_max_l, p.share_min_batch);
         return 0;
     }
     if (argc != 5) {
-        std::fprintf(stderr, "usage: %s <batch> <M> <N> <cpu|jacobi|block|qr|qrblock|bidiag|gk|cpu_vals|bidiag_vals|gk_vals>[,...]\n"
+        std::fprintf(stderr, "usage: %s <batch> <M> <N> <cpu|jacobi|block|qr|qrblock|bidiag|gk|gk_share|cpu_vals|bidiag_vals|gk_vals|gk_share_vals>[,...]\n"
                              "       %s --policy\n", argv[0], argv[0]);
         return 2;
     }
@@ -208,6 +216,8 @@ int main(int argc, char** argv) {
         else if (name == "bidiag_vals") solvers.push_back({name, vals_bidiag, false});
         else if (name == "gk")          solvers.push_back({name, solve_gk});
         else if (name == "gk_vals")     solvers.push_back({name, vals_gk, false});
+        else if (name == "gk_share")      solvers.push_back({name, solve_gk_share});
+        else if (name == "gk_share_vals") solvers.push_back({name, vals_gk_share, false});
         else if (!name.empty()) { std::fprintf(stderr, "unknown backend: %s\n", name.c_str()); return 2; }
         pos = comma + 1;
     }
