@@ -75,3 +75,28 @@ jobs:
           name: python-dist
           path: dist/
           if-no-files-found: error
+
+  oldest-macos:
+    # The wheels are tagged macOS 14; this installs one there and runs the
+    # tests, so a shader or library built for a newer macOS fails here rather
+    # than on a user's Mac. The Release workflow publishes only after it passes.
+    needs: build
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-dist
+          path: dist/
+      - name: Install a wheel on macOS 14 and test it
+        run: |
+          sw_vers
+          uv venv --seed --python 3.12 "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install dist/*-cp312-*.whl
+          cp -r python/tests "$RUNNER_TEMP/tests"
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/venv/bin/python" -c "import metal_linalg as ml, mlx.core as mx; print(ml.__version__, mx.__version__, mx.metal.is_available() and ml.device_name())"
+          "$RUNNER_TEMP/venv/bin/python" -m unittest discover -s tests -v

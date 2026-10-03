@@ -1,0 +1,46 @@
+name: Older macOS
+
+# The committed shaders/prebuilt/ metallibs are what Homebrew (whose build has
+# no Metal compiler) and the Swift package (which embeds them) ship, so they
+# must load on the oldest macOS the package supports. The compiler encodes the
+# target macOS in the AIR version (macOS 14: v26, 15: v27, 26: v28) and an older
+# system cannot read a newer one. This runs the Swift package's tests, which
+# embed those metallibs and run every kernel, on the oldest macOS runners.
+
+on:
+  pull_request:
+    paths:
+      - "shaders/**"
+      - "src/**"
+      - "include/**"
+      - "swift/**"
+      - "Package.swift"
+      - "CMakeLists.txt"
+      - ".github/workflows/compat.yml"
+  push:
+    branches: [main]
+    paths: ["shaders/**", ".github/workflows/compat.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prebuilt-shaders:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shader targets
+        run: |
+          sw_vers
+          for f in shaders/prebuilt/*.metallib; do
+            echo "$f: $(strings "$f" | grep -o -E 'air64[a-z0-9_]*-apple-macos[x]?[0-9.]*' | sort -u)"
+          done
+      - name: Swift package tests (prebuilt shaders, every kernel)
+        env:
+          METAL_LINALG_NO_MLX: "1"
+        run: swift test

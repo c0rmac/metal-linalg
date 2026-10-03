@@ -139,7 +139,11 @@ A change to a shader needs the Metal shader compiler (`xcodebuild
 -downloadComponent MetalToolchain`), and `cmake --build build --target
 update_prebuilt_shaders` to refresh the compiled copies in
 `shaders/prebuilt/`, which the Swift package and builds without the compiler
-use. Changing what a kernel does changes the measurements behind the routing;
+(Homebrew's among them) use. The build compiles every shader for macOS 14
+(`METAL_LINALG_SHADER_MIN_MACOS`), the oldest the package supports: the
+target sets the AIR version, and a metallib built for a newer macOS does not
+load on an older one. The "Older macOS" workflow runs the prebuilt shaders on
+macOS 14 and 15 for every pull request that touches them. Changing what a kernel does changes the measurements behind the routing;
 say so in the pull request, and the maintainers will arrange remeasuring.
 
 ## Releases

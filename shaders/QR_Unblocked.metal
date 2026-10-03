@@ -337,7 +337,7 @@ inline void load_tile_threadgroup(
  * Trailing Matrix values.
  */
 inline void store_tile_device(
-    thread simdgroup_float8x8 tile,
+    const thread simdgroup_float8x8& tile,
     device float* dst,
     uint stride,
     uint col,

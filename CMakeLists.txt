@@ -84,6 +84,14 @@ endif ()
 set(_ml_shader_dir "${CMAKE_CURRENT_BINARY_DIR}/shaders")
 file(MAKE_DIRECTORY "${_ml_shader_dir}")
 
+# The oldest macOS the compiled shaders must load on. The compiler picks the
+# AIR bitcode version from it (macOS 14: v26, 15: v27, 26: v28), and an older
+# system cannot read a newer one, so without it a metallib built on a new Mac
+# targets that Mac's macOS and fails to load on older ones: shaders/prebuilt/
+# was v28 (macOS 26) until 2.4.1, which Homebrew and the Swift package use.
+set(METAL_LINALG_SHADER_MIN_MACOS "14.0" CACHE STRING
+    "Oldest macOS the compiled Metal shaders target (sets their AIR version)")
+
 # metal_linalg_add_shader(<name> [FLAGS ...] [DEPENDS <header> ...])
 # Compiles shaders/<name>.metal (or copies the prebuilt metallib) and embeds
 # it as the C symbols metal_linalg_<name>_metallib / _len; see src/shaders.h.
@@ -114,7 +122,8 @@ function(metal_linalg_add_shader name)
         # edited shader can never be masked by a stale metallib.
         add_custom_command(
             OUTPUT "${_lib}"
-            COMMAND xcrun -sdk macosx metal ${_arg_FLAGS} -c "${_src}" -o "${_air}"
+            COMMAND xcrun -sdk macosx metal -mmacosx-version-min=${METAL_LINALG_SHADER_MIN_MACOS}
+                    ${_arg_FLAGS} -c "${_src}" -o "${_air}"
             COMMAND xcrun -sdk macosx metallib "${_air}" -o "${_lib}"
             DEPENDS ${_deps}
             BYPRODUCTS "${_air}"
