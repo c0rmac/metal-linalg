@@ -17,7 +17,8 @@ GENERATIONS = [
             ("Apple M3 Max", [30, 40]), ("Apple M3 Ultra", [60, 80])]),
     ("M4", [("Apple M4", [8, 10]), ("Apple M4 Pro", [16, 20]),
             ("Apple M4 Max", [32, 40])]),
-    ("M5", [("Apple M5", [10])]),
+    ("M5", [("Apple M5", [8, 10]), ("Apple M5 Pro", [16, 20]),
+            ("Apple M5 Max", [32, 40]), ("Apple M5 Ultra", [64, 80])]),
 ]
 
 
