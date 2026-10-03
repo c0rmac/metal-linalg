@@ -47,6 +47,8 @@ const char* name(ml::SvdBackend b) {
         case ml::SvdBackend::block_jacobi: return "block_jacobi";
         case ml::SvdBackend::qr_jacobi:    return "qr_jacobi";
         case ml::SvdBackend::bidiag:       return "bidiag";
+        case ml::SvdBackend::golub_kahan:  return "golub_kahan";
+        case ml::SvdBackend::qr_golub_kahan: return "qr_golub_kahan";
         default:                           return "qr_block_jacobi";
     }
 }
@@ -55,7 +57,8 @@ const char* name(ml::SvdBackend b) {
 // directions; an unknown key on the way in is an error, not silently ignored.
 #define QR_FIELDS(X) X(m_crossover_small_batch) X(m_crossover_large_batch) X(batch_threshold) \
                      X(gpu_max_k) X(gpu_min_batch_times_k) X(gpu_min_batch)                   \
-                     X(gpu_cores) X(concurrent_matrices) X(gpu_large_min_k) X(gpu_large_max_batch)
+                     X(gpu_cores) X(concurrent_matrices) X(gpu_large_min_k) X(gpu_large_max_batch) \
+                     X(gpu_min_k)
 #define EIGH_FIELDS(X) X(simd_max_n) X(block_min_n) X(block_min_n_batched) X(block_min_batch) \
                        X(gpu_max_n) X(gpu_min_batch_times_n) X(gpu_min_batch) X(gpu_cores)      \
                        X(values_gpu_max_n) X(values_gpu_min_batch_times_n) X(values_gpu_min_batch) \
@@ -64,7 +67,7 @@ const char* name(ml::SvdBackend b) {
 #define SVD_FIELDS(X) X(qr_min_rows) X(qr_min_k) X(block_min_k) X(block_min_k_batched)       \
                       X(block_min_batch) X(gpu_max_k) X(gpu_min_batch_times_k) X(gpu_min_batch) \
                       X(gpu_cores) X(bidiag_min_k) X(values_bidiag_min_k)  \
-                      X(bidiag_max_batch) X(values_bidiag_max_batch)
+                      X(bidiag_max_batch) X(values_bidiag_max_batch) X(gk_min_k) X(gk_max_k) X(gpu_max_l)
 
 #define TO_DICT(f) d[#f] = p.f;
 #define FROM_DICT(f) if (key == #f) { p.f = nb::cast<unsigned>(value); return; }

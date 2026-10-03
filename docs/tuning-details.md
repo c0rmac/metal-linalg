@@ -17,9 +17,9 @@ the curious. Contributors only need [`tuning.md`](tuning.md).
 
    | step | harness | measures | time on an M5 Pro |
    |---|---|---|---|
-   | QR | `tuning/tune_qr.py` | both GPU backends on 143 shapes, square, tall, wide and near-square | 2 min |
+   | QR | `tuning/tune_qr.py` | both GPU backends and the CPU on 185 shapes, square, tall, wide and near-square, batch 1 to 16384 | 4 min |
    | eigh | `tuning/tune_eigh.py --max-n 4096` | CPU, the whole-matrix kernel in both modes, block Jacobi, ql, tridiag, each again for eigenvalues alone; N from 2 to 4096, batch 1 to 4096 (small batches above 1024) | 25 min |
-   | SVD | `tuning/tune_svd.py --max-k 4096` | CPU, both Jacobi kernels, each with and without QR, square k up to 1024 and tall shapes, batch 1 to 4096; bidiag and the CPU, with and without vectors, from k = 128 up to 4096 (small batches above 1024) | 50 min |
+   | SVD | `tuning/tune_svd.py --max-k 4096` | CPU, both Jacobi kernels, each with and without QR, square k up to 1024 and tall shapes, batch 1 to 4096; golub_kahan up to its limit; bidiag and the CPU, with and without vectors, from k = 128 up to 4096 (small batches above 1024) | 50 min |
 
    Each runs two passes in random order, so thermal drift is not mistaken for
    a size effect and a noise floor can be measured.
@@ -146,7 +146,9 @@ should report `tuned:<device name>`.
 batches, the row crossover for large batches, and the batch that separates
 them. The two crossovers are equal unless a batch-dependent split survived
 held-out validation. Then the CPU boundary, `gpu_max_k`,
-`gpu_min_batch_times_k` and `gpu_min_batch`, and the large-matrix clause,
+`gpu_min_batch_times_k`, `gpu_min_batch` and `gpu_min_k` (the GPU only from
+this k, so that the smallest matrices stay on the CPU at any batch; 0 in a run
+from before 2.10.0), and the large-matrix clause,
 `gpu_large_min_k` and `gpu_large_max_batch`: the GPU also for `k` from the
 first in a batch of at most the second (0: any; `0, 0`: never, which a run
 from before 2.9.0 gives). Since the CPU path spreads a batch over every core
@@ -187,7 +189,13 @@ backend takes over from the CPU, with vectors and for singular values alone
 (0: never, which a run from before the backend existed gives), and up to which
 batch (0: any; as `tridiag`, it solves a batch one matrix after another);
 stage 3 of `tune_svd.py` fits each threshold with its cap on the points where
-`bidiag` was timed.
+`bidiag` was timed. Last, `gk_min_k` and `gk_max_k`: the window of k in which
+the `golub_kahan` backend replaces the Jacobi backends on the GPU (0, 0: never,
+which a run from before 2.10.0 gives). Stage 1b of `tune_svd.py` fits it over
+the Jacobi split, against the best GPU backend, on the points where `gk` was
+timed (k up to the device's limit, 83 with 32 KB of threadgroup memory), as
+`tune_eigh.py` fits the `ql` window; the CPU boundary is then fitted with it
+in place.
 
 ## 5. Reading a report
 
@@ -294,7 +302,7 @@ in the policy source.
 | variable | effect |
 |---|---|
 | `QR_M_CROSSOVER` | QR: rows at which the grid-parallel backend takes over |
-| `QR_GPU_MAX_K`, `QR_GPU_MIN_BATCH_TIMES_K`, `QR_GPU_MIN_BATCH` | QR: the GPU/CPU boundary |
+| `QR_GPU_MAX_K`, `QR_GPU_MIN_K`, `QR_GPU_MIN_BATCH_TIMES_K`, `QR_GPU_MIN_BATCH` | QR: the GPU/CPU boundary |
 | `QR_GPU_LARGE_MIN_K`, `QR_GPU_LARGE_MAX_BATCH` | QR: the GPU also from this k, for batches up to this (0: never / any batch) |
 | `QR_DEVICE=gpu` or `cpu` | QR: bypass the GPU/CPU boundary |
 | `EIGH_SIMD_MAX_N`, `EIGH_BLOCK_MIN_N` | eigensolver: the GPU backend split |
@@ -313,6 +321,7 @@ in the policy source.
 | `SVD_GPU_MAX_K`, `SVD_GPU_MIN_BATCH_TIMES_K`, `SVD_GPU_MIN_BATCH` | SVD: the GPU/CPU boundary |
 | `SVD_BIDIAG_MIN_K`, `SVD_VALUES_BIDIAG_MIN_K` | SVD: the bidiag backend instead of the CPU from this k (0: never) |
 | `SVD_BIDIAG_MAX_BATCH`, `SVD_VALUES_BIDIAG_MAX_BATCH` | SVD: the bidiag backend only for batches up to this (0: any) |
+| `SVD_GK_MIN_K`, `SVD_GK_MAX_K` | SVD: the golub_kahan backend on the GPU for k in this window (`SVD_GK_MAX_K=0`: never) |
 | `SVD_DEVICE=bidiag` | SVD: every call on the bidiag backend |
 | `SVD_DEVICE=gpu` or `cpu` | SVD: bypass the GPU/CPU boundary |
 

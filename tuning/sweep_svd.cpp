@@ -6,6 +6,12 @@
 //             block    block one-sided Jacobi kernel on the matrix itself
 //             qr       this library's QR, then the whole-matrix kernel on R
 //             qrblock  this library's QR, then the block kernel on R
+//             bidiag   GPU bidiagonalization, LAPACK's bidiagonal SVD (svd_bidiag.mm)
+//             gk       Householder bidiagonalization and implicit QR, one
+//                      threadgroup per matrix (svd_golub_kahan.mm): on the
+//                      matrix itself where it fits, else on R after this
+//                      library's QR, as svd.mm routes it; k up to its device limit
+//             cpu_vals, bidiag_vals, gk_vals   the same for singular values alone
 //   out:   batch,M,N,backend,ok,ms,p25,p75,reps   (one row per backend)
 //
 //   usage: sweep_svd --policy
@@ -71,6 +77,14 @@ SvdResult solve_bidiag(const array& A)  { return detail::svd_bidiag(A, true); }
 // Singular values alone, as svdvals runs them.
 SvdResult vals_cpu(const array& A)      { return detail::svd_cpu(A, false); }
 SvdResult vals_bidiag(const array& A)   { return detail::svd_bidiag(A, false); }
+// golub_kahan as svd.mm routes it inside its window.
+SvdResult gk(const array& A, bool uv) {
+    const int M = A.shape(-2), N = A.shape(-1);
+    if (metal_linalg::detail::svd_gk_fits(M, N)) return detail::svd_golub_kahan(A, uv);
+    return detail::svd_qr_jacobi(A, uv, with_kernel(SvdOptions::Kernel::golub_kahan));
+}
+SvdResult solve_gk(const array& A)      { return gk(A, true); }
+SvdResult vals_gk(const array& A)       { return gk(A, false); }
 
 // Singular values alone: the largest error against MLX's CPU svd, relative to S_max.
 float values_error(const Solver& s, const array& A) {
@@ -157,18 +171,20 @@ int main(int argc, char** argv) {
         std::printf("{\"device\": \"%s\", \"gpu_cores\": %u, \"source\": \"%s\", "
                     "\"qr_min_rows\": %u, \"qr_min_k\": %u, "
                     "\"block_min_k\": %u, \"block_min_k_batched\": %u, \"block_min_batch\": %u, "
-                    "\"gpu_max_k\": %u, \"gpu_min_batch_times_k\": %u, \"gpu_min_batch\": %u, "
+                    "\"gpu_max_k\": %u, \"gpu_min_batch_times_k\": %u, \"gpu_min_batch\": %u, \"gpu_max_l\": %u, "
                     "\"bidiag_min_k\": %u, \"values_bidiag_min_k\": %u, "
-                    "\"bidiag_max_batch\": %u, \"values_bidiag_max_batch\": %u}\n",
+                    "\"bidiag_max_batch\": %u, \"values_bidiag_max_batch\": %u, "
+                    "\"gk_min_k\": %u, \"gk_max_k\": %u, \"gk_limit\": %u}\n",
                     device_name(), p.gpu_cores, svd_policy_source(),
                     p.qr_min_rows, p.qr_min_k,
                     p.block_min_k, p.block_min_k_batched, p.block_min_batch,
-                    p.gpu_max_k, p.gpu_min_batch_times_k, p.gpu_min_batch,
-                    p.bidiag_min_k, p.values_bidiag_min_k, p.bidiag_max_batch, p.values_bidiag_max_batch);
+                    p.gpu_max_k, p.gpu_min_batch_times_k, p.gpu_min_batch, p.gpu_max_l,
+                    p.bidiag_min_k, p.values_bidiag_min_k, p.bidiag_max_batch, p.values_bidiag_max_batch,
+                    p.gk_min_k, p.gk_max_k, metal_linalg::detail::svd_gk_max_k());
         return 0;
     }
     if (argc != 5) {
-        std::fprintf(stderr, "usage: %s <batch> <M> <N> <cpu|jacobi|block|qr|qrblock|bidiag|cpu_vals|bidiag_vals>[,...]\n"
+        std::fprintf(stderr, "usage: %s <batch> <M> <N> <cpu|jacobi|block|qr|qrblock|bidiag|gk|cpu_vals|bidiag_vals|gk_vals>[,...]\n"
                              "       %s --policy\n", argv[0], argv[0]);
         return 2;
     }
@@ -190,6 +206,8 @@ int main(int argc, char** argv) {
         else if (name == "bidiag")      solvers.push_back({name, solve_bidiag});
         else if (name == "cpu_vals")    solvers.push_back({name, vals_cpu, false});
         else if (name == "bidiag_vals") solvers.push_back({name, vals_bidiag, false});
+        else if (name == "gk")          solvers.push_back({name, solve_gk});
+        else if (name == "gk_vals")     solvers.push_back({name, vals_gk, false});
         else if (!name.empty()) { std::fprintf(stderr, "unknown backend: %s\n", name.c_str()); return 2; }
         pos = comma + 1;
     }

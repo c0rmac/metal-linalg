@@ -11,6 +11,7 @@
     "gpu_max_k": 8,
     "gpu_min_batch_times_k": 10240,
     "gpu_min_batch": 1,
+    "gpu_min_k": 0,
     "gpu_large_min_k": 1024,
     "gpu_large_max_batch": 4,
     "chosen": {
@@ -42,6 +43,7 @@
         8,
         10240,
         1,
+        0,
         1024,
         4
       ],
@@ -1445,7 +1447,7 @@
     "geomean": 1.0166,
     "worst": 1.466
   },
-  "ktuned_entry": "{\"Apple M5 Pro\", 20, 512, 512, 16,   8, 10240, 1,   1024, 4},",
+  "ktuned_entry": "{\"Apple M5 Pro\", 20, 512, 512, 16,   8, 10240, 1, 0,   1024, 4},",
   "submissions": [
     "20261003-2d2c19"
   ]

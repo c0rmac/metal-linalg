@@ -80,6 +80,35 @@ final class MetalLinalgTests: XCTestCase {
         }
     }
 
+    // The golub_kahan backend, forced by the policy: square either side of its
+    // chaser simdgroup (k = 33), tall, wide, and tall past what it takes
+    // directly (QR first), so its shader library and its workspace are
+    // exercised.
+    func testSVDGolubKahan() throws {
+        let measured = svdPolicy
+        defer { svdPolicy = measured }
+        var p = measured
+        p.gpu_max_k = 1 << 20; p.gpu_min_batch_times_k = 0; p.gpu_min_batch = 1; p.gpu_max_l = .max
+        p.gk_min_k = 1; p.gk_max_k = 64
+        svdPolicy = p
+        for (rows, cols, backend) in [(16, 16, "golub_kahan"), (40, 40, "golub_kahan"), (90, 24, "golub_kahan"),
+                                      (24, 90, "golub_kahan"), (3000, 8, "qr_golub_kahan")] {
+            XCTAssertEqual(svdBackend(rows: rows, cols: cols, batch: 2), backend)
+            let batch = 2, k = min(rows, cols)
+            let a = values(batch * rows * cols, seed: UInt64(3 * rows + cols))
+            let (u, s, vt) = try svdAccelerated(a, batch: batch, rows: rows, cols: cols)
+            for b in 0..<batch {
+                var us = Array(u[(b * rows * k)..<((b + 1) * rows * k)])
+                for i in 0..<rows { for j in 0..<k { us[i * k + j] *= s[b * k + j] } }
+                let usv = multiply(us[...], vt[(b * k * cols)..<((b + 1) * k * cols)], rows, k, cols)
+                for i in 0..<(rows * cols) { XCTAssertEqual(usv[i], Double(a[b * rows * cols + i]), accuracy: 1e-4) }
+                for j in 1..<k { XCTAssertGreaterThanOrEqual(s[b * k + j - 1], s[b * k + j]) }
+            }
+            let sOnly = try svdvalsAccelerated(a, batch: batch, rows: rows, cols: cols)
+            for i in 0..<s.count { XCTAssertEqual(sOnly[i], s[i], accuracy: 1e-4) }
+        }
+    }
+
     // The tridiag backend, forced by the policy, on sizes either side of a
     // GPU panel (32 columns): it loads its own shader library and runs MPS.
     // Eigenvalues alone on the CPU, where from N = 128 LAPACK's two-stage

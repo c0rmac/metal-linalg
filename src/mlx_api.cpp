@@ -239,6 +239,10 @@ SvdResult svd_bidiag(const mx::array& a, bool compute_uv) {
     return run_svd(a, compute_uv, "svd", core::detail::svd_bidiag);
 }
 
+SvdResult svd_golub_kahan(const mx::array& a, bool compute_uv) {
+    return run_svd(a, compute_uv, "svd", core::detail::svd_golub_kahan);
+}
+
 SvdResult svd_cpu(const mx::array& a, bool compute_uv) {
     return run_svd(a, compute_uv, "svd", core::detail::svd_cpu);
 }

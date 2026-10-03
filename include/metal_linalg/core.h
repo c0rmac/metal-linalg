@@ -23,8 +23,9 @@ namespace metal_linalg {
     // GPU, which of the two kernels: a single-threadgroup one for short
     // matrices and a grid-parallel one for long. With k = min(M, N):
     //
-    //   GPU or CPU   GPU iff k <= gpu_max_k, batch * k >= gpu_min_batch_times_k
-    //                and batch >= gpu_min_batch
+    //   GPU or CPU   GPU iff gpu_min_k <= k <= gpu_max_k, batch * k >=
+    //                gpu_min_batch_times_k and batch >= gpu_min_batch, or k >=
+    //                gpu_large_min_k in a batch of at most gpu_large_max_batch
     //   kernel       grid-parallel iff M >= m_crossover_*, else single-threadgroup
     //
     // The sign of R's diagonal is the one each backend produces: LAPACK's
@@ -51,8 +52,9 @@ namespace metal_linalg {
         unsigned batch_threshold         = 16;
 
         // --- GPU or CPU ---
-        // GPU iff k <= gpu_max_k, batch * k >= gpu_min_batch_times_k and
-        // batch >= gpu_min_batch, with k = min(M, N). gpu_max_k = 0 means
+        // GPU iff gpu_min_k <= k <= gpu_max_k, batch * k >=
+        // gpu_min_batch_times_k and batch >= gpu_min_batch, with k = min(M, N)
+        // (or by the large-matrix clause below). gpu_max_k = 0 means
         // never, kQrNoLimit no cap; gpu_min_batch_times_k = 0 with
         // gpu_min_batch = 1 means always the GPU, which is what a device
         // measured before QR had a CPU path gets. The defaults, for an
@@ -62,6 +64,12 @@ namespace metal_linalg {
         unsigned gpu_max_k             = kQrNoLimit;
         unsigned gpu_min_batch_times_k = 1024;
         unsigned gpu_min_batch         = 1;
+        // ... and k at least this (0: no lower bound). Since the CPU path
+        // spreads a batch over every core, it wins the smallest matrices at
+        // any batch, while a large batch of mid-size ones can still be the
+        // GPU's: on an M5 Pro 10000 of 16x16 take 2.1 ms on the CPU and 3.7
+        // on the GPU, and 1024 of 128x128 21 ms on the GPU and 24 on the CPU.
+        unsigned gpu_min_k             = 0;
 
         // Large matrices: the GPU also for k >= gpu_large_min_k in a batch of
         // at most gpu_large_max_batch (0: any batch), whatever the rule above
@@ -273,13 +281,14 @@ namespace metal_linalg {
     // routing is a per-device policy measured by tuning/tune_svd.py. With
     // k = min(M, N) and l = max(M, N):
     //
-    //   GPU or CPU     GPU iff k <= gpu_max_k, batch * k >= gpu_min_batch_times_k
-    //                  and batch >= gpu_min_batch
+    //   GPU or CPU     GPU iff k <= gpu_max_k, l <= gpu_max_l, batch * k >=
+    //                  gpu_min_batch_times_k and batch >= gpu_min_batch
     //   precondition   with this library's QR iff l >= qr_min_rows, k >= qr_min_k and
     //                  l >= 2k; the kernel then runs on the k x k factor
     //   kernel         block Jacobi iff k >= block_min_k, or k >= block_min_k_batched
     //                  in a batch of at least block_min_batch; else the
     //                  whole-matrix kernel
+    //   golub_kahan    instead of the two above, for k in [gk_min_k, gk_max_k]
     //
     // The CPU path is LAPACK (Accelerate): sgesdd, preceded by a QR (sgeqrf,
     // sorgqr) when l >= 2k, so that it computes thin factors only.
@@ -322,6 +331,13 @@ namespace metal_linalg {
         unsigned gpu_max_k             = 64;
         unsigned gpu_min_batch_times_k = 1024;
         unsigned gpu_min_batch         = 1;
+        // ... and l = max(M, N) at most this (kSvdNoLimit: no cap). The CPU
+        // path reduces a tall matrix by a QR first, which a batch spread over
+        // every core does quickly, so on an M5 Pro every shape with a long
+        // side of 256 or more is the CPU's at any batch (256 x 16, 4096 of
+        // them: 0.72x on the GPU), while large batches of 32 x 32 are the
+        // GPU's (1.65x); a cap on k alone cannot say both.
+        unsigned gpu_max_l             = 0xFFFFFFFFu;
 
         // Device this was resolved against; informational.
         unsigned gpu_cores = 0;
@@ -340,6 +356,19 @@ namespace metal_linalg {
         // the CPU path spreads it over every core.
         unsigned bidiag_max_batch        = 0;
         unsigned values_bidiag_max_batch = 0;
+
+        // --- the golub_kahan backend, for k in [gk_min_k, gk_max_k] ---
+        // On the GPU, inside this window, LAPACK's method in one threadgroup
+        // per matrix (Householder bidiagonalization and implicit bidiagonal
+        // QR) instead of the Jacobi backends the fields above pick, with
+        // singular vectors and for singular values alone: on the matrix
+        // itself where it fits in threadgroup memory, else after this
+        // library's QR on the k x k factor (qr_golub_kahan). gk_max_k = 0
+        // means never, which is what a device without measurements has; the
+        // window is clipped to what the backend takes on the device
+        // (detail::svd_gk_max_k(), 83 with 32 KB of threadgroup memory).
+        unsigned gk_min_k = 0;
+        unsigned gk_max_k = 0;
     };
 
     constexpr unsigned kSvdNoLimit = 0xFFFFFFFFu;
@@ -352,9 +381,12 @@ namespace metal_linalg {
     void        set_svd_policy(const SvdPolicy& p);
 
     // bidiag: the hybrid large-k backend (bidiagonalization and
-    // back-transformations on the GPU, the bidiagonal SVD on the CPU); last,
-    // so the others keep their numbers.
-    enum class SvdBackend { cpu, jacobi, block_jacobi, qr_jacobi, qr_block_jacobi, bidiag };
+    // back-transformations on the GPU, the bidiagonal SVD on the CPU).
+    // golub_kahan: the batched one (bidiagonalization and implicit QR, one
+    // threadgroup per matrix); qr_golub_kahan: the same on the k x k factor of
+    // this library's QR. Each added last, so the others keep their numbers.
+    enum class SvdBackend { cpu, jacobi, block_jacobi, qr_jacobi, qr_block_jacobi, bidiag,
+                            golub_kahan, qr_golub_kahan };
 
     // What an SVD call does with a problem under the policy in effect.
     // SVD_DEVICE=gpu or SVD_DEVICE=cpu forces the first part of the decision.
@@ -363,7 +395,8 @@ namespace metal_linalg {
     // The GPU backend the policy picks, regardless of the CPU routing.
     SvdBackend svd_gpu_backend(unsigned m, unsigned n, unsigned batch);
 
-    // True iff svd_backend(m, n, batch) is one of the Jacobi GPU backends.
+    // True iff svd_backend(m, n, batch) is one of the GPU backends other than
+    // bidiag (the Jacobi and golub_kahan ones).
     bool svd_uses_gpu(unsigned m, unsigned n, unsigned batch);
 
     // What a call for singular values alone (svdvals) does: as svd_backend,
@@ -391,8 +424,9 @@ namespace metal_linalg {
         unsigned effective_rows = 0;
 
         // Which kernel the QR-preconditioned backend runs on the factor.
-        // `automatic` follows the policy's kernel rule.
-        enum class Kernel { automatic, jacobi, block };
+        // `automatic` follows the policy's kernel rule (between the two
+        // Jacobi kernels).
+        enum class Kernel { automatic, jacobi, block, golub_kahan };
         Kernel kernel = Kernel::automatic;
 
         // Block kernel: Jacobi sweeps per 32 x 32 subproblem. 0 = 1, or
@@ -418,8 +452,15 @@ namespace metal_linalg {
         inline bool     eigh_converged(unsigned info) { return (info >> 16) & 1u; }
         inline bool     eigh_nonfinite(unsigned info) { return (info >> 17) & 1u; }
 
+        // The largest min(M, N) of a square matrix the golub_kahan backend
+        // takes on this device, and whether it takes rows x cols itself: the
+        // matrix and V live in threadgroup memory. 0 / false without a Metal
+        // device.
+        unsigned svd_gk_max_k();
+        bool     svd_gk_fits(unsigned rows, unsigned cols);
+
         // Decode an SVD `info` word. The sweep count includes the final sweep
-        // that found nothing to rotate.
+        // that found nothing to rotate (golub_kahan: the QR steps).
         inline unsigned svd_sweeps(unsigned info)         { return info & 0xFFFFu; }
         inline bool     svd_converged(unsigned info)      { return (info >> 16) & 1u; }
         inline bool     svd_nonfinite(unsigned info)      { return (info >> 17) & 1u; }
@@ -543,6 +584,14 @@ namespace metal_linalg {
             // (a wide matrix as its transpose, a much taller one after a QR).
             // See svd_bidiag.mm.
             void svd_bidiag(const Matrices& a, float* u, float* s, float* vt, uint32_t* info);
+
+            // Householder bidiagonalization and implicit bidiagonal QR, one
+            // threadgroup per matrix, for shapes that
+            // metal_linalg::detail::svd_gk_fits(); with the QR first, through
+            // svd_qr_jacobi with SvdOptions::Kernel::golub_kahan. `info`
+            // counts QR steps where the Jacobi backends count sweeps. See
+            // svd_golub_kahan.mm.
+            void svd_golub_kahan(const Matrices& a, float* u, float* s, float* vt, uint32_t* info);
 
             // LAPACK on the CPU: sgesdd, after a QR for a matrix at least
             // twice as tall as wide, the matrices of a batch spread over

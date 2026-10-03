@@ -19,8 +19,19 @@ one 2048×2048 by 1.9x while losing every mid-size batch), and the serial
 routed calls are now 1.5-8x faster for eigh, 1.65-4.2x for the SVD and up to
 2x for QR than with 2.8's routing, one QR shape 7% slower. The re-tune also
 showed the SVD's Jacobi kernels losing to the CPU almost everywhere, as the
-eigensolver's did before `ql`; the SVD counterpart of `ql` (section 4) is the
-open item. Two things learned while building the kernel correct this study:
+eigensolver's did before `ql`; the SVD counterpart of `ql` (section 4) was
+the open item.
+
+**And in 2.10.0** it was built: `golub_kahan`, Householder bidiagonalization
+and implicit bidiagonal QR in one threadgroup per matrix ([svd.md](../svd.md)),
+1.5-2.9x faster than the Jacobi kernels and 1.2-1.8x faster than the 18-core
+CPU for large batches up to 48×48 (run
+[`20261003-106b6c`](../results/apple-m5-pro-20gpu/20261003-106b6c/summary.md)).
+It, too, needed a routing term: the CPU's QR-first path wins tall matrices
+however small k is, so the SVD's GPU-or-CPU rule caps the long side
+(`gpu_max_l`), as QR's now has a lower bound on k (`gpu_min_k`) for the
+smallest matrices, which the parallel CPU wins at any batch. Two things
+learned while building the `ql` kernel correct this study:
 
 - *The register-resident layout suggested in section 4 would not have helped.*
   A matrix's state is about $N^2$ floats wherever it lives, and Apple's GPUs
@@ -89,7 +100,7 @@ Ranked by value for effort:
 |---|---|---|---|---|
 | 1 | CPU path parallel over the batch, then re-measure the routing | eigh 1.7-8.5x, SVD 1.7-4.3x, QR up to 2x over today on batched shapes from 32×32; 7.5-15x on batched shapes already on the CPU | measured | small |
 | 2 | split a batch between CPU and GPU when their speeds are close | 1.03-1.7x over the better device | measured (coarse split search) | moderate |
-| 3 | batched tridiagonal-QL eigensolver kernel, then its SVD counterpart | at N = 24-32, 3-4x over today's GPU kernel and up to 2.3x over the 18-core CPU (1.1-1.8x at N = 8-16); N = 48-64 needs a register-resident layout | prototype measured at N ≤ 64; SVD not built | substantial |
+| 3 | batched tridiagonal-QL eigensolver kernel, then its SVD counterpart | at N = 24-32, 3-4x over today's GPU kernel and up to 2.3x over the 18-core CPU (1.1-1.8x at N = 8-16); N = 48-64 needs a register-resident layout | prototype measured at N ≤ 64; both built (2.9.0, 2.10.0) | substantial |
 | 4a | pipeline batches of large matrices (CPU solve of one, GPU reduction of the next) | 1.4-1.7x for batches | estimated from measured steps | small-moderate |
 | 4b | fewer dispatches per column in the GPU reductions | 1.25-1.6x at N = 2048-4096, and a lower `tridiag`/`bidiag` crossover | estimated | moderate |
 | 4c | parallel divide and conquer (Accelerate exports `slaed*`, `slasd*`) | 1.3-1.45x at N = 4096 | estimated | high |
@@ -279,7 +290,9 @@ block Jacobi backend, or the CPU, stays the answer for now.
 
 **The SVD counterpart** follows the same pattern: Householder
 bidiagonalization, then implicit-shift bidiagonal QR (`sbdsqr`) with each
-thread owning a row of U and of V. It was not built. QR already uses the
+thread owning a row of U and of V. It was built in 2.10.0 (`golub_kahan`,
+see the note at the top); keeping V in device memory rather than beside the
+matrix in threadgroup memory was what made it pay. QR already uses the
 efficient algorithm on the GPU, and its gains are those of sections 2 and 3.
 
 ## 5. Large single matrices

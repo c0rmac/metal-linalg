@@ -12,6 +12,8 @@
 #include <cstdlib>
 #include <random>
 #include <string>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 #include <mlx/mlx.h>
@@ -536,6 +538,107 @@ int main() {
         else std::printf("  ok    %-44s\n", "bidiag NaN in one matrix of a batch");
     }
 
+    // The golub_kahan backend keeps the matrix in threadgroup memory, so it
+    // takes squares up to svd_gk_max_k() (longer matrices when tall); a wide
+    // matrix is decomposed as its transpose, and through the QR first
+    // (svd_qr_jacobi with Kernel::golub_kahan) any length with k up to the
+    // limit. With 33 columns and more the QR iteration runs on a simdgroup of
+    // its own.
+    std::printf("\n[ backend: golub_kahan ]\n");
+    {
+        const int kmax = (int)metal_linalg::detail::svd_gk_max_k();
+        std::printf("  this device: squares up to %d\n", kmax);
+        auto run_gk = [&](const std::string& label, const array& A) {
+            SvdResult r = detail::svd_golub_kahan(A, true);
+            eval({r.U, r.S, r.Vt, r.info});
+            check(label, A, r);
+        };
+        auto run_qr_gk = [&](const std::string& label, const array& A) {
+            SvdOptions o;
+            o.kernel = SvdOptions::Kernel::golub_kahan;
+            SvdResult r = detail::svd_qr_jacobi(A, true, o);
+            eval({r.U, r.S, r.Vt, r.info});
+            check(label, A, r);
+        };
+        for (auto [M, N] : std::vector<std::pair<int, int>>{{1, 1}, {2, 2}, {3, 3}, {2, 5}, {5, 2}, {8, 8},
+                                                             {16, 16}, {32, 32}, {33, 33}, {47, 47}, {64, 64},
+                                                             {kmax, kmax}, {65, 64}, {64, 65}, {100, 20},
+                                                             {20, 100}, {300, 12}, {12, 300}, {200, 1}, {1, 200}})
+            run_gk("golub_kahan " + dims(1, M, N), random_matrix(1, M, N, 2000 + M * 3 + N));
+        run_gk("golub_kahan " + dims(64, 24, 24), random_matrix(64, 24, 24, 2100));
+        run_gk("golub_kahan " + dims(16, 40, 33), random_matrix(16, 40, 33, 2101));
+        run_qr_gk("qr_golub_kahan " + dims(1, 2000, 48), random_matrix(1, 2000, 48, 2102));
+        run_qr_gk("qr_golub_kahan " + dims(4, 600, 64), random_matrix(4, 600, 64, 2103));
+        run_qr_gk("qr_golub_kahan " + dims(1, 40, 900), random_matrix(1, 40, 900, 2104));
+        for (float sc : {1e-30f, 1e20f, 1e37f}) {
+            char label[64];
+            std::snprintf(label, sizeof label, "golub_kahan scaled by %.0e 40x30", sc);
+            run_gk(label, multiply(random_matrix(1, 40, 30, 2200), array(sc / 5.0f)));
+        }
+        run_gk("golub_kahan zero 30x20", zeros({30, 20}));
+        run_gk("golub_kahan identity 50x50", eye(50));
+        run_gk("golub_kahan rank one 60x40", matmul(random_matrix(1, 60, 1, 2201), random_matrix(1, 1, 40, 2202)));
+        {
+            std::vector<float> spec(48);
+            for (int i = 0; i < 48; ++i) spec[i] = std::pow(10.0f, 4.0f - 8.0f * i / 47.0f);
+            run_gk("golub_kahan singular values 1e+4 .. 1e-4 (60x48)", with_singular_values(60, 48, spec));
+            for (int i = 0; i < 48; ++i) spec[i] = i < 20 ? 3.0f : 1e-3f * (48 - i);
+            run_gk("golub_kahan repeated and tiny values (60x48)", with_singular_values(60, 48, spec));
+        }
+        // Rank deficiency: zero diagonal entries in the bidiagonal, chased out
+        // with rotations of their own; U stays orthonormal without completion.
+        for (auto [M, N, rank] : std::vector<std::tuple<int, int, int>>{{16, 16, 5}, {48, 40, 5}, {40, 48, 7},
+                                                                         {60, 60, 1}, {200, 24, 3}}) {
+            for (int k = 0; k < 6; ++k) {
+                array L = random::normal({M, rank}, float32, 0.0f, 1.0f, std::nullopt, Device::cpu);
+                array R = random::normal({rank, N}, float32, 0.0f, 1.0f, std::nullopt, Device::cpu);
+                array A = matmul(L, R, Device::cpu);
+                eval({A});
+                SvdResult r = detail::svd_golub_kahan(A, true);
+                eval({r.U, r.S, r.Vt, r.info});
+                if (k == 0) check("golub_kahan rank " + std::to_string(rank) + " of " + dims(1, M, N), A, r);
+                ++g_checks;
+                if (!detail::svd_rank_deficient(r.info.item<uint32_t>()))
+                    fail("golub_kahan rank " + std::to_string(rank) + " of " + dims(1, M, N), "not flagged rank-deficient");
+            }
+        }
+        {   // singular values alone == with vectors
+            array A = random_matrix(3, 50, 37, 2300);
+            SvdResult rv = detail::svd_golub_kahan(A, false), rw = detail::svd_golub_kahan(A, true);
+            eval({rv.S, rw.S});
+            ++g_checks;
+            const float d = max_abs(subtract(rv.S, rw.S)) / std::max(max_abs(rw.S), 1e-30f);
+            if (d > 1e-6f) fail("golub_kahan values-only == with vectors", "differ by " + std::to_string(d));
+            else std::printf("  ok    %-44s |ds|=%.1e\n", "golub_kahan values-only == with vectors", d);
+        }
+        {   // NaN in one matrix of a batch
+            const int M = 30, N = 20;
+            array A = random_matrix(3, M, N, 2400);
+            eval({A});
+            std::vector<float> data(A.data<float>(), A.data<float>() + 3 * M * N);
+            data[(size_t)M * N + 11] = NAN;
+            SvdResult r = detail::svd_golub_kahan(from_values(data, {3, M, N}), true);
+            array info = reshape(r.info, {-1});
+            array s1 = slice(r.S, {1, 0}, {2, N}), s0 = slice(r.S, {0, 0}, {1, N}), s2 = slice(r.S, {2, 0}, {3, N});
+            array u1 = slice(r.U, {1, 0, 0}, {2, M, N});
+            eval({info, s0, s1, s2, u1});
+            ++g_checks;
+            const uint32_t* w = info.data<uint32_t>();
+            const bool ok = all(isnan(s1)).item<bool>() && all(isnan(u1)).item<bool>() && !has_non_finite(s0) &&
+                            !has_non_finite(s2) && detail::svd_nonfinite(w[1]) && detail::svd_converged(w[0]) &&
+                            detail::svd_converged(w[2]);
+            if (!ok) fail("golub_kahan NaN in one matrix of a batch", "not isolated");
+            else std::printf("  ok    %-44s\n", "golub_kahan NaN in one matrix of a batch");
+        }
+        ++g_checks;
+        try {
+            detail::svd_golub_kahan(random_matrix(1, kmax + 1, kmax + 1, 2500), true);
+            fail("golub_kahan above its limit", "did not throw");
+        } catch (const std::invalid_argument&) {
+            std::printf("  ok    %-44s\n", "golub_kahan above its limit throws");
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Routing policy. Device-tuned, so nothing here may assume the values
     // measured on any one GPU: each check installs the policy it needs, and
@@ -668,6 +771,12 @@ int main() {
         set_svd_policy(forced);
         expect("gpu_min_batch = 4 -> 512x512 b3 cpu, b4 gpu, 4x4 b3 cpu",
                !svd_uses_gpu(512, 512, 3) && svd_uses_gpu(512, 512, 4) && !svd_uses_gpu(4, 4, 3));
+        forced.gpu_min_batch = 1;
+        forced.gpu_max_l = 64;
+        set_svd_policy(forced);
+        expect("gpu_max_l = 64 -> 64x64 and 64x8 gpu, 65x8 and 8x65 cpu (the long side, either way round)",
+               svd_uses_gpu(64, 64, 4096) && svd_uses_gpu(64, 8, 4096) && !svd_uses_gpu(65, 8, 4096) &&
+               !svd_uses_gpu(8, 65, 4096));
 
         set_svd_policy(original);
         const SvdPolicy back = svd_policy();
@@ -678,7 +787,8 @@ int main() {
                back.block_min_batch == original.block_min_batch &&
                back.gpu_max_k == original.gpu_max_k &&
                back.gpu_min_batch_times_k == original.gpu_min_batch_times_k &&
-               back.gpu_min_batch == original.gpu_min_batch);
+               back.gpu_min_batch == original.gpu_min_batch && back.gpu_max_l == original.gpu_max_l &&
+               back.gk_min_k == original.gk_min_k && back.gk_max_k == original.gk_max_k);
     }
 
     // The bidiag backend replaces the CPU from its thresholds; 0 = never.
@@ -730,6 +840,57 @@ int main() {
         expect("SVD_DEVICE=bidiag forces it", svd_backend(16, 16, 4096) == SvdBackend::bidiag &&
                                               svdvals_backend(8, 8, 1) == SvdBackend::bidiag);
         unsetenv("SVD_DEVICE");
+        set_svd_policy(original);
+    }
+
+    // The golub_kahan window replaces the Jacobi backends on the GPU; it is
+    // clipped to what the backend takes, and the CPU rule still decides first.
+    std::printf("\n[ routing: golub_kahan ]\n");
+    {
+        const SvdPolicy original = svd_policy();
+        auto expect = [&](const std::string& label, bool ok) {
+            ++g_checks;
+            if (ok) std::printf("  ok    %s\n", label.c_str()); else fail(label, "");
+        };
+        unsetenv("SVD_DEVICE");
+        SvdPolicy p;              // fixed here, as in the routing checks above
+        p.gpu_max_k = 64;  p.gpu_min_batch_times_k = 1024;  p.gpu_min_batch = 1;
+        set_svd_policy(p);
+        expect("gk_max_k = 0 -> never (32x32 b4096 -> jacobi)", svd_backend(32, 32, 4096) == SvdBackend::jacobi);
+        p.gk_min_k = 8;  p.gk_max_k = 48;
+        set_svd_policy(p);
+        expect("window 8 .. 48: 7x7 jacobi, 8x8 and 48x48 golub_kahan, 49x49 jacobi",
+               svd_gpu_backend(7, 7, 1) == SvdBackend::jacobi && svd_gpu_backend(8, 8, 1) == SvdBackend::golub_kahan &&
+               svd_gpu_backend(48, 48, 1) == SvdBackend::golub_kahan && svd_gpu_backend(49, 49, 1) == SvdBackend::jacobi);
+        expect("tall that fits golub_kahan, too long qr_golub_kahan; wide by its transpose",
+               svd_gpu_backend(300, 16, 1) == SvdBackend::golub_kahan &&
+               svd_gpu_backend(4000, 16, 1) == SvdBackend::qr_golub_kahan &&
+               svd_gpu_backend(16, 300, 1) == SvdBackend::golub_kahan &&
+               svd_gpu_backend(16, 4000, 1) == SvdBackend::qr_golub_kahan);
+        expect("the CPU rule first: 32x32 b1 -> cpu; svdvals the same window: 32x32 b4096 -> golub_kahan",
+               svd_backend(32, 32, 1) == SvdBackend::cpu && svdvals_backend(32, 32, 4096) == SvdBackend::golub_kahan);
+        {
+            array A = random_matrix(256, 24, 24, 2600);
+            auto [U, S, Vt] = svd_accelerated(A);
+            array S2 = svdvals_accelerated(A);
+            eval({U, S, Vt, S2});
+            check("routed to golub_kahan (256 x 24x24)", A, SvdResult{U, S, Vt, full({256}, (uint32_t)(1u | (1u << 16)))});
+            ++g_checks;
+            const float d = max_abs(subtract(S, S2)) / std::max(max_abs(S), 1e-30f);
+            if (d > 1e-6f) fail("routed svdvals == svd (golub_kahan)", "differ by " + std::to_string(d));
+            else std::printf("  ok    %-44s |dS|=%.1e\n", "routed svdvals == svd (golub_kahan)", d);
+            array B = random_matrix(64, 4000, 16, 2601);
+            auto [U2, S3, Vt2] = svd_accelerated(B);
+            eval({U2, S3, Vt2});
+            check("routed to qr_golub_kahan (64 x 4000x16)", B,
+                  SvdResult{U2, S3, Vt2, full({64}, (uint32_t)(1u | (1u << 16)))});
+        }
+        const unsigned kmax = metal_linalg::detail::svd_gk_max_k();
+        p.gk_min_k = 1;  p.gk_max_k = kSvdNoLimit;
+        set_svd_policy(p);
+        expect("window clipped to the device's limit (" + std::to_string(kmax) + ")",
+               svd_gpu_backend(kmax, kmax, 1) == SvdBackend::golub_kahan &&
+               svd_gpu_backend(kmax + 1, kmax + 1, 1) == SvdBackend::jacobi);
         set_svd_policy(original);
     }
 

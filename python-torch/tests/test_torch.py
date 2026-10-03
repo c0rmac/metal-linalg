@@ -230,9 +230,11 @@ class Routing(unittest.TestCase):
 
     def test_backends(self):
         self.assertIn(mlt.qr_backend(64, 32, 16), {"cpu", "unblocked", "streaming_reduced"})
-        self.assertIn(mlt.eigh_backend(64, 16), {"cpu", "simd", "threadgroup", "block", "tridiag"})
-        self.assertIn(mlt.eigvalsh_backend(64, 16), {"cpu", "simd", "threadgroup", "block", "tridiag"})
-        svd = {"cpu", "jacobi", "block_jacobi", "qr_jacobi", "qr_block_jacobi", "bidiag"}
+        eigh = {"cpu", "simd", "threadgroup", "block", "tridiag", "ql"}
+        self.assertIn(mlt.eigh_backend(64, 16), eigh)
+        self.assertIn(mlt.eigvalsh_backend(64, 16), eigh)
+        svd = {"cpu", "jacobi", "block_jacobi", "qr_jacobi", "qr_block_jacobi", "bidiag",
+               "golub_kahan", "qr_golub_kahan"}
         self.assertIn(mlt.svd_backend(64, 32, 16), svd)
         self.assertIn(mlt.svdvals_backend(64, 32, 16), svd)
 
@@ -261,6 +263,11 @@ class Routing(unittest.TestCase):
             self.assertLess(rel((U * S.unsqueeze(-2)) @ Vh, a), 2e-5)
             mlt.set_svd_policy(gpu_max_k=0, bidiag_min_k=0, values_bidiag_min_k=0)
             self.assertEqual(mlt.svd_backend(300, 80), "cpu")
+            mlt.set_svd_policy(gpu_max_k=64, gpu_min_batch_times_k=0, gpu_min_batch=1, gk_min_k=8, gk_max_k=48)
+            self.assertEqual(mlt.svd_backend(40, 24, 16), "golub_kahan")
+            a = torch.randn(16, 40, 24)
+            U, S, Vh = mlt.svd(a)
+            self.assertLess(rel((U * S.unsqueeze(-2)) @ Vh, a), 2e-5)
         finally:
             mlt.set_svd_policy(before)
 

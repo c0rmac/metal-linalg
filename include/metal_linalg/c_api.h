@@ -83,7 +83,8 @@ uint32_t metal_linalg_cpu_threads(void);
 /* The backend a call of that shape uses under the policy in effect, by name:
  *   QR    "cpu", "unblocked", "streaming_reduced"
  *   eigh  "cpu", "simd", "threadgroup", "block", "tridiag", "ql"
- *   SVD   "cpu", "jacobi", "block_jacobi", "qr_jacobi", "qr_block_jacobi", "bidiag"
+ *   SVD   "cpu", "jacobi", "block_jacobi", "qr_jacobi", "qr_block_jacobi", "bidiag",
+ *         "golub_kahan", "qr_golub_kahan"
  * The strings are static. */
 const char* metal_linalg_qr_backend(uint32_t rows, uint32_t cols, uint32_t batch);
 const char* metal_linalg_eigh_backend(uint32_t n, uint32_t batch);
@@ -109,6 +110,7 @@ typedef struct metal_linalg_qr_policy {
     uint32_t concurrent_matrices;
     uint32_t gpu_large_min_k;       /* the GPU also from this k (0: never), */
     uint32_t gpu_large_max_batch;   /* for batches up to this (0: any) */
+    uint32_t gpu_min_k;             /* the rule above only from this k (0: no lower bound) */
 } metal_linalg_qr_policy;
 
 typedef struct metal_linalg_eigh_policy {
@@ -145,6 +147,9 @@ typedef struct metal_linalg_svd_policy {
     uint32_t values_bidiag_min_k;   /* 0: never */
     uint32_t bidiag_max_batch;          /* bidiag only for batches up to this; */
     uint32_t values_bidiag_max_batch;   /* 0: any batch */
+    uint32_t gk_min_k;              /* the golub_kahan backend on the GPU for k in [gk_min_k, gk_max_k]; */
+    uint32_t gk_max_k;              /* gk_max_k = 0: never */
+    uint32_t gpu_max_l;             /* the GPU only up to this max(M, N) (0xFFFFFFFF: no cap) */
 } metal_linalg_svd_policy;
 
 metal_linalg_qr_policy   metal_linalg_qr_policy_get(void);

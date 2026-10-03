@@ -334,11 +334,11 @@ int main() {
     {
         const QrPolicy p = qr_policy();
         std::printf("  source=%s  m_crossover=%u (batch<%u) / %u (batch>=%u)"
-                    "  GPU iff k<=%u, batch*k>=%u, batch>=%u"
+                    "  GPU iff %u<=k<=%u, batch*k>=%u, batch>=%u"
                     "  gpu_cores=%u  concurrent_matrices=%u\n",
                     qr_policy_source(), p.m_crossover_small_batch,
                     p.batch_threshold, p.m_crossover_large_batch, p.batch_threshold,
-                    p.gpu_max_k, p.gpu_min_batch_times_k, p.gpu_min_batch,
+                    p.gpu_min_k, p.gpu_max_k, p.gpu_min_batch_times_k, p.gpu_min_batch,
                     p.gpu_cores, p.concurrent_matrices);
         if (p.gpu_cores == 0)
             std::printf("  note: GPU core count undetected; crossover is the untuned default\n");
@@ -352,6 +352,7 @@ int main() {
         forced.gpu_max_k = kQrNoLimit;
         forced.gpu_min_batch_times_k = 0;
         forced.gpu_min_batch = 1;
+        forced.gpu_min_k = 0;
         forced.m_crossover_small_batch = forced.m_crossover_large_batch = 1;
         set_qr_policy(forced);
         if (qr_backend(64, 64, 1) != QrBackend::streaming_reduced) fail("qr_backend", "crossover 1 -> unblocked");
@@ -380,6 +381,7 @@ int main() {
         forced.gpu_max_k = kQrNoLimit;
         forced.gpu_min_batch_times_k = 1000;
         forced.gpu_min_batch = 1;
+        forced.gpu_min_k = 0;
         set_qr_policy(forced);
         const bool lone_cpu = qr_backend(64, 64, 1) == QrBackend::cpu;            // 1 * 64  < 1000
         const bool batch_gpu = qr_backend(64, 64, 16) != QrBackend::cpu;          // 16 * 64 >= 1000
@@ -389,11 +391,25 @@ int main() {
         set_qr_policy(forced);
         if (qr_backend(64, 64, 16) != QrBackend::cpu) fail("qr_backend", "gpu_min_batch not applied");
         else { std::printf("  ok    qr_backend: gpu_min_batch 32 -> CPU at 16 x 64x64\n"); ++g_checks; }
+        forced.gpu_min_batch = 1;
+        forced.gpu_min_k = 128;
+        set_qr_policy(forced);
+        {
+            // The smallest matrices stay on the CPU at any batch.
+            const bool ok = qr_backend(16, 16, 100000) == QrBackend::cpu && qr_backend(4096, 64, 1000) == QrBackend::cpu &&
+                            qr_backend(128, 128, 1024) != QrBackend::cpu && qr_backend(512, 128, 16) != QrBackend::cpu;
+            ++g_checks;
+            if (!ok) fail("qr_backend", "gpu_min_k not applied");
+            else std::printf("  ok    qr_backend: gpu_min_k 128 -> CPU at 100000 x 16x16 and 1000 x 4096x64, "
+                             "GPU at 1024 x 128x128\n");
+        }
+        run("gpu_min_k -> cpu    16x16 b64", qr_accelerated, random_matrix(64, 16, 16, 47));
 
         // Large matrices: the GPU from gpu_large_min_k in a batch up to the
         // cap, whatever the product rule says.
         forced = original;
         forced.gpu_max_k = 8;
+        forced.gpu_min_k = 0;
         forced.gpu_min_batch_times_k = 1u << 30;
         forced.gpu_large_min_k = 1024;
         forced.gpu_large_max_batch = 4;

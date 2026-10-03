@@ -195,7 +195,7 @@ Two decisions, as for the eigensolver and the SVD. First GPU or CPU, with
 `k = min(M, N)`:
 
 ```
-GPU iff  k <= gpu_max_k,  batch * k >= gpu_min_batch_times_k  and  batch >= gpu_min_batch,
+GPU iff  gpu_min_k <= k <= gpu_max_k,  batch * k >= gpu_min_batch_times_k  and  batch >= gpu_min_batch,
      or  k >= gpu_large_min_k  and  batch <= gpu_large_max_batch       (large matrices)
 else CPU
 ```
@@ -206,8 +206,15 @@ which beats the GPU kernels for batches of small and mid-size matrices too,
 while one large matrix, which Accelerate threads only weakly, is still faster
 on the GPU (on an M5 Pro 1.9x at 2048×2048, 2.2x at 3072×3072). The product
 rule cannot say both, hence the large-matrix clause; `gpu_large_max_batch = 0`
-means any batch, and `gpu_large_min_k = 0` turns the clause off. Then, on the
-GPU, which kernel:
+means any batch, and `gpu_large_min_k = 0` turns the clause off.
+
+The lower bound `gpu_min_k` (2.10.0; 0 = none) keeps the smallest matrices on
+the CPU however large the batch. On an M5 Pro the CPU wins every square batch
+of 8×8 to 64×64 measured, up to 16384 matrices (16384 of 16×16: 3.3 ms
+against 8.1 on the GPU), while the GPU wins large batches of 128×128 (1024 of
+them: 23.7 ms against 24.4), so a product rule alone sent the large batches
+of small matrices to the GPU. Its measured row is `128 <= k <= 192` with
+`batch * k >= 40960`. Then, on the GPU, which kernel:
 
 ```
 M >= m_crossover  ->  qr_streaming_amx_reduced      (384 on an M1, 512 on an M5 Pro)
@@ -307,7 +314,7 @@ would be a structural change rather than a moved threshold. The committed runs
 are under [`results/`](results/), one folder per device.
 
 To override the policy without rebuilding, set `QR_M_CROSSOVER` (the kernel
-crossover), `QR_GPU_MAX_K`, `QR_GPU_MIN_BATCH_TIMES_K`, `QR_GPU_MIN_BATCH`,
+crossover), `QR_GPU_MAX_K`, `QR_GPU_MIN_K`, `QR_GPU_MIN_BATCH_TIMES_K`, `QR_GPU_MIN_BATCH`,
 `QR_GPU_LARGE_MIN_K` and `QR_GPU_LARGE_MAX_BATCH` (the GPU-or-CPU boundary),
 or `QR_DEVICE=gpu` or `cpu` to force one side; or call `set_qr_policy()`:
 
@@ -315,6 +322,7 @@ or `QR_DEVICE=gpu` or `cpu` to force one side; or call `set_qr_policy()`:
 auto p = metal_linalg::qr_policy();
 p.m_crossover_small_batch = p.m_crossover_large_batch = 320;
 p.gpu_min_batch_times_k = 0;          // every call on the GPU
+p.gpu_min_k = 0;
 metal_linalg::set_qr_policy(p);
 ```
 

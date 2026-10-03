@@ -185,7 +185,8 @@ def eigvalsh_backend(n, batch=1):
 
 def svd_backend(m, n, batch=1):
     """Which backend :func:`svd` uses: ``"cpu"``, ``"jacobi"``,
-    ``"block_jacobi"``, ``"qr_jacobi"``, ``"qr_block_jacobi"`` or ``"bidiag"``."""
+    ``"block_jacobi"``, ``"qr_jacobi"``, ``"qr_block_jacobi"``, ``"bidiag"``,
+    ``"golub_kahan"`` or ``"qr_golub_kahan"``."""
     return _core.svd_backend(m, n, batch)
 
 

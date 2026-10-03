@@ -6,56 +6,58 @@
     "source": "tuned:Apple M5 Pro",
     "threadgroup_memory": 32768
   },
-  "n_points": 178,
+  "n_points": 185,
   "routing": {
-    "gpu_max_k": 128,
-    "gpu_min_batch_times_k": 131072,
+    "gpu_max_k": 192,
+    "gpu_min_batch_times_k": 40960,
     "gpu_min_batch": 1,
+    "gpu_min_k": 128,
     "gpu_large_min_k": 1024,
     "gpu_large_max_batch": 4,
     "chosen": {
-      "geomean": 1.0346,
-      "worst": 2.427,
+      "geomean": 1.0342,
+      "worst": 2.541,
       "over_tie": 13,
-      "n": 178
+      "n": 185
     },
     "without_large": {
-      "geomean": 1.06,
-      "worst": 2.427,
+      "geomean": 1.0586,
+      "worst": 2.541,
       "over_tie": 22,
-      "n": 178
+      "n": 185
     },
     "gpu_always": {
-      "geomean": 2.2031,
-      "worst": 60.85,
-      "over_tie": 149,
-      "n": 178
+      "geomean": 2.2064,
+      "worst": 62.068,
+      "over_tie": 155,
+      "n": 185
     },
     "cpu_always": {
-      "geomean": 1.0601,
-      "worst": 2.427,
+      "geomean": 1.0588,
+      "worst": 2.541,
       "over_tie": 22,
-      "n": 178
+      "n": 185
     },
     "held_out": {
       "fitted": [
         8,
-        640,
+        262144,
         1,
+        0,
         1024,
         4
       ],
       "routing": {
-        "geomean": 1.07,
-        "worst": 2.431,
-        "over_tie": 10,
-        "n": 89
+        "geomean": 1.0495,
+        "worst": 2.541,
+        "over_tie": 8,
+        "n": 92
       },
       "gpu_always": {
-        "geomean": 2.0561,
-        "worst": 43.577,
-        "over_tie": 73,
-        "n": 89
+        "geomean": 2.0637,
+        "worst": 44.822,
+        "over_tie": 76,
+        "n": 92
       }
     },
     "cpu_fastest": [
@@ -81,11 +83,6 @@
       ],
       [
         1,
-        32,
-        384
-      ],
-      [
-        1,
         64,
         64
       ],
@@ -813,63 +810,98 @@
         1024,
         64,
         64
+      ],
+      [
+        4096,
+        8,
+        8
+      ],
+      [
+        4096,
+        16,
+        16
+      ],
+      [
+        4096,
+        32,
+        32
+      ],
+      [
+        4096,
+        64,
+        64
+      ],
+      [
+        16384,
+        8,
+        8
+      ],
+      [
+        16384,
+        16,
+        16
+      ],
+      [
+        16384,
+        32,
+        32
       ]
     ]
   },
   "coverage": {
     "tall": 44,
-    "square": 75,
+    "square": 82,
     "near-square": 29,
     "wide": 30
   },
   "noise": {
     "overall": {
-      "n": 1053,
-      "median": 1.01143258504,
-      "p90": 1.16591825071,
+      "n": 1608,
+      "median": 1.01060906522,
+      "p90": 1.17224367224,
       "max": 2.95976168569
     },
     "by_runtime": [
       {
         "bucket": "<1 ms",
-        "n": 406,
-        "median": 1.03495555221,
-        "p90": 1.47517342871,
+        "n": 611,
+        "median": 1.03186142499,
+        "p90": 1.56537271589,
         "max": 2.95976168569
       },
       {
         "bucket": "1-3 ms",
-        "n": 286,
-        "median": 1.00873285372,
-        "p90": 1.07201656743,
+        "n": 435,
+        "median": 1.00705339086,
+        "p90": 1.0667659955,
         "max": 1.65448337465
       },
       {
         "bucket": "3-10 ms",
-        "n": 210,
-        "median": 1.00697730813,
-        "p90": 1.02996164046,
+        "n": 321,
+        "median": 1.00689108768,
+        "p90": 1.02968804363,
         "max": 1.31501944342
       },
       {
         "bucket": "10-30 ms",
-        "n": 74,
-        "median": 1.00681906902,
+        "n": 118,
+        "median": 1.00594947357,
         "p90": 1.0247568354,
         "max": 1.29261099753
       },
       {
         "bucket": "30-100 ms",
-        "n": 41,
-        "median": 1.00509293334,
+        "n": 68,
+        "median": 1.00564143636,
         "p90": 1.02296550952,
         "max": 1.27128469482
       },
       {
         "bucket": ">100 ms",
-        "n": 36,
-        "median": 1.002305849,
-        "p90": 1.01038571196,
+        "n": 55,
+        "median": 1.00235797733,
+        "p90": 1.01099903541,
         "max": 1.08175845953
       }
     ]
@@ -893,77 +925,77 @@
       1024
     ],
     "pooled": [
-      1.1635,
-      1.1128,
-      1.0964,
-      1.0509,
-      1.0509,
-      1.0341,
-      1.0341,
-      1.0241,
-      1.0241,
-      1.0163,
-      1.0163,
-      1.0249,
-      1.0249,
-      1.0568,
-      1.0627
+      1.162,
+      1.1126,
+      1.0963,
+      1.0506,
+      1.0506,
+      1.0338,
+      1.0338,
+      1.0239,
+      1.0239,
+      1.0161,
+      1.0161,
+      1.0262,
+      1.0262,
+      1.0576,
+      1.0635
     ],
     "pooled_worst": [
-      2.163,
-      1.801,
-      1.678,
-      1.46,
-      1.46,
-      1.33,
-      1.33,
-      1.481,
-      1.481,
-      1.481,
-      1.481,
-      1.83,
-      1.83,
-      2.336,
-      2.336
+      2.155,
+      1.789,
+      1.683,
+      1.458,
+      1.458,
+      1.318,
+      1.318,
+      1.497,
+      1.497,
+      1.497,
+      1.497,
+      1.892,
+      1.892,
+      2.328,
+      2.328
     ],
     "square": [
-      1.2791,
-      1.2053,
-      1.1427,
-      1.0915,
-      1.0915,
-      1.0552,
-      1.0552,
-      1.0286,
-      1.0286,
-      1.0117,
-      1.0117,
-      1.001,
-      1.001,
-      1.0077,
-      1.0281
+      1.2777,
+      1.2049,
+      1.1431,
+      1.0919,
+      1.0919,
+      1.0553,
+      1.0553,
+      1.0291,
+      1.0291,
+      1.0121,
+      1.0121,
+      1.0016,
+      1.0016,
+      1.0074,
+      1.0276
     ],
     "tall": [
-      1.0489,
-      1.0349,
-      1.0349,
-      1.0162,
-      1.0162,
-      1.0162,
-      1.0162,
-      1.0351,
-      1.0351,
-      1.0351,
-      1.0351,
-      1.0822,
-      1.0822,
-      1.1831,
-      1.1831
+      1.0478,
+      1.0352,
+      1.0352,
+      1.0145,
+      1.0145,
+      1.0145,
+      1.0145,
+      1.0338,
+      1.0338,
+      1.0338,
+      1.0338,
+      1.0862,
+      1.0862,
+      1.1865,
+      1.1865
     ],
     "wide": [
-      1.0704,
-      1.0221,
-      1.0221,
+      1.0675,
+      1.0223,
+      1.0223,
       1.0,
       1.0,
       1.0,
@@ -978,119 +1010,119 @@
       1.0
     ],
     "near-square": [
-      1.3025,
-      1.2153,
-      1.2153,
-      1.105,
-      1.105,
-      1.0692,
-      1.0692,
-      1.0265,
-      1.0265,
-      1.0114,
-      1.0114,
+      1.3018,
+      1.2136,
+      1.2136,
+      1.1057,
+      1.1057,
+      1.0702,
+      1.0702,
+      1.0267,
+      1.0267,
+      1.0116,
+      1.0116,
       1.0,
       1.0,
-      1.0066,
-      1.0066
+      1.0067,
+      1.0067
     ]
   },
   "band": {
     "lo": 480,
     "hi": 512,
     "chosen": 512,
-    "best_geomean": 1.0163,
+    "best_geomean": 1.0161,
     "tolerance": 0.003
   },
   "cost_of_missing": [
     {
       "threshold": 128,
-      "geomean": 1.1635,
-      "excess_pct": 14.48,
+      "geomean": 1.162,
+      "excess_pct": 14.36,
       "in_band": false
     },
     {
       "threshold": 192,
-      "geomean": 1.1128,
+      "geomean": 1.1126,
       "excess_pct": 9.5,
       "in_band": false
     },
     {
       "threshold": 256,
-      "geomean": 1.0964,
-      "excess_pct": 7.88,
+      "geomean": 1.0963,
+      "excess_pct": 7.89,
       "in_band": false
     },
     {
       "threshold": 288,
-      "geomean": 1.0509,
+      "geomean": 1.0506,
       "excess_pct": 3.4,
       "in_band": false
     },
     {
       "threshold": 320,
-      "geomean": 1.0509,
+      "geomean": 1.0506,
       "excess_pct": 3.4,
       "in_band": false
     },
     {
       "threshold": 352,
-      "geomean": 1.0341,
-      "excess_pct": 1.75,
+      "geomean": 1.0338,
+      "excess_pct": 1.74,
       "in_band": false
     },
     {
       "threshold": 384,
-      "geomean": 1.0341,
-      "excess_pct": 1.75,
+      "geomean": 1.0338,
+      "excess_pct": 1.74,
       "in_band": false
     },
     {
       "threshold": 416,
-      "geomean": 1.0241,
+      "geomean": 1.0239,
       "excess_pct": 0.77,
       "in_band": false
     },
     {
       "threshold": 448,
-      "geomean": 1.0241,
+      "geomean": 1.0239,
       "excess_pct": 0.77,
       "in_band": false
     },
     {
       "threshold": 480,
-      "geomean": 1.0163,
+      "geomean": 1.0161,
       "excess_pct": 0.0,
       "in_band": true
     },
     {
       "threshold": 512,
-      "geomean": 1.0163,
+      "geomean": 1.0161,
       "excess_pct": 0.0,
       "in_band": true
     },
     {
       "threshold": 576,
-      "geomean": 1.0249,
-      "excess_pct": 0.85,
+      "geomean": 1.0262,
+      "excess_pct": 0.99,
       "in_band": false
     },
     {
       "threshold": 640,
-      "geomean": 1.0249,
-      "excess_pct": 0.85,
+      "geomean": 1.0262,
+      "excess_pct": 0.99,
       "in_band": false
     },
     {
       "threshold": 768,
-      "geomean": 1.0568,
-      "excess_pct": 3.99,
+      "geomean": 1.0576,
+      "excess_pct": 4.08,
       "in_band": false
     },
     {
       "threshold": 1024,
-      "geomean": 1.0627,
-      "excess_pct": 4.57,
+      "geomean": 1.0635,
+      "excess_pct": 4.66,
       "in_band": false
     }
   ],
@@ -1099,32 +1131,32 @@
       {
         "M": 128,
         "N": 32,
-        "ratio": 1.409
+        "ratio": 1.381
       },
       {
         "M": 128,
         "N": 64,
-        "ratio": 1.719
+        "ratio": 1.756
       },
       {
         "M": 128,
         "N": 128,
-        "ratio": 1.769
+        "ratio": 1.768
       },
       {
         "M": 128,
         "N": 256,
-        "ratio": 1.749
+        "ratio": 1.724
       },
       {
         "M": 128,
         "N": 512,
-        "ratio": 1.686
+        "ratio": 1.599
       },
       {
         "M": 256,
         "N": 32,
-        "ratio": 0.904
+        "ratio": 0.988
       },
       {
         "M": 256,
@@ -1134,27 +1166,27 @@
       {
         "M": 256,
         "N": 128,
-        "ratio": 1.629
+        "ratio": 1.587
       },
       {
         "M": 256,
         "N": 256,
-        "ratio": 1.678
+        "ratio": 1.683
       },
       {
         "M": 256,
         "N": 512,
-        "ratio": 1.479
+        "ratio": 1.476
       },
       {
         "M": 384,
         "N": 32,
-        "ratio": 0.681
+        "ratio": 0.683
       },
       {
         "M": 384,
         "N": 64,
-        "ratio": 0.948
+        "ratio": 0.968
       },
       {
         "M": 384,
@@ -1164,7 +1196,7 @@
       {
         "M": 384,
         "N": 256,
-        "ratio": 1.312
+        "ratio": 1.306
       },
       {
         "M": 384,
@@ -1174,79 +1206,79 @@
       {
         "M": 512,
         "N": 32,
-        "ratio": 0.653
+        "ratio": 0.529
       },
       {
         "M": 512,
         "N": 64,
-        "ratio": 0.794
+        "ratio": 0.788
       },
       {
         "M": 512,
         "N": 128,
-        "ratio": 1.071
+        "ratio": 1.076
       },
       {
         "M": 512,
         "N": 256,
-        "ratio": 1.044
+        "ratio": 1.043
       },
       {
         "M": 512,
         "N": 512,
-        "ratio": 1.079
+        "ratio": 1.076
       },
       {
         "M": 640,
         "N": 32,
-        "ratio": 0.459
+        "ratio": 0.464
       },
       {
         "M": 640,
         "N": 64,
-        "ratio": 0.626
+        "ratio": 0.627
       },
       {
         "M": 640,
         "N": 128,
-        "ratio": 0.853
+        "ratio": 0.852
       },
       {
         "M": 640,
         "N": 256,
-        "ratio": 0.832
+        "ratio": 0.831
       },
       {
         "M": 640,
         "N": 512,
-        "ratio": 0.826
+        "ratio": 0.825
       }
     ],
     "16": [
       {
         "M": 128,
         "N": 32,
-        "ratio": 1.283
+        "ratio": 1.23
       },
       {
         "M": 128,
         "N": 64,
-        "ratio": 1.633
+        "ratio": 1.667
       },
       {
         "M": 128,
         "N": 128,
-        "ratio": 1.624
+        "ratio": 1.617
       },
       {
         "M": 128,
         "N": 256,
-        "ratio": 1.518
+        "ratio": 1.514
       },
       {
         "M": 128,
         "N": 512,
-        "ratio": 1.467
+        "ratio": 1.47
       },
       {
         "M": 256,
@@ -1256,175 +1288,175 @@
       {
         "M": 256,
         "N": 64,
-        "ratio": 1.146
+        "ratio": 1.137
       },
       {
         "M": 256,
         "N": 128,
-        "ratio": 1.438
+        "ratio": 1.425
       },
       {
         "M": 256,
         "N": 256,
-        "ratio": 1.531
+        "ratio": 1.535
       },
       {
         "M": 256,
         "N": 512,
-        "ratio": 1.34
+        "ratio": 1.332
       },
       {
         "M": 384,
         "N": 32,
-        "ratio": 0.675
+        "ratio": 0.668
       },
       {
         "M": 384,
         "N": 64,
-        "ratio": 0.946
+        "ratio": 0.949
       },
       {
         "M": 384,
         "N": 128,
-        "ratio": 1.221
+        "ratio": 1.212
       },
       {
         "M": 384,
         "N": 256,
-        "ratio": 1.23
+        "ratio": 1.279
       },
       {
         "M": 384,
         "N": 512,
-        "ratio": 1.268
+        "ratio": 1.253
       },
       {
         "M": 512,
         "N": 32,
+        "ratio": 0.58
+      },
+      {
+        "M": 512,
+        "N": 64,
+        "ratio": 0.769
+      },
+      {
+        "M": 512,
+        "N": 128,
+        "ratio": 1.013
+      },
+      {
+        "M": 512,
+        "N": 256,
+        "ratio": 1.094
+      },
+      {
+        "M": 512,
+        "N": 512,
+        "ratio": 1.172
+      },
+      {
+        "M": 640,
+        "N": 32,
+        "ratio": 0.43
+      },
+      {
+        "M": 640,
+        "N": 64,
         "ratio": 0.574
       },
       {
-        "M": 512,
-        "N": 64,
-        "ratio": 0.768
-      },
-      {
-        "M": 512,
-        "N": 128,
-        "ratio": 1.0
-      },
-      {
-        "M": 512,
-        "N": 256,
-        "ratio": 1.087
-      },
-      {
-        "M": 512,
-        "N": 512,
-        "ratio": 1.177
-      },
-      {
-        "M": 640,
-        "N": 32,
-        "ratio": 0.428
-      },
-      {
-        "M": 640,
-        "N": 64,
-        "ratio": 0.573
-      },
-      {
         "M": 640,
         "N": 128,
-        "ratio": 0.747
+        "ratio": 0.752
       },
       {
         "M": 640,
         "N": 256,
-        "ratio": 0.884
+        "ratio": 0.894
       },
       {
         "M": 640,
         "N": 512,
-        "ratio": 1.0
+        "ratio": 0.999
       }
     ]
   },
   "rules": [
     {
-      "geomean": 1.1975,
-      "worst": 2.196,
-      "worst_shape": [
-        4,
-        16,
-        256
-      ],
-      "over_tie": 62,
-      "n": 143,
-      "total": 1.0737,
-      "label": "original 5-rule heuristic",
-      "per_region": {
-        "square": 1.1447,
-        "tall": 1.0443,
-        "wide": 1.5462,
-        "near-square": 1.2042
-      }
-    },
-    {
-      "geomean": 1.0863,
-      "worst": 2.049,
+      "geomean": 1.1985,
+      "worst": 2.079,
       "worst_shape": [
         1,
         64,
         2048
       ],
-      "over_tie": 28,
+      "over_tie": 62,
       "n": 143,
-      "total": 1.0394,
-      "label": "max(M,N) >= 512",
+      "total": 1.0751,
+      "label": "original 5-rule heuristic",
       "per_region": {
-        "square": 1.0117,
-        "tall": 1.0351,
-        "wide": 1.3233,
-        "near-square": 1.0513
+        "square": 1.144,
+        "tall": 1.0448,
+        "wide": 1.5551,
+        "near-square": 1.202
       }
     },
     {
-      "geomean": 1.2719,
-      "worst": 6.697,
+      "geomean": 1.0859,
+      "worst": 2.079,
+      "worst_shape": [
+        1,
+        64,
+        2048
+      ],
+      "over_tie": 27,
+      "n": 143,
+      "total": 1.0406,
+      "label": "max(M,N) >= 512",
+      "per_region": {
+        "square": 1.0121,
+        "tall": 1.0338,
+        "wide": 1.3229,
+        "near-square": 1.0509
+      }
+    },
+    {
+      "geomean": 1.2717,
+      "worst": 6.708,
       "worst_shape": [
         1,
         2048,
         64
       ],
-      "over_tie": 74,
+      "over_tie": 73,
       "n": 143,
-      "total": 1.2169,
+      "total": 1.2189,
       "label": "K = min(M,N) >= 128",
       "per_region": {
-        "square": 1.2791,
-        "tall": 1.4345,
-        "wide": 1.0704,
-        "near-square": 1.2569
+        "square": 1.2777,
+        "tall": 1.4397,
+        "wide": 1.0675,
+        "near-square": 1.2544
       }
     },
     {
-      "geomean": 1.0163,
-      "worst": 1.481,
+      "geomean": 1.0161,
+      "worst": 1.497,
       "worst_shape": [
         16,
         384,
         32
       ],
-      "over_tie": 6,
+      "over_tie": 5,
       "n": 143,
-      "total": 1.0156,
+      "total": 1.0168,
       "label": "M >= 512  (chosen)",
       "per_region": {
-        "square": 1.0117,
-        "tall": 1.0351,
+        "square": 1.0121,
+        "tall": 1.0338,
         "wide": 1.0,
-        "near-square": 1.0114
+        "near-square": 1.0116
       }
     }
   ],
@@ -1432,47 +1464,48 @@
     {
       "feature": "M (rows)",
       "best_threshold": 480,
-      "geomean": 1.0163,
-      "worst": 1.481
+      "geomean": 1.0161,
+      "worst": 1.497
     },
     {
       "feature": "max(M, N)",
       "best_threshold": 576,
-      "geomean": 1.066,
-      "worst": 2.049
+      "geomean": 1.0678,
+      "worst": 2.079
     },
     {
       "feature": "K = min(M, N)",
       "best_threshold": 576,
-      "geomean": 1.1356,
-      "worst": 6.697
+      "geomean": 1.1367,
+      "worst": 6.708
     }
   ],
   "refinements": [
     {
       "name": "batch-dependent split",
       "form": "M >= (480 if batch < 32 else 416)",
-      "train_geomean": 1.016,
-      "test_geomean": 1.0185,
-      "test_worst": 1.481,
+      "train_geomean": 1.0152,
+      "test_geomean": 1.0189,
+      "test_worst": 1.497,
       "justified": false
     },
     {
       "name": "narrow-N special case",
-      "form": "M >= 416 or (N <= 32 and M >= 128)",
-      "train_geomean": 1.016,
-      "test_geomean": 1.0281,
-      "test_worst": 1.409,
-      "justified": false
+      "form": "M >= 416 or (N <= 64 and M >= 288)",
+      "train_geomean": 1.0153,
+      "test_geomean": 1.0144,
+      "test_worst": 1.203,
+      "justified": true
     }
   ],
   "baseline_held_out": {
-    "geomean": 1.0166,
-    "worst": 1.481
+    "geomean": 1.017,
+    "worst": 1.497
   },
-  "ktuned_entry": "{\"Apple M5 Pro\", 20, 512, 512, 16,   128, 131072, 1,   1024, 4},",
+  "ktuned_entry": "{\"Apple M5 Pro\", 20, 512, 512, 16,   192, 40960, 1, 128,   1024, 4},",
   "submissions": [
     "20261003-2d2c19",
-    "20261003-847f0e"
+    "20261003-847f0e",
+    "20261003-af087d"
   ]
 }
