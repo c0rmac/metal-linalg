@@ -1,13 +1,26 @@
 #include "metal_runtime.h"
 #include "shaders.h"
 
-#include <Accelerate/Accelerate.h>
+#include <metal_linalg/device.h>
 
+#include <Accelerate/Accelerate.h>
+// BLASSetThreading, from the macOS 15 SDK on. Built with an older SDK, the
+// library cannot switch Accelerate's threading off and splits a batch only
+// where Accelerate would not thread anyway (see lapack_batches).
+#if __has_include(<vecLib/thread_api.h>)
+#include <vecLib/thread_api.h>
+#define METAL_LINALG_HAVE_BLAS_THREADING 1
+#else
+#define METAL_LINALG_HAVE_BLAS_THREADING 0
+#endif
+
+#include <atomic>
 #include <cfloat>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <map>
 #include <mutex>
 #include <new>
@@ -179,6 +192,79 @@ void transpose_out(const float* src, float* dst, uint32_t batch, uint32_t rows, 
     for_each_matrix(batch, per, [&](uint32_t b) {
         vDSP_mtrans(src + b * per, 1, dst + b * per, 1, cols, rows);
     });
+}
+
+namespace {
+
+// Chunks per thread in lapack_batches: more than one, so that threads on the
+// faster cores take more of the batch than those on the slower ones.
+constexpr uint32_t kChunksPerThread = 4;
+
+// Without per-thread control of Accelerate's threading (macOS 14), the largest
+// matrix lapack_batches splits a batch of: well under the sizes Accelerate
+// threads one call across cores.
+constexpr size_t kUnthreadedMaxFloats = 256 * 256;
+
+// Accelerate's BLAS and LAPACK single-threaded on this thread while in scope,
+// where macOS supports choosing (15 and later, and an SDK that declares it).
+class SingleThreadedBlas {
+public:
+    SingleThreadedBlas() {
+#if METAL_LINALG_HAVE_BLAS_THREADING
+        if (@available(macOS 15.0, *)) {
+            old_ = (int)BLASGetThreading();
+            BLASSetThreading(BLAS_THREADING_SINGLE_THREADED);
+        }
+#endif
+    }
+    ~SingleThreadedBlas() {
+#if METAL_LINALG_HAVE_BLAS_THREADING
+        if (@available(macOS 15.0, *)) {
+            if (old_ >= 0) BLASSetThreading((BLAS_THREADING)old_);
+        }
+#endif
+    }
+    SingleThreadedBlas(const SingleThreadedBlas&) = delete;
+    SingleThreadedBlas& operator=(const SingleThreadedBlas&) = delete;
+private:
+    int old_ = -1;
+};
+
+bool can_single_thread_blas() {
+#if METAL_LINALG_HAVE_BLAS_THREADING
+    if (@available(macOS 15.0, *)) return true;
+#endif
+    return false;
+}
+
+} // namespace
+
+void lapack_batches(uint32_t batch, size_t per, const std::function<void(uint32_t, uint32_t)>& f) {
+    const uint32_t threads = std::min<uint32_t>(cpu_threads(), batch);
+    if (threads <= 1 || (!can_single_thread_blas() && per > kUnthreadedMaxFloats)) {
+        f(0, batch);
+        return;
+    }
+    const uint32_t chunks = std::min<uint32_t>(batch, threads * kChunksPerThread);
+    std::atomic<uint32_t> next{0};
+    std::atomic<bool>     failed{false};
+    std::mutex            m;
+    std::exception_ptr    error;
+    parallel_for(threads, [&](size_t) {
+        SingleThreadedBlas single;
+        for (uint32_t c; !failed && (c = next.fetch_add(1)) < chunks;) {
+            const uint32_t b0 = (uint32_t)((uint64_t)batch * c / chunks);
+            const uint32_t b1 = (uint32_t)((uint64_t)batch * (c + 1) / chunks);
+            try {
+                f(b0, b1);
+            } catch (...) {
+                std::lock_guard<std::mutex> lock(m);
+                if (!error) error = std::current_exception();
+                failed = true;
+            }
+        }
+    });
+    if (error) std::rethrow_exception(error);
 }
 
 MetalRuntime& MetalRuntime::shared(const EmbeddedShader& shader, const char* tag) {

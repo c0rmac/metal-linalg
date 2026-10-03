@@ -205,6 +205,12 @@ EighResult eigh_tridiag(const mx::array& a, bool compute_vectors, bool lower) {
     });
 }
 
+EighResult eigh_ql(const mx::array& a, bool compute_vectors, bool lower) {
+    return run_eigh(a, compute_vectors, "eigh", [&](const core::Matrices& m, float* w, float* v, uint32_t* info) {
+        core::detail::eigh_ql(m, lower, w, v, info);
+    });
+}
+
 EighResult eigh_cpu(const mx::array& a, bool compute_vectors, bool lower) {
     return run_eigh(a, compute_vectors, "eigh", [&](const core::Matrices& m, float* w, float* v, uint32_t* info) {
         core::detail::eigh_cpu(m, lower, w, v, info);

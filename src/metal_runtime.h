@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 namespace metal_linalg::detail {
@@ -127,6 +128,24 @@ void for_each_rows(uint32_t batch, uint32_t rows, uint32_t cols, const F& f) {
         f(b, r0, std::min(rows, r0 + step));
     });
 }
+
+// The CPU paths' batch loop: f(b0, b1) solves matrices [b0, b1) with LAPACK,
+// and is called on chunks of [0, batch) spread over up to cpu_threads()
+// threads, each with Accelerate's own threading off. `per` is the floats in
+// one matrix. One matrix, or cpu_threads() == 1, runs f(0, batch) on the
+// calling thread with Accelerate's threading as the caller has it.
+//
+// Splitting the batch was faster at every shape measured on an M5 Pro, from
+// 2 matrices of 2048 x 2048 (1.55x) to 4096 of 8 x 8 (14x): Accelerate gains
+// little from its own threads on one matrix of these sizes, so whole matrices
+// per core use the machine better. On macOS 14, where Accelerate's threading
+// cannot be switched off per thread (and in a build with an SDK older than
+// macOS 15's, which does not declare the switch), only matrices too small for
+// it to thread are split, so the two never compete for the cores.
+//
+// An exception from f is rethrown on the calling thread once every chunk has
+// stopped; chunks not yet started are skipped.
+void lapack_batches(uint32_t batch, size_t per, const std::function<void(uint32_t, uint32_t)>& f);
 
 // -----------------------------------------------------------------------------
 // Metal

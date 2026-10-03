@@ -55,6 +55,7 @@ cc -std=c99 main.c -I/opt/homebrew/include -L/opt/homebrew/lib -lmetal_linalg -o
 | `metal_linalg_eigh(a, batch, n, lower, w, v, info)` | A = V diag(w) Vᵀ, `w` ascending; one triangle read |
 | `metal_linalg_svd(a, batch, rows, cols, u, s, vt, info)` | thin A = U diag(s) Vt, `s` descending |
 | `metal_linalg_device_name()`, `metal_linalg_gpu_core_count()` | the GPU the routing was resolved for |
+| `metal_linalg_cpu_threads()`, `metal_linalg_set_cpu_threads(n)` | how many cores the CPU paths spread a batch over: every core by default, `0` restores that |
 | `metal_linalg_qr_backend(rows, cols, batch)`, `_eigh_backend(n, batch)`, `_eigvalsh_backend(n, batch)`, `_svd_backend(rows, cols, batch)`, `_svdvals_backend(rows, cols, batch)` | the backend a call of that shape uses, by name |
 | `metal_linalg_{qr,eigh,svd}_policy_get()`, `_set(&p)`, `_source()` | the routing policies; see [tuning](tuning.md) |
 | `metal_linalg_set_calibration_notices(enabled)`, `metal_linalg_calibration_message(what)` | the notice printed when this Mac's measurements are missing or not current: off, or as a string to report another way |

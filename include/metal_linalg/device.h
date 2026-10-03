@@ -16,6 +16,19 @@ namespace metal_linalg {
     // Its GPU core count, from the IORegistry; 0 if it could not be read.
     unsigned gpu_core_count();
 
+    // CPU threads. The CPU paths (LAPACK through Accelerate) spread a batch
+    // over up to this many threads, each solving whole matrices with
+    // Accelerate's own threading off; a lone matrix keeps Accelerate's
+    // threading. The default is every core the system reports. A caller that
+    // runs several solves at once on its own threads can cap it with
+    // set_cpu_threads(n) or the environment variable
+    // METAL_LINALG_CPU_THREADS=n; 0 restores the default, and 1 solves a
+    // batch one matrix after another. The tuned GPU-or-CPU boundaries were
+    // measured with every core, so a cap moves the real boundary toward the
+    // GPU without moving the policy.
+    void     set_cpu_threads(unsigned n);
+    unsigned cpu_threads();
+
     // Calibration notices. When a decomposition's routing policy is first
     // resolved on a Mac without measurements for it, or with measurements
     // that are stale (taken on older kernels) or incomplete (from before a

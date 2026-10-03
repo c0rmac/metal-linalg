@@ -63,6 +63,17 @@ namespace metal_linalg {
         unsigned gpu_min_batch_times_k = 1024;
         unsigned gpu_min_batch         = 1;
 
+        // Large matrices: the GPU also for k >= gpu_large_min_k in a batch of
+        // at most gpu_large_max_batch (0: any batch), whatever the rule above
+        // says. Since the CPU path spreads a batch over every core, it beats
+        // the GPU kernels for batches of small and mid-size matrices, while
+        // one large matrix, which Accelerate threads only weakly, is still
+        // faster on the GPU (on an M5 Pro 2x at 2048 x 2048); one product
+        // rule cannot say both. 0 = never, which a device without
+        // measurements has.
+        unsigned gpu_large_min_k     = 0;
+        unsigned gpu_large_max_batch = 0;
+
         // Device properties this was resolved against. Informational: they are
         // detected, not assumed, and are what a retune should be keyed on.
         unsigned gpu_cores = 0;           // 0 if it could not be detected
@@ -165,6 +176,23 @@ namespace metal_linalg {
         // 0 means never, which is what a device without measurements has.
         unsigned tridiag_min_n        = 0;
         unsigned values_tridiag_min_n = 0;
+        // ... and only for a batch of at most this many matrices (0: any
+        // batch). The backend solves a batch one matrix after another, while
+        // the CPU path spreads it over every core, so beyond a few matrices
+        // the CPU wins whatever N is.
+        unsigned tridiag_max_batch        = 0;
+        unsigned values_tridiag_max_batch = 0;
+
+        // --- the ql backend, for N in [ql_min_n, ql_max_n] ---
+        // On the GPU, inside this window, the ql backend (Householder
+        // tridiagonalization and implicit QL, one threadgroup per matrix)
+        // instead of the Jacobi backend the fields above pick, for
+        // eigenvectors and eigenvalues alone. ql_max_n = 0 means never, which
+        // is what a device without measurements has; the window is clipped to
+        // what the backend takes on the device (detail::eigh_ql_max_n(), 87
+        // with 32 KB of threadgroup memory).
+        unsigned ql_min_n = 0;
+        unsigned ql_max_n = 0;
     };
 
     // The policy in effect. Resolved once, on first use.
@@ -180,8 +208,9 @@ namespace metal_linalg {
 
     // tridiag: the hybrid large-N backend (Householder tridiagonalization and
     // back-transformation on the GPU, the tridiagonal eigenproblem on the
-    // CPU); last, so the others keep their numbers.
-    enum class EighBackend { cpu, simd, threadgroup, block, tridiag };
+    // CPU). ql: the batched one (tridiagonalization and implicit QL, one
+    // threadgroup per matrix). Each added last, so the others keep their numbers.
+    enum class EighBackend { cpu, simd, threadgroup, block, tridiag, ql };
 
     // What an eigh call does with a problem under the policy in effect.
     // EIGH_DEVICE=gpu or EIGH_DEVICE=cpu forces the first part of the decision.
@@ -306,6 +335,11 @@ namespace metal_linalg {
         // 0 means never, which is what a device without measurements has.
         unsigned bidiag_min_k        = 0;
         unsigned values_bidiag_min_k = 0;
+        // ... and only for a batch of at most this many matrices (0: any
+        // batch): the backend solves a batch one matrix after another, while
+        // the CPU path spreads it over every core.
+        unsigned bidiag_max_batch        = 0;
+        unsigned values_bidiag_max_batch = 0;
     };
 
     constexpr unsigned kSvdNoLimit = 0xFFFFFFFFu;
@@ -374,6 +408,10 @@ namespace metal_linalg {
         // Shorthands for eigh_policy().simd_max_n and .block_min_n.
         unsigned eigh_simd_max_n();
         unsigned eigh_block_min_n();
+
+        // The largest N the ql backend takes on this device: the whole matrix
+        // lives in threadgroup memory. 0 without a Metal device.
+        unsigned eigh_ql_max_n();
 
         // Decode an eigh `info` word: sweeps | (converged << 16) | (non_finite << 17).
         inline unsigned eigh_sweeps(unsigned info)    { return info & 0xFFFFu; }
@@ -451,8 +489,9 @@ namespace metal_linalg {
             // orthogonal factor.
             void qr_streaming_amx_complete(const Matrices& a, float* q, float* r);
 
-            // LAPACK on the CPU (sgeqrf, sorgqr), one matrix at a time. A
-            // matrix holding a NaN or an infinity gives NaN for its Q and R.
+            // LAPACK on the CPU (sgeqrf, sorgqr), the matrices of a batch
+            // spread over cpu_threads() threads. A matrix holding a NaN or an
+            // infinity gives NaN for its Q and R.
             void qr_cpu(const Matrices& a, float* q, float* r);
 
             // One team (threadgroup or simdgroup) per matrix. Honours opt.mode
@@ -470,9 +509,16 @@ namespace metal_linalg {
             // See eigh_tridiag.mm.
             void eigh_tridiag(const Matrices& a, bool lower, float* w, float* v, uint32_t* info);
 
-            // LAPACK on the CPU, one matrix at a time: ssyevd, or ssyevd_2stage
-            // for eigenvalues alone (v == nullptr) from N = 128. `info` reports
-            // every finite matrix as converged in one sweep.
+            // Householder tridiagonalization and implicit QL, one threadgroup
+            // per matrix, N <= metal_linalg::detail::eigh_ql_max_n(). `info`
+            // counts QL iterations where the others count sweeps. See
+            // eigh_ql.mm.
+            void eigh_ql(const Matrices& a, bool lower, float* w, float* v, uint32_t* info);
+
+            // LAPACK on the CPU: ssyevd, or ssyevd_2stage for eigenvalues
+            // alone (v == nullptr) from N = 128, the matrices of a batch
+            // spread over cpu_threads() threads. `info` reports every finite
+            // matrix as converged in one sweep.
             void eigh_cpu(const Matrices& a, bool lower, float* w, float* v, uint32_t* info);
 
             // One-sided Jacobi on the matrix itself: one threadgroup per
@@ -498,9 +544,10 @@ namespace metal_linalg {
             // See svd_bidiag.mm.
             void svd_bidiag(const Matrices& a, float* u, float* s, float* vt, uint32_t* info);
 
-            // LAPACK on the CPU, one matrix at a time: sgesdd, after a QR for
-            // a matrix at least twice as tall as wide. `info` reports every
-            // finite matrix as converged in one sweep.
+            // LAPACK on the CPU: sgesdd, after a QR for a matrix at least
+            // twice as tall as wide, the matrices of a batch spread over
+            // cpu_threads() threads. `info` reports every finite matrix as
+            // converged in one sweep.
             void svd_cpu(const Matrices& a, float* u, float* s, float* vt, uint32_t* info);
         }
 

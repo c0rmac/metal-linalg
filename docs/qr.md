@@ -168,7 +168,7 @@ $Y$ and $T$ are loaded into threadgroup memory (L1 cache) once per tile and reus
 
 Two Metal backends and a CPU path handle different regimes, with a dispatcher that selects between them at runtime (a third Metal backend is retained but unused):
 
-**CPU (`qr_cpu`)** — LAPACK's `sgeqrf` and `sorgqr` (Accelerate), one matrix at a time, after transposing each matrix into the column-major layout LAPACK reads. For a lone matrix or a small batch, where a GPU launch costs more than the factorisation: on an M5 Pro, 4 matrices of 64×64 take 0.13 ms here against 1.04 ms on the GPU.
+**CPU (`qr_cpu`)** — LAPACK's `sgeqrf` and `sorgqr` (Accelerate), after transposing each matrix into the column-major layout LAPACK reads. A batch is spread over every CPU core (since 2.9.0), each core solving whole matrices with Accelerate's own threading off: on an M5 Pro that is 10-12x faster than one matrix at a time for batches of 16×16 to 64×64, and 6-8x for 512×512 and larger. A lone matrix keeps Accelerate's threading. `set_cpu_threads()` or `METAL_LINALG_CPU_THREADS` caps the cores used, for a program that runs several solves at once.
 
 **`qr_unblocked`** — Standard Householder QR in a single kernel dispatch. Used for smaller matrices where the overhead of multi-pass streaming is not worth it.
 
@@ -195,11 +195,19 @@ Two decisions, as for the eigensolver and the SVD. First GPU or CPU, with
 `k = min(M, N)`:
 
 ```
-GPU iff  k <= gpu_max_k,  batch * k >= gpu_min_batch_times_k  and  batch >= gpu_min_batch,  else CPU
+GPU iff  k <= gpu_max_k,  batch * k >= gpu_min_batch_times_k  and  batch >= gpu_min_batch,
+     or  k >= gpu_large_min_k  and  batch <= gpu_large_max_batch       (large matrices)
+else CPU
 ```
 
 The GPU needs enough work to pay for a launch, so lone and small-batch calls go
-to LAPACK. Then, on the GPU, which kernel:
+to LAPACK. Since 2.9.0 the CPU path also spreads a batch over every core,
+which beats the GPU kernels for batches of small and mid-size matrices too,
+while one large matrix, which Accelerate threads only weakly, is still faster
+on the GPU (on an M5 Pro 1.9x at 2048×2048, 2.2x at 3072×3072). The product
+rule cannot say both, hence the large-matrix clause; `gpu_large_max_batch = 0`
+means any batch, and `gpu_large_min_k = 0` turns the clause off. Then, on the
+GPU, which kernel:
 
 ```
 M >= m_crossover  ->  qr_streaming_amx_reduced      (384 on an M1, 512 on an M5 Pro)
@@ -265,17 +273,26 @@ the M5 Pro the second effect won.
 
 | GPU | cores | `m_crossover` | GPU or CPU | status |
 |---|---|---|---|---|
-| Apple M1 | 8 | 384 | always the GPU (measured before the CPU path) | measured — see [`studies/qr-routing-apple-m1.md`](studies/qr-routing-apple-m1.md) |
-| Apple M5 Pro | 20 | 512 | GPU iff `batch * k >= 512` | measured — see [`studies/routing-apple-m5-pro.md`](studies/routing-apple-m5-pro.md) |
+| Apple M1 | 8 | 384 | always the GPU (measured before the CPU path) | measured before 2.9.0 — see [`studies/qr-routing-apple-m1.md`](studies/qr-routing-apple-m1.md) |
+| Apple M5 Pro | 20 | 512 | GPU iff `k <= 128` and `batch * k >= 131072`, or `k >= 1024` and `batch <= 4` | measured — runs [`20261003-2d2c19`](results/apple-m5-pro-20gpu/20261003-2d2c19/qr/report.md) and [`20261003-847f0e`](results/apple-m5-pro-20gpu/20261003-847f0e/qr/report.md) |
 | anything else | — | 384 | GPU iff `batch * k >= 1024` | **untuned default** |
 
 The GPU-or-CPU boundary is measured by every run made since QR had a CPU path;
 a device's row sends every call to the GPU until such a run has been submitted
 for it (`python3 tuning/run.py --only qr` measures QR alone in about 3
-minutes). On the M5 Pro the boundary sends a lone matrix with `k < 512` to the CPU,
-and a handful of small ones (4 of 64×64) too, up to 15× faster than the GPU
-there; from `k = 512` a lone matrix stays on the GPU, which is 2-3x faster
-from 2048 up.
+minutes). The M5 Pro row is the first measured against the CPU path that
+spreads a batch over every core (2.9.0), and against it the CPU was fastest at
+151 of the 178 shapes measured. The GPU keeps one or a few large matrices
+(1.3x at 1536×1536, 1.9x at 2048×2048, 2.2x at 3072×3072, alone) and large
+batches up to `k = 128` (1024 of 128×128: 21 ms against 24 ms on the CPU,
+through `metal-linalg-torch` with its copies). The rule scores 1.035x against
+the best backend at every shape on geometric mean. Its worst case, 2.43x, is a
+batch of wide matrices (16 of 64×2048) that the GPU's single-threadgroup kernel
+does well on, which a rule on `k` cannot single out; and since the product
+`batch * k` also sends very large batches of tiny matrices to the GPU, 10000
+of 16×16 take 3.7 ms there against 2.1 ms on the CPU, a shape the grid does not
+reach (its batches stop at 1024). Before 2.9.0 this Mac sent every
+batch with `batch * k >= 512` to the GPU, measured against one CPU core.
 
 `qr_policy_source()` reports `default:untuned-device (<name>)` on any GPU
 without a table entry, so an untuned device is visible rather than silent.
@@ -290,9 +307,9 @@ would be a structural change rather than a moved threshold. The committed runs
 are under [`results/`](results/), one folder per device.
 
 To override the policy without rebuilding, set `QR_M_CROSSOVER` (the kernel
-crossover), `QR_GPU_MAX_K`, `QR_GPU_MIN_BATCH_TIMES_K` and `QR_GPU_MIN_BATCH`
-(the GPU-or-CPU boundary), or `QR_DEVICE=gpu` or `cpu` to force one side; or
-call `set_qr_policy()`:
+crossover), `QR_GPU_MAX_K`, `QR_GPU_MIN_BATCH_TIMES_K`, `QR_GPU_MIN_BATCH`,
+`QR_GPU_LARGE_MIN_K` and `QR_GPU_LARGE_MAX_BATCH` (the GPU-or-CPU boundary),
+or `QR_DEVICE=gpu` or `cpu` to force one side; or call `set_qr_policy()`:
 
 ```cpp
 auto p = metal_linalg::qr_policy();

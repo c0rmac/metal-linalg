@@ -166,6 +166,21 @@ int main() {
     run("2048x64 (tall)",  detail::qr_cpu, random_matrix(1, 2048, 64, 96));
     run("batch 32 x 8x8",  detail::qr_cpu, random_matrix(32, 8, 8, 97));
     run("batch 4 x 100x60",detail::qr_cpu, random_matrix(4, 100, 60, 98));
+    // A batch is spread over cpu_threads() threads; one thread must agree.
+    {
+        array A = random_matrix(41, 48, 20, 99);
+        auto [Q, R] = detail::qr_cpu(A);
+        set_cpu_threads(1);
+        auto [Q1, R1] = detail::qr_cpu(A);
+        set_cpu_threads(0);
+        eval({Q, R, Q1, R1});
+        check_factorisation("batch 41 x 48x20, every thread", A, Q, R);
+        array d = maximum(max(abs(subtract(Q, Q1))), max(abs(subtract(R, R1))));
+        eval({d});
+        ++g_checks;
+        if (d.item<float>() > 1e-5f) fail("batch 41 x 48x20, one thread == every thread", "differ by " + std::to_string(d.item<float>()));
+        else std::printf("  ok    %-44s |d|=%.1e\n", "batch 41 x 48x20, one thread == every thread", d.item<float>());
+    }
 
     // -------------------------------------------------------------------------
     // Through the public dispatcher, wherever this device's policy sends them.
@@ -374,6 +389,29 @@ int main() {
         set_qr_policy(forced);
         if (qr_backend(64, 64, 16) != QrBackend::cpu) fail("qr_backend", "gpu_min_batch not applied");
         else { std::printf("  ok    qr_backend: gpu_min_batch 32 -> CPU at 16 x 64x64\n"); ++g_checks; }
+
+        // Large matrices: the GPU from gpu_large_min_k in a batch up to the
+        // cap, whatever the product rule says.
+        forced = original;
+        forced.gpu_max_k = 8;
+        forced.gpu_min_batch_times_k = 1u << 30;
+        forced.gpu_large_min_k = 1024;
+        forced.gpu_large_max_batch = 4;
+        set_qr_policy(forced);
+        {
+            const bool ok = qr_backend(2048, 2048, 1) != QrBackend::cpu && qr_backend(1024, 4096, 4) != QrBackend::cpu &&
+                            qr_backend(2048, 2048, 5) == QrBackend::cpu && qr_backend(1023, 1023, 1) == QrBackend::cpu;
+            ++g_checks;
+            if (!ok) fail("qr_backend", "large-matrix clause not applied");
+            else std::printf("  ok    qr_backend: large clause k>=1024, batch<=4 -> GPU at 1 x 2048^2 and 4 x 1024x4096, "
+                             "CPU at 5 x 2048^2 and 1 x 1023^2\n");
+            forced.gpu_large_max_batch = 0;
+            set_qr_policy(forced);
+            ++g_checks;
+            if (qr_backend(2048, 2048, 64) == QrBackend::cpu) fail("qr_backend", "large clause, cap 0 -> any batch");
+            else std::printf("  ok    qr_backend: large clause with no cap -> GPU at 64 x 2048^2\n");
+        }
+        run("large clause -> GPU 1100x1100", qr_accelerated, random_matrix(1, 1100, 1100, 46));
 
         set_qr_policy(original);
         if (qr_policy().m_crossover_small_batch != original.m_crossover_small_batch) {

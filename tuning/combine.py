@@ -35,11 +35,15 @@ OPS = [("qr", "tune_qr.py", "src/qr.mm"), ("eigh", "tune_eigh.py", "src/eigh.mm"
 # The fields of each row after the device name and core count, as in kTuned[].
 FIELDS = {
     "qr": ["m_crossover_small_batch", "m_crossover_large_batch", "batch_threshold",
-           "gpu_max_k", "gpu_min_batch_times_k", "gpu_min_batch"],
+           "gpu_max_k", "gpu_min_batch_times_k", "gpu_min_batch", "gpu_large_min_k", "gpu_large_max_batch"],
     "eigh": ["simd_max_n", "block_min_n", "block_min_n_batched", "block_min_batch",
-             "gpu_max_n", "gpu_min_batch_times_n", "gpu_min_batch"],
+             "gpu_max_n", "gpu_min_batch_times_n", "gpu_min_batch",
+             "values_gpu_max_n", "values_gpu_min_batch_times_n", "values_gpu_min_batch",
+             "tridiag_min_n", "values_tridiag_min_n", "tridiag_max_batch", "values_tridiag_max_batch",
+             "ql_min_n", "ql_max_n"],
     "svd": ["qr_min_rows", "qr_min_k", "block_min_k", "block_min_k_batched", "block_min_batch",
-            "gpu_max_k", "gpu_min_batch_times_k", "gpu_min_batch"],
+            "gpu_max_k", "gpu_min_batch_times_k", "gpu_min_batch", "bidiag_min_k", "values_bidiag_min_k",
+            "bidiag_max_batch", "values_bidiag_max_batch"],
 }
 
 

@@ -1,0 +1,44 @@
+device: Apple M5 Pro (20 GPU cores), policy from tuned:Apple M5 Pro
+cost model scale: jacobi x0.10, block x0.25, qr x0.21, qrblock x0.25, cpu x0.08, bidiag x1.00
+sweep -> /Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261003-2d2c19/svd/raw.csv
+  274 points, 1200 backend timings per pass x 2 passes
+    20/548  elapsed 4.7m  eta 123.6m
+    40/548  elapsed 5.2m  eta 66.3m
+    60/548  elapsed 8.2m  eta 66.7m
+    80/548  elapsed 8.8m  eta 51.4m
+    100/548  elapsed 11.0m  eta 49.2m
+    120/548  elapsed 11.6m  eta 41.5m
+    140/548  elapsed 12.4m  eta 36.0m
+    160/548  elapsed 13.7m  eta 33.2m
+    180/548  elapsed 15.8m  eta 32.3m
+    200/548  elapsed 17.9m  eta 31.1m
+    220/548  elapsed 19.4m  eta 29.0m
+    240/548  elapsed 20.9m  eta 26.8m
+    260/548  elapsed 21.7m  eta 24.1m
+    280/548  elapsed 24.1m  eta 23.0m
+    300/548  elapsed 25.4m  eta 21.0m
+    320/548  elapsed 26.9m  eta 19.2m
+    340/548  elapsed 28.7m  eta 17.6m
+    360/548  elapsed 30.6m  eta 16.0m
+    380/548  elapsed 32.6m  eta 14.4m
+    400/548  elapsed 33.4m  eta 12.4m
+    420/548  elapsed 34.5m  eta 10.5m
+    440/548  elapsed 37.1m  eta 9.1m
+    460/548  elapsed 40.1m  eta 7.7m
+    480/548  elapsed 40.5m  eta 5.7m
+    500/548  elapsed 41.8m  eta 4.0m
+    520/548  elapsed 44.0m  eta 2.4m
+    540/548  elapsed 45.0m  eta 0.7m
+    548/548  elapsed 45.5m  eta 0.0m
+
+266 points on Apple M5 Pro (20 GPU cores)
+GPU backend: qr_min_rows=512 qr_min_k=32 block_min_k=192 block_min_k_batched=64 block_min_batch=64   (1.0299x vs best GPU backend, worst 1.73x)
+CPU routing: gpu_max_k=8 gpu_min_batch_times_k=4096 gpu_min_batch=1   (1.0019x vs best of all, worst 1.25x)
+in effect (tuned:Apple M5 Pro): 1.6904x, worst 6.70x
+bidiag (vectors): from k=2048   (1.0092x, worst 1.51x; without 1.0273x)
+bidiag (values): from k=3072   (1.0023x, worst 1.17x; without 1.0203x)
+
+kTuned[] row:  {"Apple M5 Pro", 20,   512, 32,   192, 64, 64,   8, 4096, 1,   2048, 3072},
+warning: GPU split loses more than 25% against the best GPU backend at 512x32 batch=16 (qr, 1.73x), 256x16 batch=1 (jacobi, 1.62x), 256x32 batch=4096 (jacobi, 1.59x), 1024x32 batch=16 (qr, 1.57x), 512x32 batch=4096 (qr, 1.55x), 512x32 batch=1024 (qr, 1.50x), 1024x32 batch=4096 (qr, 1.48x), 1024x32 batch=1024 (qr, 1.47x) ...
+warning: the fitted policy differs from the one in effect (tuned:Apple M5 Pro)
+wrote /Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261003-2d2c19/svd/results.json and report.md

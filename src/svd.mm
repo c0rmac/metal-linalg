@@ -30,6 +30,7 @@ using metal_linalg::detail::MetalRuntime;
 using metal_linalg::detail::Part;
 using metal_linalg::detail::copy_out;
 using metal_linalg::detail::input_buffer;
+using metal_linalg::detail::lapack_batches;
 using metal_linalg::detail::make_pipeline;
 using metal_linalg::detail::pad_up;
 using metal_linalg::detail::scan;
@@ -198,6 +199,10 @@ struct TunedEntry {
     // measured before the backend existed leave.
     unsigned    bidiag_min_k;
     unsigned    values_bidiag_min_k;
+    // ... for batches of at most this many matrices; 0 = any batch, which
+    // rows measured before the CPU path used every core leave.
+    unsigned    bidiag_max_batch;
+    unsigned    values_bidiag_max_batch;
     unsigned    calibration;   // kCalibration* (calibration.h); rows without it are current
 };
 
@@ -207,7 +212,7 @@ struct TunedEntry {
 // docs/studies/. The last row keeps the array non-empty and matches nothing.
 constexpr TunedEntry kTuned[] = {
 #include "tuned/svd.inc"
-    {"", 0,   0, 0,   0, 0, 0,   0, 0, 0,   0, 0,   0},
+    {"", 0,   0, 0,   0, 0, 0,   0, 0, 0,   0, 0, 0, 0,   0},
 };
 
 struct ResolvedPolicy {
@@ -244,6 +249,8 @@ ResolvedPolicy resolve_policy() {
             r.policy.gpu_min_batch         = e.gpu_min_batch;
             r.policy.bidiag_min_k          = e.bidiag_min_k;
             r.policy.values_bidiag_min_k   = e.values_bidiag_min_k;
+            r.policy.bidiag_max_batch        = e.bidiag_max_batch;
+            r.policy.values_bidiag_max_batch = e.values_bidiag_max_batch;
             r.source = detail::tuned_source_prefix(e.calibration) + r.device;
             detail::calibration_notice("SVD", e.calibration);
             break;
@@ -268,6 +275,8 @@ ResolvedPolicy resolve_policy() {
     over("SVD_GPU_MIN_BATCH",         r.policy.gpu_min_batch);
     over("SVD_BIDIAG_MIN_K",          r.policy.bidiag_min_k);
     over("SVD_VALUES_BIDIAG_MIN_K",   r.policy.values_bidiag_min_k);
+    over("SVD_BIDIAG_MAX_BATCH",        r.policy.bidiag_max_batch);
+    over("SVD_VALUES_BIDIAG_MAX_BATCH", r.policy.values_bidiag_max_batch);
     if (!env.empty()) r.source = "env:" + env;
     return r;
 }
@@ -539,78 +548,86 @@ void svd_cpu(const Matrices& a, float* u_out, float* s_out, float* vt_out, uint3
     char jobz = compute_uv ? 'S' : 'N';
     __LAPACK_int lm = (__LAPACK_int)N, ln = (__LAPACK_int)M, lk = (__LAPACK_int)K, err = 0;
 
-    std::vector<float> work_a(per), tau(K), r(tall ? (size_t)K * K : 1);
-    std::vector<float> spare_u(compute_uv ? (size_t)M * K : 1), spare_vt(compute_uv ? (size_t)K * N : 1);
-    std::vector<float> r_u(tall && compute_uv ? (size_t)K * K : 1), r_vt(tall && compute_uv ? (size_t)K * K : 1);
-    std::vector<__LAPACK_int> iwork(8 * (size_t)K);
-
-    // Workspace sizes, by query.
+    // Workspace sizes, by query (LAPACK reads no array during one).
     __LAPACK_int lwork = 1, query = -1;
-    auto grow = [&](float q) { lwork = std::max<__LAPACK_int>(lwork, (__LAPACK_int)std::ceil(q)); };
-    float q = 0.0f;
-    if (tall) {
-        sgeqrf_(&ln, &lk, work_a.data(), &ln, tau.data(), &q, &query, &err);                         grow(q);
-        if (compute_uv) { sorgqr_(&ln, &lk, &lk, work_a.data(), &ln, tau.data(), &q, &query, &err); grow(q); }
-        sgesdd_(&jobz, &lk, &lk, r.data(), &lk, s_out, r_u.data(), &lk, r_vt.data(), &lk,
-                &q, &query, iwork.data(), &err);                                                       grow(q);
-    } else {
-        sgesdd_(&jobz, &lm, &ln, work_a.data(), &lm, s_out, spare_vt.data(), &lm, spare_u.data(), &lk,
-                &q, &query, iwork.data(), &err);                                                       grow(q);
-    }
-    std::vector<float> work(lwork);
-
-    auto lapack_check = [&](const char* routine, uint32_t b) {
-        if (err != 0) {
-            throw std::runtime_error(std::string("[svd] LAPACK ") + routine + " failed on matrix " +
-                                     std::to_string(b) + " of " + std::to_string(batch) + " (" +
-                                     std::to_string(M) + "x" + std::to_string(N) + "), info " +
-                                     std::to_string((long long)err) + ".");
+    {
+        std::vector<__LAPACK_int> iq(8 * (size_t)K);
+        float scratch = 0.0f;
+        auto grow = [&](float q) { lwork = std::max<__LAPACK_int>(lwork, (__LAPACK_int)std::ceil(q)); };
+        float q = 0.0f;
+        if (tall) {
+            sgeqrf_(&ln, &lk, &scratch, &ln, &scratch, &q, &query, &err);                              grow(q);
+            if (compute_uv) { sorgqr_(&ln, &lk, &lk, &scratch, &ln, &scratch, &q, &query, &err); grow(q); }
+            sgesdd_(&jobz, &lk, &lk, &scratch, &lk, s_out, &scratch, &lk, &scratch, &lk,
+                    &q, &query, iq.data(), &err);                                                       grow(q);
+        } else {
+            sgesdd_(&jobz, &lm, &ln, &scratch, &lm, s_out, &scratch, &lm, &scratch, &lk,
+                    &q, &query, iq.data(), &err);                                                       grow(q);
         }
-    };
+    }
 
     // Non-finite input gives NaN for that matrix, as on the GPU.
     std::vector<float> amax(batch);
     std::vector<char>  finite(batch);
     scan(a, Part::all, amax.data(), finite.data());
 
-    for (uint32_t b = 0; b < batch; ++b) {
-        float* s  = s_out + (size_t)b * K;
-        float* u  = u_out  ? u_out  + (size_t)b * M * K : spare_u.data();
-        float* vt = vt_out ? vt_out + (size_t)b * K * N : spare_vt.data();
-        if (!finite[b]) {
-            std::fill(s, s + K, NAN);
-            if (u_out)  std::fill(u, u + (size_t)M * K, NAN);
-            if (vt_out) std::fill(vt, vt + (size_t)K * N, NAN);
-            if (info_out) info_out[b] = 1u << 17;
-            continue;
-        }
-        if (!tall) {
-            std::memcpy(work_a.data(), a.data + b * per, per * sizeof(float));
-            sgesdd_(&jobz, &lm, &ln, work_a.data(), &lm, s, vt, &lm, u, &lk,
-                    work.data(), &lwork, iwork.data(), &err);
-            lapack_check("sgesdd", b);
-        } else {
-            vDSP_mtrans(a.data + b * per, 1, work_a.data(), 1, N, M);   // column-major A, M x N
-            sgeqrf_(&ln, &lk, work_a.data(), &ln, tau.data(), work.data(), &lwork, &err);
-            lapack_check("sgeqrf", b);
-            for (uint32_t j = 0; j < K; ++j)          // R: the upper triangle, column-major
-                for (uint32_t i = 0; i < K; ++i)
-                    r[i + (size_t)j * K] = i <= j ? work_a[i + (size_t)j * M] : 0.0f;
-            sgesdd_(&jobz, &lk, &lk, r.data(), &lk, s, r_u.data(), &lk, r_vt.data(), &lk,
-                    work.data(), &lwork, iwork.data(), &err);
-            lapack_check("sgesdd", b);
-            if (compute_uv) {
-                sorgqr_(&ln, &lk, &lk, work_a.data(), &ln, tau.data(), work.data(), &lwork, &err);
-                lapack_check("sorgqr", b);
-                // Row-major U = Q U_R, from the column-major Q and U_R (each
-                // read row-major as its transpose).
-                cblas_sgemm(CblasRowMajor, CblasTrans, CblasTrans, (__LAPACK_int)M, lk, lk, 1.0f,
-                            work_a.data(), (__LAPACK_int)M, r_u.data(), lk, 0.0f, u, lk);
-                vDSP_mtrans(r_vt.data(), 1, vt, 1, K, K);   // row-major Vt_R
+    // Each chunk of the batch, on its own thread with its own workspace.
+    lapack_batches(batch, per, [&](uint32_t b0, uint32_t b1) {
+        char jz = jobz;
+        __LAPACK_int lw = lwork, err = 0;
+        std::vector<float> work_a(per), tau(K), r(tall ? (size_t)K * K : 1), work(lwork);
+        std::vector<float> spare_u(compute_uv ? (size_t)M * K : 1), spare_vt(compute_uv ? (size_t)K * N : 1);
+        std::vector<float> r_u(tall && compute_uv ? (size_t)K * K : 1), r_vt(tall && compute_uv ? (size_t)K * K : 1);
+        std::vector<__LAPACK_int> iwork(8 * (size_t)K);
+
+        auto lapack_check = [&](const char* routine, uint32_t b) {
+            if (err != 0) {
+                throw std::runtime_error(std::string("[svd] LAPACK ") + routine + " failed on matrix " +
+                                         std::to_string(b) + " of " + std::to_string(batch) + " (" +
+                                         std::to_string(M) + "x" + std::to_string(N) + "), info " +
+                                         std::to_string((long long)err) + ".");
             }
+        };
+
+        for (uint32_t b = b0; b < b1; ++b) {
+            float* s  = s_out + (size_t)b * K;
+            float* u  = u_out  ? u_out  + (size_t)b * M * K : spare_u.data();
+            float* vt = vt_out ? vt_out + (size_t)b * K * N : spare_vt.data();
+            if (!finite[b]) {
+                std::fill(s, s + K, NAN);
+                if (u_out)  std::fill(u, u + (size_t)M * K, NAN);
+                if (vt_out) std::fill(vt, vt + (size_t)K * N, NAN);
+                if (info_out) info_out[b] = 1u << 17;
+                continue;
+            }
+            if (!tall) {
+                std::memcpy(work_a.data(), a.data + b * per, per * sizeof(float));
+                sgesdd_(&jz, &lm, &ln, work_a.data(), &lm, s, vt, &lm, u, &lk,
+                        work.data(), &lw, iwork.data(), &err);
+                lapack_check("sgesdd", b);
+            } else {
+                vDSP_mtrans(a.data + b * per, 1, work_a.data(), 1, N, M);   // column-major A, M x N
+                sgeqrf_(&ln, &lk, work_a.data(), &ln, tau.data(), work.data(), &lw, &err);
+                lapack_check("sgeqrf", b);
+                for (uint32_t j = 0; j < K; ++j)          // R: the upper triangle, column-major
+                    for (uint32_t i = 0; i < K; ++i)
+                        r[i + (size_t)j * K] = i <= j ? work_a[i + (size_t)j * M] : 0.0f;
+                sgesdd_(&jz, &lk, &lk, r.data(), &lk, s, r_u.data(), &lk, r_vt.data(), &lk,
+                        work.data(), &lw, iwork.data(), &err);
+                lapack_check("sgesdd", b);
+                if (compute_uv) {
+                    sorgqr_(&ln, &lk, &lk, work_a.data(), &ln, tau.data(), work.data(), &lw, &err);
+                    lapack_check("sorgqr", b);
+                    // Row-major U = Q U_R, from the column-major Q and U_R (each
+                    // read row-major as its transpose).
+                    cblas_sgemm(CblasRowMajor, CblasTrans, CblasTrans, (__LAPACK_int)M, lk, lk, 1.0f,
+                                work_a.data(), (__LAPACK_int)M, r_u.data(), lk, 0.0f, u, lk);
+                    vDSP_mtrans(r_vt.data(), 1, vt, 1, K, K);   // row-major Vt_R
+                }
+            }
+            if (info_out) info_out[b] = 1u | (1u << 16);
         }
-        if (info_out) info_out[b] = 1u | (1u << 16);
-    }
+    });
 }
 
 } // namespace core::detail
@@ -647,7 +664,7 @@ bool svd_uses_gpu(unsigned m, unsigned n, unsigned batch) {
 namespace {
 
 // Where the rules send a call to the CPU: the bidiag backend instead, from the
-// policy's threshold (0 = never). SVD_DEVICE=cpu keeps the CPU;
+// policy's threshold (0 = never) and up to its batch cap (0 = none). SVD_DEVICE=cpu keeps the CPU;
 // SVD_DEVICE=bidiag forces this backend for every call.
 SvdBackend route(unsigned m, unsigned n, unsigned batch, bool vectors) {
     if (const char* e = std::getenv("SVD_DEVICE"); e && std::string(e) == "bidiag") return SvdBackend::bidiag;
@@ -655,7 +672,9 @@ SvdBackend route(unsigned m, unsigned n, unsigned batch, bool vectors) {
     if (const char* e = std::getenv("SVD_DEVICE"); e && std::string(e) == "cpu") return SvdBackend::cpu;
     const SvdPolicy& p = policy_state().policy;
     const unsigned from = vectors ? p.bidiag_min_k : p.values_bidiag_min_k;
-    return from != 0 && std::min(m, n) >= from ? SvdBackend::bidiag : SvdBackend::cpu;
+    const unsigned cap  = vectors ? p.bidiag_max_batch : p.values_bidiag_max_batch;
+    return from != 0 && std::min(m, n) >= from && (cap == 0 || batch <= cap) ? SvdBackend::bidiag
+                                                                            : SvdBackend::cpu;
 }
 
 } // namespace

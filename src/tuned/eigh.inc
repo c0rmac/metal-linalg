@@ -2,7 +2,7 @@
 // One row per device with usable runs; see docs/tuning.md. A last field
 // kCalibrationStale / kCalibrationIncomplete says the runs are not current
 // (tuning/kernels.py, docs/measurements.md).
-// apple-m1-8gpu: 1 run (legacy), incomplete (never timed block_vals, cpu_vals, simd_vals, tg_vals, tridiag, tridiag_vals)
-{"Apple M1", 8,   8, 96, 0, 0,   64, 1024, 1,   0, 0, 0,   0, 0,   kCalibrationIncomplete},
-// apple-m5-pro-20gpu: 4 runs (20260930-27b6c2, 20261001-c76e82, 20261002-153352, 20261003-d26059), current
-{"Apple M5 Pro", 20,   0, 96, 0, 0,   1024, 512, 16,   256, 2048, 32,   1024, 0},
+// apple-m1-8gpu: 1 run (legacy), stale (kernel version 1, current 2)
+{"Apple M1", 8,   8, 96, 0, 0,   64, 1024, 1,   0, 0, 0,   0, 0, 0, 0,   0, 0,   kCalibrationStale},
+// apple-m5-pro-20gpu: 1 run (20261003-2d2c19), current
+{"Apple M5 Pro", 20,   0, 96, 0, 0,   48, 8192, 1,   0, 0, 1,   1536, 3072, 2, 1,   12, 64},

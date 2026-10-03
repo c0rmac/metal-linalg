@@ -24,6 +24,8 @@ For a batch of `batch` symmetric N x N matrices, which of four backends should
     simd    whole-matrix Jacobi, one simdgroup per matrix
     tg      whole-matrix Jacobi, one threadgroup per matrix
     block   block Jacobi, one matrix spread over the grid
+    ql      tridiagonalization and implicit QL, one threadgroup per matrix
+            (N up to the device's limit, reported by `sweep_eigh --policy`)
 
 eigh.mm encodes the answer as a per-device routing policy (EighPolicy):
 
@@ -35,15 +37,24 @@ eigh.mm encodes the answer as a per-device routing policy (EighPolicy):
     gpu_min_batch_times_n   GPU only if batch * N is at least this   (CPU routing)
     gpu_min_batch           GPU only if the batch is at least this   (CPU routing)
     values_*                the same three for eigenvalues alone     (CPU routing, eigvalsh)
+    ql_min_n, ql_max_n      ql instead of the Jacobi split for N in
+                            this window; 0, 0 = never                (GPU backend 3)
 
 Every backend is also timed computing eigenvalues alone (backend names
 <name>_vals): eigvalsh has its own GPU-or-CPU boundary, because the CPU then
 uses a faster method (LAPACK's two-stage reduction from N = 128). Stage 3 fits
 that boundary given the same GPU split.
 
+The `ql` backend is fitted as stage 1b: a window of N, over the finished
+Jacobi split, against the best GPU backend, and validated on held-out points.
+The later stages see it through the GPU choice.
+
 The `tridiag` backend (LAPACK's method with the reduction and the
-back-transformation on the GPU) replaces the CPU from a threshold N. Stage 4
-fits tridiag_min_n and values_tridiag_min_n on top of the finished rule; the
+back-transformation on the GPU) replaces the CPU from a threshold N, for
+batches up to a cap: it solves a batch one matrix after another, while the CPU
+path spreads one over every core. Stage 4 fits tridiag_min_n and
+values_tridiag_min_n with tridiag_max_batch and values_tridiag_max_batch on
+top of the finished rule; the
 earlier stages are scored without it, since no rule they choose between can
 pick it.
 
@@ -100,8 +111,9 @@ from collections import defaultdict
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import submissions as sub   # noqa: E402
 
-BACKENDS = ("cpu", "simd", "tg", "block")
-GPU_BACKENDS = ("simd", "tg", "block")
+BACKENDS = ("cpu", "simd", "tg", "block", "ql")
+GPU_BACKENDS = ("simd", "tg", "block", "ql")
+JACOBI_BACKENDS = ("simd", "tg", "block")   # stage 1 chooses among these
 INF = 10 ** 9
 
 N_LIST = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512]
@@ -140,6 +152,15 @@ CURRENT = (8, 96, INF, INF, 64, 1024, 1)
 CURRENT_VALUES = None
 # The tridiag thresholds in effect, (with eigenvectors, eigenvalues alone); 0 = never.
 CURRENT_TRIDIAG = (0, 0)
+# Their batch caps, the same way round; 0 = any batch.
+CURRENT_TRIDIAG_CAP = (0, 0)
+# The ql window in effect, (ql_min_n, ql_max_n); (0, 0) = never.
+CURRENT_QL = (0, 0)
+# The largest N the ql backend takes on the device (`sweep_eigh --policy`); 0 = not timed.
+QL_LIMIT = 0
+# The ql window the GPU choice applies: (0, 0) while stage 1 is fitted, the
+# chosen one after stage 1b.
+QL = (0, 0)
 NO_LIMIT = 0xFFFFFFFF   # kEighNoLimit
 VALS = "_vals"
 
@@ -148,7 +169,7 @@ VALS = "_vals"
 # The constants are an M1's, deliberately pessimistic; calibrate() rescales
 # them to the device.
 CAP_MS = 2500.0
-SCALE = {"tg": 1.0, "simd": 1.0, "block": 1.0, "cpu": 1.0}
+SCALE = {"tg": 1.0, "simd": 1.0, "block": 1.0, "cpu": 1.0, "ql": 1.0}
 
 
 def configure_grids(times):
@@ -206,22 +227,26 @@ def _route_fields(gm, mb, mbatch):
     return f"{'kEighNoLimit' if gm >= INF else gm}, {mb}, {mbatch}"
 
 
-def tuned_row(device, params, values=None, tridiag=(0, 0)):
+def tuned_row(device, params, values=None, tridiag=(0, 0), ql=(0, 0), tridiag_cap=(0, 0)):
     """The line to paste into kTuned[] in eigh.mm. `values` is the
     eigenvalues-alone boundary, or None (written as 0, 0, 0: as for eigenvectors);
-    `tridiag` the two tridiag thresholds (0: never)."""
+    `tridiag` the two tridiag thresholds (0: never), `tridiag_cap` their batch
+    caps (0: any batch); `ql` the ql window (0, 0: never)."""
     s, bm, lo, bh, gm, mb, mbatch = params
     if lo >= INF or bh >= INF:
         lo, bh = 0, 0
     bm_s = str(1 << 30) if bm >= INF else str(bm)
     v = _route_fields(*values) if values else "0, 0, 0"
     return (f'{{"{device["name"]}", {device["gpu_cores"]},   {s}, {bm_s}, {lo}, {bh},   '
-            f'{_route_fields(gm, mb, mbatch)},   {v},   {tridiag[0]}, {tridiag[1]}}},')
+            f'{_route_fields(gm, mb, mbatch)},   {v},   {tridiag[0]}, {tridiag[1]}, '
+            f'{tridiag_cap[0]}, {tridiag_cap[1]},   {ql[0]}, {ql[1]}}},')
 
 
-def env_line(params, values=None, tridiag=(0, 0)):
+def env_line(params, values=None, tridiag=(0, 0), ql=(0, 0), tridiag_cap=(0, 0)):
     s, bm, lo, bh, gm, mb, mbatch = params
-    extra = f" EIGH_TRIDIAG_MIN_N={tridiag[0]} EIGH_VALUES_TRIDIAG_MIN_N={tridiag[1]}"
+    extra = (f" EIGH_TRIDIAG_MIN_N={tridiag[0]} EIGH_VALUES_TRIDIAG_MIN_N={tridiag[1]}"
+             f" EIGH_TRIDIAG_MAX_BATCH={tridiag_cap[0]} EIGH_VALUES_TRIDIAG_MAX_BATCH={tridiag_cap[1]}"
+             f" EIGH_QL_MIN_N={ql[0]} EIGH_QL_MAX_N={ql[1]}")
     if values:
         vg, vm, vb = values
         if vm >= INF:
@@ -243,6 +268,8 @@ def est_ms(backend, N, b):
     n3 = float(N) ** 3
     if backend == "tridiag":    # serial over the batch; launches per column, then O(N^3)
         return b * (0.5 + 0.025 * N + 7e-9 * n3) * SCALE.get(backend, 1.0)
+    if backend == "ql":         # one threadgroup per matrix, as tg, at about a tenth of the work
+        return (0.3 + 1e-6 * n3 * max(1.0, b / 8.0)) * SCALE.get(backend, 1.0)
     if backend in ("tg", "simd"):
         t = 0.3 + 1e-5 * n3 * max(1.0, b / 8.0)
     elif backend == "block":
@@ -261,6 +288,8 @@ def backends_for(N, b):
         ks.append("tg")
     if N >= 32 and est_ms("block", N, b) <= cap:
         ks.append("block")
+    if N <= QL_LIMIT and est_ms("ql", N, b) <= cap:
+        ks.append("ql")
     if not ks:
         return []
     if est_ms("cpu", N, b) <= cap:
@@ -456,7 +485,10 @@ def load_sidecar(raw_paths):
 # crossover above that N scores the same -- and the split would be untuned for
 # a forced-GPU call or a bigger GPU. Stage 2 is then fitted given stage 1.
 
-def gpu_choice(split, N, b):
+def gpu_choice(split, N, b, ql=None):
+    lo, hi = QL if ql is None else ql
+    if hi and lo <= N <= (min(hi, QL_LIMIT) if QL_LIMIT else hi):
+        return "ql"
     simd_max, block_min, block_lo, batch_hi = split
     if N >= block_min or (N >= block_lo and b >= batch_hi):
         return "block"
@@ -506,13 +538,17 @@ def _strip(e):
     return {k: v for k, v in e.items() if not k.startswith("_")}
 
 
-def gpu_only(times):
+def gpu_only(times, backends=GPU_BACKENDS):
     out = {}
     for p, tv in times.items():
-        g = {k: v for k, v in tv.items() if k in GPU_BACKENDS}
+        g = {k: v for k, v in tv.items() if k in backends}
         if g:
             out[p] = g
     return out
+
+
+def jacobi_only(times):
+    return gpu_only(times, JACOBI_BACKENDS)
 
 
 def score_split(split, gtimes):
@@ -547,6 +583,23 @@ def fit_split_batch(base, gtimes):
             for bh in B_GRID:
                 e = score_split((s, bm, lo, bh), gtimes)
                 out[(s, bm, lo, bh)] = (e["geomean"], e["worst"], e["over10"])
+    return out
+
+
+def ql_candidates(gtimes):
+    """The ql windows worth scoring: (0, 0), never, and every pair of N at
+    which ql was timed. A bound only matters where it crosses a measured N."""
+    Ns = sorted({N for (b, N), tv in gtimes.items() if "ql" in tv})
+    return [(0, 0)] + [(lo, hi) for i, lo in enumerate(Ns) for hi in Ns[i:]]
+
+
+def fit_ql(split, gtimes):
+    """Stage 1b grid: the ql window over the Jacobi split, against the best
+    GPU backend, ql included."""
+    out = {}
+    for w in ql_candidates(gtimes):
+        e = evaluate(lambda N, b, w=w: gpu_choice(split, N, b, ql=w), gtimes)
+        out[w] = (e["geomean"], e["worst"], e["over10"])
     return out
 
 
@@ -700,8 +753,10 @@ def _curve(score_fn, base, idx, grid):
 
 
 def tridiag_choice(params, th, N, b):
+    """`th` is a threshold N, or (threshold, batch cap) with cap 0 for any batch."""
+    th, cap = th if isinstance(th, tuple) else (th, 0)
     k = rule_choice(params, N, b)
-    return "tridiag" if (k == "cpu" and th and N >= th) else k
+    return "tridiag" if (k == "cpu" and th and N >= th and (not cap or b <= cap)) else k
 
 
 def tridiag_points(times):
@@ -713,19 +768,27 @@ def tridiag_points(times):
 
 
 def fit_tridiag(params, times, current, tol):
-    """Stage 4: the tridiag threshold given the whole rule `params`, over the
-    measured N from TRIDIAG_MIN_GRID_N (and 0, never). -> (chosen, scores).
-    `times` are the points where tridiag was timed."""
-    cands = [0] + sorted({N for (_, N) in times if N >= TRIDIAG_MIN_GRID_N})
-    scores = {th: _score3(evaluate(lambda N, b, th=th: tridiag_choice(params, th, N, b), times)) for th in cands}
+    """Stage 4: the tridiag threshold and batch cap given the whole rule
+    `params`, over the measured N from TRIDIAG_MIN_GRID_N (and 0, never) and
+    the measured batches (and 0, any). -> ((threshold, cap), scores). `times`
+    are the points where tridiag was timed. Inside the flat region the policy
+    in effect stays; otherwise the smallest worst case, then the least use of
+    the backend."""
+    ths = sorted({N for (_, N) in times if N >= TRIDIAG_MIN_GRID_N})
+    caps = [0] + sorted({b for (b, _) in times})
+    cands = [(0, 0)] + [(th, cap) for th in ths for cap in caps]
+    scores = {c: _score3(evaluate(lambda N, b, c=c: tridiag_choice(params, c, N, b), times)) for c in cands}
     best = min(g for g, _, _ in scores.values())
-    near = {th: v for th, v in scores.items() if v[0] <= best * (1 + tol)}
+    near = {c: v for c, v in scores.items() if v[0] <= best * (1 + tol)}
+    current = tuple(current)
     if current in near:
         return current, scores
-    return min(near, key=lambda th: (near[th][1], -th if th else 0)), scores
+    return min(near, key=lambda c: (near[c][1], -c[0] if c[0] else 0, c[1] if c[1] else INF)), scores
 
 
 def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
+    global QL
+    QL = (0, 0)    # stage 1 is the Jacobi split alone
     times_full, vtimes_full = split_values(times)
     times, vtimes = without_tridiag(times_full), without_tridiag(vtimes_full)
     configure_grids(times)
@@ -735,23 +798,26 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
            "tolerance": tol, "current": list(CURRENT)}
     gtimes = gpu_only(times)
     train, test = split_points(times)
-    gtrain, gtest = gpu_only(train), gpu_only(test)
+    # Stage 1 picks among the Jacobi backends only: the ql window is fitted
+    # over it in stage 1b, and its own oracle would otherwise shift theirs.
+    jtimes = jacobi_only(times)
+    gtrain, gtest = jacobi_only(train), jacobi_only(test)
     floor = noise_floor(repeats)
 
     # ---- stage 1: GPU split, against the best GPU backend ----
     cur_split = CURRENT[:4]
-    sc1 = fit_split(gtimes)
+    sc1 = fit_split(jtimes)
     best1, near1 = near_optimal(sc1, tol)
-    split = choose(near1, cur_split, _score3(score_split(cur_split, gtimes)), best1, tol)
+    split = choose(near1, cur_split, _score3(score_split(cur_split, jtimes)), best1, tol)
     s1 = {
-        "n_points": len(gtimes),
-        "current": _strip(score_split(cur_split, gtimes)),
-        "chosen": _strip(score_split(split, gtimes)),
+        "n_points": len(jtimes),
+        "current": _strip(score_split(cur_split, jtimes)),
+        "chosen": _strip(score_split(split, jtimes)),
         "chosen_params": list(split),
         "band": {"n_near_optimal": len(near1), "simd_max": _band(near1, 0),
                  "block_min": _band(near1, 1), "current_in_band": cur_split in near1},
-        "curves": {"simd_max": _curve(lambda p: score_split(p, gtimes), split, 0, SIMD_MAXS),
-                   "block_min": _curve(lambda p: score_split(p, gtimes), split, 1, BLOCK_MINS)},
+        "curves": {"simd_max": _curve(lambda p: score_split(p, jtimes), split, 0, SIMD_MAXS),
+                   "block_min": _curve(lambda p: score_split(p, jtimes), split, 1, BLOCK_MINS)},
     }
     # refinement: batch-dependent block crossover, fitted on train, validated on test
     tr_sc1 = fit_split(gtrain)
@@ -776,18 +842,55 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
         if ok:
             # Adopt the refinement, refitted on all GPU points; report its own
             # flat region, since the earlier band no longer applies.
-            sc1b = fit_split_batch(split, gtimes)
+            sc1b = fit_split_batch(split, jtimes)
             _, near1b = near_optimal(sc1b, tol)
             split = min(near1b, key=lambda p: (near1b[p][1], near1b[p][0]))
             s1["chosen_params"] = list(split)
-            s1["chosen"] = _strip(score_split(split, gtimes))
+            s1["chosen"] = _strip(score_split(split, jtimes))
             s1["band_batched"] = {"n_near_optimal": len(near1b), "block_min": _band(near1b, 1),
                                   "block_lo": _band(near1b, 2), "batch_hi": _band(near1b, 3)}
-            s1["curves"]["block_min"] = _curve(lambda p: score_split(p, gtimes), split, 1, BLOCK_MINS)
-            s1["curves"]["block_lo"] = _curve(lambda p: score_split(p, gtimes), split, 2,
+            s1["curves"]["block_min"] = _curve(lambda p: score_split(p, jtimes), split, 1, BLOCK_MINS)
+            s1["curves"]["block_lo"] = _curve(lambda p: score_split(p, jtimes), split, 2,
                                               [v for v in BLOCK_MINS if v < split[1]])
-            s1["batch_curve"] = _curve(lambda p: score_split(p, gtimes), split, 3, B_GRID)
+            s1["batch_curve"] = _curve(lambda p: score_split(p, jtimes), split, 3, B_GRID)
     res["stage1"] = s1
+
+    # ---- stage 1b: the ql window over the split ----
+    ql = (0, 0)
+    have_ql = any("ql" in tv for tv in gtimes.values())
+    if have_ql:
+        scq = fit_ql(split, gtimes)
+        bestq, nearq = near_optimal(scq, tol)
+        cur_q = tuple(CURRENT_QL)
+        cur_score = _score3(evaluate(lambda N, b: gpu_choice(split, N, b, ql=cur_q), gtimes))
+        ql = choose(nearq, cur_q, cur_score, bestq, tol)
+        tr_g, te_g = gpu_only(train), gpu_only(test)
+        scq_tr = fit_ql(split, tr_g)
+        _, nearq_tr = near_optimal(scq_tr, tol)
+        ql_tr = choose(nearq_tr, (0, 0))
+        fn = lambda N, b: gpu_choice(split, N, b, ql=ql)
+        never = lambda N, b: gpu_choice(split, N, b, ql=(0, 0))
+        res["stage1b"] = {
+            "n_points": len(gtimes),
+            "chosen": list(ql),
+            "current": list(cur_q),
+            "with": _strip(evaluate(fn, gtimes)),
+            "without": _strip(evaluate(never, gtimes)),
+            "band": {"n_near_optimal": len(nearq),
+                     "ql_min_n": [min(p[0] for p in nearq), max(p[0] for p in nearq)],
+                     "ql_max_n": [min(p[1] for p in nearq), max(p[1] for p in nearq)]},
+            "holdout": {"train_points": len(tr_g), "test_points": len(te_g), "fitted": list(ql_tr),
+                        "test": _strip(evaluate(lambda N, b: gpu_choice(split, N, b, ql=ql_tr), te_g)),
+                        "without_test": _strip(evaluate(never, te_g))},
+            "speedup_vs_jacobi": sorted([[N, b, min(v for k, v in tv.items() if k in JACOBI_BACKENDS) / tv["ql"]]
+                                         for (b, N), tv in gtimes.items()
+                                         if "ql" in tv and any(k in tv for k in JACOBI_BACKENDS)],
+                                        key=lambda x: (x[0], x[1])),
+            "limit": QL_LIMIT,
+        }
+    QL = tuple(ql)
+    res["ql_chosen"] = list(ql)
+    res["current_ql"] = list(CURRENT_QL)
 
     # ---- stage 2: CPU routing given the split ----
     cur_route = CURRENT[4:]
@@ -849,13 +952,14 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
     res["values_chosen"] = list(values) if values else None
 
     # ---- stage 4: the tridiag backend instead of the CPU ----
-    tridiag = [0, 0]
+    tridiag, tridiag_cap = [0, 0], [0, 0]
     have_td = any("tridiag" in tv for tv in times_full.values())
     if have_td:
         s4 = {}
-        for which, full, rule_params, cur in (("vectors", times_full, params, CURRENT_TRIDIAG[0]),
+        for which, full, rule_params, cur in (("vectors", times_full, params,
+                                                (CURRENT_TRIDIAG[0], CURRENT_TRIDIAG_CAP[0])),
                                                ("values", vtimes_full, (split + values) if values else params,
-                                                CURRENT_TRIDIAG[1])):
+                                                (CURRENT_TRIDIAG[1], CURRENT_TRIDIAG_CAP[1]))):
             if not full or not any("tridiag" in tv for tv in full.values()):
                 continue
             full = tridiag_points(full)
@@ -865,20 +969,24 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
             fn = lambda N, b, t=th: tridiag_choice(rule_params, t, N, b)
             s4[which] = {
                 "n_points": len(full),
-                "chosen": th,
+                "chosen": th[0],
+                "cap": th[1],
                 "without": _strip(evaluate(lambda N, b: tridiag_choice(rule_params, 0, N, b), full)),
                 "with": _strip(evaluate(fn, full)),
                 "curve": [[t, v[0], v[1]] for t, v in sorted(scores.items())],
-                "holdout": {"train_points": len(tr), "test_points": len(te), "fitted": th_tr,
+                "holdout": {"train_points": len(tr), "test_points": len(te), "fitted": list(th_tr),
                             "test": _strip(evaluate(lambda N, b: tridiag_choice(rule_params, th_tr, N, b), te)),
                             "without_test": _strip(evaluate(lambda N, b: tridiag_choice(rule_params, 0, N, b), te))},
                 "speedup_vs_cpu": sorted([[N, b, tv["cpu"] / tv["tridiag"]] for (b, N), tv in full.items()
                                           if "cpu" in tv and "tridiag" in tv], key=lambda x: (x[0], x[1])),
             }
-            tridiag[0 if which == "vectors" else 1] = th
+            tridiag[0 if which == "vectors" else 1] = th[0]
+            tridiag_cap[0 if which == "vectors" else 1] = th[1]
         res["stage4"] = s4
     res["tridiag_chosen"] = tridiag
     res["current_tridiag"] = list(CURRENT_TRIDIAG)
+    res["tridiag_cap_chosen"] = tridiag_cap
+    res["current_tridiag_cap"] = list(CURRENT_TRIDIAG_CAP)
     res["current_values"] = list(CURRENT_VALUES) if CURRENT_VALUES else None
 
     # ---- the whole rule ----
@@ -945,7 +1053,9 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
         warns.append("this device has no entry in kTuned[]: it is running the untuned default; "
                      "paste the row above into src/eigh.mm")
     if (tuple(params) != tuple(CURRENT) or (values and tuple(values) != tuple(CURRENT_VALUES or ()))
-            or tuple(res.get("tridiag_chosen", (0, 0))) != tuple(CURRENT_TRIDIAG)):
+            or tuple(res.get("tridiag_chosen", (0, 0))) != tuple(CURRENT_TRIDIAG)
+            or tuple(tridiag_cap) != tuple(CURRENT_TRIDIAG_CAP)
+            or tuple(ql) != tuple(CURRENT_QL)):
         warns.append(f"the fitted policy differs from the one in effect ({device.get('source', 'unknown')}): "
                      f"update this device's row in kTuned[] in src/eigh.mm")
     res["warnings"] = warns
@@ -971,8 +1081,11 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
     if not have_td:
         warns.append("no tridiag timings (a run from before the backend existed): the row's tridiag "
                      "thresholds are 0, so the backend stays off on this device")
-    res["tuned_row"] = tuned_row(device, params, values, tridiag)
-    res["env_line"] = env_line(params, values, tridiag)
+    if not have_ql:
+        warns.append("no ql timings (a run from before the backend existed): the row's ql window is "
+                     "0, 0, so the backend stays off on this device")
+    res["tuned_row"] = tuned_row(device, params, values, tridiag, ql, tridiag_cap)
+    res["env_line"] = env_line(params, values, tridiag, ql, tridiag_cap)
     res["n_candidates"] = {"split": len(SIMD_MAXS) * len(BLOCK_MINS),
                            "routing": len(GPU_MAX_NS) * len(MIN_BNS) * len(MIN_BATCHES)}
     return res
@@ -1012,7 +1125,7 @@ def _surface(cells, key):
     Ns = sorted({c["N"] for c in cells})
     Bs = sorted({c["batch"] for c in cells})
     g = {(c["N"], c["batch"]): c for c in cells}
-    letter = {"cpu": "c", "simd": "s", "tg": "t", "block": "B", None: "."}
+    letter = {"cpu": "c", "simd": "s", "tg": "t", "block": "B", "ql": "q", None: "."}
     lines = ["```", "  N \\ batch " + " ".join(f"{b:>5}" for b in Bs)]
     for N in Ns:
         row = []
@@ -1041,6 +1154,14 @@ def _holdout_row(name, params, r):
     boot = "" if b is None else f" (better in {b['p_better']*100:.0f}% of resamples, median gain {b['gain_median']*100:.1f}%)"
     return (f"| {name} | {json.dumps(params)} | {r['train']['geomean']:.4f} | {r['test']['geomean']:.4f} "
             f"| {r['test']['worst']:.2f}x | {verdict}{boot} |")
+
+
+def _fmt_td(f):
+    """A fitted (threshold, cap), or a bare threshold from before the cap existed."""
+    th, cap = (f[0], f[1]) if isinstance(f, (list, tuple)) else (f, 0)
+    if not th:
+        return "never"
+    return f"from {th}" + (f", batch <= {cap}" if cap else "")
 
 
 def write_report(res, path):
@@ -1096,7 +1217,8 @@ def write_report(res, path):
     L.append("```cpp")
     L.append("// device, GPU cores,   simd_max_n, block_min_n, block_min_n_batched, block_min_batch,   "
              "gpu_max_n, gpu_min_batch_times_n, gpu_min_batch,   values_gpu_max_n, "
-             "values_gpu_min_batch_times_n, values_gpu_min_batch,   tridiag_min_n, values_tridiag_min_n")
+             "values_gpu_min_batch_times_n, values_gpu_min_batch,   tridiag_min_n, values_tridiag_min_n, "
+             "tridiag_max_batch, values_tridiag_max_batch,   ql_min_n, ql_max_n")
     L.append(res["tuned_row"])
     L.append("```")
     L.append("")
@@ -1109,7 +1231,9 @@ def write_report(res, path):
     src = d.get("source", "unknown")
     same = tuple(res["current"]) == tuple(res["chosen"]) and (res.get("values_chosen") is None or
             res.get("current_values") == res["values_chosen"]) and \
-        res.get("current_tridiag", [0, 0]) == res.get("tridiag_chosen", [0, 0])
+        res.get("current_tridiag", [0, 0]) == res.get("tridiag_chosen", [0, 0]) and \
+        res.get("current_tridiag_cap", [0, 0]) == res.get("tridiag_cap_chosen", [0, 0]) and \
+        res.get("current_ql", [0, 0]) == res.get("ql_chosen", [0, 0])
     L.append(f"The policy in effect on this device came from `{src}`. " +
              ("It matches the fitted one." if same else
               "It differs from the fitted one; see the warnings."))
@@ -1170,12 +1294,43 @@ def write_report(res, path):
         L.append(_holdout_row("two constants", h["base"]["params"], h["base"]))
         L.append(_holdout_row("batch-dependent block crossover", h["batch_block"]["params"], h["batch_block"]))
         L.append("")
-    L.append("Best GPU backend per point (`s` simd, `t` threadgroup, `B` block), then what the split picks:")
+    L.append("Best GPU backend per point (`s` simd, `t` threadgroup, `B` block, `q` ql), then what the split "
+             "picks, the ql window of stage 1b included:")
     L.append("")
     L.append(_surface(res["surface"], "best_gpu"))
     L.append("")
     L.append(_surface(res["surface"], "rule_gpu"))
     L.append("")
+
+    # ---- stage 1b ----
+    s1b = res.get("stage1b")
+    if s1b:
+        L.append("## Stage 1b: the ql backend")
+        L.append("")
+        lo_, hi_ = s1b["chosen"]
+        L.append(f"Inside a window of N, `ql` (tridiagonalization and implicit QL, one threadgroup per matrix, "
+                 f"N <= {s1b['limit']} on this device) instead of the Jacobi backend the split picks, fitted over "
+                 f"the {s1b['n_points']} points against the best GPU backend, ql included. Chosen: "
+                 + ("never." if not hi_ else f"N = {lo_} .. {hi_}."))
+        L.append("")
+        L.append("| rule | geomean regret | worst | >10% | total time / oracle | est. picks |")
+        L.append("|---|---|---|---|---|---|")
+        L.append(_stats_row("without ql (the split alone)", s1b["without"]))
+        L.append(_stats_row(f"with ql for N in {tuple(s1b['chosen'])}", s1b["with"]))
+        L.append("")
+        bq = s1b["band"]
+        L.append(f"{bq['n_near_optimal']} windows are within {res['tolerance']*100:.1f}% of the best geomean: "
+                 f"ql_min_n {bq['ql_min_n'][0]} .. {bq['ql_min_n'][1]}, ql_max_n {bq['ql_max_n'][0]} .. {bq['ql_max_n'][1]}.")
+        L.append("")
+        h = s1b["holdout"]
+        L.append(f"Held out: fitted on {h['train_points']} points (window {tuple(h['fitted'])}), scored on the other "
+                 f"{h['test_points']}: geomean {h['test']['geomean']:.4f}x, worst {h['test']['worst']:.2f}x, against "
+                 f"{h['without_test']['geomean']:.4f}x, worst {h['without_test']['worst']:.2f}x without ql.")
+        L.append("")
+        if s1b["speedup_vs_jacobi"]:
+            L.append("ql over the best Jacobi backend, N x batch: " +
+                     ", ".join(f"{N}x{b} {r:.2f}x" for N, b, r in s1b["speedup_vs_jacobi"]))
+            L.append("")
 
     # ---- stage 2 ----
     L.append("## Stage 2: GPU or CPU")
@@ -1212,7 +1367,7 @@ def write_report(res, path):
     L.append(_holdout_row("product rule", h["base"]["params"], h["base"]))
     L.append(_holdout_row("per-N table", h["cpu_table"]["params"], h["cpu_table"]))
     L.append("")
-    L.append("Best backend per point (`c` CPU, `s` simd, `t` threadgroup, `B` block, `.` not measured), "
+    L.append("Best backend per point (`c` CPU, `s` simd, `t` threadgroup, `B` block, `q` ql, `.` not measured), "
              "what the whole rule picks, and the speedup of the best GPU backend over the CPU:")
     L.append("")
     L.append(_surface(res["surface"], "best"))
@@ -1259,18 +1414,19 @@ def write_report(res, path):
         L.append("## Stage 4: the tridiag backend instead of the CPU")
         L.append("")
         L.append("Where the rule above chooses the CPU, the `tridiag` backend from a threshold N on "
-                 "(0: never), fitted over the measured N against the best of all backends, tridiag included, "
-                 "on the points where tridiag was timed (N >= 128, within the cost cap): the region the "
-                 "threshold decides.")
+                 "(0: never), for batches up to a cap (0: any; it solves a batch one matrix after another, "
+                 "the CPU path spreads one over every core), fitted over the measured N and batches against "
+                 "the best of all backends, tridiag included, on the points where tridiag was timed "
+                 "(N >= 128, within the cost cap): the region the threshold decides.")
         L.append("")
-        L.append("| | threshold | geomean regret | worst | without tridiag: geomean | worst | held out (fitted on half) |")
-        L.append("|---|---|---|---|---|---|---|")
+        L.append("| | threshold | batch cap | geomean regret | worst | without tridiag: geomean | worst | held out (fitted on half) |")
+        L.append("|---|---|---|---|---|---|---|---|")
         for which, e in s4.items():
             h = e["holdout"]
             L.append(f"| {'with eigenvectors' if which == 'vectors' else 'eigenvalues alone'} | "
-                     f"{e['chosen'] or 'never'} | {e['with']['geomean']:.4f} | {e['with']['worst']:.2f}x | "
-                     f"{e['without']['geomean']:.4f} | {e['without']['worst']:.2f}x | "
-                     f"from {h['fitted'] or 'never'}: {h['test']['geomean']:.4f} vs {h['without_test']['geomean']:.4f} |")
+                     f"{e['chosen'] or 'never'} | {e.get('cap') or 'any'} | {e['with']['geomean']:.4f} | "
+                     f"{e['with']['worst']:.2f}x | {e['without']['geomean']:.4f} | {e['without']['worst']:.2f}x | "
+                     f"{_fmt_td(h['fitted'])}: {h['test']['geomean']:.4f} vs {h['without_test']['geomean']:.4f} |")
         L.append("")
         for which, e in s4.items():
             if e["speedup_vs_cpu"]:
@@ -1301,7 +1457,7 @@ def write_report(res, path):
 # ---------------------------------------------------------------------------
 
 def main():
-    global CURRENT, CURRENT_VALUES, CURRENT_TRIDIAG
+    global CURRENT, CURRENT_VALUES, CURRENT_TRIDIAG, CURRENT_TRIDIAG_CAP, CURRENT_QL, QL_LIMIT
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("binary", nargs="?", help="path to the built sweep_eigh")
@@ -1332,6 +1488,7 @@ def main():
         if not args.binary:
             ap.error("give the sweep_eigh binary, or --from / --reanalyse")
         policy = query_policy(args.binary)
+        QL_LIMIT = policy.get("ql_limit", 0)   # the grid times ql up to it
         print(f"device: {policy['device']} ({policy['gpu_cores']} GPU cores), "
               f"policy from {policy['source']}", file=sys.stderr)
         state0 = machine_state()
@@ -1365,6 +1522,9 @@ def main():
             CURRENT = policy_to_tuple(pol)
             CURRENT_VALUES = policy_values(pol)
             CURRENT_TRIDIAG = (pol.get("tridiag_min_n", 0), pol.get("values_tridiag_min_n", 0))
+            CURRENT_TRIDIAG_CAP = (pol.get("tridiag_max_batch", 0), pol.get("values_tridiag_max_batch", 0))
+            CURRENT_QL = (pol.get("ql_min_n", 0), pol.get("ql_max_n", 0))
+            QL_LIMIT = pol.get("ql_limit", 0)
         calibration = side.get("calibration")
         if calibration:
             SCALE.update(calibration["scale"])
@@ -1397,8 +1557,14 @@ def main():
         print(f"eigenvalues alone: values_gpu_max_n={_fmt_v(vg)} values_gpu_min_batch_times_n={_fmt_v(vm)} "
               f"values_gpu_min_batch={vb}   ({s3['chosen']['geomean']:.4f}x, worst {s3['chosen']['worst']:.2f}x; "
               f"with eigh's boundary {s3['eigh_boundary']['geomean']:.4f}x, worst {s3['eigh_boundary']['worst']:.2f}x)")
+    if res.get("stage1b"):
+        s1b = res["stage1b"]
+        lo_, hi_ = s1b["chosen"]
+        print(f"ql window:   " + (f"N={lo_}..{hi_}" if hi_ else "never") +
+              f"   ({s1b['with']['geomean']:.4f}x vs best GPU backend, worst {s1b['with']['worst']:.2f}x; "
+              f"without it {s1b['without']['geomean']:.4f}x, worst {s1b['without']['worst']:.2f}x)")
     for which, s4 in (res.get("stage4") or {}).items():
-        print(f"tridiag ({which}): from N={s4['chosen'] or 'never'}   ({s4['with']['geomean']:.4f}x, worst "
+        print(f"tridiag ({which}): {_fmt_td((s4['chosen'], s4.get('cap', 0)))}   ({s4['with']['geomean']:.4f}x, worst "
               f"{s4['with']['worst']:.2f}x; without it {s4['without']['geomean']:.4f}x, worst {s4['without']['worst']:.2f}x; "
               f"held out {s4['holdout']['test']['geomean']:.4f}x vs {s4['holdout']['without_test']['geomean']:.4f}x)")
     print(f"\nkTuned[] row:  {res['tuned_row']}" +

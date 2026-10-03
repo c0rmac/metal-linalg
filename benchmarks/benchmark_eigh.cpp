@@ -1,4 +1,5 @@
-// Symmetric eigensolver benchmark: Metal Jacobi vs MLX's CPU eigh (LAPACK).
+// Symmetric eigensolver benchmark: the GPU backends against the library's CPU
+// path (LAPACK through Accelerate, a batch spread over every core).
 //
 //   benchmark_eigh              GPU vs CPU over a grid of (N, batch)
 //   benchmark_eigh --tune [k]   the tuning tables (all, or just table k) that
@@ -17,6 +18,7 @@
 #include <mlx/mlx.h>
 #include <mlx/linalg.h>
 
+#include <metal_linalg/device.h>
 #include <metal_linalg/eigh.h>
 
 using namespace mlx::core;
@@ -90,8 +92,8 @@ unsigned max_sweeps(const array& info) {
 
 struct Row {
     int n, batch;
-    double scalar_ms, block_ms, cpu_ms;
-    float resid_scalar, resid_block;
+    double scalar_ms, block_ms, ql_ms, cpu_ms;
+    float resid_scalar, resid_block, resid_ql;
     unsigned sweeps_scalar, sweeps_block;
 };
 
@@ -105,11 +107,11 @@ double time_opts(const array& A, const EighOptions& o) {
     return median_ms([&] { EighResult r = detail::eigh_jacobi(A, true, true, o); eval({r.eigenvalues}); });
 }
 
-Row bench_point(int n, int batch, bool with_scalar, bool with_block) {
+Row bench_point(int n, int batch, bool with_scalar, bool with_block, bool with_ql) {
     array A = random_symmetric(batch, n);
     eval({A});
 
-    Row r{n, batch, 0, 0, 0, 0, 0, 0, 0};
+    Row r{n, batch, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     if (with_scalar) {
         EighOptions o; o.mode = EighOptions::Mode::automatic;   // simd or threadgroup by N
         r.scalar_ms = time_opts(A, o);
@@ -125,10 +127,13 @@ Row bench_point(int n, int batch, bool with_scalar, bool with_block) {
         r.resid_block  = residual(A, res.eigenvalues, res.eigenvectors);
         r.sweeps_block = max_sweeps(res.info);
     }
-    r.cpu_ms = median_ms([&] {
-        auto [w, V] = linalg::eigh(A, "L", Device::cpu);
-        eval({w, V});
-    });
+    if (with_ql) {
+        r.ql_ms = median_ms([&] { EighResult q = detail::eigh_ql(A, true, true); eval({q.eigenvalues}); });
+        EighResult res = detail::eigh_ql(A, true, true);
+        eval({res.eigenvalues, res.eigenvectors});
+        r.resid_ql = residual(A, res.eigenvalues, res.eigenvectors);
+    }
+    r.cpu_ms = median_ms([&] { EighResult c = detail::eigh_cpu(A, true, true); eval({c.eigenvalues}); });
     return r;
 }
 
@@ -143,33 +148,41 @@ void run_main() {
     };
     const std::vector<int> batches = {1, 16, 256, 4096};
 
-    std::printf("\nSymmetric eigensolver on an Apple GPU vs MLX CPU eigh (Accelerate LAPACK)\n");
-    std::printf("scalar = whole-matrix Jacobi (one threadgroup per matrix), block = block Jacobi\n");
+    const int ql_max = (int)detail::eigh_ql_max_n();
+    std::printf("\nSymmetric eigensolver on an Apple GPU vs the CPU path (Accelerate LAPACK, %u threads)\n",
+                cpu_threads());
+    std::printf("scalar = whole-matrix Jacobi (one threadgroup per matrix), block = block Jacobi,\n"
+                "ql = tridiagonalization and QL (one threadgroup per matrix, N <= %d); x/CPU = CPU time over x's\n",
+                ql_max);
     std::printf("median of >=5 runs after 2 warmups; resid = ||A V - V diag(w)||_F / ||A||_F\n");
     std::printf("automatic dispatch: simd for N <= %u, block from N >= %u\n\n",
                 detail::eigh_simd_max_n(), detail::eigh_block_min_n());
 
-    std::printf("%6s %7s | %10s %10s %10s | %8s %8s | %9s %9s | %5s %5s\n",
-                "N", "batch", "scalar ms", "block ms", "CPU ms", "scal/CPU", "blk/CPU",
-                "resid_s", "resid_b", "sw_s", "sw_b");
-    std::printf("%s\n", std::string(112, '-').c_str());
+    std::printf("%6s %7s | %10s %10s %10s %10s | %8s %8s %8s | %9s %9s %9s | %5s %5s\n",
+                "N", "batch", "scalar ms", "block ms", "ql ms", "CPU ms", "scal/CPU", "blk/CPU", "ql/CPU",
+                "resid_s", "resid_b", "resid_q", "sw_s", "sw_b");
+    std::printf("%s\n", std::string(141, '-').c_str());
     for (const auto& c : cfgs) {
         for (int b : batches) {
             const bool ws = c.max_batch_scalar >= 0 && (c.max_batch_scalar == 0 || b <= c.max_batch_scalar);
             const bool wb = c.max_batch_block  >= 0 && (c.max_batch_block  == 0 || b <= c.max_batch_block);
-            if (!ws && !wb) continue;
+            const bool wq = c.n <= ql_max;
+            if (!ws && !wb && !wq) continue;
             std::printf("  running N=%d batch=%d ...\r", c.n, b);
             std::fflush(stdout);
-            Row r = bench_point(c.n, b, ws, wb);
+            Row r = bench_point(c.n, b, ws, wb, wq);
             auto ms = [](bool on, double v) { return on ? v : 0.0; };
             std::printf("%6d %7d | ", r.n, r.batch);
             if (ws) std::printf("%10.3f ", r.scalar_ms); else std::printf("%10s ", "--");
             if (wb) std::printf("%10.3f ", r.block_ms);  else std::printf("%10s ", "--");
+            if (wq) std::printf("%10.3f ", r.ql_ms);     else std::printf("%10s ", "--");
             std::printf("%10.3f | ", r.cpu_ms);
             if (ws) std::printf("%7.2fx ", r.cpu_ms / ms(ws, r.scalar_ms)); else std::printf("%8s ", "--");
-            if (wb) std::printf("%7.2fx | ", r.cpu_ms / ms(wb, r.block_ms)); else std::printf("%8s | ", "--");
+            if (wb) std::printf("%7.2fx ", r.cpu_ms / ms(wb, r.block_ms)); else std::printf("%8s ", "--");
+            if (wq) std::printf("%7.2fx | ", r.cpu_ms / ms(wq, r.ql_ms)); else std::printf("%8s | ", "--");
             if (ws) std::printf("%9.1e ", r.resid_scalar); else std::printf("%9s ", "--");
-            if (wb) std::printf("%9.1e | ", r.resid_block); else std::printf("%9s | ", "--");
+            if (wb) std::printf("%9.1e ", r.resid_block); else std::printf("%9s ", "--");
+            if (wq) std::printf("%9.1e | ", r.resid_ql); else std::printf("%9s | ", "--");
             if (ws) std::printf("%5u ", r.sweeps_scalar); else std::printf("%5s ", "--");
             if (wb) std::printf("%5u\n", r.sweeps_block); else std::printf("%5s\n", "--");
             std::fflush(stdout);

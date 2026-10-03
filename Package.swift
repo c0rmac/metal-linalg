@@ -21,6 +21,7 @@ let coreSources = [
     "src/eigh.mm",
     "src/eigh_block_jacobi.mm",
     "src/eigh_tridiag.mm",
+    "src/eigh_ql.mm",
     "src/svd.mm",
     "src/svd_block_jacobi.mm",
     "src/svd_bidiag.mm",

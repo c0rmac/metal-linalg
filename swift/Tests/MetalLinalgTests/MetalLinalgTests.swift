@@ -132,6 +132,46 @@ final class MetalLinalgTests: XCTestCase {
         }
     }
 
+    // The ql backend, forced by the policy, on sizes either side of one
+    // simdgroup of rows and of its chaser simdgroup (N = 33), with the CPU
+    // spreading the batch over one thread and over every core.
+    func testEighQL() throws {
+        let measured = eighPolicy
+        let threads = cpuThreads
+        defer { eighPolicy = measured; cpuThreads = threads }
+        var p = measured
+        p.gpu_max_n = 1 << 20; p.gpu_min_batch_times_n = 0; p.gpu_min_batch = 1
+        p.values_gpu_max_n = 0; p.values_gpu_min_batch_times_n = 0; p.values_gpu_min_batch = 0
+        p.ql_min_n = 1; p.ql_max_n = 87
+        eighPolicy = p
+        for n in [1, 2, 31, 33, 64] {
+            XCTAssertEqual(eighBackend(n: n, batch: 3), "ql")
+            let batch = 3
+            var a = values(batch * n * n, seed: UInt64(70 + n))
+            for b in 0..<batch { for i in 0..<n { for j in 0..<i { a[b * n * n + i * n + j] = a[b * n * n + j * n + i] } } }
+            let (w, v) = try eighAccelerated(a, batch: batch, n: n)
+            for b in 0..<batch {
+                let av = multiply(a[(b * n * n)..<((b + 1) * n * n)], v[(b * n * n)..<((b + 1) * n * n)], n, n, n)
+                for i in 0..<n {
+                    for j in 0..<n { XCTAssertEqual(av[i * n + j], Double(v[b * n * n + i * n + j] * w[b * n + j]), accuracy: 1e-3) }
+                    if i > 0 { XCTAssertLessThanOrEqual(w[b * n + i - 1], w[b * n + i]) }
+                }
+            }
+            // The CPU's answer, one thread and every core, agrees.
+            var cpu = measured
+            cpu.gpu_max_n = 0; cpu.values_gpu_max_n = 0; cpu.values_gpu_min_batch = 1
+            cpu.tridiag_min_n = 0; cpu.values_tridiag_min_n = 0
+            eighPolicy = cpu
+            for t in [1, 0] {
+                cpuThreads = t
+                let wc = try eigvalshAccelerated(a, batch: batch, n: n)
+                for i in 0..<w.count { XCTAssertEqual(wc[i], w[i], accuracy: 1e-3) }
+            }
+            eighPolicy = p
+        }
+        XCTAssertGreaterThanOrEqual(cpuThreads, 1)
+    }
+
     func testSVDTallAndWide() throws {
         for (m, n) in [(20, 7), (7, 20)] {
             let batch = 4, k = min(m, n)
@@ -169,7 +209,8 @@ final class MetalLinalgTests: XCTestCase {
     func testRoutingAndPolicies() {
         XCTAssertFalse(deviceName.isEmpty)
         XCTAssertGreaterThanOrEqual(gpuCoreCount, 0)   // 0 means unknown, as on a virtual GPU
-        XCTAssertTrue(["unblocked", "streaming_reduced"].contains(qrBackend(rows: 64, cols: 64, batch: 100)))
+        // Which side wins depends on the Mac (on an M5 Pro the CPU, since its path uses every core).
+        XCTAssertTrue(["cpu", "unblocked", "streaming_reduced"].contains(qrBackend(rows: 64, cols: 64, batch: 100)))
         let measured = eighPolicy
         defer { eighPolicy = measured }
         var p = measured

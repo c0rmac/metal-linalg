@@ -158,12 +158,13 @@ int main(int argc, char** argv) {
                     "\"qr_min_rows\": %u, \"qr_min_k\": %u, "
                     "\"block_min_k\": %u, \"block_min_k_batched\": %u, \"block_min_batch\": %u, "
                     "\"gpu_max_k\": %u, \"gpu_min_batch_times_k\": %u, \"gpu_min_batch\": %u, "
-                    "\"bidiag_min_k\": %u, \"values_bidiag_min_k\": %u}\n",
+                    "\"bidiag_min_k\": %u, \"values_bidiag_min_k\": %u, "
+                    "\"bidiag_max_batch\": %u, \"values_bidiag_max_batch\": %u}\n",
                     device_name(), p.gpu_cores, svd_policy_source(),
                     p.qr_min_rows, p.qr_min_k,
                     p.block_min_k, p.block_min_k_batched, p.block_min_batch,
                     p.gpu_max_k, p.gpu_min_batch_times_k, p.gpu_min_batch,
-                    p.bidiag_min_k, p.values_bidiag_min_k);
+                    p.bidiag_min_k, p.values_bidiag_min_k, p.bidiag_max_batch, p.values_bidiag_max_batch);
         return 0;
     }
     if (argc != 5) {

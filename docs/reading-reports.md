@@ -203,6 +203,12 @@ CPU boundary would hide it: wherever the CPU wins, every GPU choice scores the
 same, so the kernel crossover could not be seen. Stage 1 is also exactly the
 rule a forced-GPU call follows (`EIGH_DEVICE=gpu`).
 
+**Stage 1b** (eigensolver) fits the window of N in which the `ql` backend
+replaces the Jacobi kernel stage 1 picked, scored like stage 1 against the
+best GPU backend, now `ql` included, and checked on held-out points against
+leaving it off. Stage 1 itself chooses among the Jacobi kernels only, so its
+crossovers mean what they did before the backend existed.
+
 **Stage 2** fits the GPU/CPU boundary given stage 1's choice, scored against
 the best of all backends.
 

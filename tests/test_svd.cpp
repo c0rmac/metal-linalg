@@ -466,6 +466,24 @@ int main() {
     run_cpu("20x300 (wide)",             random_matrix(1, 20, 300, 963));
     run_cpu(dims(6, 90, 30),             random_matrix(6, 90, 30, 964));
     run_cpu("rank one 30x20",            matmul(random_matrix(1, 30, 1, 965), random_matrix(1, 1, 20, 966)));
+    // A batch is spread over cpu_threads() threads; one thread must agree,
+    // through the direct branch and the QR-first one.
+    for (auto [m, n] : {std::pair{24, 24}, std::pair{200, 30}}) {
+        array A = random_matrix(37, m, n, 967 + m);
+        SvdResult all_threads = detail::svd_cpu(A, true);
+        set_cpu_threads(1);
+        SvdResult one = detail::svd_cpu(A, true);
+        set_cpu_threads(0);
+        eval({all_threads.U, all_threads.S, all_threads.Vt, all_threads.info, one.S});
+        check(dims(37, m, n) + " every thread", A, all_threads);
+        array dS = max(abs(subtract(all_threads.S, one.S)));
+        array nS = max(abs(one.S));
+        eval({dS, nS});
+        ++g_checks;
+        const float d = dS.item<float>() / std::max(nS.item<float>(), 1e-30f);
+        if (d > 1e-6f) fail(dims(37, m, n) + " one thread == every thread", "differ by " + std::to_string(d));
+        else std::printf("  ok    %-44s |dS|=%.1e\n", (dims(37, m, n) + " one thread == every thread").c_str(), d);
+    }
 
     // The bidiag backend reduces on the GPU in panels of 32 columns while more
     // than 33 remain, LAPACK takes the rest; a matrix at least twice as tall
@@ -692,6 +710,19 @@ int main() {
             auto [U, S, Vt] = svd_accelerated(A);
             eval({U, S, Vt});
             check("routed to bidiag (400x300)", A, SvdResult{U, S, Vt, full({}, (uint32_t)(1u | (1u << 16)))});
+        }
+        {
+            SvdPolicy c = svd_policy();
+            c.bidiag_max_batch = 2;
+            c.values_bidiag_max_batch = 1;
+            set_svd_policy(c);
+            expect("bidiag_max_batch = 2: k=256 batch 2 bidiag, batch 3 cpu; values cap 1: svdvals k=1024 b2 cpu",
+                   svd_backend(256, 256, 2) == SvdBackend::bidiag && svd_backend(256, 256, 3) == SvdBackend::cpu &&
+                   svdvals_backend(1024, 1024, 1) == SvdBackend::bidiag &&
+                   svdvals_backend(1024, 1024, 2) == SvdBackend::cpu);
+            c.bidiag_max_batch = 0;
+            c.values_bidiag_max_batch = 0;
+            set_svd_policy(c);
         }
         setenv("SVD_DEVICE", "cpu", 1);
         expect("SVD_DEVICE=cpu keeps the CPU over bidiag", svd_backend(4096, 4096, 1) == SvdBackend::cpu);

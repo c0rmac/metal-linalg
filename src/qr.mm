@@ -36,6 +36,10 @@ struct TunedEntry {
     unsigned    gpu_max_k;
     unsigned    gpu_min_batch_times_k;
     unsigned    gpu_min_batch;
+    // Large matrices on the GPU from this k, for batches up to the cap (0:
+    // any); 0, 0 = never, which rows from before the clause leave.
+    unsigned    gpu_large_min_k;
+    unsigned    gpu_large_max_batch;
     unsigned    calibration;   // kCalibration* (calibration.h); rows without it are current
 };
 
@@ -45,7 +49,7 @@ struct TunedEntry {
 // docs/studies/. The last row keeps the array non-empty and matches nothing.
 constexpr TunedEntry kTuned[] = {
 #include "tuned/qr.inc"
-    {"", 0, 0, 0, 0, 0, 0, 0, 0},
+    {"", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 };
 
 struct ResolvedPolicy {
@@ -97,6 +101,8 @@ ResolvedPolicy resolve() {
                     r.policy.gpu_min_batch_times_k = e.gpu_min_batch_times_k;
                     r.policy.gpu_min_batch         = e.gpu_min_batch;
                 }
+                r.policy.gpu_large_min_k     = e.gpu_large_min_k;
+                r.policy.gpu_large_max_batch = e.gpu_large_max_batch;
                 r.source = detail::tuned_source_prefix(e.calibration) + name;
                 detail::calibration_notice("QR", e.calibration);
                 break;
@@ -137,6 +143,8 @@ ResolvedPolicy resolve() {
     over("QR_GPU_MAX_K",             r.policy.gpu_max_k);
     over("QR_GPU_MIN_BATCH_TIMES_K", r.policy.gpu_min_batch_times_k);
     over("QR_GPU_MIN_BATCH",         r.policy.gpu_min_batch);
+    over("QR_GPU_LARGE_MIN_K",       r.policy.gpu_large_min_k);
+    over("QR_GPU_LARGE_MAX_BATCH",   r.policy.gpu_large_max_batch);
     if (!env.empty()) r.source = "env:" + env;
     return r;
 }
@@ -182,7 +190,8 @@ QrBackend qr_gpu_backend(unsigned m, unsigned n, unsigned batch) {
 }
 
 // GPU or CPU, as for eigh and the SVD: the GPU needs enough work to pay for a
-// launch, and a lone or small-batch call is quicker in LAPACK.
+// launch, and a lone or small-batch call is quicker in LAPACK. Large matrices
+// in small batches have a clause of their own (see QrPolicy).
 bool qr_uses_gpu(unsigned m, unsigned n, unsigned batch) {
     if (const char* e = std::getenv("QR_DEVICE")) {
         const std::string s = e;
@@ -191,6 +200,10 @@ bool qr_uses_gpu(unsigned m, unsigned n, unsigned batch) {
     }
     const QrPolicy& p = state().policy;
     const unsigned k = std::min(m, n);
+    if (p.gpu_large_min_k && k >= p.gpu_large_min_k &&
+        (p.gpu_large_max_batch == 0 || batch <= p.gpu_large_max_batch)) {
+        return true;
+    }
     return k <= p.gpu_max_k && (unsigned long long)batch * k >= p.gpu_min_batch_times_k &&
            batch >= p.gpu_min_batch;
 }

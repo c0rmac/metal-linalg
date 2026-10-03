@@ -13,7 +13,7 @@ metal-linalg routes every call by measurements made on each kind of Mac. This pa
 
 **Have one of these Macs?** One command measures it, in about an hour and a half, and a pull request submits it: [how to contribute](https://github.com/c0rmac/metal-linalg/blob/main/CONTRIBUTING.md). Every run improves the library for everyone with that chip; the library prints a notice on chips that need one.
 
-3 current, 2 incomplete, 0 stale and 109 not measured, over 38 chip configurations and 3 decompositions.
+3 current, 0 incomplete, 2 stale and 109 not measured, over 38 chip configurations and 3 decompositions.
 
 ## By chip
 
@@ -21,7 +21,7 @@ metal-linalg routes every call by measurements made on each kind of Mac. This pa
 <tr><th>chip</th><th>GPU cores</th><th>QR</th><th>eigh</th><th>SVD</th></tr>
 <tr><th colspan="5" style="text-align:left">M1</th></tr>
 <tr><td>Apple M1</td><td>7</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td></tr>
-<tr><td>Apple M1</td><td>8</td><td style="background:#fef9c3;color:#1c1917">🟡 <b>incomplete</b><br>1 run, date not recorded<br>never timed the CPU path (2.1.0): off until remeasured</td><td style="background:#fef9c3;color:#1c1917">🟡 <b>incomplete</b><br>1 run, date not recorded<br>never timed the eigenvalue-only paths (2.4.0); the tridiag backend (2.5.0): off until remeasured</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td></tr>
+<tr><td>Apple M1</td><td>8</td><td style="background:#ffedd5;color:#1c1917">🟠 <b>stale</b><br>1 run, date not recorded<br>kernel version 1, now 2: still used</td><td style="background:#ffedd5;color:#1c1917">🟠 <b>stale</b><br>1 run, date not recorded<br>kernel version 1, now 2: still used</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td></tr>
 <tr><td>Apple M1 Pro</td><td>14</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td></tr>
 <tr><td>Apple M1 Pro</td><td>16</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td></tr>
 <tr><td>Apple M1 Max</td><td>24</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td></tr>
@@ -57,7 +57,7 @@ metal-linalg routes every call by measurements made on each kind of Mac. This pa
 <tr><td>Apple M5</td><td>8</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td></tr>
 <tr><td>Apple M5</td><td>10</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td></tr>
 <tr><td>Apple M5 Pro</td><td>16</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td></tr>
-<tr><td>Apple M5 Pro</td><td>20</td><td style="background:#dcfce7;color:#1c1917">🟢 <b>current</b><br>3 runs, latest 2026-10-02</td><td style="background:#dcfce7;color:#1c1917">🟢 <b>current</b><br>4 runs, latest 2026-10-03</td><td style="background:#dcfce7;color:#1c1917">🟢 <b>current</b><br>1 run, latest 2026-10-03<br>measured with 2.7.0</td></tr>
+<tr><td>Apple M5 Pro</td><td>20</td><td style="background:#dcfce7;color:#1c1917">🟢 <b>current</b><br>2 runs, latest 2026-10-03<br>measured with 2.9.0</td><td style="background:#dcfce7;color:#1c1917">🟢 <b>current</b><br>1 run, latest 2026-10-03<br>measured with 2.9.0</td><td style="background:#dcfce7;color:#1c1917">🟢 <b>current</b><br>1 run, latest 2026-10-03<br>measured with 2.9.0</td></tr>
 <tr><td>Apple M5 Max</td><td>32</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td></tr>
 <tr><td>Apple M5 Max</td><td>40</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td></tr>
 <tr><td>Apple M5 Ultra</td><td>64</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>untuned default</td></tr>
@@ -70,13 +70,15 @@ Every run under [`docs/results/`](https://github.com/c0rmac/metal-linalg/tree/ma
 
 | run | chip | GPU cores | date | machine | macOS | library | QR | eigh | SVD |
 |---|---|---|---|---|---|---|---|---|---|
-| legacy | Apple M1 | 8 | not recorded | MacBook Pro (13-inch, M1, 2020) | ? | before 2.6 | used | used | — |
-| 20261003-d26059 | Apple M5 Pro | 20 | 2026-10-03 | MacBook Pro (16-inch, M5 Pro) | 27.0.1 | before 2.6 | — | used | — |
-| 20261003-064803 | Apple M5 Pro | 20 | 2026-10-03 | MacBook Pro (16-inch, M5 Pro) | 27.0.1 | 2.7.0 | — | — | used |
-| 20261002-9d19ba | Apple M5 Pro | 20 | 2026-10-02 | MacBook Pro (16-inch, M5 Pro) | 27.0.1 | before 2.6 | used | — | — |
-| 20261002-153352 | Apple M5 Pro | 20 | 2026-10-02 | MacBook Pro (16-inch, M5 Pro) | 27.0.1 | before 2.6 | — | used | — |
-| 20261001-c76e82 | Apple M5 Pro | 20 | 2026-10-01 | MacBook Pro (16-inch, M5 Pro) | 27.0.1 | before 2.6 | used | used | measured at kernel version 1; superseded |
-| 20260930-27b6c2 | Apple M5 Pro | 20 | 2026-09-30 | MacBook Pro (16-inch, M5 Pro) | 26.6 | before 2.6 | used | used | measured at kernel version 1; superseded |
+| legacy | Apple M1 | 8 | not recorded | MacBook Pro (13-inch, M1, 2020) | ? | before 2.6 | used (stale) | used (stale) | — |
+| 20261003-d26059 | Apple M5 Pro | 20 | 2026-10-03 | MacBook Pro (16-inch, M5 Pro) | 27.0.1 | before 2.6 | — | measured at kernel version 1; superseded | — |
+| 20261003-847f0e | Apple M5 Pro | 20 | 2026-10-03 | MacBook Pro (16-inch, M5 Pro) | 27.0.1 | 2.9.0 | used | — | — |
+| 20261003-2d2c19 | Apple M5 Pro | 20 | 2026-10-03 | MacBook Pro (16-inch, M5 Pro) | 27.0.1 | 2.9.0 | used | used | used |
+| 20261003-064803 | Apple M5 Pro | 20 | 2026-10-03 | MacBook Pro (16-inch, M5 Pro) | 27.0.1 | 2.7.0 | — | — | measured at kernel version 2; superseded |
+| 20261002-9d19ba | Apple M5 Pro | 20 | 2026-10-02 | MacBook Pro (16-inch, M5 Pro) | 27.0.1 | before 2.6 | measured at kernel version 1; superseded | — | — |
+| 20261002-153352 | Apple M5 Pro | 20 | 2026-10-02 | MacBook Pro (16-inch, M5 Pro) | 27.0.1 | before 2.6 | — | measured at kernel version 1; superseded | — |
+| 20261001-c76e82 | Apple M5 Pro | 20 | 2026-10-01 | MacBook Pro (16-inch, M5 Pro) | 27.0.1 | before 2.6 | measured at kernel version 1; superseded | measured at kernel version 1; superseded | measured at kernel version 1; superseded |
+| 20260930-27b6c2 | Apple M5 Pro | 20 | 2026-09-30 | MacBook Pro (16-inch, M5 Pro) | 26.6 | before 2.6 | measured at kernel version 1; superseded | measured at kernel version 1; superseded | measured at kernel version 1; superseded |
 
 ## Kernel versions
 
@@ -84,7 +86,10 @@ A decomposition's measurements go stale only when something they time changes: i
 
 | decomposition | version | since | date | why |
 |---|---|---|---|---|
-| QR | 1 (current) | 2.0.0 | 2026-09-30 | the measurements as 2.0 introduced them |
-| eigh | 1 (current) | 2.0.0 | 2026-09-30 | the measurements as 2.0 introduced them |
+| QR | 1 | 2.0.0 | 2026-09-30 | the measurements as 2.0 introduced them |
+| eigh | 1 | 2.0.0 | 2026-09-30 | the measurements as 2.0 introduced them |
 | SVD | 1 | 2.0.0 | 2026-09-30 | the measurements as 2.0 introduced them |
-| SVD | 2 (current) | 2.2.3 | 2026-10-02 | QR, which the QR-preconditioned SVD backends call first, routes small problems to the CPU since its CPU boundary was measured; those backends' timings have changed |
+| SVD | 2 | 2.2.3 | 2026-10-02 | QR, which the QR-preconditioned SVD backends call first, routes small problems to the CPU since its CPU boundary was measured; those backends' timings have changed |
+| QR | 2 (current) | 2.9.0 | 2026-10-03 | the CPU path spreads a batch over every core (7.5-15x faster for batches of small matrices on an M5 Pro), so every GPU-or-CPU boundary has moved |
+| eigh | 2 (current) | 2.9.0 | 2026-10-03 | the CPU path spreads a batch over every core (7.5-15x faster for batches of small matrices on an M5 Pro), so every GPU-or-CPU boundary has moved |
+| SVD | 3 (current) | 2.9.0 | 2026-10-03 | the CPU path spreads a batch over every core (7.5-15x faster for batches of small matrices on an M5 Pro), so every GPU-or-CPU boundary has moved |

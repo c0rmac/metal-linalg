@@ -1,0 +1,49 @@
+  grid coverage: near-square 29, square 70, tall 44, wide 30
+  173 shapes x 3 backends x 2 passes = 1038 timed runs
+    25/1038  elapsed 0.1m  eta 3.0m
+    50/1038  elapsed 0.1m  eta 2.7m
+    75/1038  elapsed 0.2m  eta 3.0m
+    100/1038  elapsed 0.4m  eta 3.8m
+    125/1038  elapsed 0.6m  eta 4.1m
+    150/1038  elapsed 0.7m  eta 4.4m
+    175/1038  elapsed 0.8m  eta 4.1m
+    200/1038  elapsed 0.9m  eta 3.9m
+    225/1038  elapsed 1.0m  eta 3.6m
+    250/1038  elapsed 1.1m  eta 3.4m
+    275/1038  elapsed 1.1m  eta 3.2m
+    300/1038  elapsed 1.3m  eta 3.1m
+    325/1038  elapsed 1.3m  eta 2.9m
+    350/1038  elapsed 1.4m  eta 2.8m
+    375/1038  elapsed 1.5m  eta 2.6m
+    400/1038  elapsed 1.6m  eta 2.5m
+    425/1038  elapsed 1.8m  eta 2.6m
+    450/1038  elapsed 1.8m  eta 2.4m
+    475/1038  elapsed 1.9m  eta 2.3m
+    500/1038  elapsed 2.0m  eta 2.1m
+    525/1038  elapsed 2.1m  eta 2.0m
+    550/1038  elapsed 2.1m  eta 1.9m
+    575/1038  elapsed 2.2m  eta 1.8m
+    600/1038  elapsed 2.4m  eta 1.7m
+    625/1038  elapsed 2.4m  eta 1.6m
+    650/1038  elapsed 2.5m  eta 1.5m
+    675/1038  elapsed 2.6m  eta 1.4m
+    700/1038  elapsed 2.7m  eta 1.3m
+    725/1038  elapsed 2.8m  eta 1.2m
+    750/1038  elapsed 2.9m  eta 1.1m
+    775/1038  elapsed 3.0m  eta 1.0m
+    800/1038  elapsed 3.1m  eta 0.9m
+    825/1038  elapsed 3.1m  eta 0.8m
+    850/1038  elapsed 3.3m  eta 0.7m
+    875/1038  elapsed 3.3m  eta 0.6m
+    900/1038  elapsed 3.4m  eta 0.5m
+    925/1038  elapsed 3.5m  eta 0.4m
+    950/1038  elapsed 3.6m  eta 0.3m
+    975/1038  elapsed 3.8m  eta 0.2m
+    1000/1038  elapsed 3.9m  eta 0.1m
+    1025/1038  elapsed 3.9m  eta 0.0m
+    1038/1038  elapsed 4.0m  eta 0.0m
+
+  band 480..512   ship M >= 512   (1.0170x geomean regret)
+  CPU routing: GPU iff k <= 8, batch*k >= 10240, batch >= 1   (1.0616x vs 2.2371x always GPU, worst 2.41x)
+  kTuned entry:  {"Apple M5 Pro", 20, 512, 512, 16,   8, 10240, 1},
+  -> /Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261003-2d2c19/qr/report.md, /Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261003-2d2c19/qr/results.json, /Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261003-2d2c19/qr/raw.csv

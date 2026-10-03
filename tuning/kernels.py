@@ -27,7 +27,7 @@ measurements). The library reports the state at run time
 and docs/measurements.md shows it for every chip.
 """
 
-KERNEL_EPOCHS = {"qr": 1, "eigh": 1, "svd": 2}
+KERNEL_EPOCHS = {"qr": 2, "eigh": 2, "svd": 3}
 
 # (decomposition, epoch, library version, date, why)
 HISTORY = [
@@ -37,12 +37,21 @@ HISTORY = [
     ("svd", 2, "2.2.3", "2026-10-02",
      "QR, which the QR-preconditioned SVD backends call first, routes small problems to the "
      "CPU since its CPU boundary was measured; those backends' timings have changed"),
+    ("qr", 2, "2.9.0", "2026-10-03",
+     "the CPU path spreads a batch over every core (7.5-15x faster for batches of small matrices "
+     "on an M5 Pro), so every GPU-or-CPU boundary has moved"),
+    ("eigh", 2, "2.9.0", "2026-10-03",
+     "the CPU path spreads a batch over every core (7.5-15x faster for batches of small matrices "
+     "on an M5 Pro), so every GPU-or-CPU boundary has moved"),
+    ("svd", 3, "2.9.0", "2026-10-03",
+     "the CPU path spreads a batch over every core (7.5-15x faster for batches of small matrices "
+     "on an M5 Pro), so every GPU-or-CPU boundary has moved"),
 ]
 
 REQUIRED = {
     "qr": {"unblocked", "reduced", "cpu"},
-    "eigh": {"cpu", "simd", "tg", "block", "tridiag",
-             "cpu_vals", "simd_vals", "tg_vals", "block_vals", "tridiag_vals"},
+    "eigh": {"cpu", "simd", "tg", "block", "tridiag", "ql",
+             "cpu_vals", "simd_vals", "tg_vals", "block_vals", "tridiag_vals", "ql_vals"},
     "svd": {"cpu", "jacobi", "block", "qr", "qrblock", "bidiag", "cpu_vals", "bidiag_vals"},
 }
 
@@ -58,6 +67,8 @@ ADDED = {
     "tridiag_vals": "the tridiag backend (2.5.0)",
     "bidiag": "the bidiag backend (2.7.0)",
     "bidiag_vals": "the bidiag backend (2.7.0)",
+    "ql": "the ql backend (2.9.0)",
+    "ql_vals": "the ql backend (2.9.0)",
 }
 # Where a backend name means something else for one decomposition.
 ADDED_FOR = {
@@ -69,11 +80,13 @@ def added(op, backend):
     """What an incomplete `op` run that never timed `backend` is missing, in words."""
     return ADDED_FOR.get(op, {}).get(backend) or ADDED.get(backend, backend)
 
-_QR = ["shaders/QR_", "src/qr"]
+# The CPU paths' batch loop (lapack_batches) is in the shared runtime.
+_SHARED = ["src/metal_runtime"]
+_QR = ["shaders/QR_", "src/qr"] + _SHARED
 _JACOBI = ["shaders/eigh_jacobi_common.h", "shaders/block_jacobi_common.h"]
 PATHS = {
     "qr": _QR,
-    "eigh": ["shaders/Eigh_", "src/eigh"] + _JACOBI,
+    "eigh": ["shaders/Eigh_", "src/eigh"] + _JACOBI + _SHARED,
     # The QR-preconditioned SVD backends call QR, routed by its table.
     "svd": ["shaders/Svd_", "src/svd"] + _JACOBI + _QR + ["src/tuned/qr.inc"],
 }

@@ -36,6 +36,7 @@ const char* name(ml::EighBackend b) {
         case ml::EighBackend::simd:        return "simd";
         case ml::EighBackend::threadgroup: return "threadgroup";
         case ml::EighBackend::tridiag:     return "tridiag";
+        case ml::EighBackend::ql:          return "ql";
         default:                           return "block";
     }
 }
@@ -54,14 +55,16 @@ const char* name(ml::SvdBackend b) {
 // directions; an unknown key on the way in is an error, not silently ignored.
 #define QR_FIELDS(X) X(m_crossover_small_batch) X(m_crossover_large_batch) X(batch_threshold) \
                      X(gpu_max_k) X(gpu_min_batch_times_k) X(gpu_min_batch)                   \
-                     X(gpu_cores) X(concurrent_matrices)
+                     X(gpu_cores) X(concurrent_matrices) X(gpu_large_min_k) X(gpu_large_max_batch)
 #define EIGH_FIELDS(X) X(simd_max_n) X(block_min_n) X(block_min_n_batched) X(block_min_batch) \
                        X(gpu_max_n) X(gpu_min_batch_times_n) X(gpu_min_batch) X(gpu_cores)      \
                        X(values_gpu_max_n) X(values_gpu_min_batch_times_n) X(values_gpu_min_batch) \
-                       X(tridiag_min_n) X(values_tridiag_min_n)
+                       X(tridiag_min_n) X(values_tridiag_min_n) X(ql_min_n) X(ql_max_n) \
+                       X(tridiag_max_batch) X(values_tridiag_max_batch)
 #define SVD_FIELDS(X) X(qr_min_rows) X(qr_min_k) X(block_min_k) X(block_min_k_batched)       \
                       X(block_min_batch) X(gpu_max_k) X(gpu_min_batch_times_k) X(gpu_min_batch) \
-                      X(gpu_cores) X(bidiag_min_k) X(values_bidiag_min_k)
+                      X(gpu_cores) X(bidiag_min_k) X(values_bidiag_min_k)  \
+                      X(bidiag_max_batch) X(values_bidiag_max_batch)
 
 #define TO_DICT(f) d[#f] = p.f;
 #define FROM_DICT(f) if (key == #f) { p.f = nb::cast<unsigned>(value); return; }
@@ -89,6 +92,8 @@ NB_MODULE(_core, m) {
 
     m.def("device_name", [] { return std::string(ml::device_name()); });
     m.def("gpu_core_count", &ml::gpu_core_count);
+    m.def("set_cpu_threads", &ml::set_cpu_threads, "n"_a);
+    m.def("cpu_threads", &ml::cpu_threads);
     m.def("set_calibration_notices", &ml::set_calibration_notices, "enabled"_a);
     m.def("calibration_message", [](const std::string& what) { return ml::calibration_message(what.c_str()); },
           "decomposition"_a);
