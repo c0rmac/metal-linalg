@@ -2,6 +2,7 @@
 #define ACCELERATE_NEW_LAPACK   // LAPACK's current interface; before any Accelerate header
 #endif
 #include <metal_linalg/core.h>
+#include "calibration.h"
 #include "metal_runtime.h"
 #include "shaders.h"
 
@@ -161,6 +162,7 @@ struct TunedEntry {
     // rows measured before the backend existed leave.
     unsigned    tridiag_min_n;
     unsigned    values_tridiag_min_n;
+    unsigned    calibration;   // kCalibration* (calibration.h); rows without it are current
 };
 
 // The rows are generated from every run submitted for a device (docs/results/)
@@ -169,7 +171,7 @@ struct TunedEntry {
 // docs/studies/. The last row keeps the array non-empty and matches nothing.
 constexpr TunedEntry kTuned[] = {
 #include "tuned/eigh.inc"
-    {"", 0,   0, 0, 0, 0,   0, 0, 0,   0, 0, 0,   0, 0},
+    {"", 0,   0, 0, 0, 0,   0, 0, 0,   0, 0, 0,   0, 0,   0},
 };
 
 struct ResolvedPolicy {
@@ -210,7 +212,8 @@ ResolvedPolicy resolve_policy() {
             r.policy.values_gpu_min_batch         = e.values_gpu_min_batch;
             r.policy.tridiag_min_n                = e.tridiag_min_n;
             r.policy.values_tridiag_min_n         = e.values_tridiag_min_n;
-            r.source = "tuned:" + r.device;
+            r.source = detail::tuned_source_prefix(e.calibration) + r.device;
+            detail::calibration_notice("eigh", e.calibration);
             break;
         }
     }
@@ -222,6 +225,7 @@ ResolvedPolicy resolve_policy() {
         // seconds. A GPU with more cores than an M1 will want a higher
         // gpu_max_n than this.
         r.source = "default:untuned-device" + (r.device.empty() ? "" : " (" + r.device + ")");
+        detail::calibration_notice("eigh", kUncalibrated);
     }
 
     // Environment overrides, for retuning without a rebuild.

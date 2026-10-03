@@ -111,7 +111,15 @@ class Routing(unittest.TestCase):
         self.assertIsInstance(ml.device_name(), str)
         self.assertGreaterEqual(ml.gpu_core_count(), 0)
         for source in (ml.qr_policy_source(), ml.eigh_policy_source(), ml.svd_policy_source()):
-            self.assertTrue(source.split(":")[0] in ("tuned", "default", "env", "user"), source)
+            self.assertTrue(source.split(":")[0] in ("tuned", "tuned-stale", "tuned-incomplete",
+                                                     "default", "env", "user"), source)
+
+    def test_calibration_status(self):
+        st = ml.calibration_status()
+        self.assertEqual(set(st), {"qr", "eigh", "svd"})
+        for key, state in st.items():
+            self.assertIn(state, ("current", "stale", "incomplete", "uncalibrated"))
+        self.assertTrue(issubclass(ml.CalibrationWarning, UserWarning))
 
     def test_backend_names(self):
         self.assertIn(ml.qr_backend(64, 64, 100), {"cpu", "unblocked", "streaming_reduced"})

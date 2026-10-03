@@ -410,6 +410,35 @@ int main() {
         }, 3, 20, 12, 50);
     }
 
+    // Calibration: each policy source names its state, and the notice text
+    // agrees with it -- on any Mac, current, stale, incomplete or untuned.
+    std::printf("\n[ calibration ]\n");
+    {
+        set_calibration_notices(false);
+        const struct { const char* what; const char* source; } solvers[] = {
+            {"QR", qr_policy_source()}, {"eigh", eigh_policy_source()}, {"SVD", svd_policy_source()}};
+        for (const auto& s : solvers) {
+            const std::string src = s.source, msg = calibration_message(s.what);
+            const bool untuned = src.rfind("default:untuned-device", 0) == 0;
+            const bool stale = src.rfind("tuned-stale:", 0) == 0;
+            const bool incomplete = src.rfind("tuned-incomplete:", 0) == 0;
+            const bool current = src.rfind("tuned:", 0) == 0;
+            const bool has_device = device_name()[0] != '\0';
+            bool ok = untuned || stale || incomplete || current || src.rfind("env:", 0) == 0;
+            if (current) ok = ok && msg.empty();
+            if (has_device && untuned) ok = ok && msg.find("is not calibrated") != std::string::npos;
+            if (has_device && stale) ok = ok && msg.find("older kernels") != std::string::npos;
+            if (has_device && incomplete) ok = ok && msg.find("newer optimisations") != std::string::npos;
+            if (!msg.empty()) ok = ok && msg.find("CONTRIBUTING.md") != std::string::npos &&
+                                    msg.find("METAL_LINALG_NO_CALIBRATION_NOTICE") != std::string::npos;
+            report(std::string(s.what) + " source and notice agree", src + " / " + msg, ok);
+            std::printf("  %s  %-6s %s\n", ok ? "ok  " : "FAIL", s.what, src.c_str());
+        }
+        report("calibration_notices() reflects the switch", "", !calibration_notices());
+        set_calibration_notices(true);
+        report("calibration_notices() back on", "", calibration_notices());
+    }
+
     std::printf("\n%d checks, %d failed\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

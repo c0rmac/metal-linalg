@@ -1,0 +1,23 @@
+name: Kernel versions
+
+# Warns on a pull request that changes what a decomposition's measurements
+# time (its kernels, launch parameters, CPU path, or what it calls) without
+# bumping its kernel version in tuning/kernels.py. Never fails: whether a
+# change alters timings is for a person to decide. See tuning/kernels.py.
+
+on:
+  pull_request:
+    paths: ["shaders/**", "src/**", "tuning/kernels.py"]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Compare with the base branch
+        run: python3 tuning/check_kernel_epochs.py "origin/${{ github.base_ref }}"

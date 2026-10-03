@@ -196,6 +196,20 @@ add a (pending) trusted publisher for the project `metal-linalg`: owner
 `pypi`. If an upload fails, rerun just that step for the release with
 **Actions > Release > Run workflow**, `pypi_version` set to its version.
 
+### When measurements go stale
+
+A change to what a decomposition's measurements time -- its kernels, their
+launch parameters, its CPU path, or what it calls -- bumps that
+decomposition's kernel version in [`tuning/kernels.py`](tuning/kernels.py)
+(`KERNEL_EPOCHS`), with a line in `HISTORY` saying why. Measured Macs then show
+as stale on [the measurements page](https://c0rmac.github.io/metal-linalg/docs/measurements)
+and in the library's notice, and keep their measurements until remeasured.
+A change that alters nothing timed (docs, packaging, a refactor) bumps nothing;
+the *Kernel versions* workflow warns on a pull request that touches the timed
+files without a bump, and leaves the decision to you. A new backend is
+listed in `REQUIRED`: Macs measured before it show as incomplete, and it stays
+off there until they are measured again.
+
 ### Following a new MLX
 
 The Python package works only with the MLX release it was built against, so

@@ -80,6 +80,21 @@ pip install --no-build-isolation --no-deps git+https://github.com/c0rmac/metal-l
 
 After upgrading that MLX, reinstall the package the same way.
 
+## Calibration
+
+Routing comes from measurements made on each kind of Mac. Where there are
+none for yours, or they are stale or incomplete, importing the package raises
+a `metal_linalg.CalibrationWarning` once per decomposition, saying so and how
+to measure your Mac (about an hour) and submit the results:
+
+```python
+ml.calibration_status()     # {'qr': 'current', 'eigh': 'current', 'svd': 'stale'}
+```
+
+`warnings.filterwarnings("ignore", category=ml.CalibrationWarning)`, or
+`METAL_LINALG_NO_CALIBRATION_NOTICE=1`, silences it. Which chips are measured:
+[the measurements page](https://c0rmac.github.io/metal-linalg/docs/measurements).
+
 ## Tests
 
 ```bash

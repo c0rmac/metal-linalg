@@ -31,6 +31,48 @@ from . import _core  # noqa: E402
 
 __version__ = _core.__version__
 
+
+class CalibrationWarning(UserWarning):
+    """Raised once per decomposition at import when this Mac's calibration
+    is missing, stale or incomplete: the library still works, but measuring
+    this Mac and submitting the results would make it faster (see
+    :func:`calibration_status`). Silence it with
+    ``warnings.filterwarnings("ignore", category=metal_linalg.CalibrationWarning)``
+    or ``METAL_LINALG_NO_CALIBRATION_NOTICE=1``."""
+
+
+def calibration_status():
+    """How current this Mac's measurements are, per decomposition:
+    ``{"qr": state, "eigh": state, "svd": state}``, each ``"current"``,
+    ``"stale"`` (measured on older kernels, still used), ``"incomplete"``
+    (from before a newer backend, which stays off) or ``"uncalibrated"``
+    (the untuned default). See https://c0rmac.github.io/metal-linalg/docs/measurements."""
+    out = {}
+    for key, source in (("qr", _core.qr_policy_source), ("eigh", _core.eigh_policy_source),
+                        ("svd", _core.svd_policy_source)):
+        s = source()
+        out[key] = ("uncalibrated" if s.startswith("default:") else "stale" if s.startswith("tuned-stale:")
+                    else "incomplete" if s.startswith("tuned-incomplete:") else "current")
+    return out
+
+
+def _calibration_warnings():
+    import os
+    import warnings
+    _core.set_calibration_notices(False)   # this package warns instead of printing
+    flag = os.environ.get("METAL_LINALG_NO_CALIBRATION_NOTICE", "")
+    if flag and flag != "0":
+        return
+    for source in (_core.qr_policy_source, _core.eigh_policy_source, _core.svd_policy_source):
+        source()   # resolves the policy, which records its calibration
+    for what in ("QR", "eigh", "SVD"):
+        msg = _core.calibration_message(what)
+        if msg:
+            warnings.warn(msg, CalibrationWarning, stacklevel=3)
+
+
+_calibration_warnings()
+
 __all__ = [
     "qr", "eigh", "eigvalsh", "svd", "svdvals",
     "device_name", "gpu_core_count",
@@ -38,6 +80,7 @@ __all__ = [
     "qr_policy", "eigh_policy", "svd_policy",
     "set_qr_policy", "set_eigh_policy", "set_svd_policy",
     "qr_policy_source", "eigh_policy_source", "svd_policy_source",
+    "calibration_status", "CalibrationWarning",
 ]
 
 

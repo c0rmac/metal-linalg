@@ -35,6 +35,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 import submissions as sub   # noqa: E402
+import kernels             # noqa: E402
 import tune_eigh as te      # noqa: E402  machine state checks
 
 # (decomposition, harness, sweep binary, options, options for --quick)
@@ -45,6 +46,13 @@ SWEEPS = [
 ]
 TESTS = ["test_qr", "test_eigh", "test_svd"]
 REPO_URL = "https://github.com/c0rmac/metal-linalg"
+
+
+def library_version():
+    """The version in CMakeLists.txt's project(), which every release sets."""
+    import re
+    m = re.search(r"project\(\s*\w+\s+VERSION\s+(\d+\.\d+\.\d+)", open(os.path.join(ROOT, "CMakeLists.txt")).read())
+    return m.group(1) if m else None
 
 
 def fail(msg):
@@ -269,6 +277,8 @@ def main():
     info["date"] = time.strftime("%Y-%m-%d", time.gmtime())
     info["quick"] = args.quick
     info["epoch"] = sub.EPOCH
+    info["epochs"] = dict(kernels.KERNEL_EPOCHS)   # what each decomposition is measured at
+    info["library_version"] = library_version()
     slug = info["device"]["slug"]
     base = os.path.join(build_dir, "quick") if args.quick else os.path.join(ROOT, "docs", "results")
     out = os.path.join(base, slug, info["id"])

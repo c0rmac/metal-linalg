@@ -2,6 +2,7 @@
 #define ACCELERATE_NEW_LAPACK   // LAPACK's current interface; before any Accelerate header
 #endif
 #include <metal_linalg/core.h>
+#include "calibration.h"
 #include "metal_runtime.h"
 #include "shaders.h"
 
@@ -193,6 +194,7 @@ struct TunedEntry {
     unsigned    gpu_max_k;
     unsigned    gpu_min_batch_times_k;
     unsigned    gpu_min_batch;
+    unsigned    calibration;   // kCalibration* (calibration.h); rows without it are current
 };
 
 // The rows are generated from every run submitted for a device (docs/results/)
@@ -201,7 +203,7 @@ struct TunedEntry {
 // docs/studies/. The last row keeps the array non-empty and matches nothing.
 constexpr TunedEntry kTuned[] = {
 #include "tuned/svd.inc"
-    {"", 0,   0, 0,   0, 0, 0,   0, 0, 0},
+    {"", 0,   0, 0,   0, 0, 0,   0, 0, 0,   0},
 };
 
 struct ResolvedPolicy {
@@ -236,12 +238,14 @@ ResolvedPolicy resolve_policy() {
             r.policy.gpu_max_k             = e.gpu_max_k;
             r.policy.gpu_min_batch_times_k = e.gpu_min_batch_times_k;
             r.policy.gpu_min_batch         = e.gpu_min_batch;
-            r.source = "tuned:" + r.device;
+            r.source = detail::tuned_source_prefix(e.calibration) + r.device;
+            detail::calibration_notice("SVD", e.calibration);
             break;
         }
     }
     if (r.source.empty()) {
         r.source = "default:untuned-device" + (r.device.empty() ? "" : " (" + r.device + ")");
+        detail::calibration_notice("SVD", kUncalibrated);
     }
 
     std::string env;
