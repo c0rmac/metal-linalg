@@ -16,7 +16,20 @@ import torch
 
 import metal_linalg_torch as mlt
 
-MPS = torch.backends.mps.is_available()
+def _mps_works():
+    """MPS as reported, and doing arithmetic correctly: on some virtual Macs
+    (CI's macOS 14 runners with older torch) it is reported available but
+    fails to allocate or multiplies wrongly."""
+    if not torch.backends.mps.is_available():
+        return False
+    try:
+        a = torch.randn(64, 64)
+        return torch.allclose((a.to("mps") @ a.to("mps")).cpu(), a @ a, rtol=1e-3, atol=1e-3)
+    except RuntimeError:
+        return False
+
+
+MPS = _mps_works()
 DEVICES = ["cpu"] + (["mps"] if MPS else [])
 
 

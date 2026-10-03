@@ -92,7 +92,7 @@ std::string calibration_notice_text(const char* what, unsigned calibration,
         case kUncalibrated:
             return std::string("metal-linalg: ") + what + " is not calibrated for this Mac (" + mac +
                    "); it is using untuned defaults, which may leave GPU speedups unused. Measuring "
-                   "this Mac takes about an hour, and submitting the results improves the library "
+                   "this Mac takes about an hour and a half, and submitting the results improves the library "
                    "for everyone with this chip: " + kContribute + hide;
         case kCalibrationStale:
             return std::string("metal-linalg: ") + what + "'s calibration for this Mac (" + mac +
