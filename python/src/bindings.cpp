@@ -35,6 +35,7 @@ const char* name(ml::EighBackend b) {
         case ml::EighBackend::cpu:         return "cpu";
         case ml::EighBackend::simd:        return "simd";
         case ml::EighBackend::threadgroup: return "threadgroup";
+        case ml::EighBackend::tridiag:     return "tridiag";
         default:                           return "block";
     }
 }
@@ -55,7 +56,8 @@ const char* name(ml::SvdBackend b) {
                      X(gpu_cores) X(concurrent_matrices)
 #define EIGH_FIELDS(X) X(simd_max_n) X(block_min_n) X(block_min_n_batched) X(block_min_batch) \
                        X(gpu_max_n) X(gpu_min_batch_times_n) X(gpu_min_batch) X(gpu_cores)      \
-                       X(values_gpu_max_n) X(values_gpu_min_batch_times_n) X(values_gpu_min_batch)
+                       X(values_gpu_max_n) X(values_gpu_min_batch_times_n) X(values_gpu_min_batch) \
+                       X(tridiag_min_n) X(values_tridiag_min_n)
 #define SVD_FIELDS(X) X(qr_min_rows) X(qr_min_k) X(block_min_k) X(block_min_k_batched)       \
                       X(block_min_batch) X(gpu_max_k) X(gpu_min_batch_times_k) X(gpu_min_batch) \
                       X(gpu_cores)

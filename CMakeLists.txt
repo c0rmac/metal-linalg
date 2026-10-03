@@ -3,7 +3,7 @@ if (NOT CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
     message(FATAL_ERROR "metal-linalg runs on Apple Silicon Macs only (Metal and Accelerate); "
                         "it cannot be built on ${CMAKE_HOST_SYSTEM_NAME}.")
 endif ()
-project(metal_linalg VERSION 2.4.1 LANGUAGES CXX OBJCXX
+project(metal_linalg VERSION 2.5.0 LANGUAGES CXX OBJCXX
         DESCRIPTION "QR, symmetric eigendecomposition and SVD on Apple GPUs, for MLX")
 
 set(CMAKE_CXX_STANDARD 20)
@@ -154,6 +154,7 @@ metal_linalg_add_shader(QR_Streaming_AMX_Complete)
 # measurable.
 metal_linalg_add_shader(Eigh_Jacobi      FLAGS -fno-fast-math DEPENDS eigh_jacobi_common.h)
 metal_linalg_add_shader(Eigh_BlockJacobi FLAGS -fno-fast-math DEPENDS eigh_jacobi_common.h block_jacobi_common.h)
+metal_linalg_add_shader(Eigh_Tridiag     FLAGS -fno-fast-math)
 metal_linalg_add_shader(Svd_Jacobi       FLAGS -fno-fast-math DEPENDS eigh_jacobi_common.h)
 metal_linalg_add_shader(Svd_BlockJacobi  FLAGS -fno-fast-math DEPENDS eigh_jacobi_common.h block_jacobi_common.h)
 
@@ -190,6 +191,7 @@ add_library(metal_linalg ${_ml_kind}
     src/qr_cpu.mm
     src/eigh.mm
     src/eigh_block_jacobi.mm
+    src/eigh_tridiag.mm
     src/svd.mm
     src/svd_block_jacobi.mm
     src/c_api.cpp

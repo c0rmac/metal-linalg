@@ -518,6 +518,90 @@ int main() {
     }
 
     // -------------------------------------------------------------------------
+    // tridiag: the reduction runs on the GPU in panels of 32 columns while more
+    // than 33 remain, and LAPACK takes the rest, so the sizes straddle every
+    // boundary of that: no GPU panel at all (N <= 33), exactly one, a partial
+    // last one, many. The back-transformation goes 128 reflectors at a time.
+    // -------------------------------------------------------------------------
+    std::printf("\n[ tridiag backend ]\n");
+    {
+        auto tri = [](const array& A, bool vectors, bool lower) {
+            EighResult r = detail::eigh_tridiag(A, vectors, lower);
+            eval({r.eigenvalues, r.eigenvectors, r.info});
+            return r;
+        };
+        for (int n : {1, 2, 3, 31, 33, 34, 35, 64, 65, 66, 97, 129, 130, 257, 300, 513, 1024}) {
+            array A = random_symmetric(1, n, 1000 + n);
+            check("tridiag " + std::to_string(n) + "x" + std::to_string(n), A, tri(A, true, true));
+        }
+        // Eigenvalues alone, against the same matrix with eigenvectors.
+        for (int n : {2, 65, 300, 1024}) {
+            array A = random_symmetric(1, n, 1100 + n);
+            EighResult rv = tri(A, false, true), rw = tri(A, true, true);
+            check("tridiag values only " + std::to_string(n) + "x" + std::to_string(n), A, rv, true, false);
+            const float d = max_abs(subtract(rv.eigenvalues, rw.eigenvalues)) / std::max(frobenius(A), 1.0f);
+            ++g_checks;
+            if (d > 1e-6f) fail("tridiag values-only == with vectors", "differ by " + std::to_string(d));
+        }
+        // One triangle read: junk in the other, both ways.
+        {
+            const int n = 200;
+            array S = random_symmetric(1, n, 1200);
+            array junk = full({n, n}, 1e30f);
+            check("tridiag lower, junk above 200x200", add(tril(S), triu(junk, 1)),
+                  tri(add(tril(S), triu(junk, 1)), true, true), true);
+            check("tridiag upper, junk below 200x200", add(triu(S), tril(junk, -1)),
+                  tri(add(triu(S), tril(junk, -1)), true, false), false);
+        }
+        // A batch, solved one matrix after another.
+        {
+            array A = random_symmetric(3, 150, 1300);
+            check("tridiag batch 3 x 150x150", A, tri(A, true, true));
+        }
+        // Magnitudes a float32 product would over- or underflow without scaling.
+        for (float s : {1e-30f, 1e-20f, 1e20f, 1e37f}) {
+            array A = multiply(random_symmetric(1, 160, 1400), array(s / 5.0f));
+            char label[64];
+            std::snprintf(label, sizeof label, "tridiag scaled by %.0e 160x160", s);
+            check(label, A, tri(A, true, true));
+        }
+        // Degenerate inputs: every reflector trivial (tau = 0), or eigenvalues repeated.
+        check("tridiag zero matrix 100x100", zeros({100, 100}), tri(zeros({100, 100}), true, true));
+        check("tridiag identity 100x100", eye(100), tri(eye(100), true, true));
+        {
+            std::vector<float> dvals(120);
+            for (int i = 0; i < 120; ++i) dvals[i] = (float)(i % 7) - 3.0f;
+            array D = diag(from_values(dvals, {120}));
+            check("tridiag diagonal 120x120", D, tri(D, true, true));
+            std::vector<float> spec(150);
+            for (int i = 0; i < 150; ++i) spec[i] = i < 100 ? 1.0f : 2.0f + i;
+            array R = with_spectrum(spec);
+            check("tridiag repeated eigenvalues 150x150", R, tri(R, true, true));
+        }
+        // A NaN in one matrix of a batch: that matrix NaN and flagged, the rest intact.
+        {
+            const int n = 70;
+            std::vector<float> data(2 * n * n);
+            array S = random_symmetric(2, n, 1500);
+            eval({S});
+            std::copy(S.data<float>(), S.data<float>() + 2 * n * n, data.begin());
+            data[(size_t)n * n + 5 * n + 3] = NAN;     // matrix 1, lower triangle
+            array A = from_values(data, {2, n, n});
+            EighResult r = tri(A, true, true);
+            array info = reshape(r.info, {-1});
+            array w1 = slice(r.eigenvalues, {1, 0}, {2, n});
+            array w0 = slice(r.eigenvalues, {0, 0}, {1, n});
+            eval({info, w1, w0});
+            ++g_checks;
+            const bool nan1 = all(isnan(w1)).item<bool>(), fin0 = !has_non_finite(w0);
+            const bool flags = !detail::eigh_converged(info.data<uint32_t>()[1]) &&
+                               detail::eigh_converged(info.data<uint32_t>()[0]);
+            if (!(nan1 && fin0 && flags)) fail("tridiag NaN in one matrix of a batch", "not isolated");
+            else std::printf("  ok    %-44s\n", "tridiag NaN in one matrix of a batch");
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // CPU eigenvalues alone: the two-stage reduction from N = 128, the
     // one-stage one below. Each is checked against a known spectrum and
     // against the eigenvalues of the one-stage path with eigenvectors.
@@ -628,6 +712,38 @@ int main() {
                        " on " + (eigvalsh_uses_gpu(nn, bb) ? "GPU" : "CPU") + " == eigh's eigenvalues",
                        d < 1e-5f, "differ by " + std::to_string(d));
             }
+            set_eigh_policy(known);
+        }
+
+        // The tridiag backend replaces the CPU from its thresholds; 0 = never.
+        {
+            expect("tridiag thresholds unset -> never (N=4096 b=1 -> cpu)",
+                   eigh_backend(4096, 1) == EighBackend::cpu && eigvalsh_backend(4096, 1) == EighBackend::cpu);
+            EighPolicy t = known;
+            t.tridiag_min_n = 256;
+            t.values_tridiag_min_n = 1024;
+            set_eigh_policy(t);
+            expect("tridiag_min_n = 256: eigh N=255 cpu, N=256 tridiag; GPU-routed calls unchanged",
+                   eigh_backend(255, 1) == EighBackend::cpu && eigh_backend(256, 1) == EighBackend::tridiag &&
+                   eigh_backend(8, 4096) == eigh_gpu_backend(8, 4096));
+            expect("values_tridiag_min_n = 1024: eigvalsh N=512 cpu, N=1024 tridiag",
+                   eigvalsh_backend(512, 1) == EighBackend::cpu && eigvalsh_backend(1024, 1) == EighBackend::tridiag);
+            api("routed to tridiag (300x300)", random_symmetric(1, 300, 830));
+            {
+                array A = random_symmetric(1, 1100, 831);
+                array w = eigvalsh_accelerated(A);
+                array w_ref = linalg::eigvalsh(A, "L", Device::cpu);
+                eval({w, w_ref});
+                const float d = max_abs(subtract(w, w_ref)) / std::max(frobenius(A), 1.0f);
+                expect("eigvalsh routed to tridiag (1100x1100) == LAPACK", d < kEigTol, "differ by " + std::to_string(d));
+            }
+            setenv("EIGH_DEVICE", "cpu", 1);
+            expect("EIGH_DEVICE=cpu keeps the CPU over tridiag", eigh_backend(4096, 1) == EighBackend::cpu);
+            setenv("EIGH_DEVICE", "tridiag", 1);
+            expect("EIGH_DEVICE=tridiag forces it, even where the GPU rule applies",
+                   eigh_backend(8, 4096) == EighBackend::tridiag && eigvalsh_backend(8, 1) == EighBackend::tridiag);
+            api("EIGH_DEVICE=tridiag, 64 x 16x16", random_symmetric(64, 16, 832));
+            unsetenv("EIGH_DEVICE");
             set_eigh_policy(known);
         }
 

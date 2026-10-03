@@ -141,14 +141,18 @@ held-out validation.
 **Eigensolver** (`src/eigh.mm`): device name, GPU cores, then `simd_max_n`,
 `block_min_n`, `block_min_n_batched`, `block_min_batch`, `gpu_max_n`,
 `gpu_min_batch_times_n`, `gpu_min_batch`, then `values_gpu_max_n`,
-`values_gpu_min_batch_times_n` and `values_gpu_min_batch`, as documented on
+`values_gpu_min_batch_times_n`, `values_gpu_min_batch`, then `tridiag_min_n` and
+`values_tridiag_min_n`, as documented on
 `EighPolicy` in `include/metal_linalg/core.h`. The first four choose the GPU
 backend, fitted against the best GPU backend alone; the next three are the CPU
 boundary: GPU iff N is at most `gpu_max_n`, batch × N at least
 `gpu_min_batch_times_n` and the batch at least `gpu_min_batch`. The last
 three are the same boundary for eigenvalues alone (`eigvalsh`), fitted on the
 `_vals` timings; `0, 0, 0` (a run from before those were measured) means "as
-for eigenvectors".
+for eigenvectors". The last two are where the `tridiag` backend takes over from
+the CPU, with eigenvectors and without (0: never, which a run from before the
+backend existed gives); stage 4 of `tune_eigh.py` fits them on the points
+where `tridiag` was timed.
 
 **SVD** (`src/svd.mm`): device name, GPU cores, then `qr_min_rows`,
 `qr_min_k`, `block_min_k`, `block_min_k_batched`, `block_min_batch`,
@@ -267,6 +271,8 @@ in the policy source.
 | `EIGH_BLOCK_MIN_N_BATCHED`, `EIGH_BLOCK_MIN_BATCH` | eigensolver: batch-dependent block crossover, 0 for off |
 | `EIGH_GPU_MAX_N`, `EIGH_GPU_MIN_BATCH_TIMES_N`, `EIGH_GPU_MIN_BATCH` | eigensolver: the GPU/CPU boundary |
 | `EIGH_VALUES_GPU_MAX_N`, `EIGH_VALUES_GPU_MIN_BATCH_TIMES_N`, `EIGH_VALUES_GPU_MIN_BATCH` | eigensolver, eigenvalues alone: the GPU/CPU boundary |
+| `EIGH_TRIDIAG_MIN_N`, `EIGH_VALUES_TRIDIAG_MIN_N` | eigensolver: the tridiag backend instead of the CPU from this N (0: never) |
+| `EIGH_DEVICE=tridiag` | eigensolver: every call on the tridiag backend |
 | `EIGH_DEVICE=gpu` or `cpu` | eigensolver: bypass the GPU/CPU boundary |
 | `SVD_QR_MIN_ROWS`, `SVD_QR_MIN_K` | SVD: when the QR-preconditioned backends are used |
 | `SVD_BLOCK_MIN_K` | SVD: the short side from which the block kernel is used |

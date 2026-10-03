@@ -68,7 +68,7 @@ uint32_t    metal_linalg_gpu_core_count(void);
 
 /* The backend a call of that shape uses under the policy in effect, by name:
  *   QR    "cpu", "unblocked", "streaming_reduced"
- *   eigh  "cpu", "simd", "threadgroup", "block"
+ *   eigh  "cpu", "simd", "threadgroup", "block", "tridiag"
  *   SVD   "cpu", "jacobi", "block_jacobi", "qr_jacobi", "qr_block_jacobi"
  * The strings are static. */
 const char* metal_linalg_qr_backend(uint32_t rows, uint32_t cols, uint32_t batch);
@@ -106,6 +106,8 @@ typedef struct metal_linalg_eigh_policy {
     uint32_t values_gpu_max_n;               /* eigenvalues alone; values_gpu_min_batch = 0: */
     uint32_t values_gpu_min_batch_times_n;   /* as for eigenvectors */
     uint32_t values_gpu_min_batch;
+    uint32_t tridiag_min_n;          /* the tridiag backend instead of the CPU from this N; */
+    uint32_t values_tridiag_min_n;   /* 0: never */
 } metal_linalg_eigh_policy;
 
 typedef struct metal_linalg_svd_policy {

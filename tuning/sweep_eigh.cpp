@@ -2,7 +2,8 @@
 //
 //   usage: sweep_eigh <batch> <N> <backend>[,<backend>...]
 //   backends: cpu (the library's CPU path, LAPACK ssyevd), simd, tg (whole-matrix kernel in
-//             each execution mode), block (block Jacobi); each also as <name>_vals,
+//             each execution mode), block (block Jacobi), tridiag (the hybrid backend,
+//             eigh_tridiag.mm); each also as <name>_vals,
 //             eigenvalues alone (eigvalsh: the CPU path is then LAPACK ssyevd_2stage
 //             from N = 128), which has its own GPU-or-CPU boundary
 //   out:   batch,N,backend,ok,ms,p25,p75,reps   (one row per backend)
@@ -102,6 +103,13 @@ std::pair<array, array> vals_tg(const array& A) {
     EighOptions o; o.mode = EighOptions::Mode::threadgroup;
     array w = detail::eigh_jacobi(A, false, true, o).eigenvalues; return {w, w};
 }
+std::pair<array, array> solve_tridiag(const array& A) {
+    EighResult r = detail::eigh_tridiag(A, true, true);
+    return {r.eigenvalues, r.eigenvectors};
+}
+std::pair<array, array> vals_tridiag(const array& A) {
+    array w = detail::eigh_tridiag(A, false, true).eigenvalues; return {w, w};
+}
 std::pair<array, array> vals_block(const array& A) {
     EighOptions o; o.mode = EighOptions::Mode::block;
     array w = detail::eigh_block_jacobi(A, false, true, o).eigenvalues; return {w, w};
@@ -198,15 +206,17 @@ int main(int argc, char** argv) {
                     "\"simd_max_n\": %u, \"block_min_n\": %u, \"block_min_n_batched\": %u, "
                     "\"block_min_batch\": %u, \"gpu_max_n\": %u, \"gpu_min_batch_times_n\": %u, "
                     "\"gpu_min_batch\": %u, \"values_gpu_max_n\": %u, "
-                    "\"values_gpu_min_batch_times_n\": %u, \"values_gpu_min_batch\": %u}\n",
+                    "\"values_gpu_min_batch_times_n\": %u, \"values_gpu_min_batch\": %u, "
+                    "\"tridiag_min_n\": %u, \"values_tridiag_min_n\": %u}\n",
                     device_name(), p.gpu_cores, eigh_policy_source(),
                     p.simd_max_n, p.block_min_n, p.block_min_n_batched, p.block_min_batch,
                     p.gpu_max_n, p.gpu_min_batch_times_n, p.gpu_min_batch,
-                    p.values_gpu_max_n, p.values_gpu_min_batch_times_n, p.values_gpu_min_batch);
+                    p.values_gpu_max_n, p.values_gpu_min_batch_times_n, p.values_gpu_min_batch,
+                    p.tridiag_min_n, p.values_tridiag_min_n);
         return 0;
     }
     if (argc != 4) {
-        std::fprintf(stderr, "usage: %s <batch> <N> <cpu|simd|tg|block>[_vals][,...]\n"
+        std::fprintf(stderr, "usage: %s <batch> <N> <cpu|simd|tg|block|tridiag>[_vals][,...]\n"
                              "       %s --policy\n", argv[0], argv[0]);
         return 2;
     }
@@ -227,6 +237,8 @@ int main(int argc, char** argv) {
         else if (name == "simd_vals")  solvers.push_back({name, vals_simd, false});
         else if (name == "tg_vals")    solvers.push_back({name, vals_tg, false});
         else if (name == "block_vals") solvers.push_back({name, vals_block, false});
+        else if (name == "tridiag")      solvers.push_back({name, solve_tridiag});
+        else if (name == "tridiag_vals") solvers.push_back({name, vals_tridiag, false});
         else if (!name.empty()) { std::fprintf(stderr, "unknown backend: %s\n", name.c_str()); return 2; }
         pos = comma + 1;
     }

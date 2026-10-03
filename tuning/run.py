@@ -40,7 +40,7 @@ import tune_eigh as te      # noqa: E402  machine state checks
 # (decomposition, harness, sweep binary, options, options for --quick)
 SWEEPS = [
     ("qr",   "tune_qr.py",   "sweep_qr",   [], []),
-    ("eigh", "tune_eigh.py", "sweep_eigh", ["--max-n", "2048"], ["--quick"]),
+    ("eigh", "tune_eigh.py", "sweep_eigh", ["--max-n", "4096"], ["--quick"]),
     ("svd",  "tune_svd.py",  "sweep_svd",  ["--max-k", "1024"], ["--quick"]),
 ]
 TESTS = ["test_qr", "test_eigh", "test_svd"]

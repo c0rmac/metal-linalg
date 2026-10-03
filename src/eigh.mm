@@ -157,6 +157,10 @@ struct TunedEntry {
     unsigned    values_gpu_max_n;
     unsigned    values_gpu_min_batch_times_n;
     unsigned    values_gpu_min_batch;
+    // The tridiag backend instead of the CPU from these N; 0 = never, which
+    // rows measured before the backend existed leave.
+    unsigned    tridiag_min_n;
+    unsigned    values_tridiag_min_n;
 };
 
 // The rows are generated from every run submitted for a device (docs/results/)
@@ -165,7 +169,7 @@ struct TunedEntry {
 // docs/studies/. The last row keeps the array non-empty and matches nothing.
 constexpr TunedEntry kTuned[] = {
 #include "tuned/eigh.inc"
-    {"", 0,   0, 0, 0, 0,   0, 0, 0,   0, 0, 0},
+    {"", 0,   0, 0, 0, 0,   0, 0, 0,   0, 0, 0,   0, 0},
 };
 
 struct ResolvedPolicy {
@@ -204,6 +208,8 @@ ResolvedPolicy resolve_policy() {
             r.policy.values_gpu_max_n             = e.values_gpu_max_n;
             r.policy.values_gpu_min_batch_times_n = e.values_gpu_min_batch_times_n;
             r.policy.values_gpu_min_batch         = e.values_gpu_min_batch;
+            r.policy.tridiag_min_n                = e.tridiag_min_n;
+            r.policy.values_tridiag_min_n         = e.values_tridiag_min_n;
             r.source = "tuned:" + r.device;
             break;
         }
@@ -233,6 +239,8 @@ ResolvedPolicy resolve_policy() {
     over("EIGH_VALUES_GPU_MAX_N",             r.policy.values_gpu_max_n);
     over("EIGH_VALUES_GPU_MIN_BATCH_TIMES_N", r.policy.values_gpu_min_batch_times_n);
     over("EIGH_VALUES_GPU_MIN_BATCH",         r.policy.values_gpu_min_batch);
+    over("EIGH_TRIDIAG_MIN_N",                r.policy.tridiag_min_n);
+    over("EIGH_VALUES_TRIDIAG_MIN_N",         r.policy.values_tridiag_min_n);
     if (!env.empty()) r.source = "env:" + env;
     return r;
 }
@@ -541,27 +549,60 @@ bool eigvalsh_uses_gpu(unsigned n, unsigned batch) {
     return gpu_rule(n, batch, p.values_gpu_max_n, p.values_gpu_min_batch_times_n, p.values_gpu_min_batch);
 }
 
-EighBackend eigh_backend(unsigned n, unsigned batch) {
-    return eigh_uses_gpu(n, batch) ? eigh_gpu_backend(n, batch) : EighBackend::cpu;
+namespace {
+
+// Where the rules send a call to the CPU: the tridiag backend instead, from
+// the policy's threshold (0 = never). EIGH_DEVICE=cpu keeps the CPU;
+// EIGH_DEVICE=tridiag forces this backend for every call.
+EighBackend cpu_side(unsigned n, bool vectors) {
+    if (const char* e = std::getenv("EIGH_DEVICE")) {
+        const std::string s = e;
+        if (s == "cpu") return EighBackend::cpu;
+        if (s == "tridiag") return EighBackend::tridiag;
+    }
+    const EighPolicy& p = policy_state().policy;
+    const unsigned from = vectors ? p.tridiag_min_n : p.values_tridiag_min_n;
+    return from != 0 && n >= from ? EighBackend::tridiag : EighBackend::cpu;
 }
 
-EighBackend eigvalsh_backend(unsigned n, unsigned batch) {
-    return eigvalsh_uses_gpu(n, batch) ? eigh_gpu_backend(n, batch) : EighBackend::cpu;
+bool forced_tridiag() {
+    const char* e = std::getenv("EIGH_DEVICE");
+    return e && std::string(e) == "tridiag";
 }
+
+EighBackend route(unsigned n, unsigned batch, bool vectors) {
+    if (forced_tridiag()) return EighBackend::tridiag;
+    const bool gpu = vectors ? eigh_uses_gpu(n, batch) : eigvalsh_uses_gpu(n, batch);
+    return gpu ? eigh_gpu_backend(n, batch) : cpu_side(n, vectors);
+}
+
+} // namespace
+
+EighBackend eigh_backend(unsigned n, unsigned batch) { return route(n, batch, true); }
+
+EighBackend eigvalsh_backend(unsigned n, unsigned batch) { return route(n, batch, false); }
 
 void core::eigh(const Matrices& a, bool lower, float* w, float* v, uint32_t* info) {
     if (a.rows != a.cols) {
         throw std::invalid_argument("[eigh] Input matrices must be square.");
     }
     const unsigned n = a.cols, batch = a.batch;
-    const bool gpu = v ? eigh_uses_gpu(n, batch) : eigvalsh_uses_gpu(n, batch);
-    if (n > 0 && batch > 0 && !gpu) {
+    if (n == 0 || batch == 0) {
+        core::detail::eigh_cpu(a, lower, w, v, info);   // handles the empty case
+        return;
+    }
+    const EighBackend backend = route(n, batch, v != nullptr);
+    if (backend == EighBackend::cpu) {
         core::detail::eigh_cpu(a, lower, w, v, info);
         return;
     }
-    // The GPU backend split, as the policy has it.
+    if (backend == EighBackend::tridiag) {
+        core::detail::eigh_tridiag(a, lower, w, v, info);
+        return;
+    }
+    // A Jacobi backend, as the policy splits them.
     EighOptions opt;
-    switch (eigh_gpu_backend(n, batch)) {
+    switch (backend) {
         case EighBackend::block:
             opt.mode = EighOptions::Mode::block;
             core::detail::eigh_block_jacobi(a, lower, opt, w, v, info);

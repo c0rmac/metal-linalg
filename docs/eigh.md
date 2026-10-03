@@ -169,6 +169,60 @@ on the same criterion. $N$ is zero-padded to a multiple of 32; padded rows
 never couple to real ones (a zero off-diagonal is never rotated) and are
 dropped on output. The output sort caps $N$ at 4096.
 
+## Backend 3: tridiagonalization on the GPU (`Eigh_Tridiag.metal`)
+
+For one large matrix both Jacobi backends lose to LAPACK, whose `ssyevd`
+spends most of its time in two places: reducing $A$ to tridiagonal form
+$A = Q T Q^T$ (`ssytrd`), half of which is a symmetric matrix-vector product
+per column and so bound by memory bandwidth, and forming $V = Q Z$ from the
+eigenvectors $Z$ of $T$, which is matrix products. The `tridiag` backend
+(`src/eigh_tridiag.mm`) keeps LAPACK's method and moves those two steps to the
+GPU, leaving the tridiagonal eigenproblem, $O(N^2)$ for eigenvalues and cheap
+next to the rest for eigenvectors, to LAPACK on the CPU:
+
+1. **Reduction**, blocked `ssytrd` (lower) in panels of 32 columns, as
+   [Dongarra, Hammarling and Sorensen](https://doi.org/10.1016/0377-0427(89)90367-1)
+   block it and LAPACK's `slatrd` implements it, every step on the GPU. Per
+   column: the panel's earlier reflectors applied to the column, the
+   Householder vector (norm scaled by the largest entry, as `slarfg`), the
+   product of the trailing matrix with it, reading the lower triangle only in
+   64 x 64 tiles, and `slatrd`'s corrections. Per panel: the rank-64 update of
+   the trailing matrix as one MPS GEMM. The panels' command buffers are queued
+   back to back and the host waits once per matrix: a GPU round trip costs
+   about 0.13 ms, and one per column, as a CPU-driven panel needs, cost more
+   than the whole reduction below $N \approx 3000$. The last 33 columns or
+   fewer are reduced by LAPACK.
+2. **Tridiagonal eigenproblem**: LAPACK `sstedc` (eigenvectors) or `ssterf`
+   (eigenvalues), on the CPU.
+3. **Back-transformation**: `ssytrd`'s reflectors applied to $Z$ 128 at a
+   time, each block as $I - V T V^T$ (`slarft`), three MPS GEMMs; the next
+   block's $V$ and $T$ are built on the CPU while the GPU applies this one.
+
+The split is that of hybrid CPU/GPU libraries such as MAGMA
+([Tomov, Nath and Dongarra](https://doi.org/10.1016/j.parco.2010.06.001)),
+except that the panel, which they factor on the CPU, stays on the GPU here:
+on Apple Silicon the round trip, not the panel's arithmetic, is what costs.
+
+Each matrix is scaled by a power of two first (exact), so magnitudes whose
+products over- or underflow float32 work as on the CPU; matrices are solved one
+after another, and only the requested triangle is read. With eigenvectors, on
+an M5 Pro, one $N \times N$ (eigh, then eigvalsh, against the CPU path):
+
+| $N$ | eigh: CPU | tridiag | speedup | eigvalsh: CPU | tridiag | speedup |
+|---|---|---|---|---|---|---|
+| 1024 | 0.040 s | 0.035 s | 1.14x | 0.018 s | 0.027 s | 0.66x |
+| 2048 | 0.235 s | 0.119 s | 1.98x | 0.081 s | 0.088 s | 0.92x |
+| 3072 | 0.759 s | 0.265 s | 2.86x | 0.222 s | 0.187 s | 1.18x |
+| 4096 | 2.570 s | 0.532 s | 4.83x | 0.471 s | 0.403 s | 1.17x |
+| 8192 | 18.68 s | 3.159 s | 5.91x | 2.606 s | 2.406 s | 1.08x |
+
+With eigenvectors the gain grows with $N$, because the CPU's reduction
+falls further behind memory bandwidth; for eigenvalues alone the CPU already
+uses the two-stage reduction, and the GPU path gains only a little, from about
+$N = 3000$. Accuracy matches LAPACK's: residual and orthogonality about
+$10^{-6}$ at every size tested, eigenvalues within $3 \times 10^{-7}$ of
+LAPACK's relative to $\|A\|_F$.
+
 ## Dispatch
 
 On the GPU, by the policy for this device (`metal_linalg::eigh_policy()`); on an M1:
@@ -396,7 +450,8 @@ To probe another GPU without a rebuild:
 | `EIGH_BLOCK_MIN_N_BATCHED`, `EIGH_BLOCK_MIN_BATCH` | the batch-dependent block crossover (0 = off) |
 | `EIGH_GPU_MAX_N`, `EIGH_GPU_MIN_BATCH_TIMES_N`, `EIGH_GPU_MIN_BATCH` | the GPU/CPU boundary |
 | `EIGH_VALUES_GPU_MAX_N`, `EIGH_VALUES_GPU_MIN_BATCH_TIMES_N`, `EIGH_VALUES_GPU_MIN_BATCH` | the GPU/CPU boundary for eigenvalues alone (`eigvalsh`) |
-| `EIGH_DEVICE=gpu` / `cpu` | bypass the GPU/CPU boundary |
+| `EIGH_TRIDIAG_MIN_N`, `EIGH_VALUES_TRIDIAG_MIN_N` | the tridiag backend instead of the CPU from this N (0: never) |
+| `EIGH_DEVICE=gpu` / `cpu` / `tridiag` | bypass the GPU/CPU boundary; `tridiag` forces that backend |
 | `EIGH_MODE=simd` / `threadgroup` | force the execution mode of backend 1 |
 | `EIGH_INNER_SWEEPS=<k>` | scalar sweeps per block subproblem |
 | `EIGH_CHUNK_MS=<ms>` | wall-time budget per command buffer |
@@ -430,7 +485,9 @@ device's own policy at the end.
 - R. P. Brent and F. T. Luk, ["The solution of singular-value and symmetric eigenvalue problems on multiprocessor arrays"](https://epubs.siam.org/doi/10.1137/0906007), *SIAM J. Sci. Stat. Comput.* 6(1), 1985 — the round-robin parallel ordering.
 - H. Rutishauser, ["The Jacobi method for real symmetric matrices"](https://doi.org/10.1007/BF02165223), *Numerische Mathematik* 9, 1966 — the analytic diagonal update.
 - J. Demmel and K. Veselić, ["Jacobi's method is more accurate than QR"](https://epubs.siam.org/doi/10.1137/0613074), *SIAM J. Matrix Anal. Appl.* 13(4), 1992.
+- J. J. Dongarra, S. J. Hammarling and D. C. Sorensen, ["Block reduction of matrices to condensed forms for eigenvalue computations"](https://doi.org/10.1016/0377-0427(89)90367-1), *J. Comput. Appl. Math.* 27(1-2), 1989 — the blocked tridiagonalization (LAPACK's `ssytrd` and `slatrd`) the `tridiag` backend runs on the GPU.
+- S. Tomov, R. Nath and J. Dongarra, ["Accelerating the reduction to upper Hessenberg, tridiagonal, and bidiagonal forms through hybrid GPU-based computing"](https://doi.org/10.1016/j.parco.2010.06.001), *Parallel Computing* 36(12), 2010 — the hybrid CPU/GPU split (MAGMA) the backend follows, with the panel moved to the GPU.
 - C. H. Bischof, B. Lang and X. Sun, ["A framework for symmetric band reduction"](https://doi.org/10.1145/365723.365735), *ACM Trans. Math. Softw.* 26(4), 2000 — reducing a dense matrix to band form, then the band to tridiagonal: the two-stage reduction behind `eigvalsh`'s CPU path.
 - A. Haidar, H. Ltaief and J. Dongarra, ["Parallel reduction to condensed forms for symmetric eigenvalue problems using aggregated fine-grained and memory-aware kernels"](https://doi.org/10.1145/2063384.2063394), SC '11, 2011 — the two-stage algorithm as [LAPACK 3.7.0](https://netlib.org/lapack/lapack-3.7.0.html) implements it (`ssyevd_2stage`), which this library calls through Accelerate.
-- E. Ringoot, R. Alomairy, V. Churavy and A. Edelman, ["Performant unified GPU kernels for portable singular value computation across hardware and precision"](https://doi.org/10.1145/3754598.3754667), 2025 ([arXiv:2508.06339](https://arxiv.org/abs/2508.06339)), and E. Ringoot, R. Alomairy and A. Edelman, ["Accelerating bidiagonalization of banded matrices through memory-aware bulge-chasing on GPUs"](https://arxiv.org/abs/2510.12705), 2025 — two-stage reductions on GPUs, including Apple's; they prompted measuring the two-stage reduction on Apple Silicon. Their GPU kernels are not used here.
+- E. Ringoot, R. Alomairy, V. Churavy and A. Edelman, ["Performant unified GPU kernels for portable singular value computation across hardware and precision"](https://doi.org/10.1145/3754598.3754667), 2025 ([arXiv:2508.06339](https://arxiv.org/abs/2508.06339)), and E. Ringoot, R. Alomairy and A. Edelman, ["Accelerating bidiagonalization of banded matrices through memory-aware bulge-chasing on GPUs"](https://arxiv.org/abs/2510.12705), 2025 — two-stage reductions on GPUs, including Apple's; they prompted measuring the two-stage reduction on Apple Silicon, and the second's GPU-resident design is why the `tridiag` backend keeps its panel on the GPU. Their kernels are not used here.
 - NVIDIA, [cuSOLVER `syevjBatched`](https://docs.nvidia.com/cuda/cusolver/index.html#cusolverdn-t-syevjbatch) — Jacobi as the production batched symmetric eigensolver on GPUs.

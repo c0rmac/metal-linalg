@@ -124,6 +124,14 @@ int main(void) {
         CHECK(strcmp(metal_linalg_eigvalsh_backend(8, 4096), "cpu") == 0, "values_gpu_max_n = 0 still routes to %s",
               metal_linalg_eigvalsh_backend(8, 4096));
         CHECK(strcmp(metal_linalg_eigh_backend(8, 4096), "cpu") != 0, "the values boundary moved eigh");
+        /* The tridiag backend instead of the CPU, from its threshold. */
+        p = measured;
+        p.gpu_max_n = 0;
+        p.tridiag_min_n = 256;
+        metal_linalg_eigh_policy_set(&p);
+        CHECK(strcmp(metal_linalg_eigh_backend(512, 1), "tridiag") == 0, "tridiag_min_n = 256: N=512 routes to %s",
+              metal_linalg_eigh_backend(512, 1));
+        CHECK(strcmp(metal_linalg_eigh_backend(128, 1), "cpu") == 0, "tridiag below its threshold");
         metal_linalg_eigh_policy_set(&measured);
         CHECK(metal_linalg_eigh_policy_get().gpu_max_n == measured.gpu_max_n, "policy not restored");
     }

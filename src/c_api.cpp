@@ -54,6 +54,7 @@ const char* name(EighBackend b) {
         case EighBackend::simd:        return "simd";
         case EighBackend::threadgroup: return "threadgroup";
         case EighBackend::block:       return "block";
+        case EighBackend::tridiag:     return "tridiag";
         default:                       return "cpu";
     }
 }
@@ -131,7 +132,8 @@ metal_linalg_eigh_policy metal_linalg_eigh_policy_get(void) {
     const EighPolicy p = eigh_policy();
     return {p.simd_max_n, p.block_min_n, p.block_min_n_batched, p.block_min_batch,
             p.gpu_max_n, p.gpu_min_batch_times_n, p.gpu_min_batch, p.gpu_cores,
-            p.values_gpu_max_n, p.values_gpu_min_batch_times_n, p.values_gpu_min_batch};
+            p.values_gpu_max_n, p.values_gpu_min_batch_times_n, p.values_gpu_min_batch,
+            p.tridiag_min_n, p.values_tridiag_min_n};
 }
 
 metal_linalg_svd_policy metal_linalg_svd_policy_get(void) {
@@ -166,6 +168,8 @@ void metal_linalg_eigh_policy_set(const metal_linalg_eigh_policy* c) {
     p.values_gpu_max_n             = c->values_gpu_max_n;
     p.values_gpu_min_batch_times_n = c->values_gpu_min_batch_times_n;
     p.values_gpu_min_batch         = c->values_gpu_min_batch;
+    p.tridiag_min_n                = c->tridiag_min_n;
+    p.values_tridiag_min_n         = c->values_tridiag_min_n;
     set_eigh_policy(p);
 }
 

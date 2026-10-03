@@ -20,6 +20,7 @@ let coreSources = [
     "src/qr_cpu.mm",
     "src/eigh.mm",
     "src/eigh_block_jacobi.mm",
+    "src/eigh_tridiag.mm",
     "src/svd.mm",
     "src/svd_block_jacobi.mm",
     "src/c_api.cpp",
