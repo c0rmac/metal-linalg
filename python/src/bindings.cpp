@@ -88,6 +88,9 @@ NB_MODULE(_core, m) {
 
     m.def("device_name", [] { return std::string(ml::device_name()); });
     m.def("gpu_core_count", &ml::gpu_core_count);
+    m.def("set_calibration_notices", &ml::set_calibration_notices, "enabled"_a);
+    m.def("calibration_message", [](const std::string& what) { return ml::calibration_message(what.c_str()); },
+          "decomposition"_a);
 
     m.def("qr_backend", [](unsigned rows, unsigned cols, unsigned batch) {
         return name(ml::qr_backend(rows, cols, batch)); }, "m"_a, "n"_a, "batch"_a = 1);

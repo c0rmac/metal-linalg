@@ -1,5 +1,6 @@
 #import <Metal/Metal.h>
 
+#include "calibration.h"
 #include <metal_linalg/core.h>
 
 #include <algorithm>
@@ -35,6 +36,7 @@ struct TunedEntry {
     unsigned    gpu_max_k;
     unsigned    gpu_min_batch_times_k;
     unsigned    gpu_min_batch;
+    unsigned    calibration;   // kCalibration* (calibration.h); rows without it are current
 };
 
 // The rows are generated from every run submitted for a device (docs/results/)
@@ -43,7 +45,7 @@ struct TunedEntry {
 // docs/studies/. The last row keeps the array non-empty and matches nothing.
 constexpr TunedEntry kTuned[] = {
 #include "tuned/qr.inc"
-    {"", 0, 0, 0, 0, 0, 0, 0},
+    {"", 0, 0, 0, 0, 0, 0, 0, 0},
 };
 
 struct ResolvedPolicy {
@@ -95,7 +97,8 @@ ResolvedPolicy resolve() {
                     r.policy.gpu_min_batch_times_k = e.gpu_min_batch_times_k;
                     r.policy.gpu_min_batch         = e.gpu_min_batch;
                 }
-                r.source = "tuned:" + name;
+                r.source = detail::tuned_source_prefix(e.calibration) + name;
+                detail::calibration_notice("QR", e.calibration);
                 break;
             }
         }
@@ -114,6 +117,7 @@ ResolvedPolicy resolve() {
             r.policy.batch_threshold         = 16;
             // GPU or CPU: the QrPolicy defaults.
             r.source = "default:untuned-device" + (name.empty() ? "" : " (" + name + ")");
+            detail::calibration_notice("QR", kUncalibrated);
         }
     }
 

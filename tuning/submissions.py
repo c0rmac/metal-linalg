@@ -27,10 +27,9 @@ import time
 from collections import defaultdict
 
 
-# The measurement epoch. Bump it when a change to a kernel or to its launch
-# parameters makes earlier timings unrepresentative of the library: runs from
-# an older epoch are then left out of the tables until a device is measured
-# again. Recorded in every submission.json by tuning/run.py.
+# The single measurement epoch of runs made before 2.6.0, which all recorded 1.
+# Which measurements are current is now tracked per decomposition, in
+# tuning/kernels.py.
 EPOCH = 1
 
 

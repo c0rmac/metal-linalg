@@ -4,8 +4,9 @@
     python3 tuning/combine.py docs/results/apple-m5-pro-20gpu
 
 For each decomposition it uses every submission whose measurements of it are
-trustworthy and from the current measurement epoch, skips the rest (smoke
-tests, interrupted runs, untrustworthy results, older epochs) and says why,
+trustworthy and at the current kernel version (tuning/kernels.py) -- or, if
+none is, the newest older ones, marked stale -- skips the rest (smoke tests,
+interrupted runs, untrustworthy results, superseded kernel versions) and says why,
 re-runs the analysis over all of them together, and writes
 docs/results/<device>/combined/: one report per decomposition and a
 summary.md. No GPU is needed. How runs combine is described in
@@ -25,6 +26,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 import submissions as sub   # noqa: E402
+import kernels             # noqa: E402
 
 OPS = [("qr", "tune_qr.py", "src/qr.mm"), ("eigh", "tune_eigh.py", "src/eigh.mm"),
        ("svd", "tune_svd.py", "src/svd.mm")]
@@ -106,10 +108,26 @@ def load_submissions(device_dir):
     return out
 
 
+def backends_measured(raw):
+    """The backends a raw.csv timed successfully."""
+    import csv
+    return {r["backend"] for r in csv.DictReader(open(raw)) if r.get("ok") == "1"}
+
+
 def eligible(subs, op, device_dir):
-    """(used, skipped) for one decomposition: used as [(id, raw.csv)],
-    skipped as ["id (reason)"]."""
-    used, skipped = [], []
+    """(used, skipped, status) for one decomposition: used as [(id, raw.csv)],
+    skipped as ["id (reason)"], and status:
+
+        {"state": "current" | "incomplete" | "stale" | "none",
+         "epoch": the kernel version the used runs measured,
+         "current_epoch": kernels.KERNEL_EPOCHS[op],
+         "missing": backends the used runs never timed (incomplete)}
+
+    Runs at the current kernel version are used if there are any; otherwise
+    the newest older ones, rather than none: slightly old measurements usually
+    beat the untuned default. See tuning/kernels.py."""
+    current = kernels.KERNEL_EPOCHS[op]
+    usable, skipped = [], []
     for name, info in subs:
         r = info.get("results", {}).get(op)
         raw = os.path.join(device_dir, name, op, "raw.csv")
@@ -119,13 +137,29 @@ def eligible(subs, op, device_dir):
             skipped.append(f"{name} (smoke test)")
         elif info.get("status") == "running":
             skipped.append(f"{name} (interrupted)")
-        elif info.get("epoch", 0) < sub.EPOCH:
-            skipped.append(f"{name} (measured with older kernels, epoch {info.get('epoch', 0)})")
         elif not r.get("trustworthy"):
             skipped.append(f"{name} ({r.get('why') or 'not trustworthy'})")
         else:
-            used.append((name, raw))
-    return used, skipped
+            usable.append((name, raw, kernels.run_epoch(info, op)))
+    status = {"state": "none", "epoch": None, "current_epoch": current, "missing": []}
+    if not usable:
+        return [], skipped, status
+    at_current = [u for u in usable if u[2] == current]
+    if at_current:
+        chosen, epoch = at_current, current
+    else:
+        epoch = max(e for _, _, e in usable if e < current) if any(e < current for _, _, e in usable) \
+            else max(e for _, _, e in usable)
+        chosen = [u for u in usable if u[2] == epoch]
+    for name, _, e in usable:
+        if e != epoch:
+            skipped.append(f"{name} (measured at kernel version {e}; "
+                           f"{'superseded' if e < epoch else 'newer than this checkout'})")
+    timed = set().union(*(backends_measured(raw) for _, raw, _ in chosen))
+    missing = sorted(kernels.REQUIRED[op] - timed)
+    status.update(epoch=epoch, missing=missing,
+                  state="stale" if epoch != current else ("incomplete" if missing else "current"))
+    return [(n, raw) for n, raw, _ in chosen], skipped, status
 
 
 def combine_device(device_dir):
@@ -138,10 +172,18 @@ def combine_device(device_dir):
     if not subs:
         return None
     out_root = os.path.join(device_dir, "combined")
-    result = {"device": subs[0][1]["device"], "subs": [n for n, _ in subs], "ops": {}}
+    result = {"device": subs[0][1]["device"], "subs": [n for n, _ in subs], "ops": {},
+              "sub_info": {n: {"date": i.get("date"), "library_version": i.get("library_version"),
+                               "macos": i.get("macos"),
+                               "machine": (i.get("machine") or {}).get("product_name"),
+                               "memory_gb": i.get("memory_gb"),
+                               "measured": sorted((i.get("results") or {}).keys()),
+                               "epochs": {op: kernels.run_epoch(i, op) for op, _, _ in OPS}}
+                           for n, i in subs}}
     for op, harness, target in OPS:
-        used, skipped = eligible(subs, op, device_dir)
-        entry = {"row": None, "used": [n for n, _ in used], "skipped": skipped, "target": target}
+        used, skipped, status = eligible(subs, op, device_dir)
+        entry = {"row": None, "used": [n for n, _ in used], "skipped": skipped, "target": target,
+                 "status": status}
         if used:
             out = os.path.join(out_root, op)
             cmd = [sys.executable, os.path.join("tuning", harness), "--reanalyse",
@@ -158,7 +200,11 @@ def combine_device(device_dir):
         skip = f"; skipped {', '.join(e['skipped'])}" if e["skipped"] else ""
         if e["row"]:
             n = len(e["used"])
-            lines.append(f"- **{op}** from {n} run{'s' if n > 1 else ''} ({', '.join(e['used'])}){skip}: "
+            st = e["status"]
+            state = {"current": "current", "incomplete": "incomplete, never timed " + ", ".join(st["missing"]),
+                     "stale": f"stale, measured at kernel version {st['epoch']} (current {st['current_epoch']})"
+                     }[st["state"]]
+            lines.append(f"- **{op}** ({state}) from {n} run{'s' if n > 1 else ''} ({', '.join(e['used'])}){skip}: "
                          f"`{e['row']}` in `{e['target']}` ([report]({op}/report.md))")
         else:
             lines.append(f"- **{op}**: no usable runs{skip}")

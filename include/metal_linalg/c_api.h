@@ -64,6 +64,10 @@ metal_linalg_status metal_linalg_svd(const float* a, uint32_t batch, uint32_t ro
 /* The default Metal device's name, e.g. "Apple M5 Pro" ("" if none), and its
  * GPU core count (0 if unknown). */
 const char* metal_linalg_device_name(void);
+
+/* Calibration notices on stderr (see set_calibration_notices in device.h):
+ * on by default; 0 turns them off. METAL_LINALG_NO_CALIBRATION_NOTICE=1 also does. */
+void metal_linalg_set_calibration_notices(int enabled);
 uint32_t    metal_linalg_gpu_core_count(void);
 
 /* The backend a call of that shape uses under the policy in effect, by name:

@@ -1,7 +1,33 @@
 # Changes
 
-## Unreleased (tuning)
+## 2.6.0 (2026-10-03)
 
+- **Which measurements are current is tracked, per decomposition.** A
+  release does not by itself make measurements stale; a change to what a
+  decomposition times does, and bumps its kernel version in
+  `tuning/kernels.py` (with a history of why). Runs record the versions they
+  measured; the tables use runs at the current version, or else the newest
+  older ones -- marked stale, still used -- rather than falling back to the
+  untuned default. A run from before a newer backend is *incomplete*: valid,
+  with that backend off on its Mac until remeasured. The SVD's version is
+  now 2: QR, which its QR-preconditioned backends call, routes small problems
+  to the CPU since 2.2.3, so the M5 Pro's SVD measurements are stale.
+- **[The measurements page](https://c0rmac.github.io/metal-linalg/docs/measurements)**
+  (`docs/measurements.md`, generated with the tables): every Apple Silicon
+  chip, colour-coded per decomposition (current, incomplete, stale, not
+  measured), with run counts, dates and library versions, every submitted
+  run, and the kernel-version history.
+- **The library says when a Mac is not calibrated.** On the first use of a
+  decomposition with no measurements for this Mac, one line on stderr says so
+  and how to measure and submit; stale or incomplete calibrations get a
+  softer note. Once per decomposition per process; Python raises
+  `metal_linalg.CalibrationWarning` at import instead.
+  `METAL_LINALG_NO_CALIBRATION_NOTICE=1`, `set_calibration_notices(false)`
+  (C++) or `metal_linalg_set_calibration_notices(0)` (C) turns it off. Policy
+  sources read `tuned-stale:` / `tuned-incomplete:` for such rows; new
+  `calibration_message()` (C++) and `ml.calibration_status()` (Python).
+- CI: the *Kernel versions* workflow warns on a pull request that changes a
+  decomposition's timed files without bumping its version.
 - **The measurement sweeps fit the Mac's memory.** Every shape is skipped if
   its estimated peak (six copies of its arrays) exceeds 35% of physical RAM,
   so an 8 GB Mac no longer attempts SVD shapes of 2 GB per array, which could
