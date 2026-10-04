@@ -27,7 +27,7 @@ measurements). The library reports the state at run time
 and docs/measurements.md shows it for every chip.
 """
 
-KERNEL_EPOCHS = {"qr": 3, "eigh": 3, "svd": 5}
+KERNEL_EPOCHS = {"qr": 3, "eigh": 4, "svd": 6}
 
 # (decomposition, epoch, library version, date, why)
 HISTORY = [
@@ -59,10 +59,16 @@ HISTORY = [
      "golub_kahan splits its column sums over lanes (1.2-1.4x on tall matrices) and runs the QR "
      "iteration as a second dispatch from k = 40 (singular values alone) or 60; the bidiag backend "
      "pipelines a batch over two slots (1.5-1.7x per matrix for batches of 2048 x 2048)"),
+    ("eigh", 4, "2.12.0", "2026-10-04",
+     "the tridiag backend's reduction takes three dispatches per column instead of seven, and "
+     "copies the matrix in on every core: 1.3-1.7x for eigenvalues alone, 1.2-1.5x with vectors"),
+    ("svd", 6, "2.12.0", "2026-10-04",
+     "the bidiag backend's reduction takes four dispatches per column instead of twelve, and "
+     "copies the matrix in on every core: 1.2-1.8x for singular values alone, 1.1-1.3x with vectors"),
 ]
 
 REQUIRED = {
-    "qr": {"unblocked", "reduced", "cpu"},
+    "qr": {"unblocked", "reduced", "cpu", "share"},
     "eigh": {"cpu", "simd", "tg", "block", "tridiag", "ql", "ql_share",
              "cpu_vals", "simd_vals", "tg_vals", "block_vals", "tridiag_vals", "ql_vals", "ql_share_vals"},
     "svd": {"cpu", "jacobi", "block", "qr", "qrblock", "bidiag", "gk", "gk_share", "cpu_vals", "bidiag_vals",
@@ -89,6 +95,7 @@ ADDED = {
     "gk_share_vals": "sharing a batch between the GPU and the CPU (2.11.0)",
     "ql_share": "sharing a batch between the GPU and the CPU (2.11.0)",
     "ql_share_vals": "sharing a batch between the GPU and the CPU (2.11.0)",
+    "share": "sharing a batch between the GPU and the CPU (2.12.0)",
 }
 # Where a backend name means something else for one decomposition.
 ADDED_FOR = {

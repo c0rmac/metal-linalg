@@ -83,6 +83,12 @@ void copy_out(const float* src, float* dst, uint32_t batch, size_t per,
 // Each rows x cols matrix of src, transposed into dst as cols x rows.
 void transpose_out(const float* src, float* dst, uint32_t batch, uint32_t rows, uint32_t cols);
 
+// dst[j * ld_dst + i] = scale * src[i * ld_src + j] for i < rows, j < cols:
+// one row-major matrix into column-major storage, in cache-sized blocks on
+// every core.
+void transpose_scaled(const float* src, size_t ld_src, float* dst, size_t ld_dst, uint32_t rows, uint32_t cols,
+                      float scale);
+
 // Floats of host work worth a thread of its own.
 constexpr size_t kGrain = size_t(1) << 16;
 

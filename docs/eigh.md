@@ -196,6 +196,22 @@ next to the rest for eigenvectors, to LAPACK on the CPU:
    about 0.13 ms, and one per column, as a CPU-driven panel needs, cost more
    than the whole reduction below $N \approx 3000$. The last 33 columns or
    fewer are reduced by LAPACK.
+
+   A column's steps are three dispatches (since 2.12.0; seven before), one
+   per point where a whole vector must be done before the next step starts:
+   the column's update, which also finishes the previous column's $W$ and
+   leaves per-threadgroup partials of the column's norm; the product, whose
+   every threadgroup forms the Householder vector from those partials itself,
+   with the corrections' dot products in further threadgroups; and the sum of
+   the product's tiles with the corrections. Each dispatch, even an empty one,
+   costs the GPU about a microsecond, and a dependent one several more while
+   the previous drains: on an M5 Pro, outside the product itself, a column
+   cost 13 µs at $N = 2048$ and 20 µs at 4096, against the product's 10 and
+   38. The update and the corrections run eight threads to a row, so that a
+   few thousand rows still fill the GPU. With the matrix copied in on every
+   core rather than one, eigenvalues alone are 1.3-1.7x faster at
+   $N = 1024$-4096 and eigenvectors 1.2-1.5x. Every sum over threadgroups is
+   taken in a fixed order, so results do not depend on scheduling.
 2. **Tridiagonal eigenproblem**: LAPACK `sstedc` (eigenvectors) or `ssterf`
    (eigenvalues), on the CPU.
 3. **Back-transformation**: `ssytrd`'s reflectors applied to $Z$ 128 at a
@@ -212,26 +228,28 @@ products over- or underflow float32 work as on the CPU, and only the requested
 triangle is read. A batch is pipelined over two workspace slots (since 2.11.0):
 while the CPU solves one matrix's tridiagonal problem, the GPU reduces the
 next, and while the GPU back-transforms one, the CPU solves the next. On an M5
-Pro, per matrix of 2048×2048 with eigenvectors, that is 117 ms alone, 84 ms in
-a batch of 4 and 79 ms in a batch of 8 (1.48x); the GPU then stays ahead of the
-CPU path up to batches of 8 at that size, where before it was ahead only up to
-2. Because the CPU path spreads a batch over every core, the backend still
+Pro, per matrix of 2048×2048 with eigenvectors, that is 90 ms alone, 55 ms in
+a batch of 4 and 50 ms in a batch of 8 (1.80x; 117, 84 and 79 ms before the
+reduction's dispatches were merged in 2.12.0); the GPU then stays ahead of the
+CPU path up to batches of 8 at that size, where before 2.11.0 it was ahead only
+up to 2. Because the CPU path spreads a batch over every core, the backend still
 wins only for a lone matrix or a few, and the policy caps the batch
 (`tridiag_max_batch`). With eigenvectors, on an M5 Pro, one $N \times N$
-(eigh, then eigvalsh, against the CPU path):
+(eigh, then eigvalsh, against the CPU path; to 4096 from the routing sweep in
+[`20261004-fd9bd8`](results/apple-m5-pro-20gpu/20261004-fd9bd8/eigh/report.md), 8192 measured alone):
 
 | $N$ | eigh: CPU | tridiag | speedup | eigvalsh: CPU | tridiag | speedup |
 |---|---|---|---|---|---|---|
-| 1024 | 0.040 s | 0.035 s | 1.14x | 0.018 s | 0.027 s | 0.66x |
-| 2048 | 0.235 s | 0.119 s | 1.98x | 0.081 s | 0.088 s | 0.92x |
-| 3072 | 0.759 s | 0.265 s | 2.86x | 0.222 s | 0.187 s | 1.18x |
-| 4096 | 2.570 s | 0.532 s | 4.83x | 0.471 s | 0.403 s | 1.17x |
-| 8192 | 18.68 s | 3.159 s | 5.91x | 2.606 s | 2.406 s | 1.08x |
+| 1024 | 0.040 s | 0.025 s | 1.61x | 0.018 s | 0.017 s | 1.09x |
+| 2048 | 0.228 s | 0.092 s | 2.49x | 0.081 s | 0.058 s | 1.40x |
+| 3072 | 0.683 s | 0.218 s | 3.14x | 0.207 s | 0.141 s | 1.47x |
+| 4096 | 2.329 s | 0.428 s | 5.44x | 0.466 s | 0.295 s | 1.58x |
+| 8192 | 17.91 s | 2.700 s | 6.63x | 2.540 s | 2.016 s | 1.26x |
 
 With eigenvectors the gain grows with $N$, because the CPU's reduction
 falls further behind memory bandwidth; for eigenvalues alone the CPU already
-uses the two-stage reduction, and the GPU path gains only a little, from about
-$N = 3000$. Accuracy matches LAPACK's: residual and orthogonality about
+uses the two-stage reduction, and the GPU path gains less: 1.1-1.6x, from
+$N = 1024$ since 2.12.0 (before it, about 1.2x from $N = 3000$). Accuracy matches LAPACK's: residual and orthogonality about
 $10^{-6}$ at every size tested, eigenvalues within $3 \times 10^{-7}$ of
 LAPACK's relative to $\|A\|_F$.
 
@@ -314,6 +332,18 @@ measurements:
 ql_min_n <= N <= ql_max_n  ->  backend 4, ql      (eigh and eigvalsh alike)
 otherwise                  ->  the Jacobi split above
 ```
+
+**The large-batch clause** (since 2.12.0). The GPU-or-CPU rule is a product,
+`N <= gpu_max_n` and `batch * N >= gpu_min_batch_times_n`, and shared with the
+CPU (below) the GPU also wins large batches of matrices just above
+`gpu_max_n`, which the product cannot take without also taking their small
+batches, which the CPU wins. So the rule has a second clause: the GPU also for
+N above `gpu_max_n` up to `gpu_big_batch_max_n` in a batch of at least
+`gpu_big_batch_min` (0: never; `gpu_max_n = 0` is still never the GPU). It is
+fitted together with the product rule (stage 2 of `tuning/tune_eigh.py`), and applies to
+eigenvalues alone only while they follow the eigenvectors' rule
+(`values_gpu_min_batch = 0`). `EIGH_GPU_BIG_BATCH_MAX_N` and
+`EIGH_GPU_BIG_BATCH_MIN` override it.
 
 **Sharing a batch with the CPU** (since 2.11.0). From a batch of
 `share_min_batch` (0: never), a batch that goes to `ql` is solved by the GPU
@@ -464,23 +494,30 @@ rather than constants:
 | GPU | cores | simd up to | block from | ql for | GPU iff | tridiag | status |
 |---|---|---|---|---|---|---|---|
 | Apple M1 | 8 | N = 8 | N = 96 | never | N <= 64 and batch * N >= 1024 | never | measured before 2.9.0 (incomplete) — see [`studies/eigh-routing-apple-m1.md`](studies/eigh-routing-apple-m1.md) |
-| Apple M5 Pro | 20 | never | N = 96 | N = 12-64, shared with the CPU from batch 1024 | N <= 48 and batch * N >= 8192 (eigvalsh: batch * N >= 16384) | from N = 1536, batch <= 2 | measured — run [`20261003-c0878c`](results/apple-m5-pro-20gpu/20261003-c0878c/eigh/report.md) |
+| Apple M5 Pro | 20 | N = 8 | N = 96 | N = 12-64, shared with the CPU from batch 1024 | N <= 48 and batch * N >= 16384, or N = 49-64 in batches of 1024+ (eigvalsh: N <= 48 and batch * N >= 16384) | from N = 1024, batch <= 4 (eigvalsh: from 1536, batch <= 2) | measured — run [`20261004-fd9bd8`](results/apple-m5-pro-20gpu/20261004-fd9bd8/eigh/report.md) |
 | anything else | — | N = 8 | N = 96 | never | N <= 64 and batch * N >= 1024 | never | **untuned default** |
 
 The M5 Pro row is the first measured against the CPU path that spreads a
 batch over every core (2.9.0). Against it the GPU keeps two regions: large
-batches of matrices up to N = 48 (batch × N at least 8192, so 256 matrices of
-32×32 or 1024 of 8×8), on the `ql` backend from N = 12, shared with the
-CPU path from 1024 matrices (since 2.11.0), and one or two large matrices on
-`tridiag`. Eigenvalues alone go to the GPU from twice the batch (batch × N at
-least 16384), shared likewise; before 2.11.0 they never did, the CPU's
-eigenvalue paths being faster than the GPU alone everywhere measured except
-`tridiag` for one matrix from N = 3072. Before 2.9.0 the
+batches of matrices up to N = 48 (batch × N at least 16384, so 512 matrices of
+32×32 or 2048 of 8×8), on the `ql` backend from N = 12, shared with the
+CPU path from 1024 matrices (since 2.11.0), and up to four large matrices on
+`tridiag` from N = 1024 (since 2.12.0; 1536 and two before). Since 2.12.0
+batches of 1024 and more go to the GPU, shared, up to N = 64 (the large-batch
+clause), which the product rule cannot reach without also taking small batches
+of N = 49-64 that the CPU wins: on the 205 points of the run the row scores
+1.0094 geometric-mean regret, worst 1.38x, against 1.0157 for the product rule
+alone and 1.0112, worst 1.59x, for the row it replaces. Eigenvalues alone go to
+the GPU at the same batches, shared likewise, and to `tridiag` from N = 1536;
+before 2.11.0 they never went to the GPU, the CPU's eigenvalue paths being
+faster than the GPU alone everywhere measured except `tridiag` for one matrix
+from N = 3072. Before 2.9.0 the
 same machine routed batches up to N = 1024 to the GPU, measured against one
 CPU core ([study](studies/routing-apple-m5-pro.md)); against every core that
 routing is 1.71x slower than the oracle on geometric mean, worst 14x, and
-the new row 1.003x. The block crossover, 96, is unchanged, and simd mode
-still never wins on the M5 Pro.
+the new row 1.003x. The block crossover, 96, is unchanged; simd mode takes
+N <= 8 since the 2.12.0 run (1.020 against 1.025 without it, on the GPU's
+choices alone).
 
 The GPU/CPU rule is `N <= gpu_max_n`, `batch * N >= gpu_min_batch_times_n` and
 `batch >= gpu_min_batch`; the last is 1 (no minimum) on the M1. Eigenvalues
@@ -581,11 +618,11 @@ cmake --build build --target test_eigh
 ./build/test_eigh          # or: ctest --test-dir build
 ```
 
-About 250 checks: every backend, and both modes of backend 1, across
+About 260 checks: every backend, and both modes of backend 1, across
 $N = 1 \ldots 512$ (odd sizes, sizes straddling the 16-block and 32-group
 boundaries, several thread and inner-sweep counts; for `ql` every simdgroup
 boundary up to its limit, 87, and the switch to a chaser of its own at 33),
-the `tridiag` backend to 1024, batched and 4-D inputs, a batch split over
+the `tridiag` backend to 1100, batched and 4-D inputs, a batch split over
 many command buffers,
 both triangles with junk in the other, transposed and unaligned views, integer
 input, structured spectra (identity, zero, diagonal, repeated, $10^{-4}$ to

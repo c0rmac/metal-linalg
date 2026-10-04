@@ -197,6 +197,25 @@ void transpose_out(const float* src, float* dst, uint32_t batch, uint32_t rows, 
     });
 }
 
+void transpose_scaled(const float* src, size_t ld_src, float* dst, size_t ld_dst, uint32_t rows, uint32_t cols,
+                      float scale) {
+    constexpr uint32_t kBlock = 32;
+    const uint32_t col_blocks = (cols + kBlock - 1) / kBlock;
+    // A strip of columns per task: each reads kBlock floats of a row at a time
+    // and writes whole columns.
+    parallel_for(rows * (size_t)cols >= kGrain ? col_blocks : 1, [&](size_t t) {
+        const uint32_t j0 = rows * (size_t)cols >= kGrain ? (uint32_t)t * kBlock : 0;
+        const uint32_t j1 = rows * (size_t)cols >= kGrain ? std::min(cols, j0 + kBlock) : cols;
+        for (uint32_t i0 = 0; i0 < rows; i0 += kBlock) {
+            const uint32_t i1 = std::min(rows, i0 + kBlock);
+            for (uint32_t j = j0; j < j1; ++j) {
+                float* d = dst + (size_t)j * ld_dst;
+                for (uint32_t i = i0; i < i1; ++i) d[i] = scale * src[(size_t)i * ld_src + j];
+            }
+        }
+    });
+}
+
 namespace {
 
 // Chunks per thread in lapack_batches: more than one, so that threads on the

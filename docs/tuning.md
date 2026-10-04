@@ -10,7 +10,7 @@ contribute: each run is saved under its own ID, and the runs are combined.
 | Mac | GPU cores | QR | eigh | SVD | runs |
 |---|---|---|---|---|---|
 | Apple M1 | 8 | measured (stale) | measured (stale) | — | 1 |
-| Apple M5 Pro | 20 | measured | measured | measured | 11 |
+| Apple M5 Pro | 20 | measured | measured | measured | 13 |
 <!-- end of generated table -->
 
 **How to measure and send the results** is in

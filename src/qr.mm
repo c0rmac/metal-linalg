@@ -1,7 +1,9 @@
 #import <Metal/Metal.h>
 
 #include "calibration.h"
+#include "metal_runtime.h"
 #include <metal_linalg/core.h>
+#include <metal_linalg/device.h>
 
 #include <algorithm>
 #include <cstdlib>
@@ -41,6 +43,7 @@ struct TunedEntry {
     // any); 0, 0 = never, which rows from before the clause leave.
     unsigned    gpu_large_min_k;
     unsigned    gpu_large_max_batch;
+    unsigned    share_min_batch;   // 0 = never, which rows from before 2.12.0 leave
     unsigned    calibration;   // kCalibration* (calibration.h); rows without it are current
 };
 
@@ -50,7 +53,7 @@ struct TunedEntry {
 // docs/studies/. The last row keeps the array non-empty and matches nothing.
 constexpr TunedEntry kTuned[] = {
 #include "tuned/qr.inc"
-    {"", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+    {"", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 };
 
 struct ResolvedPolicy {
@@ -105,6 +108,7 @@ ResolvedPolicy resolve() {
                 }
                 r.policy.gpu_large_min_k     = e.gpu_large_min_k;
                 r.policy.gpu_large_max_batch = e.gpu_large_max_batch;
+                r.policy.share_min_batch     = e.share_min_batch;
                 r.source = detail::tuned_source_prefix(e.calibration) + name;
                 detail::calibration_notice("QR", e.calibration);
                 break;
@@ -148,6 +152,7 @@ ResolvedPolicy resolve() {
     over("QR_GPU_MIN_K",             r.policy.gpu_min_k);
     over("QR_GPU_LARGE_MIN_K",       r.policy.gpu_large_min_k);
     over("QR_GPU_LARGE_MAX_BATCH",   r.policy.gpu_large_max_batch);
+    over("QR_SHARE_MIN_BATCH",       r.policy.share_min_batch);
     if (!env.empty()) r.source = "env:" + env;
     return r;
 }
@@ -215,7 +220,37 @@ QrBackend qr_backend(unsigned m, unsigned n, unsigned batch) {
     return qr_uses_gpu(m, n, batch) ? qr_gpu_backend(m, n, batch) : QrBackend::cpu;
 }
 
+bool qr_shares_batch(unsigned m, unsigned n, unsigned batch) {
+    const unsigned from = state().policy.share_min_batch;
+    return from != 0 && batch >= from && qr_backend(m, n, batch) != QrBackend::cpu;
+}
+
+void core::detail::qr_shared(const Matrices& a, float* q, float* r) {
+    const uint32_t M = a.rows, N = a.cols, K = std::min(M, N);
+    if (K == 0 || a.batch == 0) return;
+    const QrBackend gpu = qr_gpu_backend(M, N, a.batch);
+    auto sub = [&](uint32_t b0, uint32_t count) { return Matrices{a.data + (size_t)b0 * M * N, count, M, N}; };
+    // The smallest GPU chunk worth a dispatch: eight matrices per core. The
+    // CPU's chunks are a few matrices per worker (share_batch).
+    metal_linalg::detail::share_batch(
+        a.batch, 8 * std::max(1u, gpu_core_count()),
+        std::clamp(a.batch / (16 * std::max(1u, cpu_threads())), 1u, 16u),
+        [&](uint32_t b0, uint32_t count) {
+            if (gpu == QrBackend::streaming_reduced)
+                qr_streaming_amx_reduced(sub(b0, count), q + (size_t)b0 * M * K, r + (size_t)b0 * K * N);
+            else
+                qr_unblocked(sub(b0, count), q + (size_t)b0 * M * K, r + (size_t)b0 * K * N);
+        },
+        [&](uint32_t b0, uint32_t count) {
+            qr_cpu(sub(b0, count), q + (size_t)b0 * M * K, r + (size_t)b0 * K * N);
+        });
+}
+
 void core::qr(const Matrices& a, float* q, float* r) {
+    if (qr_shares_batch(a.rows, a.cols, a.batch)) {
+        core::detail::qr_shared(a, q, r);
+        return;
+    }
     switch (qr_backend(a.rows, a.cols, a.batch)) {
         case QrBackend::cpu:               core::detail::qr_cpu(a, q, r); break;
         case QrBackend::streaming_reduced: core::detail::qr_streaming_amx_reduced(a, q, r); break;

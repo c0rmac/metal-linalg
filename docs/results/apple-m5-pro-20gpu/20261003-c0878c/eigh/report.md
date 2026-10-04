@@ -16,25 +16,25 @@ Row for `kTuned[]` in `src/eigh.mm`:
 
 ```cpp
 // device, GPU cores,   simd_max_n, block_min_n, block_min_n_batched, block_min_batch,   gpu_max_n, gpu_min_batch_times_n, gpu_min_batch,   values_gpu_max_n, values_gpu_min_batch_times_n, values_gpu_min_batch,   tridiag_min_n, values_tridiag_min_n, tridiag_max_batch, values_tridiag_max_batch,   ql_min_n, ql_max_n
-{"Apple M5 Pro", 20,   0, 96, 0, 0,   48, 8192, 1,   48, 16384, 1,   1536, 3072, 2, 1,   12, 64,   1024},
+{"Apple M5 Pro", 20,   0, 96, 0, 0,   48, 8192, 1,   48, 16384, 1,   1536, 3072, 2, 1,   12, 64,   1024,   64, 1024},
 ```
 
 To try it without rebuilding:
 
 ```sh
-EIGH_SIMD_MAX_N=0 EIGH_BLOCK_MIN_N=96 EIGH_BLOCK_MIN_N_BATCHED=0 EIGH_BLOCK_MIN_BATCH=0 EIGH_GPU_MAX_N=48 EIGH_GPU_MIN_BATCH_TIMES_N=8192 EIGH_GPU_MIN_BATCH=1 EIGH_TRIDIAG_MIN_N=1536 EIGH_VALUES_TRIDIAG_MIN_N=3072 EIGH_TRIDIAG_MAX_BATCH=2 EIGH_VALUES_TRIDIAG_MAX_BATCH=1 EIGH_QL_MIN_N=12 EIGH_QL_MAX_N=64 EIGH_SHARE_MIN_BATCH=1024 EIGH_VALUES_GPU_MAX_N=48 EIGH_VALUES_GPU_MIN_BATCH_TIMES_N=16384 EIGH_VALUES_GPU_MIN_BATCH=1
+EIGH_SIMD_MAX_N=0 EIGH_BLOCK_MIN_N=96 EIGH_BLOCK_MIN_N_BATCHED=0 EIGH_BLOCK_MIN_BATCH=0 EIGH_GPU_MAX_N=48 EIGH_GPU_MIN_BATCH_TIMES_N=8192 EIGH_GPU_MIN_BATCH=1 EIGH_TRIDIAG_MIN_N=1536 EIGH_VALUES_TRIDIAG_MIN_N=3072 EIGH_TRIDIAG_MAX_BATCH=2 EIGH_VALUES_TRIDIAG_MAX_BATCH=1 EIGH_QL_MIN_N=12 EIGH_QL_MAX_N=64 EIGH_SHARE_MIN_BATCH=1024 EIGH_GPU_BIG_BATCH_MAX_N=64 EIGH_GPU_BIG_BATCH_MIN=1024 EIGH_VALUES_GPU_MAX_N=48 EIGH_VALUES_GPU_MIN_BATCH_TIMES_N=16384 EIGH_VALUES_GPU_MIN_BATCH=1
 ```
 
 The policy in effect on this device came from `tuned-stale:Apple M5 Pro`. It differs from the fitted one; see the warnings.
 
-Against the best measured backend at every point the whole rule scores 1.0153 geometric-mean regret, worst 1.60x, 9 of 205 points losing more than 10%, and 1.004x the oracle's total time. The decision is fitted in two stages, below, because the CPU routing would otherwise hide the GPU backend crossover.
+Against the best measured backend at every point the whole rule scores 1.0089 geometric-mean regret, worst 1.60x, 6 of 205 points losing more than 10%, and 1.000x the oracle's total time. The decision is fitted in two stages, below, because the CPU routing would otherwise hide the GPU backend crossover.
 
 ## Warnings
 
-- chosen rule loses more than 25% at N=48 batch=256 (ql, 1.60x), N=64 batch=4096 (cpu, 1.58x), N=64 batch=2048 (cpu, 1.55x), N=12 batch=1024 (ql_share, 1.54x), N=64 batch=1024 (cpu, 1.48x), N=48 batch=512 (ql, 1.26x), N=16 batch=1024 (ql_share, 1.26x)
+- chosen rule loses more than 25% at N=48 batch=256 (ql, 1.60x), N=12 batch=1024 (ql_share, 1.54x), N=48 batch=512 (ql, 1.26x), N=16 batch=1024 (ql_share, 1.26x)
 - GPU split loses more than 25% against the best GPU backend at N=32 batch=1 (ql, 1.63x), N=32 batch=4 (ql, 1.49x), N=32 batch=2 (ql, 1.46x), N=32 batch=16 (ql, 1.45x), N=24 batch=16 (ql, 1.40x), N=32 batch=8 (ql, 1.39x), N=96 batch=16 (block, 1.38x), N=24 batch=4 (ql, 1.35x) ...
 - the fitted policy differs from the one in effect (tuned-stale:Apple M5 Pro): update this device's row in kTuned[] in src/eigh.mm
-- eigenvalues alone: the chosen boundary loses more than 25% at N=64 batch=1024 (cpu, 1.43x), N=64 batch=4096 (cpu, 1.39x), N=32 batch=512 (ql, 1.38x), N=4 batch=4096 (tg, 1.35x), N=64 batch=2048 (cpu, 1.32x), N=8 batch=2048 (tg, 1.26x)
+- eigenvalues alone: the chosen boundary loses more than 25% at N=32 batch=512 (ql, 1.38x), N=4 batch=4096 (tg, 1.35x), N=8 batch=2048 (tg, 1.26x)
 
 ## Stage 1: which GPU backend
 
@@ -166,7 +166,9 @@ Given the split above, GPU iff `N <= gpu_max_n`, `batch * N >= gpu_min_batch_tim
 |---|---|---|---|---|---|
 | oracle (best per point) | 1.0000 | 1.00x | 0 | 1.000 | 0 |
 | policy in effect ('48', '8192', '1') | 1.0153 | 1.60x | 9 | 1.004 | 0 |
-| fitted ('48', '8192', '1') | 1.0153 | 1.60x | 9 | 1.004 | 0 |
+| fitted ('48', '8192', '1') | 1.0089 | 1.60x | 6 | 1.000 | 0 |
+
+Large batches: the GPU also for N above gpu_max_n up to 64 in a batch of at least 1024, fitted over the product rule (product rule alone 1.0153, worst 1.60x; chosen 1.0089, worst 1.60x).
 
 24 of 1188 combinations are within 0.5% of the best geomean: gpu_max_n 48 .. 64, gpu_min_batch_times_n 8192 .. 16384, gpu_min_batch 1 .. 32.
 
@@ -174,26 +176,26 @@ Given the split above, GPU iff `N <= gpu_max_n`, `batch * N >= gpu_min_batch_tim
 xychart-beta
     title "Regret by gpu_min_batch_times_n"
     x-axis "gpu_min_batch_times_n" [0, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, none]
-    y-axis "geometric-mean regret" 1.0 --> 1.88
-    line [1.8604, 1.3500, 1.2384, 1.1582, 1.1036, 1.0710, 1.0428, 1.0229, 1.0153, 1.0147, 1.0538]
+    y-axis "geometric-mean regret" 1.0 --> 1.86
+    line [1.8487, 1.3415, 1.2306, 1.1509, 1.0966, 1.0642, 1.0362, 1.0165, 1.0089, 1.0083, 1.0472]
 ```
 
 | gpu_min_batch_times_n | 0 | 64 | 128 | 256 | 512 | 1024 | 2048 | 4096 | 8192 | 16384 | none |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| geomean | 1.8604 | 1.3500 | 1.2384 | 1.1582 | 1.1036 | 1.0710 | 1.0428 | 1.0229 | 1.0153 | 1.0147 | 1.0538 |
-| worst | 115.80x | 11.90x | 9.92x | 5.82x | 4.28x | 3.21x | 2.20x | 1.60x | 1.60x | 1.58x | 2.18x |
+| geomean | 1.8487 | 1.3415 | 1.2306 | 1.1509 | 1.0966 | 1.0642 | 1.0362 | 1.0165 | 1.0089 | 1.0083 | 1.0472 |
+| worst | 115.80x | 11.90x | 9.92x | 5.82x | 4.28x | 3.21x | 2.20x | 1.60x | 1.60x | 1.42x | 2.18x |
 
 ```mermaid
 xychart-beta
     title "Regret by gpu_min_batch"
     x-axis "gpu_min_batch" [1, 2, 4, 8, 16, 32]
-    y-axis "geometric-mean regret" 1.0 --> 1.03
-    line [1.0153, 1.0153, 1.0153, 1.0153, 1.0153, 1.0153]
+    y-axis "geometric-mean regret" 1.0 --> 1.02
+    line [1.0089, 1.0089, 1.0089, 1.0089, 1.0089, 1.0089]
 ```
 
 | gpu_min_batch | 1 | 2 | 4 | 8 | 16 | 32 |
 |---|---|---|---|---|---|---|
-| geomean | 1.0153 | 1.0153 | 1.0153 | 1.0153 | 1.0153 | 1.0153 |
+| geomean | 1.0089 | 1.0089 | 1.0089 | 1.0089 | 1.0089 | 1.0089 |
 | worst | 1.60x | 1.60x | 1.60x | 1.60x | 1.60x | 1.60x |
 
 ```mermaid
@@ -201,20 +203,20 @@ xychart-beta
     title "Regret by gpu_max_n"
     x-axis "gpu_max_n" [16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, none]
     y-axis "geometric-mean regret" 1.0 --> 1.48
-    line [1.0446, 1.0339, 1.0235, 1.0153, 1.0152, 1.0529, 1.1067, 1.1758, 1.2422, 1.3122, 1.3711, 1.4232, 1.4539, 1.4539, 1.4657, 1.4657, 1.4657, 1.4657]
+    line [1.0112, 1.0101, 1.0090, 1.0089, 1.0152, 1.0529, 1.1067, 1.1758, 1.2422, 1.3122, 1.3711, 1.4232, 1.4539, 1.4539, 1.4657, 1.4657, 1.4657, 1.4657]
 ```
 
 | gpu_max_n | 16 | 24 | 32 | 48 | 64 | 96 | 128 | 192 | 256 | 384 | 512 | 768 | 1024 | 1536 | 2048 | 3072 | 4096 | none |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| geomean | 1.0446 | 1.0339 | 1.0235 | 1.0153 | 1.0152 | 1.0529 | 1.1067 | 1.1758 | 1.2422 | 1.3122 | 1.3711 | 1.4232 | 1.4539 | 1.4539 | 1.4657 | 1.4657 | 1.4657 | 1.4657 |
-| worst | 2.18x | 2.07x | 1.92x | 1.60x | 1.95x | 3.71x | 4.56x | 6.53x | 7.50x | 10.31x | 11.04x | 13.73x | 13.73x | 13.73x | 13.73x | 13.73x | 13.73x | 13.73x |
+| geomean | 1.0112 | 1.0101 | 1.0090 | 1.0089 | 1.0152 | 1.0529 | 1.1067 | 1.1758 | 1.2422 | 1.3122 | 1.3711 | 1.4232 | 1.4539 | 1.4539 | 1.4657 | 1.4657 | 1.4657 | 1.4657 |
+| worst | 1.54x | 1.54x | 1.54x | 1.60x | 1.95x | 3.71x | 4.56x | 6.53x | 7.50x | 10.31x | 11.04x | 13.73x | 13.73x | 13.73x | 13.73x | 13.73x | 13.73x | 13.73x |
 
 Held-out check of a per-N boundary (a lookup table of the smallest batch at which the GPU wins, per N) against the product rule. Fitted on 112 points, scored on the other 93.
 
 | rule | fitted on train | train geomean | test geomean | test worst | verdict |
 |---|---|---|---|---|---|
-| product rule | [48, 8192, 1] | 1.0135 | 1.0175 | 1.60x | baseline |
-| per-N table | {"min_batch_by_n": {"2": 4096, "4": 4096, "8": null, "12": 2048, "16": 2048, "24": 256, "32": 512, "48": 512, "64": 2048, "96": null, "128": null, "192": null, "256": null, "384": null, "512": null, "768": null, "1024": null, "1536": null, "2048": null, "3072": null, "4096": null}} | 1.0049 | 1.0179 | 1.48x | rejected (better in 46% of resamples, median gain -0.0%) |
+| product rule | [48, 8192, 1] | 1.0054 | 1.0132 | 1.60x | baseline |
+| per-N table | {"min_batch_by_n": {"2": 4096, "4": 4096, "8": null, "12": 2048, "16": 2048, "24": 256, "32": 512, "48": 512, "64": 2048, "96": null, "128": null, "192": null, "256": null, "384": null, "512": null, "768": null, "1024": null, "1536": null, "2048": null, "3072": null, "4096": null}} | 1.0049 | 1.0179 | 1.48x | rejected (better in 25% of resamples, median gain -0.4%) |
 
 Best backend per point (`c` CPU, `s` simd, `t` threadgroup, `B` block, `q` ql, `Q` ql shared with the CPU, `.` not measured), what the whole rule picks, and the speedup of the best GPU backend over the CPU:
 
@@ -253,7 +255,7 @@ Best backend per point (`c` CPU, `s` simd, `t` threadgroup, `B` block, `q` ql, `
          24     c     c     c     c     c     c     c     c     c     q     Q     Q     Q
          32     c     c     c     c     c     c     c     c     q     q     Q     Q     Q
          48     c     c     c     c     c     c     c     c     q     q     Q     Q     Q
-         64     c     c     c     c     c     c     c     c     c     c     c     c     c
+         64     c     c     c     c     c     c     c     c     c     c     Q     Q     Q
          96     c     c     c     c     c     c     c     c     c     c     c     c     c
         128     c     c     c     c     c     c     c     c     c     c     c     c     c
         192     c     c     c     c     c     c     c     c     c     c     c     c     c
@@ -300,7 +302,7 @@ The same rule for `eigvalsh`, with its own thresholds (`values_gpu_max_n`, `valu
 | rule | geomean regret | worst | >10% | total time / oracle | est. picks |
 |---|---|---|---|---|---|
 | policy in effect | 1.0218 | 1.76x | 13 | 1.007 | 0 |
-| eigh's fitted boundary | 1.0257 | 1.85x | 17 | 1.004 | 0 |
+| eigh's fitted boundary | 1.0209 | 1.85x | 14 | 1.001 | 0 |
 | fitted ('48', '16384', '1') | 1.0121 | 1.43x | 9 | 1.003 | 0 |
 
 12 combinations are within 0.5% of the best geomean: values_gpu_max_n 48 .. 64, values_gpu_min_batch_times_n 16384 .. 16384, values_gpu_min_batch 1 .. 32.

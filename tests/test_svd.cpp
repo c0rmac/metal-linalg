@@ -490,11 +490,13 @@ int main() {
     // The bidiag backend reduces on the GPU in panels of 32 columns while more
     // than 33 remain, LAPACK takes the rest; a matrix at least twice as tall
     // as wide and 64 wide goes through a QR first; a wide one is its transpose.
+    // Above 1024 rows, a column has more threadgroups' norm partials than a
+    // simdgroup has lanes.
     std::printf("\n[ backend: bidiag ]\n");
     for (auto [M, N] : std::vector<std::pair<int, int>>{{1, 1}, {3, 3}, {33, 33}, {34, 34}, {35, 35},
                                                          {65, 64}, {64, 65}, {100, 97}, {129, 130},
                                                          {300, 300}, {513, 500}, {300, 20}, {20, 300},
-                                                         {600, 100}, {100, 600}, {1024, 1024}})
+                                                         {600, 100}, {100, 600}, {1024, 1024}, {1100, 1060}})
         run_bidiag("bidiag " + dims(1, M, N), random_matrix(1, M, N, 1000 + M * 3 + N));
     run_bidiag("bidiag " + dims(3, 150, 120), random_matrix(3, 150, 120, 1100));
     // Batches are pipelined over two workspace slots: odd and even counts,
@@ -808,6 +810,19 @@ int main() {
         expect("gpu_max_l = 64 -> 64x64 and 64x8 gpu, 65x8 and 8x65 cpu (the long side, either way round)",
                svd_uses_gpu(64, 64, 4096) && svd_uses_gpu(64, 8, 4096) && !svd_uses_gpu(65, 8, 4096) &&
                !svd_uses_gpu(8, 65, 4096));
+        // The large-batch clause: above gpu_max_k, up to its own cap, from its batch.
+        forced = known;
+        forced.gpu_max_k = 48;  forced.gpu_min_batch_times_k = 16384;  forced.gpu_max_l = 256;
+        forced.gpu_big_batch_max_k = 80;  forced.gpu_big_batch_min = 1024;
+        set_svd_policy(forced);
+        expect("big-batch clause (49..80 from 1024): 64x64 b1024 and 80x80 b1024 gpu, 64x64 b1023 and 81x81 b4096 cpu, "
+               "64x300 b4096 cpu (l > 256), 32x32 b512 by the product rule",
+               svd_uses_gpu(64, 64, 1024) && svd_uses_gpu(80, 80, 1024) && !svd_uses_gpu(64, 64, 1023) &&
+               !svd_uses_gpu(81, 81, 4096) && !svd_uses_gpu(64, 300, 4096) && svd_uses_gpu(32, 32, 512) &&
+               !svd_uses_gpu(16, 16, 512));
+        forced.gpu_big_batch_min = 0;
+        set_svd_policy(forced);
+        expect("gpu_big_batch_min = 0 -> no clause (64x64 b4096 cpu)", !svd_uses_gpu(64, 64, 4096));
 
         set_svd_policy(original);
         const SvdPolicy back = svd_policy();

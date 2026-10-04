@@ -180,7 +180,8 @@ int main(int argc, char** argv) {
                     "\"bidiag_max_batch\": %u, \"values_bidiag_max_batch\": %u, "
                     "\"gk_min_k\": %u, \"gk_max_k\": %u, \"gk_limit\": %u, "
                     "\"values_gpu_max_k\": %u, \"values_gpu_min_batch_times_k\": %u, "
-                    "\"values_gpu_min_batch\": %u, \"values_gpu_max_l\": %u, \"share_min_batch\": %u}\n",
+                    "\"values_gpu_min_batch\": %u, \"values_gpu_max_l\": %u, \"share_min_batch\": %u, "
+                    "\"gpu_big_batch_max_k\": %u, \"gpu_big_batch_min\": %u}\n",
                     device_name(), p.gpu_cores, svd_policy_source(),
                     p.qr_min_rows, p.qr_min_k,
                     p.block_min_k, p.block_min_k_batched, p.block_min_batch,
@@ -188,7 +189,7 @@ int main(int argc, char** argv) {
                     p.bidiag_min_k, p.values_bidiag_min_k, p.bidiag_max_batch, p.values_bidiag_max_batch,
                     p.gk_min_k, p.gk_max_k, metal_linalg::detail::svd_gk_max_k(),
                     p.values_gpu_max_k, p.values_gpu_min_batch_times_k, p.values_gpu_min_batch,
-                    p.values_gpu_max_l, p.share_min_batch);
+                    p.values_gpu_max_l, p.share_min_batch, p.gpu_big_batch_max_k, p.gpu_big_batch_min);
         return 0;
     }
     if (argc != 5) {

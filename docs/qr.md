@@ -198,7 +198,21 @@ Two decisions, as for the eigensolver and the SVD. First GPU or CPU, with
 GPU iff  gpu_min_k <= k <= gpu_max_k,  batch * k >= gpu_min_batch_times_k  and  batch >= gpu_min_batch,
      or  k >= gpu_large_min_k  and  batch <= gpu_large_max_batch       (large matrices)
 else CPU
+on the GPU, from a batch of share_min_batch: the batch shared with the CPU path
 ```
+
+**Sharing a batch with the CPU** (since 2.12.0). From a batch of
+`share_min_batch` (0: never), a batch that goes to the GPU is solved by the
+GPU kernel and the CPU path at once, as the eigensolver's and the SVD's
+batched kernels are (see [eigh.md](eigh.md#dispatch)): the GPU takes chunks
+from the front of the batch, CPU workers a few matrices at a time from the
+back, and they meet wherever their speeds put them. QR's GPU region is where
+the two are closest (on an M5 Pro, 1024 matrices of 128×128: 17.7 ms on the
+GPU, 24.2 on the CPU, 14.6 shared), and sharing also takes shapes neither wins
+alone by much (1024 of 256×256: 80 ms on the GPU, 69 on the CPU, 43 shared).
+`qr_shares_batch(m, n, batch)` reports it; `QR_SHARE_MIN_BATCH` overrides it.
+The threshold is fitted by `tuning/tune_qr.py` before the GPU-or-CPU boundary,
+which is then fitted with sharing in effect.
 
 The GPU needs enough work to pay for a launch, so lone and small-batch calls go
 to LAPACK. Since 2.9.0 the CPU path also spreads a batch over every core,
@@ -213,8 +227,13 @@ the CPU however large the batch. On an M5 Pro the CPU wins every square batch
 of 8×8 to 64×64 measured, up to 16384 matrices (16384 of 16×16: 3.3 ms
 against 8.1 on the GPU), while the GPU wins large batches of 128×128 (1024 of
 them: 23.7 ms against 24.4), so a product rule alone sent the large batches
-of small matrices to the GPU. Its measured row is `128 <= k <= 192` with
-`batch * k >= 40960`. Then, on the GPU, which kernel:
+of small matrices to the GPU. It was measured at `128 <= k <= 192` with
+`batch * k >= 40960` in 2.10.0; since 2.12.0, with a batch shared between the
+GPU and the CPU from 64 matrices, the shared GPU route beats the CPU alone for
+large batches of small matrices too (1024 of 64×64: 2.6 ms against 3.1;
+16384 of 16×16: 2.9 ms against 3.5), and
+the measured row is `k <= 128` with `batch * k >= 40960`, no lower bound. Then,
+on the GPU, which kernel:
 
 ```
 M >= m_crossover  ->  qr_streaming_amx_reduced      (384 on an M1, 512 on an M5 Pro)
@@ -281,13 +300,15 @@ the M5 Pro the second effect won.
 | GPU | cores | `m_crossover` | GPU or CPU | status |
 |---|---|---|---|---|
 | Apple M1 | 8 | 384 | always the GPU (measured before the CPU path) | measured before 2.9.0 — see [`studies/qr-routing-apple-m1.md`](studies/qr-routing-apple-m1.md) |
-| Apple M5 Pro | 20 | 512 | GPU iff `k <= 128` and `batch * k >= 131072`, or `k >= 1024` and `batch <= 4` | measured — runs [`20261003-2d2c19`](results/apple-m5-pro-20gpu/20261003-2d2c19/qr/report.md) and [`20261003-847f0e`](results/apple-m5-pro-20gpu/20261003-847f0e/qr/report.md) |
+| Apple M5 Pro | 20 | 512 | GPU iff `k <= 128` and `batch * k >= 40960`, or `k >= 1024` and `batch <= 4`; shared with the CPU from batch 64 | measured — run [`20261004-4d6208`](results/apple-m5-pro-20gpu/20261004-4d6208/qr/report.md) |
 | anything else | — | 384 | GPU iff `batch * k >= 1024` | **untuned default** |
 
 The GPU-or-CPU boundary is measured by every run made since QR had a CPU path;
 a device's row sends every call to the GPU until such a run has been submitted
-for it (`python3 tuning/run.py --only qr` measures QR alone in about 3
-minutes). The M5 Pro row is the first measured against the CPU path that
+for it (`python3 tuning/run.py --only qr` measures QR alone in about 4
+minutes). Against the best backend at each of the 185 shapes of its run, the
+M5 Pro row scores 1.0013 geometric-mean regret, worst 1.17x (2.11.0's row on
+the same data: 1.0081, worst 1.45x). The M5 Pro row of 2.9.0 was the first measured against the CPU path that
 spreads a batch over every core (2.9.0), and against it the CPU was fastest at
 151 of the 178 shapes measured. The GPU keeps one or a few large matrices
 (1.3x at 1536×1536, 1.9x at 2048×2048, 2.2x at 3072×3072, alone) and large
@@ -316,6 +337,7 @@ are under [`results/`](results/), one folder per device.
 To override the policy without rebuilding, set `QR_M_CROSSOVER` (the kernel
 crossover), `QR_GPU_MAX_K`, `QR_GPU_MIN_K`, `QR_GPU_MIN_BATCH_TIMES_K`, `QR_GPU_MIN_BATCH`,
 `QR_GPU_LARGE_MIN_K` and `QR_GPU_LARGE_MAX_BATCH` (the GPU-or-CPU boundary),
+`QR_SHARE_MIN_BATCH` (sharing a batch with the CPU),
 or `QR_DEVICE=gpu` or `cpu` to force one side; or call `set_qr_policy()`:
 
 ```cpp

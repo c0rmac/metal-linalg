@@ -12,23 +12,24 @@ Row for `kTuned[]` in `src/eigh.mm`:
 
 ```cpp
 // device, GPU cores,   simd_max_n, block_min_n, block_min_n_batched, block_min_batch,   gpu_max_n, gpu_min_batch_times_n, gpu_min_batch,   values_gpu_max_n, values_gpu_min_batch_times_n, values_gpu_min_batch,   tridiag_min_n, values_tridiag_min_n, tridiag_max_batch, values_tridiag_max_batch,   ql_min_n, ql_max_n
-{"Apple M1", 8,   8, 96, 0, 0,   64, 1024, 1,   0, 0, 0,   0, 0, 0, 0,   0, 0,   0},
+{"Apple M1", 8,   8, 96, 0, 0,   16, 1024, 1,   0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   64, 16},
 ```
 
 To try it without rebuilding:
 
 ```sh
-EIGH_SIMD_MAX_N=8 EIGH_BLOCK_MIN_N=96 EIGH_BLOCK_MIN_N_BATCHED=0 EIGH_BLOCK_MIN_BATCH=0 EIGH_GPU_MAX_N=64 EIGH_GPU_MIN_BATCH_TIMES_N=1024 EIGH_GPU_MIN_BATCH=1 EIGH_TRIDIAG_MIN_N=0 EIGH_VALUES_TRIDIAG_MIN_N=0 EIGH_TRIDIAG_MAX_BATCH=0 EIGH_VALUES_TRIDIAG_MAX_BATCH=0 EIGH_QL_MIN_N=0 EIGH_QL_MAX_N=0 EIGH_SHARE_MIN_BATCH=0
+EIGH_SIMD_MAX_N=8 EIGH_BLOCK_MIN_N=96 EIGH_BLOCK_MIN_N_BATCHED=0 EIGH_BLOCK_MIN_BATCH=0 EIGH_GPU_MAX_N=16 EIGH_GPU_MIN_BATCH_TIMES_N=1024 EIGH_GPU_MIN_BATCH=1 EIGH_TRIDIAG_MIN_N=0 EIGH_VALUES_TRIDIAG_MIN_N=0 EIGH_TRIDIAG_MAX_BATCH=0 EIGH_VALUES_TRIDIAG_MAX_BATCH=0 EIGH_QL_MIN_N=0 EIGH_QL_MAX_N=0 EIGH_SHARE_MIN_BATCH=0 EIGH_GPU_BIG_BATCH_MAX_N=64 EIGH_GPU_BIG_BATCH_MIN=16
 ```
 
-The policy in effect on this device came from `tuned:Apple M1`. It matches the fitted one.
+The policy in effect on this device came from `tuned:Apple M1`. It differs from the fitted one; see the warnings.
 
-Against the best measured backend at every point the whole rule scores 1.0229 geometric-mean regret, worst 1.70x, 13 of 174 points losing more than 10%, and 1.038x the oracle's total time. The decision is fitted in two stages, below, because the CPU routing would otherwise hide the GPU backend crossover.
+Against the best measured backend at every point the whole rule scores 1.0152 geometric-mean regret, worst 1.32x, 9 of 174 points losing more than 10%, and 1.038x the oracle's total time. The decision is fitted in two stages, below, because the CPU routing would otherwise hide the GPU backend crossover.
 
 ## Warnings
 
-- chosen rule loses more than 25% at N=24 batch=32 (cpu, 1.70x), N=48 batch=16 (cpu, 1.33x), N=12 batch=64 (cpu, 1.32x), N=64 batch=4096 (tg, 1.30x), N=24 batch=16 (cpu, 1.30x), N=64 batch=2048 (tg, 1.27x), N=32 batch=16 (cpu, 1.27x), N=64 batch=1024 (tg, 1.25x)
+- chosen rule loses more than 25% at N=12 batch=64 (cpu, 1.32x), N=64 batch=4096 (tg, 1.30x), N=64 batch=2048 (tg, 1.27x), N=64 batch=1024 (tg, 1.25x)
 - GPU split loses more than 25% against the best GPU backend at N=96 batch=2 (block, 1.49x), N=96 batch=8 (block, 1.48x), N=96 batch=4 (block, 1.43x), N=96 batch=1 (block, 1.37x), N=64 batch=4096 (tg, 1.30x), N=64 batch=2048 (tg, 1.27x), N=64 batch=1024 (tg, 1.25x)
+- the fitted policy differs from the one in effect (tuned:Apple M1): update this device's row in kTuned[] in src/eigh.mm
 - no eigenvalues-alone timings (a run from before they were measured): the row's values_* fields are 0, so eigvalsh follows eigh's boundary
 - no tridiag timings (a run from before the backend existed): the row's tridiag thresholds are 0, so the backend stays off on this device
 - no ql timings (a run from before the backend existed): the row's ql window is 0, 0, so the backend stays off on this device
@@ -125,7 +126,9 @@ Given the split above, GPU iff `N <= gpu_max_n`, `batch * N >= gpu_min_batch_tim
 |---|---|---|---|---|---|
 | oracle (best per point) | 1.0000 | 1.00x | 0 | 1.000 | 0 |
 | policy in effect ('64', '1024', '1') | 1.0229 | 1.70x | 13 | 1.038 | 0 |
-| fitted ('64', '1024', '1') | 1.0229 | 1.70x | 13 | 1.038 | 0 |
+| fitted ('16', '1024', '1') | 1.0152 | 1.32x | 9 | 1.038 | 0 |
+
+Large batches: the GPU also for N above gpu_max_n up to 64 in a batch of at least 16, fitted with the product rule (per cap, the rule, the clause over it and the rule again given the clause, the best kept) (product rule alone 1.1391, worst 3.72x; chosen 1.0152, worst 1.32x).
 
 12 of 792 combinations are within 0.5% of the best geomean: gpu_max_n 64 .. 64, gpu_min_batch_times_n 512 .. 1024, gpu_min_batch 1 .. 32.
 
@@ -133,40 +136,40 @@ Given the split above, GPU iff `N <= gpu_max_n`, `batch * N >= gpu_min_batch_tim
 xychart-beta
     title "Regret by gpu_min_batch_times_n"
     x-axis "gpu_min_batch_times_n" [0, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, none]
-    y-axis "geometric-mean regret" 1.0 --> 1.54
-    line [1.5267, 1.1888, 1.0998, 1.0441, 1.0206, 1.0229, 1.0444, 1.0806, 1.1303, 1.1954, 1.3710]
+    y-axis "geometric-mean regret" 1.0 --> 1.40
+    line [1.3899, 1.1260, 1.0739, 1.0374, 1.0182, 1.0152, 1.0263, 1.0497, 1.0843, 1.1304, 1.2219]
 ```
 
 | gpu_min_batch_times_n | 0 | 64 | 128 | 256 | 512 | 1024 | 2048 | 4096 | 8192 | 16384 | none |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| geomean | 1.5267 | 1.1888 | 1.0998 | 1.0441 | 1.0206 | 1.0229 | 1.0444 | 1.0806 | 1.1303 | 1.1954 | 1.3710 |
-| worst | 12.44x | 6.89x | 4.45x | 2.81x | 1.68x | 1.70x | 2.30x | 2.84x | 3.56x | 4.60x | 8.06x |
+| geomean | 1.3899 | 1.1260 | 1.0739 | 1.0374 | 1.0182 | 1.0152 | 1.0263 | 1.0497 | 1.0843 | 1.1304 | 1.2219 |
+| worst | 12.44x | 6.08x | 4.45x | 2.81x | 1.68x | 1.32x | 1.92x | 2.84x | 3.56x | 4.60x | 8.06x |
 
 ```mermaid
 xychart-beta
     title "Regret by gpu_min_batch"
     x-axis "gpu_min_batch" [1, 2, 4, 8, 16, 32]
-    y-axis "geometric-mean regret" 1.0 --> 1.04
-    line [1.0229, 1.0229, 1.0229, 1.0229, 1.0229, 1.0228]
+    y-axis "geometric-mean regret" 1.0 --> 1.03
+    line [1.0152, 1.0152, 1.0152, 1.0152, 1.0152, 1.0152]
 ```
 
 | gpu_min_batch | 1 | 2 | 4 | 8 | 16 | 32 |
 |---|---|---|---|---|---|---|
-| geomean | 1.0229 | 1.0229 | 1.0229 | 1.0229 | 1.0229 | 1.0228 |
-| worst | 1.70x | 1.70x | 1.70x | 1.70x | 1.70x | 1.70x |
+| geomean | 1.0152 | 1.0152 | 1.0152 | 1.0152 | 1.0152 | 1.0152 |
+| worst | 1.32x | 1.32x | 1.32x | 1.32x | 1.32x | 1.32x |
 
 ```mermaid
 xychart-beta
     title "Regret by gpu_max_n"
     x-axis "gpu_max_n" [16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, none]
     y-axis "geometric-mean regret" 1.0 --> 1.20
-    line [1.1391, 1.0900, 1.0561, 1.0308, 1.0229, 1.0289, 1.0514, 1.0752, 1.1091, 1.1434, 1.1834, 1.1834]
+    line [1.0152, 1.0198, 1.0212, 1.0229, 1.0229, 1.0289, 1.0514, 1.0752, 1.1091, 1.1434, 1.1834, 1.1834]
 ```
 
 | gpu_max_n | 16 | 24 | 32 | 48 | 64 | 96 | 128 | 192 | 256 | 384 | 512 | none |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| geomean | 1.1391 | 1.0900 | 1.0561 | 1.0308 | 1.0229 | 1.0289 | 1.0514 | 1.0752 | 1.1091 | 1.1434 | 1.1834 | 1.1834 |
-| worst | 3.72x | 2.47x | 1.90x | 1.70x | 1.70x | 1.79x | 2.58x | 2.58x | 2.77x | 3.20x | 3.62x | 3.62x |
+| geomean | 1.0152 | 1.0198 | 1.0212 | 1.0229 | 1.0229 | 1.0289 | 1.0514 | 1.0752 | 1.1091 | 1.1434 | 1.1834 | 1.1834 |
+| worst | 1.32x | 1.70x | 1.70x | 1.70x | 1.70x | 1.79x | 2.58x | 2.58x | 2.77x | 3.20x | 3.62x | 3.62x |
 
 Held-out check of a per-N boundary (a lookup table of the smallest batch at which the GPU wins, per N) against the product rule. Fitted on 93 points, scored on the other 81.
 
@@ -203,9 +206,9 @@ Best backend per point (`c` CPU, `s` simd, `t` threadgroup, `B` block, `q` ql, `
           8     c     c     c     c     c     c     c     s     s     s     s     s     s
          12     c     c     c     c     c     c     c     t     t     t     t     t     t
          16     c     c     c     c     c     c     t     t     t     t     t     t     t
-         24     c     c     c     c     c     c     t     t     t     t     t     t     t
-         32     c     c     c     c     c     t     t     t     t     t     t     t     t
-         48     c     c     c     c     c     t     t     t     t     t     t     t     t
+         24     c     c     c     c     t     t     t     t     t     t     t     t     t
+         32     c     c     c     c     t     t     t     t     t     t     t     t     t
+         48     c     c     c     c     t     t     t     t     t     t     t     t     t
          64     c     c     c     c     t     t     t     t     t     t     t     t     t
          96     c     c     c     c     c     c     c     c     c     c     c     c     c
         128     c     c     c     c     c     c     c     c     c     c     c     c     .

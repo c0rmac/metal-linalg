@@ -2,7 +2,7 @@
 // steps on the GPU.
 //
 //   1. Tridiagonalize, A = Q T Q^T, entirely on the GPU (shaders/Eigh_Tridiag.metal):
-//      blocked ssytrd (lower), per column slatrd's steps as small kernels, per
+//      blocked ssytrd (lower), per column slatrd's steps as three kernels, per
 //      panel the rank-2nb trailing update as an MPS GEMM. The panels' command
 //      buffers are queued back to back and the host waits once per matrix, so
 //      no GPU round trip is paid per column. The last few columns, fewer than a
@@ -15,15 +15,16 @@
 // ssyevd spends most of its time in step 1, half of it a symmetric
 // matrix-vector product per column, bound by memory bandwidth, and in the
 // back-transformation, which is matrix products. On an M5 Pro, one N x N with
-// eigenvectors: 2.0x the CPU's speed at N = 2048, 4.9x at 4096, 6.2x at 8192.
-// Below N ~ 1024 the per-panel work and the launches cost more than they save,
-// which is what the routing policy's tridiag_min_n is measured for.
+// eigenvectors: 1.6x the CPU's speed at N = 1024, 2.5x at 2048, 5.4x at 4096,
+// 6.6x at 8192. Below N ~ 1000 the per-panel work and the launches cost more
+// than they save, which is what the routing policy's tridiag_min_n is measured
+// for.
 //
 // A batch is pipelined over two workspace slots: while the CPU solves one
 // matrix's tridiagonal problem (step 2), the GPU reduces the next (step 1),
 // and while the GPU back-transforms one (step 3), the CPU solves the next. On
-// an M5 Pro, per matrix of 2048 x 2048 with eigenvectors: 117 ms alone, 84 ms
-// in a batch of 4, 79 ms in a batch of 8. Each matrix is scaled by a power of
+// an M5 Pro, per matrix of 2048 x 2048 with eigenvectors: 90 ms alone, 55 ms
+// in a batch of 4, 50 ms in a batch of 8. Each matrix is scaled by a power of
 // two first (exact), so magnitudes that would over- or underflow a float32
 // product work as on the CPU.
 
@@ -54,6 +55,7 @@ using metal_linalg::detail::MetalRuntime;
 using metal_linalg::detail::Part;
 using metal_linalg::detail::make_pipeline;
 using metal_linalg::detail::scan;
+using metal_linalg::detail::transpose_scaled;
 
 namespace metal_linalg {
 namespace {
@@ -61,15 +63,19 @@ namespace {
 constexpr uint32_t kPanel     = 32;    // columns per panel of the reduction (nb)
 constexpr uint32_t kBackBlock = 128;   // reflectors per pass of the back-transformation
 constexpr uint32_t kTile      = 64;    // must match TILE in Eigh_Tridiag.metal
+constexpr uint32_t kGroup     = 256;   // must match GROUP in Eigh_Tridiag.metal
+constexpr uint32_t kRows      = 32;    // must match ROWS: td_update's and td_apply's rows per threadgroup
 
 // Must match TdParams and PackParams in Eigh_Tridiag.metal.
-struct TdParams   { uint32_t nn, lda, ldw, i, k; };
-struct PackParams { uint32_t m, nb, lda, ldw, ldb; };
+struct TdParams   { uint32_t nn, lda, ldw, i, k, ng, ngp, tiles; };
+struct PackParams { uint32_t m, nb, lda, ldw, ldb, k, ngp; };
+
+uint32_t groups(uint32_t rows) { return (rows + kRows - 1) / kRows; }
 
 using L = __LAPACK_int;
 
 struct Pipelines {
-    id<MTLComputePipelineState> col_update, larfg, tiles, reduce, dots, apply, finish, pack, restore;
+    id<MTLComputePipelineState> update, symv, apply, pack, restore;
 };
 
 // Buffers for one N, reused across the matrices of a batch and across calls.
@@ -77,6 +83,8 @@ struct Pipelines {
 struct Workspace {
     uint32_t      lda = 0;
     id<MTLBuffer> A[2], W, B, C, P, tmp, d, e, tau;   // the reduction
+    id<MTLBuffer> red;                                 // reflector scale, norm and dot partials
+    size_t        npart_off = 0, dpart_off = 0;        // in red, bytes
     id<MTLBuffer> Z[2];                                // eigenvectors, column-major (n x n)
     id<MTLBuffer> V[2], T[2], Y, Y2;                   // the back-transformation, two slots
 };
@@ -90,15 +98,16 @@ struct Cache {
     const Pipelines& pipelines() {
         if (!have_pipelines) {
             auto make = [&](NSString* name) { return make_pipeline(rt.device, rt.library, name, nil); };
-            p.col_update = make(@"td_col_update");
-            p.larfg      = make(@"td_larfg");
-            p.tiles      = make(@"td_symv_tiles");
-            p.reduce     = make(@"td_symv_reduce");
-            p.dots       = make(@"td_corr_dots");
-            p.apply      = make(@"td_corr_apply");
-            p.finish     = make(@"td_finish_w");
-            p.pack       = make(@"td_pack");
-            p.restore    = make(@"td_restore_e");
+            p.update  = make(@"td_update");
+            p.symv    = make(@"td_symv");
+            p.apply   = make(@"td_apply");
+            p.pack    = make(@"td_pack");
+            p.restore = make(@"td_restore_e");
+            for (id<MTLComputePipelineState> ps : {p.update, p.symv, p.apply}) {
+                if (ps.maxTotalThreadsPerThreadgroup < kGroup) {
+                    throw std::runtime_error("[eigh] tridiag: a pipeline allows fewer than 256 threads per threadgroup.");
+                }
+            }
             have_pipelines = true;
         }
         return p;
@@ -127,6 +136,10 @@ struct Cache {
         w.C   = priv((size_t)n * 2 * kPanel);
         w.P   = priv((size_t)((n + kTile - 1) / kTile) * n);
         w.tmp = priv(2 * kPanel);
+        const size_t g = groups(n) + 1;
+        w.red = priv(4 + 3 * g);
+        w.npart_off = 4 * sizeof(float);
+        w.dpart_off = (4 + 2 * g) * sizeof(float);
         w.d   = shared(n);
         w.e   = shared(n);
         w.tau = shared(n);
@@ -192,76 +205,58 @@ void tridiagonalize(Cache& cache, Workspace& ws, id<MTLBuffer> Abuf, uint32_t n,
         const size_t offk = (size_t)k * lda + k;
         id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
         for (uint32_t i = 0; i < nb; ++i) {
-            const TdParams prm{nn, lda, ldw, i, k};
-            const uint32_t len = nn - i, lr = nn - i - 1;
-            if (i > 0) {
-                [enc setComputePipelineState:p.col_update];
-                [enc setBuffer:Abuf offset:offk * sizeof(float) atIndex:0];
-                [enc setBuffer:ws.W offset:0 atIndex:1];
-                [enc setBytes:&prm length:sizeof prm atIndex:2];
-                [enc dispatchThreads:MTLSizeMake(len, 1, 1)
-                    threadsPerThreadgroup:MTLSizeMake(group_size(p.col_update, 256), 1, 1)];
-            }
-            [enc setComputePipelineState:p.larfg];
-            [enc setBuffer:Abuf offset:offk * sizeof(float) atIndex:0];
-            [enc setBuffer:ws.d offset:0 atIndex:1];
-            [enc setBuffer:ws.e offset:0 atIndex:2];
-            [enc setBuffer:ws.tau offset:0 atIndex:3];
-            [enc setBytes:&prm length:sizeof prm atIndex:4];
-            [enc dispatchThreadgroups:MTLSizeMake(1, 1, 1)
-                threadsPerThreadgroup:MTLSizeMake(group_size(p.larfg, 1024), 1, 1)];
-
-            // W(i+1:, i) = Ak(i+1:, i+1:) v
-            const uint32_t dims[2] = {lr, lda};
-            const uint32_t blocks = (lr + kTile - 1) / kTile;
-            [enc setComputePipelineState:p.tiles];
-            [enc setBuffer:Abuf offset:(offk + (size_t)(i + 1) * lda + i + 1) * sizeof(float) atIndex:0];
-            [enc setBuffer:Abuf offset:(offk + (size_t)i * lda + i + 1) * sizeof(float) atIndex:1];
-            [enc setBuffer:ws.P offset:0 atIndex:2];
-            [enc setBytes:dims length:sizeof dims atIndex:3];
-            [enc dispatchThreadgroups:MTLSizeMake(blocks, blocks, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
-            [enc setComputePipelineState:p.reduce];
-            [enc setBuffer:ws.P offset:0 atIndex:0];
-            [enc setBuffer:ws.W offset:((size_t)i * ldw + i + 1) * sizeof(float) atIndex:1];
-            [enc setBytes:dims length:sizeof dims atIndex:2];
-            [enc dispatchThreads:MTLSizeMake(lr, 1, 1)
-                threadsPerThreadgroup:MTLSizeMake(group_size(p.reduce, 256), 1, 1)];
-
-            if (i > 0) {
-                [enc setComputePipelineState:p.dots];
-                [enc setBuffer:Abuf offset:offk * sizeof(float) atIndex:0];
-                [enc setBuffer:ws.W offset:0 atIndex:1];
-                [enc setBuffer:ws.tmp offset:0 atIndex:2];
-                [enc setBytes:&prm length:sizeof prm atIndex:3];
-                [enc dispatchThreadgroups:MTLSizeMake(2 * i, 1, 1)
-                    threadsPerThreadgroup:MTLSizeMake(group_size(p.dots, 256), 1, 1)];
-            }
-            [enc setComputePipelineState:p.apply];
-            [enc setBuffer:Abuf offset:offk * sizeof(float) atIndex:0];
-            [enc setBuffer:ws.W offset:0 atIndex:1];
-            [enc setBuffer:ws.tmp offset:0 atIndex:2];
-            [enc setBuffer:ws.tau offset:0 atIndex:3];
-            [enc setBytes:&prm length:sizeof prm atIndex:4];
-            [enc dispatchThreads:MTLSizeMake(lr, 1, 1)
-                threadsPerThreadgroup:MTLSizeMake(group_size(p.apply, 256), 1, 1)];
-            [enc setComputePipelineState:p.finish];
+            const uint32_t len = nn - i, lr = len - 1, blocks = (lr + kTile - 1) / kTile;
+            const TdParams prm{nn, lda, ldw, i, k, groups(len), i > 0 ? groups(len) : 0,
+                               blocks * (blocks + 1) / 2};
+            // Finish W(:, i-1), update Ak(i:, i), the norm partials.
+            [enc setComputePipelineState:p.update];
             [enc setBuffer:Abuf offset:offk * sizeof(float) atIndex:0];
             [enc setBuffer:ws.W offset:0 atIndex:1];
             [enc setBuffer:ws.tau offset:0 atIndex:2];
-            [enc setBytes:&prm length:sizeof prm atIndex:3];
-            [enc dispatchThreadgroups:MTLSizeMake(1, 1, 1)
-                threadsPerThreadgroup:MTLSizeMake(group_size(p.finish, 1024), 1, 1)];
+            [enc setBuffer:ws.red offset:ws.dpart_off atIndex:3];
+            [enc setBuffer:ws.red offset:ws.npart_off atIndex:4];
+            [enc setBytes:&prm length:sizeof prm atIndex:5];
+            [enc dispatchThreadgroups:MTLSizeMake(prm.ng, 1, 1) threadsPerThreadgroup:MTLSizeMake(kGroup, 1, 1)];
+
+            // The reflector; W(i+1:, i) = Ak(i+1:, i+1:) v in tiles; the corrections' dot products.
+            [enc setComputePipelineState:p.symv];
+            [enc setBuffer:Abuf offset:offk * sizeof(float) atIndex:0];
+            [enc setBuffer:ws.W offset:0 atIndex:1];
+            [enc setBuffer:ws.P offset:0 atIndex:2];
+            [enc setBuffer:ws.tmp offset:0 atIndex:3];
+            [enc setBuffer:ws.red offset:ws.npart_off atIndex:4];
+            [enc setBuffer:ws.d offset:0 atIndex:5];
+            [enc setBuffer:ws.e offset:0 atIndex:6];
+            [enc setBuffer:ws.tau offset:0 atIndex:7];
+            [enc setBuffer:ws.red offset:0 atIndex:8];
+            [enc setBytes:&prm length:sizeof prm atIndex:9];
+            [enc dispatchThreadgroups:MTLSizeMake(prm.tiles + 2 * i, 1, 1)
+                threadsPerThreadgroup:MTLSizeMake(kGroup, 1, 1)];
+
+            // Sum the tiles, apply the corrections, store v; the dot partials.
+            [enc setComputePipelineState:p.apply];
+            [enc setBuffer:Abuf offset:offk * sizeof(float) atIndex:0];
+            [enc setBuffer:ws.W offset:0 atIndex:1];
+            [enc setBuffer:ws.P offset:0 atIndex:2];
+            [enc setBuffer:ws.tmp offset:0 atIndex:3];
+            [enc setBuffer:ws.tau offset:0 atIndex:4];
+            [enc setBuffer:ws.red offset:0 atIndex:5];
+            [enc setBuffer:ws.red offset:ws.dpart_off atIndex:6];
+            [enc setBytes:&prm length:sizeof prm atIndex:7];
+            [enc dispatchThreadgroups:MTLSizeMake(groups(lr), 1, 1) threadsPerThreadgroup:MTLSizeMake(kGroup, 1, 1)];
         }
         // A(k+nb:, k+nb:) -= [V W] [W V]^T, one GEMM. The column-major m x 2nb
         // B and C, seen row-major, are B^T and C^T.
         const uint32_t m = nn - nb;
-        const PackParams pp{m, nb, lda, ldw, n};
+        const PackParams pp{m, nb, lda, ldw, n, k, groups(m)};
         [enc setComputePipelineState:p.pack];
         [enc setBuffer:Abuf offset:offk * sizeof(float) atIndex:0];
         [enc setBuffer:ws.W offset:0 atIndex:1];
         [enc setBuffer:ws.B offset:0 atIndex:2];
         [enc setBuffer:ws.C offset:0 atIndex:3];
-        [enc setBytes:&pp length:sizeof pp atIndex:4];
+        [enc setBuffer:ws.tau offset:0 atIndex:4];
+        [enc setBuffer:ws.red offset:ws.dpart_off atIndex:5];
+        [enc setBytes:&pp length:sizeof pp atIndex:6];
         [enc dispatchThreads:MTLSizeMake(m, nb, 1) threadsPerThreadgroup:MTLSizeMake(group_size(p.pack, 256), 1, 1)];
         [enc endEncoding];
         gemm(dev, cb, mps_matrix(ws.B, 0, 2 * nb, m, n), true, mps_matrix(ws.C, 0, 2 * nb, m, n), false,
@@ -406,10 +401,13 @@ void eigh_tridiag(const Matrices& a, bool lower, float* w_out, float* v_out, uin
         // triangle is already the column-major lower one.
         const float* src = a.data + b * per;
         float* A = static_cast<float*>(ws.A[s].contents);
-        for (uint32_t j = 0; j < n; ++j) {
-            float* col = A + (size_t)j * ws.lda;
-            if (lower) for (uint32_t i = 0; i < n; ++i) col[i] = src[(size_t)i * n + j] * scale;
-            else       for (uint32_t i = 0; i < n; ++i) col[i] = src[(size_t)j * n + i] * scale;
+        if (lower) {
+            transpose_scaled(src, n, A, ws.lda, n, n, scale);
+        } else {
+            for (uint32_t j = 0; j < n; ++j) {
+                float* col = A + (size_t)j * ws.lda;
+                for (uint32_t i = 0; i < n; ++i) col[i] = src[(size_t)j * n + i] * scale;
+            }
         }
         tridiagonalize(cache, ws, ws.A[s], n, slots[s].d.data(), slots[s].e.data(), slots[s].tau.data());
     };

@@ -66,18 +66,19 @@ def _struct(name, fields):
 # Field for field as in c_api.h, which says what each does.
 QR_FIELDS = ("m_crossover_small_batch", "m_crossover_large_batch", "batch_threshold",
              "gpu_max_k", "gpu_min_batch_times_k", "gpu_min_batch", "gpu_cores", "concurrent_matrices",
-             "gpu_large_min_k", "gpu_large_max_batch", "gpu_min_k")
+             "gpu_large_min_k", "gpu_large_max_batch", "gpu_min_k", "share_min_batch")
 EIGH_FIELDS = ("simd_max_n", "block_min_n", "block_min_n_batched", "block_min_batch",
                "gpu_max_n", "gpu_min_batch_times_n", "gpu_min_batch", "gpu_cores",
                "values_gpu_max_n", "values_gpu_min_batch_times_n", "values_gpu_min_batch",
                "tridiag_min_n", "values_tridiag_min_n", "ql_min_n", "ql_max_n",
-               "tridiag_max_batch", "values_tridiag_max_batch", "share_min_batch")
+               "tridiag_max_batch", "values_tridiag_max_batch", "share_min_batch",
+               "gpu_big_batch_max_n", "gpu_big_batch_min")
 SVD_FIELDS = ("qr_min_rows", "qr_min_k", "block_min_k", "block_min_k_batched", "block_min_batch",
               "gpu_max_k", "gpu_min_batch_times_k", "gpu_min_batch", "gpu_cores",
               "bidiag_min_k", "values_bidiag_min_k", "bidiag_max_batch", "values_bidiag_max_batch",
               "gk_min_k", "gk_max_k", "gpu_max_l",
               "values_gpu_max_k", "values_gpu_min_batch_times_k", "values_gpu_min_batch", "values_gpu_max_l",
-              "share_min_batch")
+              "share_min_batch", "gpu_big_batch_max_k", "gpu_big_batch_min")
 # Read back but ignored when set.
 INFORMATIONAL = {"gpu_cores", "concurrent_matrices"}
 

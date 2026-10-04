@@ -57,6 +57,14 @@ import submissions as sub   # noqa: E402
 
 GPU_BACKENDS = ("unblocked", "reduced")
 BACKENDS = GPU_BACKENDS + ("cpu",)       # what a sweep times; "cpu" is LAPACK
+# The GPU kernel and the CPU sharing one batch (QrPolicy::share_min_batch),
+# timed from this batch: below it a batch is too small to share.
+SHARE_MIN_GRID_BATCH = 64
+# From which batch a GPU batch is shared (0: never): fitted before the CPU
+# routing, which is then fitted with it in effect; the points where "share"
+# was timed, which it can only be chosen at.
+SHARE = 0
+SHARED_PTS = set()
 REGIONS = ("square", "tall", "wide", "near-square")
 NO_LIMIT = 0xFFFFFFFF
 INF = float("inf")
@@ -177,9 +185,10 @@ def run_one(binary, job, limit, attempts=3):
 
 def sweep(binary, pts, passes, limit, out_csv):
     jobs = [(b, M, N, k) for (b, M, N) in pts for k in BACKENDS]
+    jobs += [(b, M, N, "share") for (b, M, N) in pts if b >= SHARE_MIN_GRID_BATCH]
     total = len(jobs) * passes
-    print(f"  {len(pts)} shapes x {len(BACKENDS)} backends x {passes} passes "
-          f"= {total} timed runs", file=sys.stderr)
+    print(f"  {len(pts)} shapes x {len(BACKENDS)} backends (and sharing from batch {SHARE_MIN_GRID_BATCH}) "
+          f"x {passes} passes = {total} timed runs", file=sys.stderr)
     done = 0
     t0 = time.time()
     with open(out_csv, "w") as fh:
@@ -316,7 +325,10 @@ def routed(params, chosen, large=(0, 0)):
     gm, mb, mbatch = params[:3]
     mk = params[3] if len(params) > 3 else 0
     lk, lcap = large
-    kernel = flat_rule(chosen)
+    base = flat_rule(chosen)
+
+    def kernel(b, M, N):   # on the GPU: the kernel, or shared with the CPU from SHARE
+        return "share" if SHARE and b >= SHARE and (b, M, N) in SHARED_PTS else base(b, M, N)
 
     def rule(b, M, N):
         k = min(M, N)
@@ -326,6 +338,27 @@ def routed(params, chosen, large=(0, 0)):
             return "cpu"
         return kernel(b, M, N)
     return rule
+
+
+def fit_share(best, chosen, tol=0.005):
+    """From which batch a GPU batch is shared with the CPU, on the GPU's side
+    alone: the kernel against "share", scored against the best of the two
+    kernels and "share" where it was timed. 0 (never) unless sharing beats the
+    kernels by more than `tol`. -> (threshold, scores)."""
+    pts = {k: {g: v[g] for g in GPU_BACKENDS + ("share",) if g in v} for k, v in best.items() if "share" in v}
+    if not pts:
+        return 0, {}
+    kern = flat_rule(chosen)
+    cands = [0] + sorted({b for (b, _, _) in pts})
+    scores = {}
+    for c in cands:
+        rule = lambda b, M, N, c=c: "share" if c and b >= c else kern(b, M, N)
+        e = evaluate(rule, pts)
+        scores[c] = (e["geomean"], e["worst"])
+    g = min(v[0] for v in scores.values())
+    near = [c for c, v in scores.items() if v[0] <= g * (1 + tol)]
+    # The smallest worst case, then the latest threshold (sharing used least).
+    return min(near, key=lambda c: (scores[c][1], -c if c else -10**9)), scores
 
 
 def fit_cpu_routing(best, chosen, tol=0.005):
@@ -578,7 +611,15 @@ def analyse(best_all, repeats, device):
     for k in best_all:
         counts[region(k[1], k[2])] += 1
 
+    global SHARE, SHARED_PTS
+    SHARED_PTS = {k for k, v in best_all.items() if "share" in v}
+    SHARE = 0
+    share, share_scores = fit_share(best_all, chosen)
+    SHARE = share
     routing = fit_cpu_routing(best_all, chosen)
+    if routing is not None:
+        routing["share_min_batch"] = share
+        routing["share_curve"] = [[c, round(v[0], 4), round(v[1], 3)] for c, v in sorted(share_scores.items())]
     lk, lcap, mk = 0, 0, 0
     if routing is None:     # measured before QR had a CPU path: always the GPU
         gm_s, mb, mbatch = "kQrNoLimit", 0, 1
@@ -605,7 +646,7 @@ def analyse(best_all, repeats, device):
         "baseline_held_out": {"geomean": round(base_te["geomean"], 4),
                               "worst": round(base_te["worst"], 3)},
         "ktuned_entry": (f'{{"{device["name"]}", {device["gpu_cores"]}, '
-                         f'{chosen}, {chosen}, 16,   {gm_s}, {mb}, {mbatch}, {mk},   {lk}, {lcap}}},'),
+                         f'{chosen}, {chosen}, 16,   {gm_s}, {mb}, {mbatch}, {mk},   {lk}, {lcap},   {share}}},'),
     }
 
 
@@ -750,6 +791,18 @@ def write_report(res, path):
         mk = rt.get("gpu_min_k", 0)
         A(f"```\nGPU iff {str(mk) + ' <= ' if mk else ''}k <= {gm}, batch * k >= {rt['gpu_min_batch_times_k']} "
           f"and batch >= {rt['gpu_min_batch']}   (k = min(M, N)){large}\notherwise LAPACK on the CPU\n```")
+        A("")
+        sh = rt.get("share_min_batch", 0)
+        A("On the GPU, " + (f"from a batch of {sh} the batch is shared with the CPU path (the GPU and the CPU "
+                            "solving it at once)" if sh else "no batch is shared with the CPU path") +
+          ": fitted first, on the GPU's side alone (the kernel against `share`, timed from batch "
+          f"{SHARE_MIN_GRID_BATCH}), and the routing above fitted with it in effect.")
+        if rt.get("share_curve"):
+            A("")
+            A("| shared from batch | geomean regret (GPU side) | worst |")
+            A("|---|---|---|")
+            for c, g, w in rt["share_curve"]:
+                A(f"| {c or 'never'} | {g:.4f} | {w:.2f}x |")
         A("")
         A("Fitted on every shape with a CPU timing; inside the region within 0.5% of "
           "the best geometric-mean regret, the candidate with the smallest worst case.")
@@ -970,6 +1023,7 @@ def main():
         print(f"  CPU routing: GPU iff {rt.get('gpu_min_k', 0)} <= k <= {gm}, batch*k >= {rt['gpu_min_batch_times_k']}, "
               f"batch >= {rt['gpu_min_batch']}" +
               (f", or k >= {lk} and batch <= {rt['gpu_large_max_batch'] or 'any'}" if lk else "") +
+              (f"; shared with the CPU from batch {rt['share_min_batch']}" if rt.get("share_min_batch") else "") +
               f"   ({rt['chosen']['geomean']:.4f}x vs "
               f"{rt['gpu_always']['geomean']:.4f}x always GPU, worst {rt['chosen']['worst']:.2f}x)")
     print(f"  kTuned entry:  {res['ktuned_entry']}")

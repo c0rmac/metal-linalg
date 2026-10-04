@@ -171,6 +171,14 @@ int main() {
     run("batch 5 x 30x45 (wide)", detail::qr_cpu, random_matrix(5, 30, 45, 100));
     run("1x7 (wide)",      detail::qr_cpu, random_matrix(1, 1, 7, 101));
     run("rank 3 of 40x90 (wide)", detail::qr_cpu, matmul(random_matrix(1, 40, 3, 102), random_matrix(1, 3, 90, 103)));
+
+    // A batch shared between a GPU kernel and the CPU path: the GPU's chunks
+    // from the front, the CPU's from the back; every matrix solved once.
+    std::printf("\n[ shared with the CPU ]\n");
+    run("shared 700 x 24x24 (unblocked)",  detail::qr_shared, random_matrix(700, 24, 24, 104));
+    run("shared 300 x 600x64 (reduced)",   detail::qr_shared, random_matrix(300, 600, 64, 105));
+    run("shared 3 x 40x30",                detail::qr_shared, random_matrix(3, 40, 30, 106));
+    run("shared 500 x 20x50 (wide)",       detail::qr_shared, random_matrix(500, 20, 50, 107));
     // A batch is spread over cpu_threads() threads; one thread must agree.
     {
         array A = random_matrix(41, 48, 20, 99);
@@ -409,6 +417,19 @@ int main() {
                              "GPU at 1024 x 128x128\n");
         }
         run("gpu_min_k -> cpu    16x16 b64", qr_accelerated, random_matrix(64, 16, 16, 47));
+
+        // Sharing a GPU batch with the CPU from share_min_batch; never a CPU batch.
+        forced.share_min_batch = 512;
+        set_qr_policy(forced);
+        {
+            const bool ok = qr_shares_batch(128, 128, 512) && !qr_shares_batch(128, 128, 511) &&
+                            !qr_shares_batch(16, 16, 100000);
+            ++g_checks;
+            if (!ok) fail("qr_shares_batch", "share_min_batch not applied");
+            else std::printf("  ok    qr_shares_batch: from 512 at 128x128, never on the CPU (16x16)\n");
+        }
+        run("routed, shared       600 x 128x128", qr_accelerated, random_matrix(600, 128, 128, 48));
+        forced.share_min_batch = 0;
 
         // Large matrices: the GPU from gpu_large_min_k in a batch up to the
         // cap, whatever the product rule says.

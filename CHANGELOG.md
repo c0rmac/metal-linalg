@@ -1,5 +1,62 @@
 # Changes
 
+## 2.12.0 (2026-10-04)
+
+- **QR shares batches with the CPU** (`share_min_batch` in the QR policy,
+  `QR_SHARE_MIN_BATCH`), as eigh and the SVD do since 2.11.0: from that batch a
+  batch that goes to the GPU is solved by the GPU kernel and the CPU path at
+  once. On an M5 Pro, against the faster of the two alone: 1.2x for 1024
+  matrices of 128×128, 1.5x for 1024 of 192×192, 1.6x for 1024 of 256×256.
+  `qr_shares_batch()` reports it, `detail::qr_shared` runs it directly. QR's
+  GPU workspaces are kept and grown per shape, rather than kept per batch size
+  for good.
+- **A large-batch clause in the eigh and SVD routing** (`gpu_big_batch_max_n` /
+  `gpu_big_batch_max_k` and `gpu_big_batch_min`, `EIGH_GPU_BIG_BATCH_*`,
+  `SVD_GPU_BIG_BATCH_*`): the GPU also for sizes above the product rule's cap,
+  up to a cap of its own, in batches of at least a batch of its own. Shared
+  with the CPU, the GPU wins large batches of 64×64 and 80×80 (1.5-1.6x), which
+  a rule `batch * k >= c` cannot take without also taking their small batches,
+  which the CPU wins. `gpu_max_n = 0` / `gpu_max_k = 0` is still never the GPU.
+- **Fewer dispatches per column in the large-matrix reductions.** The
+  `tridiag` backend's reduction takes three dispatches per column instead of
+  seven and the `bidiag` backend's four instead of twelve: each step that needs
+  a whole vector done before the next is a kernel boundary, and everything
+  else is folded into its neighbours (the Householder vector is formed from
+  norm partials in every threadgroup of the product that uses it; the previous
+  column is finished inside the next column's update). The row-sized steps run
+  eight threads to a row, and the matrix is copied in on every core (a strided
+  copy took 55 ms at 4096×4096). On an M5 Pro, one matrix: eigvalsh 1.67x at
+  N = 1024, 1.47x at 2048, 1.32x at 4096; eigh 1.49x, 1.34x, 1.24x; svdvals
+  1.76x, 1.52x, 1.22x; svd 1.34x, 1.24x, 1.12x. Accuracy is unchanged: the
+  values differ from float32 LAPACK's as much as before (3e-6 to 2e-5 of the
+  largest), and the eigenvector residual is about 1e-6. Every sum over
+  threadgroups is taken in a fixed order.
+- The C API's policy structs gain these fields at their ends:
+  `metal_linalg_qr_policy` `share_min_batch`; `metal_linalg_eigh_policy`
+  `gpu_big_batch_max_n`, `gpu_big_batch_min`; `metal_linalg_svd_policy`
+  `gpu_big_batch_max_k`, `gpu_big_batch_min`.
+- **M5 Pro re-tuned.** QR re-measured (run `20261004-4d6208`): GPU for
+  `k <= 128` and `batch * k >= 40960`, shared from batch 64; against the best
+  backend at each of the 185 shapes it scores 1.0013 geometric-mean regret,
+  worst 1.17x (2.11.0's row: 1.0081, worst 1.45x). eigh and the SVD
+  re-measured after the reductions changed (run `20261004-fd9bd8`; epochs
+  eigh 4, SVD 6): `tridiag` from N = 1024 for up to four matrices (was 1536
+  and two), from 1536 for eigenvalues alone (was 3072); `bidiag` from
+  k = 1024 for singular values alone too (was 2048), for up to two matrices;
+  the large-batch clause takes eigh up to N = 64 and the SVD up to 80×80 in
+  batches of 1024 and more. eigh scores 1.0094, worst 1.38x (the row it
+  replaces: 1.0112, worst 1.59x), the SVD 1.020 (the product rule alone:
+  1.028). One matrix against the CPU, at N = 1024 / 4096: eigh 1.61x / 5.44x
+  (2.11.0: 1.13x / 4.55x), eigvalsh 1.09x / 1.58x (0.68x / 1.22x), svd
+  1.40x / 2.26x (1.02x / 2.03x), svdvals 1.35x / 2.32x (0.74x / 1.91x).
+  Through metal-linalg-torch, 1024 QRs of 128×128 take 19 ms, from 24
+  (torch's MPS path: 1.21 s), one eigh of 2048×2048 90 ms, from 121, and one
+  SVD of 4096×4096 1.56 s, from 1.77.
+- The tuning harnesses fit the GPU-or-CPU product rule and the large-batch
+  clause together (per cap: the rule, the clause over it, the rule again given
+  the clause), rather than the clause over the rule fitted alone, which could
+  miss a lower cap plus the clause beating a higher cap without one.
+
 ## 2.11.0 (2026-10-04)
 
 - **A batch shared between the GPU and the CPU.** From a batch of

@@ -218,6 +218,15 @@ once. It is scored against the best GPU backend, the shared one (`ql_share`,
 and the backend is the GPU's choice. Sharing only pays from a batch large
 enough to keep both busy; below it the threads cost more than they save.
 
+Stage 2 also fits a **large-batch clause** (eigensolver, SVD): the GPU for
+sizes above the product rule's cap, up to a size of its own, in batches of at
+least a batch of its own. A product `batch * N >= c` cannot send large
+batches of 64×64 to the GPU without also sending their small batches, which
+the CPU wins; the clause can. It is fitted together with the product rule
+(for each cap, the rule alone, the clause over it, and the rule again given
+the clause), a clause is kept only if it improves the geometric-mean regret by
+more than the tolerance, and the report shows the rule with and without it.
+
 **Stage 2b** (SVD) fits the GPU/CPU boundary again for singular values alone
 (`svdvals`): both sides skip the vectors, by different amounts, so the
 boundary moves. It is scored on the `gk_vals` and `cpu_vals` timings where `gk`

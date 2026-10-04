@@ -32,6 +32,7 @@ struct Pipelines {
 };
 
 struct Workspace {
+    uint          capacity = 0;   // matrices the buffers hold
     id<MTLBuffer> buf_A;
     id<MTLBuffer> buf_Q;
     id<MTLBuffer> buf_R_diag;
@@ -47,7 +48,7 @@ struct Cache {
         MetalRuntime::shared(METAL_LINALG_SHADER(QR_Streaming_AMX_Reduced), "qr_streaming_amx_reduced");
 
     std::map<std::pair<uint, uint>, Pipelines>        pipelines;   // keyed by (M_pad, N_pad)
-    std::map<std::tuple<uint, uint, uint>, Workspace> workspaces;  // keyed by (batch, M, N)
+    std::map<std::pair<uint, uint>, Workspace>        workspaces;  // keyed by (M, N): the latest shape's
 
     Pipelines get_pipelines(uint M_pad, uint N_pad) {
         auto key = std::make_pair(M_pad, N_pad);
@@ -74,11 +75,15 @@ struct Cache {
 
     Workspace get_workspace(uint batch, uint M_pad, uint N_pad, uint K_pad, uint M, uint N, uint K) {
         // The exact shape, not the padded one: the output buffers are sized
-        // by M and N, so two shapes that pad alike cannot share them.
-        auto key = std::make_tuple(batch, M, N);
-        if (auto it = workspaces.find(key); it != workspaces.end()) {
+        // by M and N, so two shapes that pad alike cannot share them. The
+        // latest shape's buffers are kept and grown, so that varying batches
+        // (and the chunks of a batch shared with the CPU) reuse them, and
+        // many shapes do not accumulate.
+        auto key = std::make_pair(M, N);
+        if (auto it = workspaces.find(key); it != workspaces.end() && it->second.capacity >= batch) {
             return it->second;
         }
+        workspaces.clear();
 
         const MTLResourceOptions opt = MTLResourceStorageModeShared;
         const uint num_blocks = K_pad / 32;
@@ -98,6 +103,7 @@ struct Cache {
         // Exact-size output buffers.
         w.buf_R_out  = [rt.device newBufferWithLength:((size_t)batch * K * N * sizeof(float)) options:opt];
         w.buf_Q_out  = [rt.device newBufferWithLength:((size_t)batch * M * K * sizeof(float)) options:opt];
+        w.capacity   = batch;
 
         return workspaces[key] = w;
     }
