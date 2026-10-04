@@ -25,6 +25,7 @@ mlt.device_name()                      # 'Apple M5 Pro'
 mlt.eigh_policy_source()               # 'tuned:Apple M5 Pro'
 mlt.eigh_backend(32, 4096)             # 'ql': 4096 matrices of 32x32 go to the GPU
 mlt.svd_backend(4096, 4096)            # 'bidiag': GPU bidiagonalization, LAPACK's solver
+mlt.svdvals_backend(4096, 4096)        # 'band': the two-stage reduction, values alone
 mlt.set_eigh_policy(gpu_min_batch=1)   # override the measured policy
 ```
 
@@ -99,9 +100,9 @@ as well when their input requires grad, since the gradient needs them.
 
 ## Performance
 
-Against `torch.linalg` on an M5 Pro with PyTorch 2.14 and metal-linalg 2.12 (best of five; the
-same tensors on MPS for torch's MPS path and for this package, copies
-included):
+Against `torch.linalg` on an M5 Pro with PyTorch 2.14 and metal-linalg 2.12
+(the last two rows 2.13; best of five, of three for those; the same tensors
+on MPS for torch's MPS path and for this package, copies included):
 
 | | torch, CPU | torch, MPS | metal-linalg-torch |
 |---|---|---|---|
@@ -111,13 +112,16 @@ included):
 | eigh, 4096 × 16×16 | 35 ms | 5.3 ms | 1.9 ms |
 | eigh, one 2048×2048 | 240 ms | 239 ms | 90 ms |
 | SVD, one 4096×4096 | 3.42 s | 3.45 s | 1.56 s |
+| eigvalsh, one 4096×4096 | 4.23 s | 4.23 s | 0.16 s |
+| svdvals, one 4096×4096 | 1.89 s | 3.49 s | 0.23 s |
 
 It is ahead on every row: 1.6-3.6x over PyTorch's MPS kernels for batches of
 small matrices (the SVD of 256 matrices of 128×64 runs on the library's CPU
 path, which spreads a batch over every core, so routing an MPS tensor to the
 CPU can still be the fast choice; the two batches of 4096, and the QR batch,
 run on the GPU and the CPU at once), and 2-60x in QR and in large matrices,
-where torch falls back to the CPU. Which
+where torch falls back to the CPU: for the eigenvalues or singular values
+alone of a large matrix, 8-26x, by a two-stage reduction. Which
 backend a shape gets on your Mac: `mlt.svd_backend(m, n, batch)` and its
 siblings.
 

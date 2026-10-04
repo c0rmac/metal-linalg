@@ -608,6 +608,67 @@ int main() {
     }
 
     // -------------------------------------------------------------------------
+    // band, eigenvalues alone: the GPU's blocks while 3b columns remain,
+    // LAPACK the rest; a panel of up to 128 rows in one simdgroup, a taller one
+    // by TSQR; the band chased to tridiagonal on the CPU's cores, then
+    // bisection on the GPU from N = 512. Each band width, either triangle,
+    // against LAPACK's eigenvalues.
+    // -------------------------------------------------------------------------
+    std::printf("\n[ band backend (eigenvalues alone) ]\n");
+    {
+        auto band = [&](const std::string& label, const array& A, bool lower, uint32_t width) {
+            EighResult r = detail::eigh_band(A, lower, width);
+            array ref = linalg::eigvalsh(symmetrised(A, lower), "L", Device::cpu);
+            array info = reshape(r.info, {-1});
+            eval({r.eigenvalues, ref, info});
+            ++g_checks;
+            const float d = max_abs(subtract(r.eigenvalues, ref)) / std::max(max_abs(ref), 1e-30f);
+            bool converged = true;
+            for (size_t i = 0; i < info.size(); ++i) converged &= detail::eigh_converged(info.data<uint32_t>()[i]);
+            if (!(d <= 2e-5f) || !converged) fail(label, "|w - LAPACK| / |w|max " + std::to_string(d));
+            else std::printf("  ok    %-44s |dw|=%.1e\n", label.c_str(), d);
+        };
+        for (uint32_t w : {8u, 16u, 32u})
+            for (int n : {1, 2, 3, 20, 47, 48, 49, 64, 100, 128, 129, 200, 300, 513, 1100})
+                band("band b=" + std::to_string(w) + " " + std::to_string(n) + "x" + std::to_string(n),
+                     random_symmetric(1, n, 3000 + n), true, w);
+        {
+            array S = random_symmetric(1, 300, 3100), junk = random_symmetric(1, 300, 3101);
+            band("band lower, junk above 300x300", add(tril(S), triu(junk, 1)), true, 16);
+            band("band upper, junk below 300x300", add(triu(S), tril(junk, -1)), false, 16);
+        }
+        band("band batch 3 x 150x150", random_symmetric(3, 150, 3200), true, 16);
+        band("band zero 100x100", zeros({100, 100}), true, 16);
+        band("band identity 600x600", eye(600), true, 16);
+        {
+            std::vector<float> spec(600);
+            for (int i = 0; i < 600; ++i) spec[i] = i < 200 ? 1.0f : i < 400 ? -2.0f : 1e-4f * i;
+            band("band repeated eigenvalues 600x600", with_spectrum(spec), true, 16);
+        }
+        for (float s : {1e-30f, 1e30f}) {
+            char label[64];
+            std::snprintf(label, sizeof label, "band scaled by %.0e 160x160", s);
+            band(label, multiply(random_symmetric(1, 160, 3300), array(s)), true, 8);
+        }
+        {   // NaN in one matrix of a batch
+            array A = random_symmetric(2, 200, 3400);
+            eval({A});
+            std::vector<float> data(A.data<float>(), A.data<float>() + 2 * 200 * 200);
+            data[200 * 200 + 5 * 200] = NAN;   // row 5, column 0: in the lower triangle, which is read
+            EighResult r = detail::eigh_band(from_values(data, {2, 200, 200}), true);
+            array info = reshape(r.info, {-1});
+            array w1 = slice(r.eigenvalues, {1, 0}, {2, 200}), w0 = slice(r.eigenvalues, {0, 0}, {1, 200});
+            eval({info, w0, w1});
+            ++g_checks;
+            const bool ok = all(isnan(w1)).item<bool>() && !has_non_finite(w0) &&
+                            detail::eigh_nonfinite(info.data<uint32_t>()[1]) &&
+                            detail::eigh_converged(info.data<uint32_t>()[0]);
+            if (!ok) fail("band NaN in one matrix of a batch", "not isolated");
+            else std::printf("  ok    %-44s\n", "band NaN in one matrix of a batch");
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // ql: one threadgroup per matrix, the matrix in threadgroup memory. The
     // sizes straddle the simdgroup boundaries (32, 64) and the switch to a
     // chaser simdgroup of its own (N = 33), up to the largest N the device's
@@ -927,6 +988,36 @@ int main() {
                        eigvalsh_backend(1024, 2) == EighBackend::cpu);
                 set_eigh_policy(t);
             }
+            {   // the band backend, eigenvalues alone, before tridiag
+                EighPolicy c = t;
+                c.values_band_min_n = 2048;
+                set_eigh_policy(c);
+                expect("values_band_min_n = 2048: eigvalsh N=1024 tridiag, N=2048 band; eigh N=2048 tridiag",
+                       eigvalsh_backend(1024, 1) == EighBackend::tridiag &&
+                       eigvalsh_backend(2048, 1) == EighBackend::band && eigh_backend(2048, 1) == EighBackend::tridiag);
+                c.values_tridiag_max_batch = 1;
+                set_eigh_policy(c);
+                expect("band within values_tridiag_max_batch: eigvalsh N=2048 batch 2 cpu",
+                       eigvalsh_backend(2048, 2) == EighBackend::cpu);
+                c.values_tridiag_max_batch = 0;
+                c.values_band_min_n = 256;
+                set_eigh_policy(c);
+                {
+                    array A = random_symmetric(1, 700, 833);
+                    array w = eigvalsh_accelerated(A);
+                    array w_ref = linalg::eigvalsh(A, "L", Device::cpu);
+                    eval({w, w_ref});
+                    const float d = max_abs(subtract(w, w_ref)) / std::max(frobenius(A), 1.0f);
+                    expect("eigvalsh routed to band (700x700) == LAPACK", d < kEigTol, "differ by " + std::to_string(d));
+                }
+                c.values_band_min_n = 0;
+                set_eigh_policy(c);
+                expect("values_band_min_n = 0: never", eigvalsh_backend(4096, 1) == EighBackend::tridiag);
+                set_eigh_policy(t);
+            }
+            setenv("EIGH_DEVICE", "band", 1);
+            expect("EIGH_DEVICE=band: eigvalsh band, eigh tridiag",
+                   eigvalsh_backend(8, 1) == EighBackend::band && eigh_backend(8, 1) == EighBackend::tridiag);
             setenv("EIGH_DEVICE", "cpu", 1);
             expect("EIGH_DEVICE=cpu keeps the CPU over tridiag", eigh_backend(4096, 1) == EighBackend::cpu);
             setenv("EIGH_DEVICE", "tridiag", 1);

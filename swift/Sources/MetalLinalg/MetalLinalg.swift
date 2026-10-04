@@ -171,7 +171,8 @@ public func eighBackend(n: Int, batch: Int = 1) -> String {
 }
 
 /// The backend `eigvalshAccelerated` uses: as `eighBackend`, under the policy's
-/// eigenvalues-alone boundary (`values_gpu_*`).
+/// eigenvalues-alone boundary (`values_gpu_*`), and "band" (the two-stage
+/// reduction) from `values_band_min_n`.
 public func eigvalshBackend(n: Int, batch: Int = 1) -> String {
     String(cString: metal_linalg_eigvalsh_backend(UInt32(clamping: n), UInt32(clamping: batch)))
 }
@@ -183,7 +184,8 @@ public func svdBackend(rows: Int, cols: Int, batch: Int = 1) -> String {
 }
 
 /// The backend `svdvalsAccelerated` uses: as `svdBackend`, with the policy's
-/// `values_bidiag_min_k` for the bidiag backend.
+/// `values_bidiag_min_k` for the bidiag backend, and "band" (the two-stage
+/// reduction) from `values_band_min_k`.
 public func svdvalsBackend(rows: Int, cols: Int, batch: Int = 1) -> String {
     String(cString: metal_linalg_svdvals_backend(UInt32(clamping: rows), UInt32(clamping: cols), UInt32(clamping: batch)))
 }

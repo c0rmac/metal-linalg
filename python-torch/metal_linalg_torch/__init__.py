@@ -200,7 +200,8 @@ def eigh_backend(n, batch=1):
 
 def eigvalsh_backend(n, batch=1):
     """Which backend :func:`eigvalsh` uses, under the policy's
-    eigenvalues-alone boundary."""
+    eigenvalues-alone boundary: as :func:`eigh_backend`, or ``"band"`` (the
+    two-stage reduction) for large N."""
     return _lib.text(_lib.eigvalsh_backend(n, batch))
 
 
@@ -212,7 +213,8 @@ def svd_backend(m, n, batch=1):
 
 
 def svdvals_backend(m, n, batch=1):
-    """Which backend :func:`svdvals` uses."""
+    """Which backend :func:`svdvals` uses: as :func:`svd_backend`, or
+    ``"band"`` (the two-stage reduction, singular values alone)."""
     return _lib.text(_lib.svdvals_backend(m, n, batch))
 
 

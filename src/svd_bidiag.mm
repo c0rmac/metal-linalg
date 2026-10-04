@@ -1,12 +1,14 @@
 // The SVD's `bidiag` backend: LAPACK's method with its two expensive steps on
-// the GPU.
+// the GPU; and the `band` backend, singular values alone in two stages
+// (below, band_reduce).
 //
 //   1. Bidiagonalize, A = Q B P^T, entirely on the GPU (shaders/Svd_Bidiag.metal):
 //      blocked sgebrd (upper bidiagonal), per column slabrd's steps as four
 //      kernels, per panel the trailing update as two MPS GEMMs; the panels'
 //      command buffers are queued and the host waits once per matrix. The last
 //      few columns, fewer than a panel, are reduced by LAPACK.
-//   2. B = U_B diag(S) V_B^T on the CPU: LAPACK sbdsdc.
+//   2. B = U_B diag(S) V_B^T on the CPU: LAPACK sbdsdc; the singular values
+//      alone by sbdsqr (dqds), faster and accurate to the smallest.
 //   3. U = Q U_B and V^T = V_B^T P^T on the GPU, 128 reflectors at a time as
 //      three MPS GEMMs each.
 //
@@ -28,6 +30,16 @@
 // 168 ms in a batch of 4, 155 ms in a batch of 8. Each matrix is scaled by a
 // power of two first (exact), so magnitudes whose products over- or underflow
 // float32 work.
+//
+// `band`, for singular values alone: the reduction is in two stages, as
+// LAPACK's ssyevd_2stage does for symmetric eigenvalues. A to an upper band of
+// width b on the GPU (band_reduce.mm), a block of b columns at a time, the work
+// matrix products that read the matrix three times a block where the one-stage
+// reduction reads it twice a column; then the band to bidiagonal by bulge
+// chasing on the CPU's cores (band_chase.cpp) and its singular values by
+// bisection on the GPU (bisect.mm). On an M5 Pro, one 4096 x 4096: 234 ms
+// against bidiag's 757; from about 2048 it is the faster. See
+// docs/studies/two-stage-apple-m5-pro.md.
 
 #ifndef ACCELERATE_NEW_LAPACK
 #define ACCELERATE_NEW_LAPACK
@@ -35,6 +47,8 @@
 #include <Accelerate/Accelerate.h>
 
 #include <metal_linalg/core.h>
+#include <metal_linalg/device.h>
+#include "band_chase.h"
 #include "metal_runtime.h"
 #include "shaders.h"
 
@@ -43,6 +57,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <future>
 #include <map>
@@ -65,7 +80,7 @@ constexpr uint32_t kPanel     = 32;    // columns per panel of the reduction
 constexpr uint32_t kBackBlock = 128;   // reflectors per pass of the back-transformations
 constexpr uint32_t kTile      = 64;    // must match TILE in Svd_Bidiag.metal
 constexpr uint32_t kGroup     = 256;   // must match GROUP
-constexpr uint32_t kRows      = 32;    // must match ROWS: bd_col's and bd_row's rows per threadgroup
+constexpr uint32_t kRows      = 32;    // must match GROUP / LANES: bd_col's and bd_row's rows per threadgroup
 constexpr uint32_t kQrFirstMinK = 64;  // QR first for l >= 2k from this k
 
 // Must match Svd_Bidiag.metal.
@@ -331,11 +346,9 @@ void back_transform(Cache& c, Workspace& ws, id<MTLBuffer> Abuf, id<MTLBuffer> U
     }
 }
 
-} // namespace
-
-namespace core::detail {
-
-void svd_bidiag(const Matrices& a, float* u_out, float* s_out, float* vt_out, uint32_t* info_out) {
+// Both backends: `band` (> 0, singular values alone) the two-stage reduction's
+// band width, 0 the one-stage reduction.
+void bidiag_impl(const Matrices& a, float* u_out, float* s_out, float* vt_out, uint32_t* info_out, uint32_t band) {
     const uint32_t M = a.rows, N = a.cols, batch = a.batch, K = std::min(M, N);
     const bool vectors = u_out || vt_out;
     if (K == 0 || batch == 0) {
@@ -368,8 +381,9 @@ void svd_bidiag(const Matrices& a, float* u_out, float* s_out, float* vt_out, ui
     Workspace& ws = cache.workspace(rows, K, vectors);
     if (todo.size() > 1) cache.second_slot(ws, vectors);
 
+
     struct Slot {
-        std::vector<float> t, q, d, e, tq, tp, ub, vb;
+        std::vector<float> t, q, d, e, tq, tp, ub, vb, ab;
         float scale = 1.0f;
     };
     Slot slots[2];
@@ -406,24 +420,58 @@ void svd_bidiag(const Matrices& a, float* u_out, float* s_out, float* vt_out, ui
         } else {
             transpose_scaled(src, N, A, ws.lda, M, N, sl.scale);
         }
-        bidiagonalize(cache, ws, ws.A[s], sl.d.data(), sl.e.data(), sl.tq.data(), sl.tp.data());
+        if (!band) {
+            bidiagonalize(cache, ws, ws.A[s], sl.d.data(), sl.e.data(), sl.tq.data(), sl.tp.data());
+            return;
+        }
+        if (!metal_linalg::detail::band_reduce_general(ws.A[s], ws.m, ws.n, ws.lda, band)) {
+            sl.ab.clear();   // too tall for the band reduction's panels: one stage
+            bidiagonalize(cache, ws, ws.A[s], sl.d.data(), sl.e.data(), sl.tq.data(), sl.tp.data());
+            return;
+        }
+        // The band, with room for the bulges of band_to_bidiagonal: B(i, j) at
+        // ab[j * ld + ku + i - j], ku = 2 band above the diagonal, band below.
+        const size_t ld = 3 * (size_t)band + 1, ku = 2 * (size_t)band;
+        sl.ab.assign(ld * K, 0.0f);
+        for (uint32_t j = 0; j < K; ++j)
+            for (uint32_t i = j > band ? j - band : 0; i <= j; ++i)
+                sl.ab[(size_t)j * ld + ku + i - j] = A[(size_t)j * ws.lda + i];
     };
 
     // Step 2 for matrix b in slot s, on the CPU: the singular values (into
     // s_out) and the bidiagonal problem's vectors.
+    // Singular values alone: the band to bidiagonal (band_to_bidiagonal, on
+    // the CPU's cores but two, which the GPU's host work keeps) if two-stage,
+    // then sbdsqr without vectors, which is dqds (slasq1): faster than sbdsdc,
+    // and accurate to the bidiagonal's every singular value, however small.
     auto solve = [&](uint32_t b, int s) {
         Slot& sl = slots[s];
-        char uplo = 'U', compq = vectors ? 'I' : 'N';
-        L n = K, ld = K, info = 0, iq = 0;
+        L n = K, ld = K, info = 0, iq = 0, zero = 0, one = 1;
         float qd = 0;
-        std::vector<float> one(1);
-        std::vector<float> work(3 * (size_t)K * K + 4 * (size_t)K + 8 * (size_t)K + 16);
-        std::vector<L> iwork(8 * (size_t)K + 8);
-        sbdsdc_(&uplo, &compq, &n, sl.d.data(), sl.e.data(), vectors ? sl.ub.data() : one.data(), &ld,
-                vectors ? sl.vb.data() : one.data(), &ld, &qd, &iq, work.data(), iwork.data(), &info);
+        const char* routine = vectors ? "sbdsdc" : "sbdsqr";
+        if (vectors) {
+            char uplo = 'U', compq = 'I';
+            std::vector<float> work(3 * (size_t)K * K + 4 * (size_t)K + 8 * (size_t)K + 16);
+            std::vector<L> iwork(8 * (size_t)K + 8);
+            sbdsdc_(&uplo, &compq, &n, sl.d.data(), sl.e.data(), sl.ub.data(), &ld, sl.vb.data(), &ld, &qd, &iq,
+                    work.data(), iwork.data(), &info);
+        } else {
+            std::vector<float> work(4 * (size_t)K + 16);
+            if (!sl.ab.empty())
+                metal_linalg::detail::band_to_bidiagonal(K, band, sl.ab.data(), 3 * (size_t)band + 1,
+                                                         2 * (size_t)band, sl.d.data(), sl.e.data(),
+                                                         std::max(1u, cpu_threads() - 2));
+            // By bisection on the GPU where it is the faster, else sbdsqr.
+            std::vector<float> sv(K);
+            if (metal_linalg::detail::bidiagonal_singular_values(K, sl.d.data(), sl.e.data(), sv.data()))
+                sl.d = std::move(sv);
+            else
+                sbdsqr_("U", &n, &zero, &zero, &zero, sl.d.data(), sl.e.data(), &qd, &one, &qd, &one, &qd, &one,
+                    work.data(), &info);
+        }
         if (info != 0) {
-            throw std::runtime_error("[svd] bidiag: LAPACK sbdsdc failed on matrix " + std::to_string(b) +
-                                     ", info " + std::to_string((long long)info));
+            throw std::runtime_error(std::string("[svd] bidiag: LAPACK ") + routine + " failed on matrix " +
+                                     std::to_string(b) + ", info " + std::to_string((long long)info));
         }
         float* sv = s_out + (size_t)b * K;
         for (uint32_t i = 0; i < K; ++i) sv[i] = sl.d[i] / sl.scale;   // descending
@@ -488,6 +536,24 @@ void svd_bidiag(const Matrices& a, float* u_out, float* s_out, float* vt_out, ui
             throw;
         }
     }
+}
+
+} // namespace
+
+namespace core::detail {
+
+void svd_bidiag(const Matrices& a, float* u, float* s, float* vt, uint32_t* info) {
+    bidiag_impl(a, u, s, vt, info, 0);
+}
+
+void svd_band(const Matrices& a, float* s, uint32_t* info, uint32_t width) {
+    // The band's width: as asked, narrower if the matrix is too tall for the
+    // panel kernels at that width (rows b <= 128 * 1024), and if even the
+    // narrowest is, the one-stage reduction (band 0).
+    const uint32_t M = a.rows, N = a.cols, K = std::min(M, N), l = std::max(M, N);
+    const uint32_t rows = l >= 2 * K && K >= kQrFirstMinK ? K : l;
+    bidiag_impl(a, nullptr, s, nullptr, info,
+                metal_linalg::detail::band_fit(rows, metal_linalg::detail::band_width(width, "SVD_BAND_WIDTH")));
 }
 
 } // namespace core::detail

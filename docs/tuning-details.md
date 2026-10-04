@@ -191,6 +191,11 @@ shared one (`ql_share`, timed from batch 64) included. After it,
 which a run from before 2.12.0 gives), fitted in stage 2 together with the
 product rule: for each `gpu_max_n`, the rule fitted alone, the clause over it,
 and the rule fitted again given the clause; the best combination is kept.
+Last, `values_band_min_n`: for eigenvalues alone, from this N the `band`
+backend (the two-stage reduction) instead of `tridiag` or the CPU, within
+`values_tridiag_max_batch` (0: never, which a run from before 2.13.0 gives);
+stage 4b fits it, after `tridiag`'s thresholds, on the points where
+`band_vals` was timed (N >= 512).
 
 **SVD** (`src/svd.mm`): device name, GPU cores, then `qr_min_rows`,
 `qr_min_k`, `block_min_k`, `block_min_k_batched`, `block_min_batch`,
@@ -218,7 +223,11 @@ timed (k up to the device's limit, 83 with 32 KB of threadgroup memory), as
 in place. And `share_min_batch`, as for the eigensolver: from this batch a
 `golub_kahan` batch is shared with the CPU path (stage 1c, on `gk_share`),
 and `gpu_big_batch_max_k` and `gpu_big_batch_min`, the large-batch clause, as
-for the eigensolver.
+for the eigensolver. Last, `values_band_min_k`: for singular values alone,
+from this k the `band` backend (the two-stage reduction) instead of `bidiag`
+or the CPU, within `values_bidiag_max_batch` (0: never, which a run from
+before 2.13.0 gives); stage 3b fits it, after `bidiag`'s threshold, on the
+points where `band_vals` was timed (k >= 512, where `bidiag_vals` is).
 
 ## 5. Reading a report
 
@@ -338,8 +347,11 @@ in the policy source.
 | `EIGH_QL_MIN_N`, `EIGH_QL_MAX_N` | eigensolver: the ql backend on the GPU for N in this window (`EIGH_QL_MAX_N=0`: never) |
 | `EIGH_SHARE_MIN_BATCH` | eigensolver: a ql batch shared with the CPU from this batch (0: never) |
 | `EIGH_GPU_BIG_BATCH_MAX_N`, `EIGH_GPU_BIG_BATCH_MIN` | eigensolver: the GPU also for N above `gpu_max_n` up to this, in batches of at least this (0: never) |
+| `EIGH_VALUES_BAND_MIN_N` | eigenvalues alone: the `band` backend (the two-stage reduction) from this N (0: never) |
+| `EIGH_BAND_WIDTH` | the eigensolver's `band` backend's band width: 8, 16 (default) or 32 |
 | `METAL_LINALG_CPU_THREADS` | every decomposition: CPU threads a batch is spread over (default: every core) |
 | `EIGH_DEVICE=tridiag` | eigensolver: every call on the tridiag backend |
+| `EIGH_DEVICE=band` | eigensolver: eigenvalues alone on the band backend (with eigenvectors, tridiag) |
 | `EIGH_DEVICE=gpu` or `cpu` | eigensolver: bypass the GPU/CPU boundary |
 | `SVD_QR_MIN_ROWS`, `SVD_QR_MIN_K` | SVD: when the QR-preconditioned backends are used |
 | `SVD_BLOCK_MIN_K` | SVD: the short side from which the block kernel is used |
@@ -350,8 +362,11 @@ in the policy source.
 | `SVD_GK_MIN_K`, `SVD_GK_MAX_K` | SVD: the golub_kahan backend on the GPU for k in this window (`SVD_GK_MAX_K=0`: never) |
 | `SVD_SHARE_MIN_BATCH` | SVD: a golub_kahan batch shared with the CPU from this batch (0: never) |
 | `SVD_GPU_BIG_BATCH_MAX_K`, `SVD_GPU_BIG_BATCH_MIN` | SVD: the GPU also for k above `gpu_max_k` up to this, in batches of at least this (0: never) |
+| `SVD_VALUES_BAND_MIN_K` | singular values alone: the `band` backend (the two-stage reduction) from this k (0: never) |
+| `SVD_BAND_WIDTH` | the `band` backend's band width: 8, 16 (default) or 32 |
 | `SVD_VALUES_GPU_MAX_K`, `SVD_VALUES_GPU_MIN_BATCH_TIMES_K`, `SVD_VALUES_GPU_MIN_BATCH`, `SVD_VALUES_GPU_MAX_L` | SVD, singular values alone: the GPU/CPU boundary (`SVD_VALUES_GPU_MIN_BATCH=0`: as with vectors) |
 | `SVD_DEVICE=bidiag` | SVD: every call on the bidiag backend |
+| `SVD_DEVICE=band` | SVD: singular values alone on the band backend (with vectors, bidiag) |
 | `SVD_DEVICE=gpu` or `cpu` | SVD: bypass the GPU/CPU boundary |
 
 **Programmatic overrides.** `set_qr_policy()`, `set_eigh_policy()` and

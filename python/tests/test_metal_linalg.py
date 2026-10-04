@@ -149,12 +149,30 @@ class Routing(unittest.TestCase):
             with mx.stream(mx.cpu):
                 self.assertLess(mx.max(mx.abs(s @ v - v * w[None, :])).item() / mx.max(mx.abs(s)).item(), 1e-4)
             ml.set_eigh_policy(tridiag_min_n=0)
+            # eigenvalues alone by the two-stage reduction
+            ml.set_eigh_policy(values_band_min_n=256)
+            self.assertEqual(ml.eigvalsh_backend(300, 1), "band")
+            w_band = ml.eigvalsh(s)
+            ml.set_eigh_policy(values_band_min_n=0, values_tridiag_min_n=0)
+            w_cpu = ml.eigvalsh(s)
+            with mx.stream(mx.cpu):
+                self.assertLess(mx.max(mx.abs(w_band - w_cpu)).item() / mx.max(mx.abs(w_cpu)).item(), 1e-5)
             # the bidiag SVD backend, with svdvals' own threshold
             svd_measured = ml.svd_policy()
             try:
-                ml.set_svd_policy(gpu_max_k=0, bidiag_min_k=256, values_bidiag_min_k=0)
+                ml.set_svd_policy(gpu_max_k=0, bidiag_min_k=256, values_bidiag_min_k=0, values_band_min_k=0)
                 self.assertEqual(ml.svd_backend(400, 300), "bidiag")
                 self.assertEqual(ml.svdvals_backend(400, 300), "cpu")
+                # singular values alone by the two-stage reduction
+                ml.set_svd_policy(values_band_min_k=256)
+                self.assertEqual(ml.svdvals_backend(400, 300), "band")
+                self.assertEqual(ml.svd_backend(400, 300), "bidiag")
+                a = mx.random.normal((400, 300))
+                s_band = ml.svdvals(a)
+                ml.set_svd_policy(values_band_min_k=0)
+                s_cpu = ml.svdvals(a)
+                with mx.stream(mx.cpu):
+                    self.assertLess(mx.max(mx.abs(s_band - s_cpu)).item() / mx.max(s_cpu).item(), 1e-5)
                 a = mx.random.normal((400, 300))
                 u, s, vt = ml.svd(a)
                 with mx.stream(mx.cpu):

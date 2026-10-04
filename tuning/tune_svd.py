@@ -115,6 +115,7 @@ LARGE_BATCHES = [1, 2, 4]
 HUGE_K = 2048          # above this, lone matrices only
 CAP_LARGE_MS = 8000.0
 BIDIAG_MIN_GRID_K = 128   # bidiag is timed from this k
+BAND_MIN_GRID_K = 512     # and band (singular values alone) from this k
 VALS = "_vals"            # suffix: the same backend for singular values alone
 
 # Filled from the data by configure_grids().
@@ -136,6 +137,7 @@ CURRENT = (512, 64, 192, INF, INF, 64, 1024, 1, INF)
 N_SPLIT = 5              # the first five are the GPU split, the rest the CPU routing
 # The bidiag thresholds in effect, (with vectors, singular values alone); 0 = never.
 CURRENT_BIDIAG = (0, 0)
+CURRENT_BAND = 0          # values_band_min_k in effect
 # Their batch caps, the same way round; 0 = any batch.
 CURRENT_BIDIAG_CAP = (0, 0)
 # The gk window in effect, (gk_min_k, gk_max_k); (0, 0) = never.
@@ -171,6 +173,8 @@ def est_ms(backend, M, N, b):
         return 0.6 * est_ms(backend[:-len(VALS)], M, N, b)
     if backend.endswith("_share"):  # the GPU and the CPU at once
         return 0.7 * est_ms(backend[:-len("_share")], M, N, b)
+    if backend == "band":           # the two-stage reduction: below bidiag's, for large k
+        return 0.7 * est_ms("bidiag", M, N, b)
     if backend == "bidiag":         # serial over the batch: launches per column, then O(M N^2)
         k = min(M, N)
         return b * (1.0 + 0.04 * k + 4e-8 * max(M, N) * k * k) * SCALE.get(backend, 1.0)
@@ -219,6 +223,8 @@ def backends_for(M, N, b):
         ks.append("cpu")
     if bidiag:   # and the two again for singular values alone, the region values_bidiag_min_k decides
         ks += ["bidiag", "bidiag" + VALS] + ([] if "cpu" + VALS in ks else ["cpu" + VALS])
+        if k >= BAND_MIN_GRID_K:   # and the band backend, the region values_band_min_k decides
+            ks.append("band" + VALS)
     return ks
 
 
@@ -290,8 +296,10 @@ def split_bidiag(times):
     """-> (times for stages 1-2: the Jacobi backends, gk and the CPU, at points
     with a Jacobi backend; times with vectors, bidiag included; times for
     singular values alone, as {"cpu", "bidiag"}; and for singular values alone
-    on the GPU, as {"cpu", "gk"}). Runs from before a backend give empty parts."""
-    base, vec, val, gval = {}, {}, {}, {}
+    on the GPU, as {"cpu", "gk"}; and for singular values alone where band was
+    timed, as {"cpu", "bidiag", "band"}). Runs from before a backend give
+    empty parts."""
+    base, vec, val, gval, bval = {}, {}, {}, {}, {}
     for p, tv in times.items():
         a = {k: v for k, v in tv.items() if k in GPU_BACKENDS or k in ("cpu", "gk", "gk_share")}
         if any(k in a for k in GPU_BACKENDS):
@@ -300,11 +308,13 @@ def split_bidiag(times):
             vec[p] = {k: v for k, v in tv.items() if not k.endswith(VALS)}
         if "bidiag" + VALS in tv and "cpu" + VALS in tv:
             val[p] = {"cpu": tv["cpu" + VALS], "bidiag": tv["bidiag" + VALS]}
+            if "band" + VALS in tv:
+                bval[p] = dict(val[p], band=tv["band" + VALS])
         if "gk" + VALS in tv and "cpu" + VALS in tv:
             gval[p] = {"cpu": tv["cpu" + VALS], "gk": tv["gk" + VALS]}
             if "gk_share" + VALS in tv:
                 gval[p]["gk_share"] = tv["gk_share" + VALS]
-    return base, vec, val, gval
+    return base, vec, val, gval, bval
 
 def query_policy(binary):
     r = subprocess.run([binary, "--policy"], capture_output=True, text=True, timeout=60)
@@ -367,19 +377,20 @@ def _cxx_values(values):
 
 
 def tuned_row(device, params, bidiag=(0, 0), bidiag_cap=(0, 0), gk=(0, 0), values=(0, 0, 0, INF), share=0,
-              big=(0, 0)):
+              big=(0, 0), band=0):
     """The line for kTuned[] in svd.mm; `bidiag` the two bidiag thresholds (0: never),
     `bidiag_cap` their batch caps (0: any batch), `gk` the gk window (0, 0: never),
-    `values` the values_gpu_* rule (min_batch 0: as with vectors)."""
+    `values` the values_gpu_* rule (min_batch 0: as with vectors), `band` the
+    band backend's threshold (0: never)."""
     r, a, bm, lo, bh, gm, mb, mbatch, ml = _cxx(params)
     vgm, vmb, vmbatch, vml = _cxx_values(values)
     return (f'{{"{device["name"]}", {device["gpu_cores"]},   {r}, {a},   {bm}, {lo}, {bh},   '
             f'{gm}, {mb}, {mbatch}, {ml},   {vgm}, {vmb}, {vmbatch}, {vml},   {bidiag[0]}, {bidiag[1]}, {bidiag_cap[0]}, {bidiag_cap[1]},   '
-            f'{gk[0]}, {gk[1]},   {share},   {big[0]}, {big[1]}}},')
+            f'{gk[0]}, {gk[1]},   {share},   {big[0]}, {big[1]},   {band}}},')
 
 
 def env_line(params, bidiag=(0, 0), bidiag_cap=(0, 0), gk=(0, 0), values=(0, 0, 0, INF), share=0,
-             big=(0, 0)):
+             big=(0, 0), band=0):
     r, a, bm, lo, bh, gm, mb, mbatch, ml = _cxx(params)
     vgm, vmb, vmbatch, vml = values
     gm = NO_LIMIT if gm == "kSvdNoLimit" else gm
@@ -390,7 +401,7 @@ def env_line(params, bidiag=(0, 0), bidiag_cap=(0, 0), gk=(0, 0), values=(0, 0, 
             f"SVD_BIDIAG_MIN_K={bidiag[0]} SVD_VALUES_BIDIAG_MIN_K={bidiag[1]} "
             f"SVD_BIDIAG_MAX_BATCH={bidiag_cap[0]} SVD_VALUES_BIDIAG_MAX_BATCH={bidiag_cap[1]} "
             f"SVD_GK_MIN_K={gk[0]} SVD_GK_MAX_K={gk[1]} SVD_SHARE_MIN_BATCH={share} "
-            f"SVD_GPU_BIG_BATCH_MAX_K={big[0]} SVD_GPU_BIG_BATCH_MIN={big[1]} "
+            f"SVD_GPU_BIG_BATCH_MAX_K={big[0]} SVD_GPU_BIG_BATCH_MIN={big[1]} SVD_VALUES_BAND_MIN_K={band} "
             f"SVD_VALUES_GPU_MAX_K={vgm} SVD_VALUES_GPU_MIN_BATCH_TIMES_K={vmb} "
             f"SVD_VALUES_GPU_MIN_BATCH={vmbatch} SVD_VALUES_GPU_MAX_L={NO_LIMIT if vml >= INF else vml}")
 
@@ -710,7 +721,7 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
     global GK, SHARE, BIG
     GK, SHARE, BIG = (0, 0), 0, (0, 0)    # stage 1 is the Jacobi split alone
     times_all = times
-    times, vtimes, valtimes, gvaltimes = split_bidiag(times)
+    times, vtimes, valtimes, gvaltimes, bandtimes = split_bidiag(times)
     if not times:
         sys.exit("no Jacobi-backend timings: the GPU split and the CPU boundary cannot be fitted")
     configure_grids(times)
@@ -947,6 +958,36 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
         bidiag[0 if which == "vectors" else 1] = th[0]
         bidiag_cap[0 if which == "vectors" else 1] = th[1]
     res["stage3"] = s3
+
+    # ---- stage 3b: the band backend (singular values alone) before bidiag,
+    # from its own threshold, within the same batch cap
+    band = 0
+    bfull = {p: tv for p, tv in bandtimes.items() if values_choice(values, *p[1:], p[0], params) == "cpu"}
+    if bfull:
+        def band_choice(t, M, N, b):
+            k = min(M, N)
+            if bidiag_cap[1] and b > bidiag_cap[1]:
+                return "cpu"
+            if t and k >= t:
+                return "band"
+            return "bidiag" if bidiag[1] and k >= bidiag[1] else "cpu"
+        cands = [0] + sorted({min(M, N) for (_, M, N) in bfull})
+        bscores = {t: te._score3(evaluate(lambda M, N, b, t=t: band_choice(t, M, N, b), bfull)) for t in cands}
+        best_b = min(v[0] for v in bscores.values())
+        near_b = {t: v for t, v in bscores.items() if v[0] <= best_b * (1 + tol)}
+        band = CURRENT_BAND if CURRENT_BAND in near_b else min(near_b, key=lambda t: (near_b[t][1], -t if t else 0))
+        res["stage3b"] = {
+            "n_points": len(bfull), "chosen": band, "current": CURRENT_BAND,
+            "with": _strip(evaluate(lambda M, N, b: band_choice(band, M, N, b), bfull)),
+            "without": _strip(evaluate(lambda M, N, b: band_choice(0, M, N, b), bfull)),
+            "curve": [[t, v[0], v[1]] for t, v in sorted(bscores.items())],
+            "speedup_vs_bidiag": sorted([[M, N, b, tv["bidiag"] / tv["band"]] for (b, M, N), tv in bfull.items()],
+                                        key=lambda x: (min(x[0], x[1]), x[0], x[2])),
+            "speedup_vs_cpu": sorted([[M, N, b, tv["cpu"] / tv["band"]] for (b, M, N), tv in bfull.items()],
+                                     key=lambda x: (min(x[0], x[1]), x[0], x[2])),
+        }
+    res["band_chosen"] = band
+    res["current_band"] = CURRENT_BAND
     res["bidiag_chosen"] = bidiag
     res["current_bidiag"] = list(CURRENT_BIDIAG)
     res["bidiag_cap_chosen"] = bidiag_cap
@@ -1026,12 +1067,12 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
     if (tuple(params) != tuple(CURRENT) or tuple(bidiag) != tuple(CURRENT_BIDIAG)
             or tuple(bidiag_cap) != tuple(CURRENT_BIDIAG_CAP) or tuple(gk) != tuple(CURRENT_GK)
             or tuple(values) != tuple(CURRENT_VALUES) or share != CURRENT_SHARE
-            or tuple(big) != tuple(CURRENT_BIG)):
+            or tuple(big) != tuple(CURRENT_BIG) or band != CURRENT_BAND):
         warns.append(f"the fitted policy differs from the one in effect ({device.get('source', 'unknown')})")
     res["warnings"] = warns
     res["noise"] = te.noise_floor(repeats)
-    res["tuned_row"] = tuned_row(device, params, bidiag, bidiag_cap, gk, values, share, big)
-    res["env_line"] = env_line(params, bidiag, bidiag_cap, gk, values, share, big)
+    res["tuned_row"] = tuned_row(device, params, bidiag, bidiag_cap, gk, values, share, big, band)
+    res["env_line"] = env_line(params, bidiag, bidiag_cap, gk, values, share, big, band)
     res["big_chosen"] = list(big)
     return res
 
@@ -1105,7 +1146,7 @@ def write_report(res, path):
           "block_min_batch,   gpu_max_k, gpu_min_batch_times_k, gpu_min_batch, gpu_max_l,   "
           "values_gpu_max_k, values_gpu_min_batch_times_k, values_gpu_min_batch, values_gpu_max_l,   "
           "bidiag_min_k, values_bidiag_min_k, bidiag_max_batch, values_bidiag_max_batch,   gk_min_k, gk_max_k,   "
-          "share_min_batch,   gpu_big_batch_max_k, gpu_big_batch_min",
+          "share_min_batch,   gpu_big_batch_max_k, gpu_big_batch_min,   values_band_min_k",
           res["tuned_row"], "```", "", "To try it without rebuilding:", "", "```sh", res["env_line"], "```", "",
           f"The policy in effect on this device came from `{d.get('source', 'unknown')}`. "
           f"Against the best measured backend at every point the fitted rule scores "
@@ -1288,6 +1329,21 @@ def write_report(res, path):
             if e["speedup_vs_cpu"]:
                 L += [f"bidiag over the CPU ({'with vectors' if which == 'vectors' else 'singular values alone'}), "
                       "M x N x batch: " + ", ".join(f"{M}x{N}x{b} {r:.2f}x" for M, N, b, r in e["speedup_vs_cpu"]), ""]
+    s3b = res.get("stage3b")
+    if s3b:
+        L += ["## Stage 3b: the band backend for singular values alone", "",
+              "For singular values alone, where the rules above choose the CPU or bidiag, the `band` "
+              "backend (the two-stage reduction: A to a band on the GPU in blocks whose work is matrix "
+              f"products, then LAPACK's band-to-bidiagonal on the CPU) from a threshold k on (0: never), "
+              f"within bidiag's batch cap, fitted on the {s3b['n_points']} points where it was timed "
+              f"(k >= {BAND_MIN_GRID_K}) against the CPU, bidiag and band.", "",
+              f"Chosen: {s3b['chosen'] or 'never'} (in effect: {s3b['current'] or 'never'}): "
+              f"{s3b['with']['geomean']:.4f} geometric-mean regret, worst {s3b['with']['worst']:.2f}x; without "
+              f"band {s3b['without']['geomean']:.4f}, worst {s3b['without']['worst']:.2f}x.", "",
+              "band over bidiag, M x N x batch: " +
+              ", ".join(f"{M}x{N}x{b} {r:.2f}x" for M, N, b, r in s3b["speedup_vs_bidiag"]), "",
+              "band over the CPU, M x N x batch: " +
+              ", ".join(f"{M}x{N}x{b} {r:.2f}x" for M, N, b, r in s3b["speedup_vs_cpu"]), ""]
 
     nf = res["noise"]
     L += ["## Noise floor", "",
@@ -1306,6 +1362,7 @@ def write_report(res, path):
 
 def main():
     global CURRENT, CURRENT_BIDIAG, CURRENT_BIDIAG_CAP, CURRENT_GK, GK_LIMIT, CURRENT_VALUES, CURRENT_SHARE, CURRENT_BIG
+    global CURRENT_BAND
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("binary", nargs="?", help="path to the built sweep_svd")
     ap.add_argument("--out", default="svd-tune-results", help="output directory")
@@ -1365,6 +1422,7 @@ def main():
             CURRENT = policy_to_tuple(pol)
             CURRENT_BIDIAG = (pol.get("bidiag_min_k", 0), pol.get("values_bidiag_min_k", 0))
             CURRENT_BIDIAG_CAP = (pol.get("bidiag_max_batch", 0), pol.get("values_bidiag_max_batch", 0))
+            CURRENT_BAND = pol.get("values_band_min_k", 0)
             CURRENT_GK = (pol.get("gk_min_k", 0), pol.get("gk_max_k", 0))
             CURRENT_SHARE = pol.get("share_min_batch", 0)
             CURRENT_BIG = (pol.get("gpu_big_batch_max_k", 0), pol.get("gpu_big_batch_min", 0))
@@ -1416,6 +1474,10 @@ def main():
     for which, s3 in res.get("stage3", {}).items():
         print(f"bidiag ({which}): {te._fmt_td((s3['chosen'], s3.get('cap', 0)))}   ({s3['with']['geomean']:.4f}x, worst "
               f"{s3['with']['worst']:.2f}x; without {s3['without']['geomean']:.4f}x)")
+    if res.get("stage3b"):
+        b3 = res["stage3b"]
+        print(f"band (values): {b3['chosen'] or 'never'}   ({b3['with']['geomean']:.4f}x, worst "
+              f"{b3['with']['worst']:.2f}x; without {b3['without']['geomean']:.4f}x)")
     print(f"\nkTuned[] row:  {res['tuned_row']}" +
           ("" if res["trustworthy"] else "     <-- indicative only, do not paste (see warnings)"))
     for w in res["warnings"]:

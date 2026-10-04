@@ -16,14 +16,16 @@ requested triangle is read, so the input need not be exactly symmetric. Batch
 dimensions are arbitrary. Non-finite input yields NaN output rather than an
 exception, as LAPACK does.
 
-**Routing.** Four Metal backends cover the size range (see
+**Routing.** Five Metal backends cover the size range (see
 [Dispatch](#dispatch)), but Accelerate's LAPACK on the CPU is quick (a single
 512×512 in 18 ms on an M1), and since 2.9.0 a batch is spread over every CPU
 core, so the public functions run on the GPU only where it was measured
 faster, and call LAPACK (Accelerate) on the CPU otherwise: on an M5 Pro for
-large batches of matrices up to N = 48 (`batch * N >= 8192`), and for one or
-two matrices from N = 1536 on the `tridiag` backend. The boundary is part of the
-per-device policy (see [Tuning](#tuning));
+large batches of matrices up to N = 48 (`batch * N >= 16384`; up to 64 from
+1024 matrices), for up to four matrices from N = 1024 on the `tridiag`
+backend, and for the eigenvalues alone of one or two matrices from N = 1536
+on `tridiag` and from 4096 on `band`, the two-stage reduction. The boundary is
+part of the per-device policy (see [Tuning](#tuning));
 on the CPU, eigenvectors come from `ssyevd`, and eigenvalues alone
 (`eigvalsh`) from N = 128 come from `ssyevd_2stage`, the two-stage
 reduction (dense to band in matrix-matrix products, then band to
@@ -212,8 +214,10 @@ next to the rest for eigenvectors, to LAPACK on the CPU:
    core rather than one, eigenvalues alone are 1.3-1.7x faster at
    $N = 1024$-4096 and eigenvectors 1.2-1.5x. Every sum over threadgroups is
    taken in a fixed order, so results do not depend on scheduling.
-2. **Tridiagonal eigenproblem**: LAPACK `sstedc` (eigenvectors) or `ssterf`
-   (eigenvalues), on the CPU.
+2. **Tridiagonal eigenproblem**: LAPACK `sstedc` (eigenvectors) on the CPU;
+   eigenvalues alone by bisection on the GPU from $N = 512$ (since 2.13.0;
+   see [backend 5](#backend-5-eigenvalues-alone-in-two-stages-band)), else
+   `ssterf`.
 3. **Back-transformation**: `ssytrd`'s reflectors applied to $Z$ 128 at a
    time, each block as $I - V T V^T$ (`slarft`), three MPS GEMMs; the next
    block's $V$ and $T$ are built on the CPU while the GPU applies this one.
@@ -236,20 +240,22 @@ up to 2. Because the CPU path spreads a batch over every core, the backend still
 wins only for a lone matrix or a few, and the policy caps the batch
 (`tridiag_max_batch`). With eigenvectors, on an M5 Pro, one $N \times N$
 (eigh, then eigvalsh, against the CPU path; to 4096 from the routing sweep in
-[`20261004-fd9bd8`](results/apple-m5-pro-20gpu/20261004-fd9bd8/eigh/report.md), 8192 measured alone):
+[`20261004-06bc11`](results/apple-m5-pro-20gpu/20261004-06bc11/eigh/report.md), 8192 measured alone):
 
 | $N$ | eigh: CPU | tridiag | speedup | eigvalsh: CPU | tridiag | speedup |
 |---|---|---|---|---|---|---|
-| 1024 | 0.040 s | 0.025 s | 1.61x | 0.018 s | 0.017 s | 1.09x |
-| 2048 | 0.228 s | 0.092 s | 2.49x | 0.081 s | 0.058 s | 1.40x |
-| 3072 | 0.683 s | 0.218 s | 3.14x | 0.207 s | 0.141 s | 1.47x |
-| 4096 | 2.329 s | 0.428 s | 5.44x | 0.466 s | 0.295 s | 1.58x |
-| 8192 | 17.91 s | 2.700 s | 6.63x | 2.540 s | 2.016 s | 1.26x |
+| 1024 | 0.039 s | 0.025 s | 1.57x | 0.018 s | 0.012 s | 1.47x |
+| 2048 | 0.227 s | 0.091 s | 2.48x | 0.082 s | 0.039 s | 2.12x |
+| 3072 | 0.682 s | 0.218 s | 3.13x | 0.207 s | 0.096 s | 2.15x |
+| 4096 | 2.460 s | 0.438 s | 5.62x | 0.467 s | 0.209 s | 2.23x |
+| 8192 | 18.09 s | 2.728 s | 6.63x | 2.588 s | 1.749 s | 1.48x |
 
 With eigenvectors the gain grows with $N$, because the CPU's reduction
 falls further behind memory bandwidth; for eigenvalues alone the CPU already
-uses the two-stage reduction, and the GPU path gains less: 1.1-1.6x, from
-$N = 1024$ since 2.12.0 (before it, about 1.2x from $N = 3000$). Accuracy matches LAPACK's: residual and orthogonality about
+uses the two-stage reduction, and the GPU path gains less: 1.5-2.2x since
+2.13.0's bisection (1.1-1.6x in 2.12.0, and before that about 1.2x from
+$N = 3000$). From $N = 4096$ eigenvalues alone go to the `band` backend
+instead (below). Accuracy matches LAPACK's: residual and orthogonality about
 $10^{-6}$ at every size tested, eigenvalues within $3 \times 10^{-7}$ of
 LAPACK's relative to $\|A\|_F$.
 
@@ -299,6 +305,84 @@ backends: across $N = 1 \ldots 87$, residual and orthogonality at most
 $1.5 \times 10^{-6}$ relative to $\|A\|_F$ and eigenvalues within
 $8 \times 10^{-7}$ of LAPACK's.
 
+## Backend 5: eigenvalues alone in two stages (`band`)
+
+For eigenvalues alone the `tridiag` backend's reduction is held to the speed
+of memory: a symmetric matrix-vector product a column, reading the whole
+trailing matrix each time. The CPU path already avoids that with LAPACK's
+two-stage `ssyevd_2stage`, which is why `tridiag` led it by only 1.1-1.6x for
+`eigvalsh`. The `band` backend (`src/eigh_band.mm`, new in 2.13.0) reduces in
+the same two stages ([Haidar, Ltaief and Dongarra](https://doi.org/10.1145/2063384.2063394)),
+the first on the GPU and the second on every CPU core:
+
+1. **To a band** of width $b$ (16 by default) on the GPU
+   (`band_reduce_symmetric` in `src/band_reduce.mm`), $b$ columns a block:
+   the QR of the panel below the diagonal block, $H = I - V T V^T$, its $R$
+   left in place as the band; then both sides of the trailing matrix
+   $A_{22}$ at once, $X = A_{22} V T$, $Y = X - \tfrac12 V (T^T V^T X)$,
+   $A_{22} \mathrel{-}= V Y^T + Y V^T$ as one product of $[V\ Y]$ and
+   $[Y\ V]^T$. The trailing matrix is kept in full (MPS has no symmetric
+   rank-$2b$ update), so it is read twice and written once a block, where the
+   one-stage reduction reads it once a column. The panels are the SVD's
+   `band` kernels ([svd.md](svd.md)): up to 128 rows in one simdgroup,
+   taller by TSQR with the Householder vectors rebuilt. The last columns,
+   fewer than $3b$, are LAPACK's `ssytrd_sy2sb`.
+2. **To tridiagonal** on the CPU (`band_to_tridiagonal` in
+   `src/band_chase.cpp`), by Householder bulge chasing, LAPACK's
+   `ssytrd_sb2st` kernels: sweep $s$ annihilates column $s$ below the
+   subdiagonal and chases the bulge it makes down the band, a block of $b$ at
+   a time. Sweeps overlap ([Lang](https://doi.org/10.1137/0914078)): sweep
+   $s$ may run its $t$-th step once sweep $s - 1$ has finished its
+   $(t + 2)$-th, the blocks they touch being one apart, so the sweeps run
+   pipelined on all the cores but two (left to the GPU's host work), each
+   thread spinning on the previous sweep's count of finished steps.
+   Accelerate's `ssytrd_sb2st` runs on one core: 112 ms for a 4096 band of
+   width 16, against 39 ms here.
+3. **The eigenvalues** of the tridiagonal by bisection on the GPU
+   (`sturm_bisect` in `shaders/Eigh_Tridiag.metal`): a thread an eigenvalue,
+   each counting the Sturm sequence's sign changes
+   ([Barth, Martin and Wilkinson](https://doi.org/10.1007/BF02162154)) with
+   LAPACK's `pivmin` guard ([Demmel, Dhillon and Ren](http://www.emis.de/journals/ETNA/vol.3.1995/pp116-149.dir/pp116-149.html))
+   for a fixed number of halvings from the Gershgorin interval, the
+   tridiagonal staged in threadgroup memory 1024 entries at a time. LAPACK's
+   `ssterf` is sequential, 79 ms at 4096 and 305 at 8192; bisection takes 6
+   and 16, accurate to a few float32 ulps of $\|T\|$. Below $N = 512$ `ssterf`
+   is the faster and is used. The `tridiag` backend's eigenvalue path uses
+   the same bisection since 2.13.0.
+
+A batch is pipelined over two slots, as in `tridiag`: the CPU chases and
+solves one matrix while the GPU reduces the next. Each matrix is scaled by a
+power of two first, and a non-finite matrix gives NaN eigenvalues and the
+`info` flag without being reduced. The band width is narrowed where a
+panel would not fit the kernels ($N b \le 131072$: 16 up to $N = 8192$, 8 up
+to 16384) and the backend gives way to `tridiag` beyond.
+
+On an M5 Pro, one $N \times N$, eigenvalues alone, against `tridiag` (with
+bisection) and the CPU path (to 4096 from the routing sweep in
+[`20261004-06bc11`](results/apple-m5-pro-20gpu/20261004-06bc11/eigh/report.md), 8192 measured alone):
+
+| $N$ | CPU | tridiag | band | band / CPU |
+|---|---|---|---|---|
+| 1024 | 0.018 s | 0.012 s | 0.017 s | 1.10x |
+| 2048 | 0.082 s | 0.039 s | 0.047 s | 1.74x |
+| 3072 | 0.207 s | 0.096 s | 0.090 s | 2.30x |
+| 4096 | 0.467 s | 0.209 s | 0.161 s | 2.91x |
+| 8192 | 2.588 s | 1.749 s | 0.872 s | 2.97x |
+
+From about 3072 the band reduction's matrix products beat the one-stage
+reduction's bandwidth limit; at 8192 the backend is 2.0x `tridiag`, and the
+CPU's own two-stage driver takes 3x as long. Below that, a block's panel
+factorization, a chain of dependent steps whose latency does not shrink with
+$N$, costs more than the products save. At 4096 the chase takes 35 ms,
+bisection 6, and the GPU's stage, with the matrix's copy in, the rest. Eigenvalues are
+within $6 \times 10^{-6}$ of LAPACK's `ssyevd` relative to the largest at
+the sizes tested (`tridiag`'s within $3 \times 10^{-7}$). The
+routing sweep fits `values_band_min_n`, from which $N$ eigenvalues alone use
+it: 4096 on the M5 Pro, where at 3072 the backend is 7% ahead of `tridiag`,
+inside the fit's 0.5% tolerance on the geometric mean, whose tie-break takes
+the higher threshold. How the stages were built and measured is in [the
+two-stage study](studies/two-stage-apple-m5-pro.md).
+
 ## Dispatch
 
 On the GPU, by the policy for this device (`metal_linalg::eigh_policy()`); on an M1:
@@ -331,6 +415,16 @@ measurements:
 ```
 ql_min_n <= N <= ql_max_n  ->  backend 4, ql      (eigh and eigvalsh alike)
 otherwise                  ->  the Jacobi split above
+```
+
+Where the GPU/CPU rule (below) says CPU, one large matrix or a few still go to
+the GPU's LAPACK-style backends:
+
+```
+up to tridiag_max_batch matrices (eigvalsh: values_tridiag_max_batch; 0 = any):
+  eigvalsh: band     iff  N >= values_band_min_n      (0 = never)
+  tridiag            iff  N >= tridiag_min_n          (eigvalsh: values_tridiag_min_n; 0 = never)
+otherwise the CPU path
 ```
 
 **The large-batch clause** (since 2.12.0). The GPU-or-CPU rule is a product,
@@ -494,7 +588,7 @@ rather than constants:
 | GPU | cores | simd up to | block from | ql for | GPU iff | tridiag | status |
 |---|---|---|---|---|---|---|---|
 | Apple M1 | 8 | N = 8 | N = 96 | never | N <= 64 and batch * N >= 1024 | never | measured before 2.9.0 (incomplete) — see [`studies/eigh-routing-apple-m1.md`](studies/eigh-routing-apple-m1.md) |
-| Apple M5 Pro | 20 | N = 8 | N = 96 | N = 12-64, shared with the CPU from batch 1024 | N <= 48 and batch * N >= 16384, or N = 49-64 in batches of 1024+ (eigvalsh: N <= 48 and batch * N >= 16384) | from N = 1024, batch <= 4 (eigvalsh: from 1536, batch <= 2) | measured — run [`20261004-fd9bd8`](results/apple-m5-pro-20gpu/20261004-fd9bd8/eigh/report.md) |
+| Apple M5 Pro | 20 | never | N = 96 | N = 12-64, shared with the CPU from batch 1024 | N <= 48 and batch * N >= 16384, or N = 49-64 in batches of 1024+ (eigvalsh: N <= 48 and batch * N >= 16384) | from N = 1024, batch <= 4 (eigvalsh: from 1536, batch <= 2, and `band` from 4096) | measured — run [`20261004-06bc11`](results/apple-m5-pro-20gpu/20261004-06bc11/eigh/report.md) |
 | anything else | — | N = 8 | N = 96 | never | N <= 64 and batch * N >= 1024 | never | **untuned default** |
 
 The M5 Pro row is the first measured against the CPU path that spreads a
@@ -505,19 +599,21 @@ CPU path from 1024 matrices (since 2.11.0), and up to four large matrices on
 `tridiag` from N = 1024 (since 2.12.0; 1536 and two before). Since 2.12.0
 batches of 1024 and more go to the GPU, shared, up to N = 64 (the large-batch
 clause), which the product rule cannot reach without also taking small batches
-of N = 49-64 that the CPU wins: on the 205 points of the run the row scores
-1.0094 geometric-mean regret, worst 1.38x, against 1.0157 for the product rule
-alone and 1.0112, worst 1.59x, for the row it replaces. Eigenvalues alone go to
-the GPU at the same batches, shared likewise, and to `tridiag` from N = 1536;
+of N = 49-64 that the CPU wins: on the 205 points of the 2.12.0 run the row
+scored 1.0094 geometric-mean regret, worst 1.38x, against 1.0157 for the
+product rule alone and 1.0112, worst 1.59x, for the row it replaced, and on the
+2.13.0 run 1.0095, worst 1.35x. Eigenvalues alone go to
+the GPU at the same batches, shared likewise, to `tridiag` from N = 1536 and
+to `band` from 4096 (since 2.13.0);
 before 2.11.0 they never went to the GPU, the CPU's eigenvalue paths being
 faster than the GPU alone everywhere measured except `tridiag` for one matrix
 from N = 3072. Before 2.9.0 the
 same machine routed batches up to N = 1024 to the GPU, measured against one
 CPU core ([study](studies/routing-apple-m5-pro.md)); against every core that
 routing is 1.71x slower than the oracle on geometric mean, worst 14x, and
-the new row 1.003x. The block crossover, 96, is unchanged; simd mode takes
-N <= 8 since the 2.12.0 run (1.020 against 1.025 without it, on the GPU's
-choices alone).
+the new row 1.003x. The block crossover, 96, is unchanged; simd mode, which
+took N <= 8 in the 2.12.0 run, is off in the 2.13.0 one (1.0186 against
+1.0277 with it, on the GPU's choices alone; up to N = 4 is within 0.5%).
 
 The GPU/CPU rule is `N <= gpu_max_n`, `batch * N >= gpu_min_batch_times_n` and
 `batch >= gpu_min_batch`; the last is 1 (no minimum) on the M1. Eigenvalues
@@ -600,9 +696,11 @@ To probe another GPU without a rebuild:
 | `EIGH_VALUES_GPU_MAX_N`, `EIGH_VALUES_GPU_MIN_BATCH_TIMES_N`, `EIGH_VALUES_GPU_MIN_BATCH` | the GPU/CPU boundary for eigenvalues alone (`eigvalsh`) |
 | `EIGH_TRIDIAG_MIN_N`, `EIGH_VALUES_TRIDIAG_MIN_N` | the tridiag backend instead of the CPU from this N (0: never) |
 | `EIGH_TRIDIAG_MAX_BATCH`, `EIGH_VALUES_TRIDIAG_MAX_BATCH` | ... only for batches up to this (0: any) |
+| `EIGH_VALUES_BAND_MIN_N` | the band backend for eigenvalues alone from this N, within the same batch cap (0: never) |
+| `EIGH_BAND_WIDTH=8` / `16` / `32` | the band backend's band width (default 16) |
 | `EIGH_QL_MIN_N`, `EIGH_QL_MAX_N` | the ql backend on the GPU for N in this window (`EIGH_QL_MAX_N=0`: never) |
 | `METAL_LINALG_CPU_THREADS=<n>` | CPU threads a batch is spread over (default: every core; all three decompositions) |
-| `EIGH_DEVICE=gpu` / `cpu` / `tridiag` | bypass the GPU/CPU boundary; `tridiag` forces that backend |
+| `EIGH_DEVICE=gpu` / `cpu` / `tridiag` / `band` | bypass the GPU/CPU boundary; `tridiag` forces that backend, `band` that backend for eigenvalues alone (`tridiag` with eigenvectors) |
 | `EIGH_MODE=simd` / `threadgroup` | force the execution mode of backend 1 |
 | `EIGH_INNER_SWEEPS=<k>` | scalar sweeps per block subproblem |
 | `EIGH_CHUNK_MS=<ms>` | wall-time budget per command buffer |
@@ -618,11 +716,13 @@ cmake --build build --target test_eigh
 ./build/test_eigh          # or: ctest --test-dir build
 ```
 
-About 260 checks: every backend, and both modes of backend 1, across
+319 checks: every backend, and both modes of backend 1, across
 $N = 1 \ldots 512$ (odd sizes, sizes straddling the 16-block and 32-group
 boundaries, several thread and inner-sweep counts; for `ql` every simdgroup
 boundary up to its limit, 87, and the switch to a chaser of its own at 33),
-the `tridiag` backend to 1100, batched and 4-D inputs, a batch split over
+the `tridiag` backend to 1100, `band` at each band width from 1×1 to
+1100×1100 (either side of the one-simdgroup panel, the TSQR leaf and the
+switch to bisection), batched and 4-D inputs, a batch split over
 many command buffers,
 both triangles with junk in the other, transposed and unaligned views, integer
 input, structured spectra (identity, zero, diagonal, repeated, $10^{-4}$ to
@@ -642,7 +742,10 @@ device's own policy at the end.
 - J. Demmel and K. Veselić, ["Jacobi's method is more accurate than QR"](https://epubs.siam.org/doi/10.1137/0613074), *SIAM J. Matrix Anal. Appl.* 13(4), 1992.
 - J. J. Dongarra, S. J. Hammarling and D. C. Sorensen, ["Block reduction of matrices to condensed forms for eigenvalue computations"](https://doi.org/10.1016/0377-0427(89)90367-1), *J. Comput. Appl. Math.* 27(1-2), 1989 — the blocked tridiagonalization (LAPACK's `ssytrd` and `slatrd`) the `tridiag` backend runs on the GPU.
 - S. Tomov, R. Nath and J. Dongarra, ["Accelerating the reduction to upper Hessenberg, tridiagonal, and bidiagonal forms through hybrid GPU-based computing"](https://doi.org/10.1016/j.parco.2010.06.001), *Parallel Computing* 36(12), 2010 — the hybrid CPU/GPU split (MAGMA) the backend follows, with the panel moved to the GPU.
+- B. Lang, ["A parallel algorithm for reducing symmetric banded matrices to tridiagonal form"](https://doi.org/10.1137/0914078), *SIAM J. Sci. Comput.* 14(6), 1993 — Householder bulge chasing with the sweeps pipelined, the `band` backend's second stage.
+- W. Barth, R. S. Martin and J. H. Wilkinson, ["Calculation of the eigenvalues of a symmetric tridiagonal matrix by the method of bisection"](https://doi.org/10.1007/BF02162154), *Numerische Mathematik* 9, 1967 — Sturm-sequence bisection, which the `band` and `tridiag` backends run on the GPU for eigenvalues alone.
+- J. W. Demmel, I. Dhillon and H. Ren, ["On the correctness of some bisection-like parallel eigenvalue algorithms in floating point arithmetic"](http://www.emis.de/journals/ETNA/vol.3.1995/pp116-149.dir/pp116-149.html), *Electron. Trans. Numer. Anal.* 3, 1995 — why the counts are monotone in floating point, and the `pivmin` guard (LAPACK's `sstebz`).
 - C. H. Bischof, B. Lang and X. Sun, ["A framework for symmetric band reduction"](https://doi.org/10.1145/365723.365735), *ACM Trans. Math. Softw.* 26(4), 2000 — reducing a dense matrix to band form, then the band to tridiagonal: the two-stage reduction behind `eigvalsh`'s CPU path.
-- A. Haidar, H. Ltaief and J. Dongarra, ["Parallel reduction to condensed forms for symmetric eigenvalue problems using aggregated fine-grained and memory-aware kernels"](https://doi.org/10.1145/2063384.2063394), SC '11, 2011 — the two-stage algorithm as [LAPACK 3.7.0](https://netlib.org/lapack/lapack-3.7.0.html) implements it (`ssyevd_2stage`), which this library calls through Accelerate.
+- A. Haidar, H. Ltaief and J. Dongarra, ["Parallel reduction to condensed forms for symmetric eigenvalue problems using aggregated fine-grained and memory-aware kernels"](https://doi.org/10.1145/2063384.2063394), SC '11, 2011 — the two-stage algorithm as [LAPACK 3.7.0](https://netlib.org/lapack/lapack-3.7.0.html) implements it (`ssyevd_2stage`), which this library calls through Accelerate, and which the `band` backend runs with its first stage on the GPU.
 - E. Ringoot, R. Alomairy, V. Churavy and A. Edelman, ["Performant unified GPU kernels for portable singular value computation across hardware and precision"](https://doi.org/10.1145/3754598.3754667), 2025 ([arXiv:2508.06339](https://arxiv.org/abs/2508.06339)), and E. Ringoot, R. Alomairy and A. Edelman, ["Accelerating bidiagonalization of banded matrices through memory-aware bulge-chasing on GPUs"](https://arxiv.org/abs/2510.12705), 2025 — two-stage reductions on GPUs, including Apple's; they prompted measuring the two-stage reduction on Apple Silicon, and the second's GPU-resident design is why the `tridiag` backend keeps its panel on the GPU. Their kernels are not used here.
 - NVIDIA, [cuSOLVER `syevjBatched`](https://docs.nvidia.com/cuda/cusolver/index.html#cusolverdn-t-syevjbatch) — Jacobi as the production batched symmetric eigensolver on GPUs.

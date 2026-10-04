@@ -13,6 +13,9 @@ let withMLX = ProcessInfo.processInfo.environment["METAL_LINALG_NO_MLX"] == nil
 let coreSources = [
     "src/device.mm",
     "src/metal_runtime.mm",
+    "src/band_chase.cpp",
+    "src/band_reduce.mm",
+    "src/bisect.mm",
     "src/qr.mm",
     "src/qr_unblocked.mm",
     "src/qr_streaming_amx_reduced.mm",
@@ -22,6 +25,7 @@ let coreSources = [
     "src/eigh_block_jacobi.mm",
     "src/eigh_tridiag.mm",
     "src/eigh_ql.mm",
+    "src/eigh_band.mm",
     "src/svd.mm",
     "src/svd_block_jacobi.mm",
     "src/svd_bidiag.mm",

@@ -175,6 +175,7 @@ struct TunedEntry {
     // The large-batch clause; 0, 0 = never, which rows from before 2.12.0 leave.
     unsigned    gpu_big_batch_max_n;
     unsigned    gpu_big_batch_min;
+    unsigned    values_band_min_n;   // 0 = never, which rows from before 2.13.0 leave
     unsigned    calibration;   // kCalibration* (calibration.h); rows without it are current
 };
 
@@ -184,7 +185,7 @@ struct TunedEntry {
 // docs/studies/. The last row keeps the array non-empty and matches nothing.
 constexpr TunedEntry kTuned[] = {
 #include "tuned/eigh.inc"
-    {"", 0,   0, 0, 0, 0,   0, 0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0, 0,   0},
+    {"", 0,   0, 0, 0, 0,   0, 0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0, 0,   0,   0},
 };
 
 struct ResolvedPolicy {
@@ -232,6 +233,7 @@ ResolvedPolicy resolve_policy() {
             r.policy.share_min_batch              = e.share_min_batch;
             r.policy.gpu_big_batch_max_n          = e.gpu_big_batch_max_n;
             r.policy.gpu_big_batch_min            = e.gpu_big_batch_min;
+            r.policy.values_band_min_n            = e.values_band_min_n;
             r.source = detail::tuned_source_prefix(e.calibration) + r.device;
             detail::calibration_notice("eigh", e.calibration);
             break;
@@ -272,6 +274,7 @@ ResolvedPolicy resolve_policy() {
     over("EIGH_SHARE_MIN_BATCH",              r.policy.share_min_batch);
     over("EIGH_GPU_BIG_BATCH_MAX_N",          r.policy.gpu_big_batch_max_n);
     over("EIGH_GPU_BIG_BATCH_MIN",            r.policy.gpu_big_batch_min);
+    over("EIGH_VALUES_BAND_MIN_N",            r.policy.values_band_min_n);
     if (!env.empty()) r.source = "env:" + env;
     return r;
 }
@@ -638,10 +641,11 @@ bool eigvalsh_uses_gpu(unsigned n, unsigned batch) {
 
 namespace {
 
-// Where the rules send a call to the CPU: the tridiag backend instead, from
-// the policy's threshold (0 = never) and up to its batch cap (0 = none).
-// EIGH_DEVICE=cpu keeps the CPU; EIGH_DEVICE=tridiag forces this backend for
-// every call.
+// Where the rules send a call to the CPU: for eigenvalues alone the band
+// backend from its threshold, then the tridiag backend from its own (0 =
+// never), both up to the batch cap (0 = none). EIGH_DEVICE=cpu keeps the CPU;
+// EIGH_DEVICE=tridiag forces that backend for every call, EIGH_DEVICE=band
+// the band backend for eigenvalues alone (tridiag with eigenvectors).
 EighBackend cpu_side(unsigned n, unsigned batch, bool vectors) {
     if (const char* e = std::getenv("EIGH_DEVICE")) {
         const std::string s = e;
@@ -649,9 +653,11 @@ EighBackend cpu_side(unsigned n, unsigned batch, bool vectors) {
         if (s == "tridiag") return EighBackend::tridiag;
     }
     const EighPolicy& p = policy_state().policy;
+    const unsigned cap = vectors ? p.tridiag_max_batch : p.values_tridiag_max_batch;
+    if (cap != 0 && batch > cap) return EighBackend::cpu;
+    if (!vectors && p.values_band_min_n != 0 && n >= p.values_band_min_n) return EighBackend::band;
     const unsigned from = vectors ? p.tridiag_min_n : p.values_tridiag_min_n;
-    const unsigned cap  = vectors ? p.tridiag_max_batch : p.values_tridiag_max_batch;
-    return from != 0 && n >= from && (cap == 0 || batch <= cap) ? EighBackend::tridiag : EighBackend::cpu;
+    return from != 0 && n >= from ? EighBackend::tridiag : EighBackend::cpu;
 }
 
 bool forced_tridiag() {
@@ -659,8 +665,14 @@ bool forced_tridiag() {
     return e && std::string(e) == "tridiag";
 }
 
+bool forced_band() {
+    const char* e = std::getenv("EIGH_DEVICE");
+    return e && std::string(e) == "band";
+}
+
 EighBackend route(unsigned n, unsigned batch, bool vectors) {
     if (forced_tridiag()) return EighBackend::tridiag;
+    if (forced_band()) return vectors ? EighBackend::tridiag : EighBackend::band;
     const bool gpu = vectors ? eigh_uses_gpu(n, batch) : eigvalsh_uses_gpu(n, batch);
     return gpu ? eigh_gpu_backend(n, batch) : cpu_side(n, batch, vectors);
 }
@@ -721,6 +733,10 @@ void core::eigh(const Matrices& a, bool lower, float* w, float* v, uint32_t* inf
     }
     if (backend == EighBackend::tridiag) {
         core::detail::eigh_tridiag(a, lower, w, v, info);
+        return;
+    }
+    if (backend == EighBackend::band) {   // eigenvalues alone
+        core::detail::eigh_band(a, lower, w, info);
         return;
     }
     if (backend == EighBackend::ql) {

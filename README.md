@@ -77,8 +77,8 @@ spread over every core), by a policy measured on the device it runs on. MLX's ow
 | operation | functions | GPU kernels | CPU path | details |
 |---|---|---|---|---|
 | QR | `qr_accelerated` | Householder in one threadgroup per matrix; grid-parallel blocked Householder | LAPACK `sgeqrf`, `sorgqr` | [docs/qr.md](docs/qr.md) |
-| symmetric eigendecomposition | `eigh_accelerated`, `eigvalsh_accelerated` | whole-matrix Jacobi; block Jacobi; tridiagonalization and implicit QL in one threadgroup per matrix (N <= 87); Householder tridiagonalization for large N (with LAPACK's tridiagonal solver) | LAPACK `ssyevd`; `ssyevd_2stage` for eigenvalues alone from N = 128 | [docs/eigh.md](docs/eigh.md) |
-| thin SVD | `svd_accelerated`, `svdvals_accelerated` | whole-matrix one-sided Jacobi; block one-sided Jacobi; either after QR for tall input; bidiagonalization and implicit QR in one threadgroup per matrix (k <= 83); Householder bidiagonalization for large k (with LAPACK's bidiagonal solver) | LAPACK `sgesdd` | [docs/svd.md](docs/svd.md) |
+| symmetric eigendecomposition | `eigh_accelerated`, `eigvalsh_accelerated` | whole-matrix Jacobi; block Jacobi; tridiagonalization and implicit QL in one threadgroup per matrix (N <= 87); Householder tridiagonalization for large N (with LAPACK's tridiagonal solver, or bisection on the GPU for eigenvalues alone); for eigenvalues alone of large N, a two-stage reduction (to a band on the GPU, then to tridiagonal on every CPU core) | LAPACK `ssyevd`; `ssyevd_2stage` for eigenvalues alone from N = 128 | [docs/eigh.md](docs/eigh.md) |
+| thin SVD | `svd_accelerated`, `svdvals_accelerated` | whole-matrix one-sided Jacobi; block one-sided Jacobi; either after QR for tall input; bidiagonalization and implicit QR in one threadgroup per matrix (k <= 83); Householder bidiagonalization for large k (with LAPACK's bidiagonal solver, or bisection on the GPU for singular values alone); for singular values alone of large k, a two-stage reduction (to a band on the GPU, then to bidiagonal on every CPU core) | LAPACK `sgesdd` | [docs/svd.md](docs/svd.md) |
 
 On the CPU a batch is spread over every core, each solving whole matrices
 (`set_cpu_threads()` or `METAL_LINALG_CPU_THREADS` caps it).
@@ -103,52 +103,64 @@ The same solvers and routing, from five places, each on an Apple Silicon Mac:
 
 ### Where the GPU wins
 
-Less widely than before 2.9.0, because the CPU path now spreads a batch over
-every core: on an Apple M5 Pro (18 CPU cores) that made batches of small and
-mid-size matrices 7.5-15x faster on the CPU, and most of them now stay there.
-Against it the GPU wins in two places. The first is large batches of small
-matrices, where LAPACK's own methods in one threadgroup per matrix carry the
-GPU's lead: the eigensolver's `ql` kernel (tridiagonalization and QL, new in
-2.9.0) and the SVD's `golub_kahan` (bidiagonalization and implicit QR, new in
-2.10.0, 1.6-3x faster than the Jacobi kernels it replaces there). From about
-1024 matrices a batch is shared between the GPU and the CPU, the two solving
-it at once (new in 2.11.0, 1.4-1.7x over either alone); a QR batch is shared
-from 64 matrices (new in 2.12.0, 1.5x at 1024 of 128×128). On the M5 Pro, the
-best GPU route against the CPU alone:
+On an Apple M5 Pro (20 GPU cores), against a CPU path that spreads every call
+over all 18 CPU cores, the GPU wins in two places, and the router sends work
+there and nowhere else.
 
-| | lone matrix | batch 16 | batch 256 | batch 4096 |
-|---|---|---|---|---|
-| eigh 16×16 | 0.04x | 0.26x | 0.84x | 1.80x |
-| eigh 32×32 | 0.11x | 0.39x | 1.08x | 2.07x |
-| eigh 128×128 | 0.09x | 0.12x | 0.25x | 0.22x |
-| SVD 16×16 | 0.09x | 0.36x | 1.09x | 1.96x |
-| SVD 32×32 | 0.09x | 0.47x | 1.25x | 1.76x |
-| SVD 48×48 | 0.12x | 0.33x | 1.54x | 1.81x |
-| SVD 512×512 | 0.52x | 0.18x | — | — |
-
-The second is one large matrix. eigh and the SVD each have a backend that
-keeps LAPACK's method and moves its memory-bound reduction (to tridiagonal or
-bidiagonal form) and its back-transformation to the GPU, leaving the small
-tridiagonal or bidiagonal problem to LAPACK, and QR's kernels win on their
-own. On the M5 Pro, one N×N matrix against the CPU:
+**One large matrix: up to 8.6x, and 10.4x at 8192.** eigh and the SVD keep
+LAPACK's method and move its memory-bound reduction (to tridiagonal or
+bidiagonal form) and its back-transformation to the GPU. For the eigenvalues
+or singular values alone, large matrices are reduced in two stages (since
+2.13.0): to a band on the GPU, in blocks whose work is matrix products, then
+to tridiagonal or bidiagonal on every CPU core, and the values come from
+bisection on the GPU. QR's kernels win on their own. One N×N matrix against
+the CPU:
 
 | | 1024 | 1536 | 2048 | 3072 | 4096 |
 |---|---|---|---|---|---|
-| eigh, with eigenvectors | 1.61x | 1.92x | 2.49x | 3.14x | 5.44x |
-| eigvalsh, eigenvalues alone | 1.09x | 1.28x | 1.40x | 1.47x | 1.58x |
-| SVD, with vectors | 1.40x | 1.35x | 1.75x | 2.10x | 2.26x |
-| svdvals, singular values alone | 1.35x | 1.43x | 1.73x | 2.08x | 2.32x |
-| QR | 1.14x | 1.30x | 1.89x | 2.15x | — |
+| svdvals, singular values alone | 1.55x | 1.93x | 2.87x | **5.68x** | **8.62x** |
+| eigh, with eigenvectors | 1.57x | 1.91x | 2.48x | **3.13x** | **5.62x** |
+| eigvalsh, eigenvalues alone | 1.47x | 1.84x | 2.12x | 2.15x | **2.91x** |
+| SVD, with vectors | 1.42x | 1.49x | 1.81x | 2.15x | 2.32x |
+| QR | 1.14x | 1.29x | 1.89x | 2.12x | — |
 
-Each is used where the routing sweep found it ahead on that Mac: on the M5
-Pro from N = 1024 for eigh, the SVD, svdvals and QR, and 1536 for eigvalsh,
-for one matrix or a few (the reductions overlap one matrix's GPU work with the
-next one's CPU work, but the CPU spreads a batch over its cores). Since 2.12.0
-the reductions take three or four GPU dispatches per column rather than seven
-or twelve, which is most of the gain over 2.11.0's 1.13x (eigh) and 0.68x
-(eigvalsh) at 1024. The full
-tables are in the per-solver docs, and why the CPU path changed is in
-[the performance-headroom study](docs/studies/performance-headroom-apple-m5-pro.md).
+At 8192, the singular values alone take 1.15 s against the CPU's 11.95 s
+(10.4x), eigh 2.7 s against 18.1 s (6.6x), and the eigenvalues alone 0.87 s
+against 2.59 s (3.0x, against LAPACK's own two-stage driver). The M5 Pro uses
+these backends from N = 1024, for one matrix or a few: a batch of them is
+pipelined, the CPU solving one matrix's small problem while the GPU reduces
+the next, but the CPU path spreads a large batch over its cores. In 2.12.0
+svdvals at 4096 was 2.32x and eigvalsh 1.58x.
+
+**Large batches of small matrices: up to 2.2x.** LAPACK's own methods in one
+threadgroup per matrix carry the GPU's lead: the eigensolver's `ql` kernel
+(tridiagonalization and QL) and the SVD's `golub_kahan` (bidiagonalization and
+implicit QR, 1.6-3x faster than the Jacobi kernels it replaced). From 1024
+matrices the batch is shared, the GPU and the CPU solving it at once (1.4-1.7x
+over either alone), up to 64×64 for eigh and 80×80 for the SVD; a QR batch is
+shared from 64 matrices (1.5x at 1024 of 128×128). The best GPU route against
+the CPU alone:
+
+| | lone matrix | batch 16 | batch 256 | batch 4096 |
+|---|---|---|---|---|
+| eigh 24×24 | 0.08x | 0.35x | 1.08x | **2.19x** |
+| eigh 32×32 | 0.11x | 0.38x | 1.06x | **2.06x** |
+| eigh 64×64 | 0.12x | 0.23x | 0.89x | 1.68x |
+| eigvalsh 32×32 | 0.04x | 0.21x | 0.75x | 1.60x |
+| SVD 16×16 | 0.06x | 0.30x | 1.05x | 1.97x |
+| SVD 32×32 | 0.17x | 0.42x | 1.27x | **2.11x** |
+| SVD 48×48 | 0.15x | 0.34x | 1.58x | 1.88x |
+| SVD 64×64 | 0.19x | 0.33x | 1.09x | 1.58x |
+
+Lone small matrices, small batches and mid-size matrices (about 96 to 512)
+stay on the CPU, which is 3-100x faster there: since 2.9.0 it spreads a
+batch over every core ([the performance-headroom
+study](docs/studies/performance-headroom-apple-m5-pro.md) has why). The numbers
+are from the routing sweeps [`20261004-06bc11`](docs/results/apple-m5-pro-20gpu/20261004-06bc11/summary.md)
+(eigh, SVD) and [`20261004-4d6208`](docs/results/apple-m5-pro-20gpu/20261004-4d6208/summary.md)
+(QR), 8192 measured alone; the full tables are in the per-solver docs, and how
+the two-stage reduction got there in [the two-stage
+study](docs/studies/two-stage-apple-m5-pro.md).
 
 ### How calls are routed
 
@@ -562,7 +574,7 @@ lists them.
 | `<metal_linalg/metal_linalg.h>` | all of the below |
 | `<metal_linalg/qr.h>` | `qr_accelerated`; `QrPolicy`, `qr_policy()`, `set_qr_policy()`, `qr_policy_source()`; `qr_backend(m, n, batch)` |
 | `<metal_linalg/eigh.h>` | `eigh_accelerated`, `eigvalsh_accelerated`; `EighPolicy`, `eigh_policy()`, `set_eigh_policy()`, `eigh_policy_source()`; `eigh_backend(n, batch)`, `eigvalsh_backend(n, batch)`, `eigh_uses_gpu`, `eigvalsh_uses_gpu` |
-| `<metal_linalg/svd.h>` | `svd_accelerated`, `svdvals_accelerated`; `SvdPolicy`, `svd_policy()`, `set_svd_policy()`, `svd_policy_source()`; `svd_backend(m, n, batch)`, `svd_uses_gpu` |
+| `<metal_linalg/svd.h>` | `svd_accelerated`, `svdvals_accelerated`; `SvdPolicy`, `svd_policy()`, `set_svd_policy()`, `svd_policy_source()`; `svd_backend(m, n, batch)`, `svdvals_backend(m, n, batch)`, `svd_uses_gpu`, `svdvals_uses_gpu` |
 | `<metal_linalg/device.h>` | `device_name()`, `gpu_core_count()`: the GPU the policies were resolved for; `cpu_threads()`, `set_cpu_threads()`: how many cores the CPU paths spread a batch over |
 | `<metal_linalg/core.h>` | the same on float buffers, without MLX: `core::qr`, `core::eigh`, `core::svd`; the policies, backends and options |
 | `<metal_linalg/c_api.h>` | the C API: `metal_linalg_qr`, `_eigh`, `_svd`, the routing queries and policies |
@@ -582,8 +594,8 @@ ctest --test-dir build --output-on-failure    # test_qr, test_eigh, test_svd, te
 ./build/sweep_svd --policy                    # the device and the policy in effect
 ```
 
-The tests (116 QR, 260 eigh and 329 SVD checks through MLX, 208 on the buffer
-API and 63 on the C API) cover every backend directly and through the router,
+The tests (116 QR, 319 eigh and 384 SVD checks through MLX, 208 on the buffer
+API and 66 on the C API) cover every backend directly and through the router,
 shapes around every kernel boundary, batches, transposed views, structured
 and rank-deficient input, magnitudes from 1e-30 to 1e+37, NaN inside a batch
 (eigh, SVD), and the routing policies without assuming any device's values.
@@ -621,8 +633,12 @@ The Python (MLX and PyTorch) and Swift packages have their own tests; see their 
   [eigensolver launch parameters](docs/studies/eigh-launch-parameters-apple-m1.md);
   [SVD design notes](docs/studies/svd-design-notes.md);
   [performance headroom on an M5 Pro](docs/studies/performance-headroom-apple-m5-pro.md),
-  behind the CPU path's use of every core and the `ql` kernel
+  behind the CPU path's use of every core and the `ql` kernel;
+  [the two-stage reduction on an M5 Pro](docs/studies/two-stage-apple-m5-pro.md),
+  behind the `band` backends and bisection on the GPU
 - Every submitted run, with its raw timings and reports: [docs/results/](docs/results/)
+- [Proposals](docs/proposals/README.md): work scoped but not done yet, with
+  the measurements behind it
 - [Changes](CHANGELOG.md)
 
 ## Contributing
