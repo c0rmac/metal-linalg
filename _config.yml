@@ -1,0 +1,169 @@
+# The project site, https://c0rmac.github.io/metal-linalg/, which GitHub Pages
+# builds from main with Jekyll: README.md is the home page and every other
+# Markdown file a page of its own (docs/qr.md is /docs/qr). This file sets what
+# search engines see: each page's title and description, the sitemap, and
+# which pages stay out of search results. The Markdown files themselves carry
+# no front matter, so they read the same on GitHub.
+
+title: metal-linalg
+# The home page's <title> is "title | tagline"; every other page's is
+# "page title | title".
+tagline: QR, eigh and SVD on Apple Silicon GPUs for MLX and PyTorch
+description: >-
+  Batched QR decomposition, symmetric eigendecomposition (eigh) and SVD on
+  Apple Silicon GPUs: Metal kernels for MLX and PyTorch, with C++, Swift and C
+  APIs.
+url: https://c0rmac.github.io
+baseurl: /metal-linalg
+lang: en
+author: Cormac Cinnsealach
+
+theme: jekyll-theme-primer
+plugins:
+  - jekyll-seo-tag
+  - jekyll-sitemap   # /metal-linalg/sitemap.xml, every page but the noindex ones
+
+# Titles and descriptions per page. A page with no title here takes its first
+# heading. noindex (see _includes/head-custom.html) keeps a page out of search
+# results; sitemap: false keeps it out of the sitemap.
+defaults:
+  # The card link previews show (Slack, Mastodon, X, ...): GitHub's own for
+  # the repository. jekyll-seo-tag reads image per page, so it is set here.
+  - scope: { path: "" }
+    values:
+      image: https://opengraph.githubassets.com/1/c0rmac/metal-linalg
+  - scope: { path: CHANGELOG.md }
+    values:
+      title: Changelog
+      description: >-
+        Every metal-linalg release: new Metal kernels, routing changes and
+        measured speedups for QR, eigh and SVD on Apple Silicon.
+  - scope: { path: CONTRIBUTING.md }
+    values:
+      description: >-
+        How to contribute to metal-linalg: measure your Mac with one command
+        and send the results as a pull request, report a bug, or change the code.
+  - scope: { path: docs/qr.md }
+    values:
+      title: QR decomposition on Apple Silicon GPUs
+      description: >-
+        Householder QR for batches of matrices on Apple GPUs: the compact-WY
+        Metal kernels, how calls are routed between them and LAPACK, and
+        benchmarks.
+  - scope: { path: docs/eigh.md }
+    values:
+      title: Symmetric eigendecomposition (eigh) on Apple Silicon GPUs
+      description: >-
+        eigh and eigvalsh for batches of symmetric matrices on Apple GPUs:
+        Jacobi, block Jacobi, tridiagonal and QL Metal kernels, routing,
+        accuracy and performance.
+  - scope: { path: docs/svd.md }
+    values:
+      title: Singular value decomposition (SVD) on Apple Silicon GPUs
+      description: >-
+        SVD and svdvals for batches of matrices on Apple GPUs: one-sided
+        Jacobi, Golub-Kahan and GPU bidiagonalization Metal kernels, routing,
+        accuracy and performance.
+  - scope: { path: docs/measurements.md }
+    values:
+      title: Which Macs are measured
+      description: >-
+        Every Apple Silicon chip and how current metal-linalg's measurements
+        of it are, for QR, eigh and SVD, regenerated from the submitted runs.
+  - scope: { path: docs/tuning.md }
+    values:
+      description: >-
+        Measure your Apple Silicon Mac for metal-linalg with one command,
+        python3 tuning/run.py, and send the results as a pull request.
+  - scope: { path: docs/tuning-details.md }
+    values:
+      title: "Tuning: how the measurements work"
+      description: >-
+        How metal-linalg measures a Mac: what tuning/run.py checks and times,
+        and how the runs become the per-device routing policies.
+  - scope: { path: docs/reading-reports.md }
+    values:
+      description: >-
+        Every section and number in a metal-linalg routing report, the
+        report.md that tuning/run.py writes for each decomposition.
+  - scope: { path: docs/c-api.md }
+    values:
+      title: "C API: QR, eigh and SVD on Apple GPUs from C"
+      description: >-
+        metal-linalg on plain float buffers with no MLX: QR, eigh and SVD on
+        Apple Silicon GPUs from C, Rust, Zig, Swift or Python's ctypes.
+  - scope: { path: docs/swift.md }
+    values:
+      title: "Swift: QR, eigh and SVD on Apple Silicon GPUs"
+      description: >-
+        The metal-linalg Swift package: QR, eigh and SVD on Apple Silicon GPUs
+        for [Float] buffers and for mlx-swift's MLXArray.
+  - scope: { path: docs/objective-c.md }
+    values:
+      description: >-
+        QR, eigh and SVD on Apple GPUs from Objective-C and Objective-C++, on
+        MLX arrays or, through the C API, on your own buffers.
+  - scope: { path: python/README.md }
+    values:
+      title: "Python and MLX: QR, eigh and SVD on Apple Silicon GPUs"
+      description: >-
+        pip install metal-linalg: QR, eigh and SVD for batches of mlx.core
+        arrays on Apple Silicon GPUs, where MLX's own eigh and svd run only on
+        the CPU.
+  - scope: { path: python-torch/README.md }
+    values:
+      title: "PyTorch: QR, eigh and SVD on Apple Silicon GPUs"
+      description: >-
+        pip install metal-linalg-torch: qr, eigh, eigvalsh, svd and svdvals
+        like torch.linalg's, for CPU and MPS tensors, ahead of PyTorch's own
+        on Apple Silicon.
+  - scope: { path: docs/studies/eigh-launch-parameters-apple-m1.md }
+    values:
+      description: >-
+        The measurements behind the launch constants of metal-linalg's eigh
+        Metal kernels, on an Apple M1.
+  - scope: { path: docs/studies/eigh-routing-apple-m1.md }
+    values:
+      description: >-
+        Which of four GPU backends, or the CPU, should solve a batch of
+        symmetric eigenproblems on an Apple M1, and where the crossovers are.
+  - scope: { path: docs/studies/performance-headroom-apple-m5-pro.md }
+    values:
+      description: >-
+        Could eigh, the SVD and QR run faster on an Apple M5 Pro? Where the
+        time goes, measured ceilings, and the CPU and GPU working at once.
+  - scope: { path: docs/studies/qr-benchmark-apple-m1.md }
+    values:
+      description: >-
+        An early benchmark of metal-linalg's QR Metal kernels against the CPU
+        on an Apple M1, kept for reference.
+  - scope: { path: docs/studies/qr-routing-apple-m1.md }
+    values:
+      description: >-
+        Choosing the threshold that routes a QR factorisation between two
+        Metal backends on an Apple M1, from 421 measured shapes.
+  - scope: { path: docs/studies/routing-apple-m5-pro.md }
+    values:
+      description: >-
+        GPU against CPU routing for QR, eigh and SVD on an Apple M5 Pro,
+        superseded for routing by 2.9.0's multi-core CPU path.
+  - scope: { path: docs/studies/svd-design-notes.md }
+    values:
+      description: >-
+        How metal-linalg's SVD was built, why it looks the way it does, and
+        what was measured along the way.
+  # Each submitted measurement run: dozens of near-identical tables, useful
+  # from the links to them but not as search results. A device's combined
+  # reports, the ones the routing is generated from, stay in.
+  - scope: { path: docs/results }
+    values:
+      noindex: true
+      sitemap: false
+  - scope: { path: "docs/results/*/combined" }
+    values:
+      noindex: false
+      sitemap: true
+  - scope: { path: docs/design }
+    values:
+      noindex: true
+      sitemap: false

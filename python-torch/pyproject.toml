@@ -13,8 +13,9 @@ build-backend = "scikit_build_core.build"
 [project]
 name = "metal-linalg-torch"
 version = "2.13.0"
-description = "QR, symmetric eigendecomposition and SVD for batches of matrices on Apple GPUs, for PyTorch"
+description = "QR, symmetric eigendecomposition and SVD for batches of matrices on Apple Silicon GPUs, for PyTorch"
 readme = "README.md"
+keywords = ["linear-algebra", "qr", "eigh", "eigendecomposition", "svd", "singular-value-decomposition", "pytorch", "torch", "mps", "apple-silicon", "metal", "gpu", "batched"]
 requires-python = ">=3.10"
 dependencies = ["torch>=2.4"]
 license = "MIT"
@@ -29,8 +30,9 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/c0rmac/metal-linalg"
-Documentation = "https://github.com/c0rmac/metal-linalg/blob/main/python-torch/README.md"
+Homepage = "https://c0rmac.github.io/metal-linalg/"
+Source = "https://github.com/c0rmac/metal-linalg"
+Documentation = "https://c0rmac.github.io/metal-linalg/python-torch/"
 Changelog = "https://github.com/c0rmac/metal-linalg/blob/main/CHANGELOG.md"
 
 [tool.scikit-build]

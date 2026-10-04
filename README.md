@@ -1,13 +1,7 @@
 # metal-linalg
 
-> **Formerly `qr-apple-silicon`.** The project was renamed in version 2.0,
-> when it grew from QR to QR, symmetric eigendecomposition and SVD. Links to
-> `github.com/c0rmac/qr-apple-silicon` redirect here; to update an existing
-> clone, run `git remote set-url origin https://github.com/c0rmac/metal-linalg.git`.
-> The changes from 1.x are listed in [CHANGELOG.md](CHANGELOG.md).
-
-QR decomposition, symmetric eigendecomposition and singular value
-decomposition for batches of matrices on Apple GPUs, for
+QR decomposition, symmetric eigendecomposition (`eigh`) and singular value
+decomposition (SVD) for batches of matrices on Apple Silicon GPUs, for
 [MLX](https://github.com/ml-explore/mlx), [PyTorch](https://pytorch.org) and
 plain float buffers. A C++ library, installed with Homebrew or built from
 source inside your own project, with Python packages for `mlx.core` arrays
@@ -18,7 +12,7 @@ Each solver has several Metal kernels, one per regime (small matrices in large
 batches, large matrices spread over the whole GPU, long thin matrices), and
 every call is routed to the fastest of them, or to LAPACK on the CPU (a batch
 spread over every core), by a policy measured on the device it runs on. MLX's own `linalg::eigh` and
-`linalg::svd` run only on the CPU.
+`linalg::svd` (`mx.linalg.eigh` and `mx.linalg.svd` in Python) run only on the CPU.
 
 > **Contributions welcome: measure your Mac.** The routing is only as good as
 > the measurements behind it, and every new chip needs its own.
@@ -32,6 +26,12 @@ spread over every core), by a policy measured on the device it runs on. MLX's ow
 > run improves the library for everyone with that Mac, and runs from several
 > people with the same Mac are combined. Contributions are what keep the
 > library up to date as Apple ships new chips: [how to contribute](CONTRIBUTING.md).
+
+> **Formerly `qr-apple-silicon`.** The project was renamed in version 2.0,
+> when it grew from QR to QR, symmetric eigendecomposition and SVD. Links to
+> `github.com/c0rmac/qr-apple-silicon` redirect here; to update an existing
+> clone, run `git remote set-url origin https://github.com/c0rmac/metal-linalg.git`.
+> The changes from 1.x are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## Contents
 
