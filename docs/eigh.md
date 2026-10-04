@@ -496,8 +496,8 @@ up to 1.5x between runs, so treat ratios near 1 as ties.
 The M1 table above is from before 2.9.0, against MLX's CPU `eigh`, which
 solves a batch one matrix at a time on one core.
 
-On an Apple M5 Pro (20 GPU cores, 18 CPU cores) with 2.11.0, from the routing
-sweep in [`results/apple-m5-pro-20gpu/20261003-c0878c/eigh/`](results/apple-m5-pro-20gpu/20261003-c0878c/eigh/):
+On an Apple M5 Pro (20 GPU cores, 18 CPU cores) with 2.13.0, from the routing
+sweep in [`results/apple-m5-pro-20gpu/20261004-06bc11/eigh/`](results/apple-m5-pro-20gpu/20261004-06bc11/eigh/):
 min of two randomised passes, on mains, against the CPU path as the library
 runs it, a batch spread over all 18 cores. Each cell is the speedup of the
 fastest GPU backend over the CPU, with its time and name (`ql+CPU`: `ql`
@@ -505,38 +505,39 @@ sharing the batch with the CPU path, see [Dispatch](#dispatch)):
 
 | N | batch 1 | batch 16 | batch 256 | batch 4096 |
 |---|---|---|---|---|
-| 4 | 0.01x (0.15 ms, ql) | 0.11x (0.16 ms, simd) | 0.66x (0.17 ms, tg) | **1.19x** (0.29 ms, ql) |
-| 8 | 0.02x (0.20 ms, ql) | 0.22x (0.19 ms, simd) | 0.64x (0.20 ms, tg) | **1.36x** (0.56 ms, simd) |
-| 16 | 0.04x (0.23 ms, tg) | 0.26x (0.24 ms, tg) | 0.84x (0.31 ms, ql) | **1.80x** (1.44 ms, ql+CPU) |
-| 32 | 0.11x (0.33 ms, tg) | 0.39x (0.37 ms, tg) | **1.08x** (0.63 ms, ql) | **2.07x** (4.51 ms, ql+CPU) |
-| 64 | 0.12x (1.25 ms, tg) | 0.22x (1.27 ms, tg) | 0.90x (2.90 ms, ql+CPU) | **1.58x** (23.4 ms, ql+CPU) |
-| 128 | 0.09x (5.79 ms, block) | 0.12x (6.54 ms, block) | 0.25x (40.4 ms, block) | 0.22x (654.3 ms, block) |
-| 256 | 0.20x (11.6 ms, block) | 0.17x (20.4 ms, block) | 0.14x (313.5 ms, block) | -- |
-| 512 | 0.30x (29.9 ms, block) | 0.13x (124.4 ms, block) | -- | -- |
-| 1024 | 0.40x (100.9 ms, block) | 0.10x (1.13 s, block) | -- | -- |
+| 4 | 0.01x (0.17 ms, ql) | 0.11x (0.16 ms, simd) | 0.49x (0.17 ms, ql) | **1.19x** (0.29 ms, ql) |
+| 8 | 0.03x (0.16 ms, tg) | 0.23x (0.17 ms, tg) | 0.67x (0.20 ms, simd) | **1.42x** (0.56 ms, simd) |
+| 16 | 0.05x (0.23 ms, tg) | 0.30x (0.24 ms, tg) | 0.86x (0.30 ms, ql) | **1.77x** (1.45 ms, ql+CPU) |
+| 32 | 0.11x (0.33 ms, tg) | 0.38x (0.37 ms, tg) | **1.06x** (0.64 ms, ql) | **2.06x** (4.53 ms, ql+CPU) |
+| 64 | 0.12x (1.21 ms, tg) | 0.23x (1.26 ms, tg) | 0.89x (2.89 ms, ql+CPU) | **1.68x** (23.5 ms, ql+CPU) |
+| 128 | 0.08x (5.85 ms, block) | 0.12x (6.57 ms, block) | 0.24x (42.5 ms, block) | 0.22x (670.4 ms, block) |
+| 256 | 0.19x (11.7 ms, block) | 0.19x (20.7 ms, block) | 0.14x (318.2 ms, block) | -- |
+| 512 | 0.30x (30.1 ms, block) | 0.12x (132.4 ms, block) | -- | -- |
+| 1024 | 0.39x (101.9 ms, block) | 0.11x (1.14 s, block) | -- | -- |
 
 Against a CPU that uses its cores the GPU's region is small: large batches
 of matrices up to N = 64, where `ql`, shared with the CPU from about 1024
-matrices, is up to 2.1x faster than the CPU alone, and
-one large matrix, which the `tridiag` backend takes (backend 3; 1.45x at
-N = 1536, 1.9x at 2048, 4.6x at 4096). Without `ql` the GPU would win almost
-nowhere: at 4096 matrices of 32×32 the whole-matrix Jacobi kernel takes
-16.8 ms and the CPU 9.6 ms. `ql`, alone and sharing the batch with the CPU,
+matrices, is up to 2.2x faster than the CPU alone, and
+one large matrix, which the `tridiag` backend takes (backend 3; 1.91x at
+N = 1536, 2.48x at 2048, 5.62x at 4096), and for its eigenvalues alone
+`tridiag` or, from 4096, `band` (backend 5; 2.91x at 4096). Without `ql` the
+GPU would win almost nowhere: at 4096 matrices of 32×32 the whole-matrix
+Jacobi kernel takes 16.4 ms and the CPU 9.4 ms. `ql`, alone and sharing the batch with the CPU,
 against the best Jacobi kernel and against the CPU:
 
 | N | batch | ql | shared with the CPU | best Jacobi | CPU | Jacobi / ql | CPU / ql | CPU / shared |
 |---|---|---|---|---|---|---|---|---|
-| 16 | 4096 | 1.64 ms | 1.44 ms | 2.39 ms | 2.60 ms | 1.45x | 1.58x | 1.80x |
-| 24 | 4096 | 3.21 ms | 2.65 ms | 7.50 ms | 5.78 ms | 2.34x | 1.80x | 2.18x |
-| 32 | 256 | 0.63 ms | 0.77 ms | 1.61 ms | 0.69 ms | 2.54x | 1.08x | 0.89x |
-| 32 | 4096 | 5.38 ms | 4.51 ms | 16.5 ms | 9.34 ms | 3.06x | 1.74x | 2.07x |
-| 48 | 1024 | 4.84 ms | 3.93 ms | 15.2 ms | 5.79 ms | 3.14x | 1.20x | 1.47x |
-| 48 | 4096 | 17.1 ms | 11.6 ms | 59.5 ms | 22.2 ms | 3.49x | 1.30x | 1.92x |
-| 64 | 1024 | 11.6 ms | 6.81 ms | 24.9 ms | 10.1 ms | 2.15x | 0.87x | 1.48x |
-| 64 | 4096 | 44.7 ms | 23.4 ms | 95.8 ms | 37.0 ms | 2.15x | 0.83x | 1.58x |
+| 16 | 4096 | 1.64 ms | 1.45 ms | 2.40 ms | 2.57 ms | 1.46x | 1.57x | 1.77x |
+| 24 | 4096 | 3.20 ms | 2.66 ms | 7.47 ms | 5.82 ms | 2.34x | 1.82x | 2.19x |
+| 32 | 256 | 0.64 ms | 0.79 ms | 1.61 ms | 0.67 ms | 2.53x | 1.06x | 0.85x |
+| 32 | 4096 | 5.39 ms | 4.53 ms | 16.4 ms | 9.35 ms | 3.05x | 1.73x | 2.06x |
+| 48 | 1024 | 4.86 ms | 3.86 ms | 15.5 ms | 6.11 ms | 3.20x | 1.26x | 1.58x |
+| 48 | 4096 | 17.3 ms | 12.0 ms | 63.2 ms | 23.2 ms | 3.65x | 1.34x | 1.93x |
+| 64 | 1024 | 11.8 ms | 6.89 ms | 25.8 ms | 10.2 ms | 2.17x | 0.86x | 1.48x |
+| 64 | 4096 | 45.8 ms | 23.5 ms | 98.7 ms | 39.6 ms | 2.16x | 0.87x | 1.68x |
 
 For a lone small matrix and small batches `ql` is slower than the
-whole-matrix kernel (0.63x at 32×32 alone), whose many threads per matrix
+whole-matrix kernel (0.62x at 32×32 alone), whose many threads per matrix
 shorten a lone matrix's critical path, but those calls go to the CPU, which
 is 10-100x faster than either.
 

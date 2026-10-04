@@ -225,33 +225,33 @@ library's QR, on the $k \times k$ factor (`qr_golub_kahan`), as the Jacobi
 kernels are preconditioned.
 
 On an M5 Pro, $k \times k$ matrices in batches, from the routing sweep in
-[`results/apple-m5-pro-20gpu/20261003-c0878c/svd/`](results/apple-m5-pro-20gpu/20261003-c0878c/svd/)
-(2.11.0; min of two randomised passes; the CPU path spreads the batch over 18 cores; "shared" is the
+[`results/apple-m5-pro-20gpu/20261004-06bc11/svd/`](results/apple-m5-pro-20gpu/20261004-06bc11/svd/)
+(2.13.0; min of two randomised passes; the CPU path spreads the batch over 18 cores; "shared" is the
 batch split between golub_kahan and the CPU path, see below):
 
 | k×k | batch | golub_kahan | shared with the CPU | best Jacobi | CPU | Jacobi / GK | CPU / GK | CPU / shared |
 |---|---|---|---|---|---|---|---|---|
-| 8 | 4096 | 0.91 ms | 0.99 ms | 1.42 ms | 1.44 ms | 1.57x | **1.59x** | **1.46x** |
-| 16 | 1024 | 0.90 ms | 0.90 ms | 1.75 ms | 1.19 ms | 1.95x | **1.32x** | **1.32x** |
-| 16 | 4096 | 2.42 ms | 2.30 ms | 5.77 ms | 4.50 ms | 2.38x | **1.86x** | **1.96x** |
-| 24 | 4096 | 5.76 ms | 4.53 ms | 14.1 ms | 9.52 ms | 2.46x | **1.65x** | **2.10x** |
-| 32 | 256 | 0.95 ms | 0.87 ms | 2.19 ms | 1.09 ms | 2.31x | **1.15x** | **1.25x** |
-| 32 | 1024 | 2.64 ms | 2.20 ms | 6.69 ms | 4.07 ms | 2.54x | **1.54x** | **1.85x** |
-| 32 | 4096 | 9.33 ms | 8.78 ms | 22.4 ms | 15.4 ms | 2.40x | **1.66x** | **1.76x** |
-| 40 | 4096 | 18.5 ms | 14.0 ms | 49.3 ms | 24.0 ms | 2.67x | **1.30x** | **1.71x** |
-| 48 | 1024 | 7.16 ms | 5.17 ms | 21.1 ms | 9.16 ms | 2.95x | **1.28x** | **1.77x** |
-| 48 | 4096 | 27.9 ms | 18.8 ms | 80.2 ms | 34.0 ms | 2.87x | **1.22x** | **1.81x** |
-| 56 | 4096 | 43.6 ms | 24.9 ms | 104.4 ms | 40.1 ms | 2.39x | 0.92x | **1.61x** |
-| 64 | 1024 | 17.4 ms | 9.03 ms | 30.4 ms | 14.5 ms | 1.74x | 0.83x | **1.60x** |
-| 64 | 4096 | 64.8 ms | 33.7 ms | 113.8 ms | 52.7 ms | 1.76x | 0.81x | **1.56x** |
-| 80 | 4096 | 147.9 ms | 65.7 ms | 309.3 ms | 96.5 ms | 2.09x | 0.65x | **1.47x** |
+| 8 | 4096 | 0.87 ms | 0.96 ms | 1.41 ms | 1.46 ms | 1.62x | **1.67x** | **1.52x** |
+| 16 | 1024 | 0.87 ms | 0.95 ms | 1.77 ms | 1.19 ms | 2.02x | **1.36x** | **1.24x** |
+| 16 | 4096 | 2.47 ms | 2.28 ms | 5.81 ms | 4.50 ms | 2.36x | **1.82x** | **1.97x** |
+| 24 | 4096 | 5.73 ms | 4.70 ms | 14.1 ms | 9.56 ms | 2.47x | **1.67x** | **2.03x** |
+| 32 | 256 | 0.92 ms | 0.89 ms | 2.21 ms | 1.13 ms | 2.39x | **1.22x** | **1.27x** |
+| 32 | 1024 | 2.68 ms | 2.28 ms | 7.02 ms | 4.17 ms | 2.62x | **1.56x** | **1.83x** |
+| 32 | 4096 | 9.29 ms | 7.31 ms | 22.4 ms | 15.5 ms | 2.41x | **1.66x** | **2.11x** |
+| 40 | 4096 | 18.7 ms | 13.7 ms | 50.6 ms | 25.8 ms | 2.71x | **1.38x** | **1.88x** |
+| 48 | 1024 | 7.21 ms | 5.20 ms | 21.3 ms | 9.02 ms | 2.96x | **1.25x** | **1.73x** |
+| 48 | 4096 | 28.2 ms | 19.4 ms | 82.5 ms | 36.5 ms | 2.93x | **1.29x** | **1.88x** |
+| 56 | 4096 | 43.9 ms | 25.1 ms | 105.6 ms | 42.0 ms | 2.41x | 0.96x | **1.67x** |
+| 64 | 1024 | 17.4 ms | 9.32 ms | 30.4 ms | 14.4 ms | 1.75x | 0.83x | **1.55x** |
+| 64 | 4096 | 64.5 ms | 33.9 ms | 114.0 ms | 53.4 ms | 1.77x | 0.83x | **1.58x** |
+| 80 | 4096 | 150.0 ms | 66.2 ms | 308.1 ms | 97.6 ms | 2.05x | 0.65x | **1.48x** |
 
 It is 1.6-3x faster than the best Jacobi kernel at every size it takes, and
 alone ahead of the CPU for large batches up to 48×48; shared with the CPU, up
 to 80×80 (1.5-2.1x). Alone, beyond 48 the CPU pulls away: the QR iteration is one thread's serial chain per matrix, and with the
 matrix in threadgroup memory too few matrices share a core to hide it. Tall
 matrices are the CPU's whatever the backend, since the CPU path reduces them
-by a QR first (256×32, 4096 of them: 0.84x), which the routing's
+by a QR first (256×32, 4096 of them: 0.87x), which the routing's
 `gpu_max_l` says.
 
 Accuracy is that of LAPACK's QR iteration: backward stable, singular values
@@ -450,8 +450,8 @@ backends, the worst reconstruction error was 2.3e-06 and the worst sweep count
 
 ## Performance
 
-Apple M5 Pro (20 GPU cores, 18 CPU cores) with 2.11.0, from the routing sweep in
-[`results/apple-m5-pro-20gpu/20261003-c0878c/svd/`](results/apple-m5-pro-20gpu/20261003-c0878c/svd/): min of two
+Apple M5 Pro (20 GPU cores, 18 CPU cores) with 2.13.0, from the routing sweep in
+[`results/apple-m5-pro-20gpu/20261004-06bc11/svd/`](results/apple-m5-pro-20gpu/20261004-06bc11/svd/): min of two
 randomised passes, on mains, against the CPU path as the library runs it, a
 batch spread over all 18 cores. Each cell is the speedup of the fastest GPU
 backend over the CPU, with the GPU time and the backend (`whole` and `block`
@@ -461,30 +461,30 @@ path); bold is where the GPU was ahead.
 
 | shape | batch 1 | batch 4 | batch 16 | batch 64 | batch 256 | batch 4096 |
 |---|---|---|---|---|---|---|
-| 4×4 | 0.02x (0.24 ms, whole) | 0.12x (0.19 ms, GK) | 0.25x (0.15 ms, whole) | 0.32x (0.25 ms, whole) | 0.66x (0.21 ms, GK) | **1.75x** (0.39 ms, GK) |
-| 8×8 | 0.03x (0.25 ms, GK) | 0.06x (0.31 ms, whole) | 0.37x (0.18 ms, whole) | 0.57x (0.33 ms, GK+CPU) | 0.79x (0.25 ms, GK) | **1.59x** (0.91 ms, GK) |
-| 16×16 | 0.09x (0.23 ms, whole) | 0.17x (0.24 ms, whole) | 0.36x (0.25 ms, whole) | 0.53x (0.34 ms, whole) | **1.09x** (0.39 ms, GK) | **1.96x** (2.30 ms, GK+CPU) |
-| 32×32 | 0.09x (0.62 ms, whole) | 0.25x (0.36 ms, whole) | 0.47x (0.40 ms, whole) | 0.55x (0.71 ms, GK) | **1.25x** (0.87 ms, GK+CPU) | **1.76x** (8.78 ms, GK+CPU) |
-| 48×48 | 0.12x (0.92 ms, whole) | 0.20x (0.77 ms, whole) | 0.33x (0.87 ms, whole) | 0.58x (1.21 ms, GK) | **1.54x** (1.53 ms, GK+CPU) | **1.81x** (18.8 ms, GK+CPU) |
-| 64×64 | 0.19x (1.07 ms, whole) | 0.20x (1.15 ms, whole) | 0.33x (1.18 ms, whole) | 0.53x (1.95 ms, GK) | **1.08x** (3.43 ms, GK+CPU) | **1.56x** (33.7 ms, GK+CPU) |
-| 128×128 | 0.21x (4.91 ms, whole) | 0.27x (4.94 ms, whole) | 0.34x (5.05 ms, whole) | 0.42x (14.3 ms, block) | 0.46x (47.6 ms, block) | 0.40x (751.2 ms, block) |
-| 256×256 | 0.30x (13.0 ms, block) | 0.30x (14.1 ms, block) | 0.25x (24.6 ms, block) | 0.25x (82.9 ms, block) | 0.23x (339.2 ms, block) | -- |
-| 512×512 | 0.52x (32.0 ms, block) | 0.38x (48.4 ms, block) | 0.18x (154.0 ms, block) | 0.16x (628.7 ms, block) | -- | -- |
-| 1024×1024 | 0.67x (115.1 ms, block) | 0.32x (290.5 ms, block) | 0.24x (1.22 s, block) | -- | -- | -- |
-| 64×8 | 0.06x (0.20 ms, whole) | 0.13x (0.22 ms, whole) | 0.34x (0.24 ms, GK) | 0.67x (0.24 ms, GK) | 0.97x (0.30 ms, GK) | **1.83x** (1.60 ms, GK+CPU) |
-| 64×32 | 0.13x (0.53 ms, whole) | 0.19x (0.58 ms, whole) | 0.57x (0.40 ms, whole) | 0.57x (0.83 ms, whole) | **1.47x** (1.02 ms, GK+CPU) | **1.70x** (12.6 ms, GK+CPU) |
-| 256×32 | 0.23x (0.51 ms, whole) | 0.31x (0.51 ms, whole) | 0.58x (0.53 ms, whole) | 0.54x (1.34 ms, whole) | 0.77x (3.66 ms, GK+CPU) | **1.06x** (30.3 ms, GK+CPU) |
-| 1024×32 | 0.32x (0.69 ms, QR+whole) | 0.44x (0.87 ms, QR+whole) | 0.57x (1.14 ms, whole) | 0.63x (3.48 ms, GK+CPU) | 0.66x (9.36 ms, GK+CPU) | -- |
-| 1024×64 | 0.38x (1.55 ms, QR+whole) | 0.51x (2.19 ms, QR+whole) | 0.63x (3.42 ms, QR+whole) | 0.64x (8.74 ms, GK+CPU) | 0.68x (27.5 ms, GK+CPU) | -- |
-| 2048×64 | 0.48x (1.89 ms, QR+whole) | 0.56x (3.52 ms, QR+whole) | 0.63x (5.00 ms, QR+whole) | 0.70x (14.0 ms, GK+CPU) | 0.74x (46.9 ms, GK+CPU) | 0.69x (736.7 ms, QR+block) |
-| 1024×256 | 0.47x (13.9 ms, QR+block) | 0.47x (15.8 ms, QR+block) | 0.43x (27.9 ms, QR+block) | 0.44x (95.9 ms, QR+block) | 0.41x (390.5 ms, QR+block) | -- |
-| 2048×256 | 0.55x (16.2 ms, QR+block) | 0.56x (18.8 ms, QR+block) | 0.54x (36.3 ms, QR+block) | 0.55x (129.3 ms, QR+block) | 0.52x (518.3 ms, QR+block) | -- |
+| 4×4 | 0.02x (0.20 ms, GK) | 0.16x (0.15 ms, whole) | 0.23x (0.18 ms, GK) | 0.49x (0.16 ms, GK+CPU) | 0.49x (0.29 ms, whole) | **1.81x** (0.39 ms, GK) |
+| 8×8 | 0.05x (0.19 ms, whole) | 0.10x (0.23 ms, GK) | 0.42x (0.18 ms, whole) | 0.58x (0.24 ms, GK) | 0.81x (0.24 ms, GK) | **1.67x** (0.87 ms, GK) |
+| 16×16 | 0.06x (0.32 ms, GK) | 0.19x (0.23 ms, whole) | 0.30x (0.31 ms, whole) | 0.56x (0.33 ms, whole) | **1.05x** (0.39 ms, GK) | **1.97x** (2.28 ms, GK+CPU) |
+| 32×32 | 0.17x (0.34 ms, whole) | 0.24x (0.39 ms, whole) | 0.42x (0.44 ms, whole) | 0.49x (0.81 ms, GK) | **1.27x** (0.89 ms, GK+CPU) | **2.11x** (7.31 ms, GK+CPU) |
+| 48×48 | 0.15x (0.77 ms, whole) | 0.20x (0.80 ms, whole) | 0.34x (0.87 ms, whole) | 0.57x (1.21 ms, GK) | **1.58x** (1.55 ms, GK+CPU) | **1.88x** (19.4 ms, GK+CPU) |
+| 64×64 | 0.19x (1.05 ms, whole) | 0.22x (1.05 ms, whole) | 0.33x (1.19 ms, whole) | 0.53x (1.95 ms, GK) | **1.09x** (3.41 ms, GK+CPU) | **1.58x** (33.9 ms, GK+CPU) |
+| 128×128 | 0.21x (4.91 ms, whole) | 0.27x (4.94 ms, whole) | 0.33x (5.07 ms, whole) | 0.42x (14.5 ms, block) | 0.45x (47.9 ms, block) | 0.41x (757.2 ms, block) |
+| 256×256 | 0.31x (13.0 ms, block) | 0.29x (14.2 ms, block) | 0.25x (25.0 ms, block) | 0.24x (82.9 ms, block) | 0.23x (348.6 ms, block) | -- |
+| 512×512 | 0.53x (32.0 ms, block) | 0.39x (48.7 ms, block) | 0.18x (155.6 ms, block) | 0.16x (645.5 ms, block) | -- | -- |
+| 1024×1024 | 0.68x (115.4 ms, block) | 0.30x (310.6 ms, block) | 0.25x (1.25 s, block) | -- | -- | -- |
+| 64×8 | 0.06x (0.20 ms, whole) | 0.14x (0.21 ms, GK) | 0.35x (0.23 ms, GK) | 0.64x (0.24 ms, GK) | 0.97x (0.29 ms, GK) | **1.57x** (1.84 ms, GK) |
+| 64×32 | 0.19x (0.37 ms, whole) | 0.28x (0.38 ms, whole) | 0.35x (0.63 ms, QR+whole) | 0.56x (0.85 ms, GK) | **1.46x** (1.01 ms, GK+CPU) | **1.90x** (11.7 ms, GK+CPU) |
+| 256×32 | 0.20x (0.59 ms, QR+whole) | 0.34x (0.48 ms, whole) | 0.57x (0.51 ms, whole) | 0.54x (1.34 ms, whole) | 0.74x (3.66 ms, GK+CPU) | **1.10x** (30.8 ms, GK+CPU) |
+| 1024×32 | 0.33x (0.69 ms, QR+whole) | 0.45x (0.86 ms, QR+whole) | 0.57x (1.15 ms, whole) | 0.59x (3.50 ms, QR+whole) | 0.65x (9.41 ms, GK+CPU) | -- |
+| 1024×64 | 0.38x (1.55 ms, QR+whole) | 0.52x (2.13 ms, QR+whole) | 0.51x (3.44 ms, QR+whole) | 0.62x (8.72 ms, GK) | 0.71x (27.1 ms, GK+CPU) | -- |
+| 2048×64 | 0.48x (1.89 ms, QR+whole) | 0.57x (3.43 ms, QR+whole) | 0.62x (4.99 ms, QR+whole) | 0.70x (14.1 ms, GK+CPU) | 0.74x (47.5 ms, GK+CPU) | 0.86x (592.7 ms, QR+block) |
+| 1024×256 | 0.47x (13.9 ms, QR+block) | 0.48x (16.1 ms, QR+block) | 0.55x (28.8 ms, QR+block) | 0.43x (99.2 ms, QR+block) | 0.40x (399.4 ms, QR+block) | -- |
+| 2048×256 | 0.57x (16.1 ms, QR+block) | 0.56x (18.8 ms, QR+block) | 0.54x (36.9 ms, QR+block) | 0.53x (133.3 ms, QR+block) | 0.51x (522.2 ms, QR+block) | -- |
 
 `--` was not measured.
 
 Against a CPU that uses its cores, the GPU wins large batches of small
 matrices, with `golub_kahan`, shared with the CPU from about 1024 matrices:
-1.6-2x at 4096 matrices from 4×4 to 64×64, and from 256 matrices for 16×16 to
+1.6-2.1x at 4096 matrices from 4×4 to 64×64, and from 256 matrices for 16×16 to
 64×32. Lone matrices and small batches stay the CPU's, as do tall shapes past a
 long side of 256 and anything from 128×128; one large matrix wins on
 `bidiag`. The tables in this document's versions before 2.9.0, with up to 16x
