@@ -388,24 +388,27 @@ The functions mirror their `torch.linalg` namesakes (arguments, result types,
 the input's device), support autograd with torch's own formulas, and compile
 with `torch.compile`: they are the custom operators
 `torch.ops.metal_linalg.*`. Computation is in float32. Against `torch.linalg`
-on an M5 Pro with PyTorch 2.14 and metal-linalg 2.12 (best of five; the same tensors on MPS for
+on an M5 Pro with PyTorch 2.14 and metal-linalg 2.13 (best of five; the same tensors on MPS for
 torch's MPS path and for this package, copies included):
 
 | | torch, CPU | torch, MPS | metal-linalg-torch |
 |---|---|---|---|
-| QR, 1024 × 128×128 | 160 ms | 1210 ms | 19 ms |
-| SVD, 256 × 128×64 | 64 ms | 11 ms | 7.0 ms |
-| SVD, 4096 × 32×32 | 219 ms | 27 ms | 7.4 ms |
-| eigh, 4096 × 16×16 | 35 ms | 5.3 ms | 1.9 ms |
-| eigh, one 2048×2048 | 240 ms | 239 ms | 90 ms |
-| SVD, one 4096×4096 | 3.42 s | 3.45 s | 1.56 s |
+| QR, 1024 × 128×128 | 160 ms | 1.04 s | 19 ms |
+| SVD, 256 × 128×64 | 65 ms | 12 ms | 6.9 ms |
+| SVD, 4096 × 32×32 | 219 ms | 27 ms | 8.0 ms |
+| eigh, 4096 × 16×16 | 35 ms | 5.3 ms | 2.0 ms |
+| eigh, one 2048×2048 | 238 ms | 241 ms | 91 ms |
+| SVD, one 4096×4096 | 3.58 s | 3.62 s | 1.61 s |
+| eigvalsh, one 4096×4096 | 4.39 s | 4.37 s | 165 ms |
+| svdvals, one 4096×4096 | 1.96 s | 3.57 s | 233 ms |
 
-It is ahead on every row: 1.6-3.6x over PyTorch's MPS kernels for batches of
+It is ahead on every row: 1.7-3.4x over PyTorch's MPS kernels for batches of
 small matrices (the SVD of 256 matrices of 128×64 runs on the library's CPU
 path, which spreads a batch over every core, so routing an MPS tensor to the
 CPU can still be the fast choice; the two batches of 4096, and the QR batch,
-run on the GPU and the CPU at once), and 2-60x in QR and in large matrices,
-where torch falls back to the CPU.
+run on the GPU and the CPU at once), and 2-55x in QR and in large matrices,
+where torch falls back to the CPU: for the eigenvalues or singular values
+alone of a large matrix 8-27x, by a two-stage reduction.
 
 [python-torch/README.md](python-torch/README.md) has the details: what differs
 from `torch.linalg`, gradients, and MPS tensors.
