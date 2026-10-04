@@ -14,8 +14,9 @@ build-backend = "scikit_build_core.build"
 [project]
 name = "metal-linalg"
 version = "2.12.0"
-description = "QR, symmetric eigendecomposition and SVD for batches of matrices on Apple GPUs, for MLX"
+description = "QR, symmetric eigendecomposition and SVD for batches of matrices on Apple Silicon GPUs, for MLX"
 readme = "python/README.md"
+keywords = ["linear-algebra", "qr", "eigh", "eigendecomposition", "svd", "singular-value-decomposition", "mlx", "apple-silicon", "metal", "gpu", "batched"]
 requires-python = ">=3.10"
 dependencies = ["mlx==0.32.3"]  # MLX_PIN
 license = "MIT"
@@ -30,8 +31,9 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/c0rmac/metal-linalg"
-Documentation = "https://github.com/c0rmac/metal-linalg/blob/main/python/README.md"
+Homepage = "https://c0rmac.github.io/metal-linalg/"
+Source = "https://github.com/c0rmac/metal-linalg"
+Documentation = "https://c0rmac.github.io/metal-linalg/python/"
 Changelog = "https://github.com/c0rmac/metal-linalg/blob/main/CHANGELOG.md"
 
 [tool.scikit-build]
