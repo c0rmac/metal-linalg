@@ -232,6 +232,14 @@ more than the tolerance, and the report shows the rule with and without it.
 boundary moves. It is scored on the `gk_vals` and `cpu_vals` timings where `gk`
 is the GPU's choice, against stage 2's rule applied as is.
 
+**Stage 3b** (SVD) fits the `band` backend's threshold, for singular values
+alone: where the rules choose the CPU or `bidiag`, `band` from this k on,
+scored against the CPU, `bidiag` and `band` on the points where `band_vals`
+was timed (k >= 512). The report lists `band` over `bidiag` and over the CPU
+at each of them. **Stage 4b** (eigensolver) does the same for eigenvalues
+alone: `band` from this N where the rules choose the CPU or `tridiag`, scored
+against both on the points where `band_vals` was timed (N >= 512).
+
 **Stage 2** fits the GPU/CPU boundary given stage 1's choice, scored against
 the best of all backends.
 

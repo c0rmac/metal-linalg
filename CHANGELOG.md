@@ -1,5 +1,48 @@
 # Changes
 
+## 2.13.0 (2026-10-04)
+
+- **Two-stage reductions for eigenvalues alone and singular values alone**:
+  a `band` backend in each solver, the reduction in two stages as LAPACK's
+  `ssyevd_2stage` does it. A to a band of width 16 on the GPU, a block of
+  columns at a time, its work matrix products that read the matrix a few
+  times a block where the one-stage `tridiag` and `bidiag` reductions read it
+  once or twice a column; then the band to tridiagonal or bidiagonal by
+  Householder bulge chasing, its sweeps pipelined over the CPU's cores; then
+  the eigenvalues or singular values by bisection on the GPU. A block's panels
+  are factored in registers, one simdgroup for up to 128 rows, by TSQR beyond,
+  with the Householder vectors rebuilt from TSQR's Q. On an M5 Pro, one
+  matrix: `svdvals` 226 ms at 4096 x 4096 against `bidiag`'s 733 and the
+  CPU's 1949 (8.6x), 1.15 s at 8192 against 11.95 s (10.4x); `eigvalsh`
+  161 ms at 4096 (CPU 467, `tridiag` 209: 2.9x the CPU) and 872 ms at 8192
+  (CPU 2588, `tridiag` 1749). The M5 Pro uses them for one or two matrices,
+  svdvals from k = 1536 and eigvalsh from N = 4096.
+  `values_band_min_n` in the eigensolver's policy and `values_band_min_k` in
+  the SVD's (`EIGH_VALUES_BAND_MIN_N`, `SVD_VALUES_BAND_MIN_K`; 0, never, on
+  a device without measurements) say from which size they are used;
+  `EIGH_DEVICE=band` and `SVD_DEVICE=band` force them, `EIGH_BAND_WIDTH` and
+  `SVD_BAND_WIDTH` set the width (8, 16, 32); `eigvalsh_backend()` and
+  `svdvals_backend()` report `"band"`. The MLX layer adds
+  `detail::eigh_band` and `detail::svd_band`.
+- **Bisection on the GPU** for the eigenvalues of a tridiagonal (from
+  N = 512) and the singular values of a bidiagonal (from k = 1024), in the
+  `tridiag` and `bidiag` backends' value paths as well: 6 ms against
+  `ssterf`'s 79 at 4096, 12 against `sbdsqr`'s 77. `eigvalsh` on `tridiag` is
+  1.4-1.5x faster at 2048-4096 (2.1-2.2x the CPU), `svdvals` on `bidiag`
+  1.1-1.2x.
+- `bidiag` solves the bidiagonal for singular values alone below k = 1024
+  with `sbdsqr` (dqds) instead of `sbdsdc`: faster, and accurate to every
+  singular value of the bidiagonal.
+- The C API's `metal_linalg_eigh_policy` gains `values_band_min_n` and
+  `metal_linalg_svd_policy` `values_band_min_k`, each at its end; the Python
+  and PyTorch packages expose both.
+- The tuning harness times `band_vals` for both and fits the thresholds
+  (stages 3b and 4b). Kernel versions: eigh 5, SVD 7. The M5 Pro is
+  re-measured (run `20261004-06bc11`); its eigh row also turns the Jacobi
+  kernel's simd mode off (it took N <= 8).
+- [The two-stage study](docs/studies/two-stage-apple-m5-pro.md): where the
+  time goes, the panel kernels, the parallel chase and the bisection.
+
 ## 2.12.0 (2026-10-04)
 
 - **QR shares batches with the CPU** (`share_min_batch` in the QR policy,

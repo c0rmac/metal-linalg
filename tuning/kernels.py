@@ -27,7 +27,7 @@ measurements). The library reports the state at run time
 and docs/measurements.md shows it for every chip.
 """
 
-KERNEL_EPOCHS = {"qr": 3, "eigh": 4, "svd": 6}
+KERNEL_EPOCHS = {"qr": 3, "eigh": 5, "svd": 7}
 
 # (decomposition, epoch, library version, date, why)
 HISTORY = [
@@ -65,14 +65,21 @@ HISTORY = [
     ("svd", 6, "2.12.0", "2026-10-04",
      "the bidiag backend's reduction takes four dispatches per column instead of twelve, and "
      "copies the matrix in on every core: 1.2-1.8x for singular values alone, 1.1-1.3x with vectors"),
+    ("eigh", 5, "2.13.0", "2026-10-04",
+     "the tridiag backend's eigenvalues alone come from bisection on the GPU rather than ssterf from "
+     "N = 512: 6 ms against 79 at 4096"),
+    ("svd", 7, "2.13.0", "2026-10-04",
+     "the bidiag backend's singular values alone come from bisection on the GPU from k = 1024, and "
+     "below that from sbdsqr (dqds) rather than sbdsdc: 12 ms against 93 at 4096"),
 ]
 
 REQUIRED = {
     "qr": {"unblocked", "reduced", "cpu", "share"},
     "eigh": {"cpu", "simd", "tg", "block", "tridiag", "ql", "ql_share",
-             "cpu_vals", "simd_vals", "tg_vals", "block_vals", "tridiag_vals", "ql_vals", "ql_share_vals"},
+             "cpu_vals", "simd_vals", "tg_vals", "block_vals", "tridiag_vals", "ql_vals", "ql_share_vals",
+             "band_vals"},
     "svd": {"cpu", "jacobi", "block", "qr", "qrblock", "bidiag", "gk", "gk_share", "cpu_vals", "bidiag_vals",
-            "gk_vals", "gk_share_vals"},
+            "gk_vals", "gk_share_vals", "band_vals"},
 }
 
 # Backends added after a decomposition's first measurements, and when: what
@@ -96,6 +103,7 @@ ADDED = {
     "ql_share": "sharing a batch between the GPU and the CPU (2.11.0)",
     "ql_share_vals": "sharing a batch between the GPU and the CPU (2.11.0)",
     "share": "sharing a batch between the GPU and the CPU (2.12.0)",
+    "band_vals": "the band backend, the two-stage reduction for eigenvalues or singular values alone (2.13.0)",
 }
 # Where a backend name means something else for one decomposition.
 ADDED_FOR = {

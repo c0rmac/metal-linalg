@@ -125,6 +125,14 @@ int main(void) {
         p.gpu_min_batch = 1;
         metal_linalg_eigh_policy_set(&p);
         CHECK(strcmp(metal_linalg_eigh_backend(8, 4096), "cpu") != 0, "unlimited GPU still routes to cpu");
+        /* The band backend for eigenvalues alone, from its threshold. */
+        p.values_band_min_n = 2048;
+        metal_linalg_eigh_policy_set(&p);
+        CHECK(metal_linalg_eigh_policy_get().values_band_min_n == 2048, "values_band_min_n not set");
+        CHECK(strcmp(metal_linalg_eigvalsh_backend(4096, 1), "band") == 0, "eigvalsh 4096 routes to %s",
+              metal_linalg_eigvalsh_backend(4096, 1));
+        p.values_band_min_n = 0;
+        metal_linalg_eigh_policy_set(&p);
         /* Eigenvalues alone: values_gpu_min_batch = 0 follows eigh; set, it decides apart. */
         p.values_gpu_min_batch = 0;
         metal_linalg_eigh_policy_set(&p);
@@ -171,6 +179,11 @@ int main(void) {
         CHECK(metal_linalg_svd_policy_get().gpu_big_batch_max_k == 80 &&
               metal_linalg_svd_policy_get().gpu_big_batch_min == 1024, "SVD large-batch clause not set");
         sp.gpu_big_batch_min = 0;
+        sp.values_band_min_k = 2048;
+        metal_linalg_svd_policy_set(&sp);
+        CHECK(metal_linalg_svd_policy_get().values_band_min_k == 2048, "values_band_min_k not set");
+        sp.values_band_min_k = 0;
+        metal_linalg_svd_policy_set(&sp);
         CHECK(strcmp(metal_linalg_svd_backend(40, 24, 16), "golub_kahan") == 0, "gk window: 40x24 routes to %s",
               metal_linalg_svd_backend(40, 24, 16));
         CHECK(strcmp(metal_linalg_svd_backend(4000, 16, 16), "qr_golub_kahan") == 0, "gk window: 4000x16 routes to %s",

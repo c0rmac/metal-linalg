@@ -209,6 +209,12 @@ EighResult eigh_tridiag(const mx::array& a, bool compute_vectors, bool lower) {
     });
 }
 
+EighResult eigh_band(const mx::array& a, bool lower, uint32_t width) {
+    return run_eigh(a, false, "eigvalsh", [&](const core::Matrices& m, float* w, float*, uint32_t* info) {
+        core::detail::eigh_band(m, lower, w, info, width);
+    });
+}
+
 EighResult eigh_ql(const mx::array& a, bool compute_vectors, bool lower) {
     return run_eigh(a, compute_vectors, "eigh", [&](const core::Matrices& m, float* w, float* v, uint32_t* info) {
         core::detail::eigh_ql(m, lower, w, v, info);
@@ -247,6 +253,12 @@ SvdResult svd_qr_jacobi(const mx::array& a, bool compute_uv, const SvdOptions& o
 
 SvdResult svd_bidiag(const mx::array& a, bool compute_uv) {
     return run_svd(a, compute_uv, "svd", core::detail::svd_bidiag);
+}
+
+SvdResult svd_band(const mx::array& a, uint32_t width) {
+    return run_svd(a, false, "svd", [width](const core::Matrices& m, float*, float* s, float*, uint32_t* info) {
+        core::detail::svd_band(m, s, info, width);
+    });
 }
 
 SvdResult svd_golub_kahan(const mx::array& a, bool compute_uv) {

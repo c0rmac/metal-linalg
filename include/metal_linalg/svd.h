@@ -53,6 +53,9 @@ namespace metal_linalg {
         SvdResult svd_qr_jacobi(const mlx::core::array& a, bool compute_uv, const SvdOptions& opt);
         SvdResult svd_cpu(const mlx::core::array& a, bool compute_uv);
         SvdResult svd_bidiag(const mlx::core::array& a, bool compute_uv);
+        // Singular values alone by the two-stage reduction (S only); `width`
+        // the band's, 8, 16 or 32 (0: the default).
+        SvdResult svd_band(const mlx::core::array& a, uint32_t width = 0);
         // Shapes that metal_linalg::detail::svd_gk_fits(); `info` counts QR
         // steps. With the QR first: svd_qr_jacobi with Kernel::golub_kahan.
         SvdResult svd_golub_kahan(const mlx::core::array& a, bool compute_uv);

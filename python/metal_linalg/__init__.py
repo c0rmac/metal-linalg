@@ -179,7 +179,8 @@ def eigh_backend(n, batch=1):
 
 def eigvalsh_backend(n, batch=1):
     """Which backend :func:`eigvalsh` uses; as :func:`eigh_backend`, under
-    the eigenvalues-alone boundary of the policy (``values_gpu_*``)."""
+    the eigenvalues-alone boundary of the policy (``values_gpu_*``), and
+    ``"band"`` (the two-stage reduction) from ``values_band_min_n``."""
     return _core.eigvalsh_backend(n, batch)
 
 
@@ -192,7 +193,8 @@ def svd_backend(m, n, batch=1):
 
 def svdvals_backend(m, n, batch=1):
     """Which backend :func:`svdvals` uses; as :func:`svd_backend`, with the
-    policy's ``values_bidiag_min_k`` for the bidiag backend."""
+    policy's ``values_bidiag_min_k`` for the bidiag backend, and ``"band"``
+    (the two-stage reduction) from ``values_band_min_k``."""
     return _core.svdvals_backend(m, n, batch)
 
 

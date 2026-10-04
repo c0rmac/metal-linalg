@@ -223,4 +223,27 @@ id<MTLComputePipelineState> make_pipeline(id<MTLDevice> device,
                                           NSString* name,
                                           MTLFunctionConstantValues* constants);
 
+// The first stage of the two-stage reductions, on the GPU (band_reduce.mm).
+// A band width the panel kernels have, 8, 16 or 32: `want` rounded up, or
+// with want = 0 the environment variable `env`, else 16.
+uint32_t band_width(uint32_t want, const char* env);
+// The widest band of at most b the panel kernels take for a matrix of `rows`
+// rows (rows b <= 128 * 1024), or 0 if none.
+uint32_t band_fit(uint32_t rows, uint32_t b);
+// A (m x n column-major, m >= n, in shared storage) to an upper band of width
+// b, A = Q B P^T: the band in A's upper band, the rest of A scratch. False if
+// m is too tall for the panel kernels (m b > 128 * 1024).
+bool band_reduce_general(id<MTLBuffer> A, uint32_t m, uint32_t n, uint32_t lda, uint32_t b);
+// A symmetric A (n x n, both triangles, in shared storage) to a band of width
+// b, Q^T A Q: the band in A's lower band. Likewise false if n is too large.
+bool band_reduce_symmetric(id<MTLBuffer> A, uint32_t n, uint32_t lda, uint32_t b);
+
+// By bisection on the GPU (bisect.mm): the eigenvalues of the symmetric
+// tridiagonal (d, n; e, n - 1) into w, ascending, or the singular values of
+// the upper bidiagonal (d, e) into s, descending. False, and nothing done,
+// below the order from which the GPU is the faster: LAPACK's ssterf or
+// sbdsqr then.
+bool tridiagonal_eigenvalues(uint32_t n, const float* d, const float* e, float* w);
+bool bidiagonal_singular_values(uint32_t n, const float* d, const float* e, float* s);
+
 } // namespace metal_linalg::detail

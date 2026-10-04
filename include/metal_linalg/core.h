@@ -202,6 +202,12 @@ namespace metal_linalg {
         // the CPU wins whatever N is.
         unsigned tridiag_max_batch        = 0;
         unsigned values_tridiag_max_batch = 0;
+        // Eigenvalues alone, from N >= values_band_min_n (within
+        // values_tridiag_max_batch), the band backend before tridiag: the
+        // two-stage reduction, A to a band on the GPU in blocks whose work is
+        // matrix products, the band to tridiagonal on the CPU's cores. 0
+        // means never.
+        unsigned values_band_min_n = 0;
 
         // Large batches: the GPU also for N above gpu_max_n, up to
         // gpu_big_batch_max_n, in a batch of at least gpu_big_batch_min (with
@@ -248,7 +254,7 @@ namespace metal_linalg {
     // back-transformation on the GPU, the tridiagonal eigenproblem on the
     // CPU). ql: the batched one (tridiagonalization and implicit QL, one
     // threadgroup per matrix). Each added last, so the others keep their numbers.
-    enum class EighBackend { cpu, simd, threadgroup, block, tridiag, ql };
+    enum class EighBackend { cpu, simd, threadgroup, block, tridiag, ql, band };
 
     // What an eigh call does with a problem under the policy in effect.
     // EIGH_DEVICE=gpu or EIGH_DEVICE=cpu forces the first part of the decision.
@@ -413,6 +419,12 @@ namespace metal_linalg {
         // the CPU path spreads it over every core.
         unsigned bidiag_max_batch        = 0;
         unsigned values_bidiag_max_batch = 0;
+        // Singular values alone, from k >= values_band_min_k (within
+        // values_bidiag_max_batch), the band backend before bidiag: the
+        // two-stage reduction, A to a band on the GPU in blocks whose work is
+        // matrix products, then the band to bidiagonal on the CPU (on an M5
+        // Pro 1.8x the bidiag backend at 4096 x 4096). 0 means never.
+        unsigned values_band_min_k = 0;
 
         // --- the golub_kahan backend, for k in [gk_min_k, gk_max_k] ---
         // On the GPU, inside this window, LAPACK's method in one threadgroup
@@ -448,7 +460,7 @@ namespace metal_linalg {
     // threadgroup per matrix); qr_golub_kahan: the same on the k x k factor of
     // this library's QR. Each added last, so the others keep their numbers.
     enum class SvdBackend { cpu, jacobi, block_jacobi, qr_jacobi, qr_block_jacobi, bidiag,
-                            golub_kahan, qr_golub_kahan };
+                            golub_kahan, qr_golub_kahan, band };
 
     // What an SVD call does with a problem under the policy in effect.
     // SVD_DEVICE=gpu or SVD_DEVICE=cpu forces the first part of the decision.
@@ -625,6 +637,12 @@ namespace metal_linalg {
             // See eigh_tridiag.mm.
             void eigh_tridiag(const Matrices& a, bool lower, float* w, float* v, uint32_t* info);
 
+            // Eigenvalues alone by the two-stage reduction: A to a band on the
+            // GPU, the band to tridiagonal on the CPU's cores, then LAPACK
+            // ssterf. `width` the band's, 8, 16 or 32 (0: the default, or
+            // EIGH_BAND_WIDTH). See eigh_band.mm.
+            void eigh_band(const Matrices& a, bool lower, float* w, uint32_t* info, uint32_t width = 0);
+
             // Householder tridiagonalization and implicit QL, one threadgroup
             // per matrix, N <= metal_linalg::detail::eigh_ql_max_n(). `info`
             // counts QL iterations where the others count sweeps. See
@@ -663,6 +681,13 @@ namespace metal_linalg {
             // (a wide matrix as its transpose, a much taller one after a QR).
             // See svd_bidiag.mm.
             void svd_bidiag(const Matrices& a, float* u, float* s, float* vt, uint32_t* info);
+
+            // Singular values alone by the two-stage reduction: A to a band
+            // on the GPU (blocked panels, the work as matrix products), the
+            // band to bidiagonal (LAPACK sgbbrd) and its singular values
+            // (sbdsqr) on the CPU. `width` the band's, 8, 16 or 32 (0: the
+            // default, or SVD_BAND_WIDTH). See svd_bidiag.mm.
+            void svd_band(const Matrices& a, float* s, uint32_t* info, uint32_t width = 0);
 
             // Householder bidiagonalization and implicit bidiagonal QR, one
             // threadgroup per matrix, for shapes that

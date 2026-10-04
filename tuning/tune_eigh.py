@@ -129,6 +129,7 @@ LARGE_N = 1024
 LARGE_BATCHES = [1, 2, 4]
 HUGE_N = 2048          # above this, lone matrices only
 TRIDIAG_MIN_GRID_N = 128   # tridiag is timed from this N
+BAND_MIN_GRID_N = 512      # and band (eigenvalues alone) from this N
 CAP_LARGE_MS = 8000.0
 
 # Candidate values for each constant. A value only changes behaviour when it
@@ -152,6 +153,7 @@ CURRENT = (8, 96, INF, INF, 64, 1024, 1)
 CURRENT_VALUES = None
 # The tridiag thresholds in effect, (with eigenvectors, eigenvalues alone); 0 = never.
 CURRENT_TRIDIAG = (0, 0)
+CURRENT_BAND = 0           # values_band_min_n in effect
 # Their batch caps, the same way round; 0 = any batch.
 CURRENT_TRIDIAG_CAP = (0, 0)
 # The ql window in effect, (ql_min_n, ql_max_n); (0, 0) = never.
@@ -211,17 +213,27 @@ def without_tridiag(times):
 
 def split_values(times):
     """(times with eigenvectors, times for eigenvalues alone), each keyed by the
-    plain backend names. Runs from before the _vals backends give an empty
-    second part."""
+    plain backend names, band left out (stage 4b scores it, band_values).
+    Runs from before the _vals backends give an empty second part."""
     vec, val = {}, {}
     for p, tv in times.items():
         a = {k: v for k, v in tv.items() if not k.endswith(VALS)}
-        b = {k[:-len(VALS)]: v for k, v in tv.items() if k.endswith(VALS)}
+        b = {k[:-len(VALS)]: v for k, v in tv.items() if k.endswith(VALS) and k != "band" + VALS}
         if any(k in a for k in GPU_BACKENDS):
             vec[p] = a
         if any(k in b for k in GPU_BACKENDS) and "cpu" in b:
             val[p] = b
     return vec, val
+
+
+def band_values(times):
+    """For eigenvalues alone, the points where band was timed, as {"cpu",
+    "tridiag", "band"}."""
+    out = {}
+    for p, tv in times.items():
+        if "band" + VALS in tv and "tridiag" + VALS in tv and "cpu" + VALS in tv:
+            out[p] = {k: tv[k + VALS] for k in ("cpu", "tridiag", "band")}
+    return out
 
 
 def policy_to_tuple(pol):
@@ -240,7 +252,8 @@ def _route_fields(gm, mb, mbatch):
     return f"{'kEighNoLimit' if gm >= INF else gm}, {mb}, {mbatch}"
 
 
-def tuned_row(device, params, values=None, tridiag=(0, 0), ql=(0, 0), tridiag_cap=(0, 0), share=0, big=(0, 0)):
+def tuned_row(device, params, values=None, tridiag=(0, 0), ql=(0, 0), tridiag_cap=(0, 0), share=0, big=(0, 0),
+              band=0):
     """The line to paste into kTuned[] in eigh.mm. `values` is the
     eigenvalues-alone boundary, or None (written as 0, 0, 0: as for eigenvectors);
     `tridiag` the two tridiag thresholds (0: never), `tridiag_cap` their batch
@@ -252,15 +265,15 @@ def tuned_row(device, params, values=None, tridiag=(0, 0), ql=(0, 0), tridiag_ca
     v = _route_fields(*values) if values else "0, 0, 0"
     return (f'{{"{device["name"]}", {device["gpu_cores"]},   {s}, {bm_s}, {lo}, {bh},   '
             f'{_route_fields(gm, mb, mbatch)},   {v},   {tridiag[0]}, {tridiag[1]}, '
-            f'{tridiag_cap[0]}, {tridiag_cap[1]},   {ql[0]}, {ql[1]},   {share},   {big[0]}, {big[1]}}},')
+            f'{tridiag_cap[0]}, {tridiag_cap[1]},   {ql[0]}, {ql[1]},   {share},   {big[0]}, {big[1]},   {band}}},')
 
 
-def env_line(params, values=None, tridiag=(0, 0), ql=(0, 0), tridiag_cap=(0, 0), share=0, big=(0, 0)):
+def env_line(params, values=None, tridiag=(0, 0), ql=(0, 0), tridiag_cap=(0, 0), share=0, big=(0, 0), band=0):
     s, bm, lo, bh, gm, mb, mbatch = params
     extra = (f" EIGH_TRIDIAG_MIN_N={tridiag[0]} EIGH_VALUES_TRIDIAG_MIN_N={tridiag[1]}"
              f" EIGH_TRIDIAG_MAX_BATCH={tridiag_cap[0]} EIGH_VALUES_TRIDIAG_MAX_BATCH={tridiag_cap[1]}"
              f" EIGH_QL_MIN_N={ql[0]} EIGH_QL_MAX_N={ql[1]} EIGH_SHARE_MIN_BATCH={share}"
-             f" EIGH_GPU_BIG_BATCH_MAX_N={big[0]} EIGH_GPU_BIG_BATCH_MIN={big[1]}")
+             f" EIGH_GPU_BIG_BATCH_MAX_N={big[0]} EIGH_GPU_BIG_BATCH_MIN={big[1]} EIGH_VALUES_BAND_MIN_N={band}")
     if values:
         vg, vm, vb = values
         if vm >= INF:
@@ -282,6 +295,8 @@ def est_ms(backend, N, b):
     if backend.endswith("_share"):   # the GPU and the CPU at once
         return 0.7 * est_ms(backend[:-len("_share")], N, b)
     n3 = float(N) ** 3
+    if backend == "band":       # the two-stage reduction: below tridiag's, for large N
+        return 0.8 * est_ms("tridiag", N, b)
     if backend == "tridiag":    # serial over the batch; launches per column, then O(N^3)
         return b * (0.5 + 0.025 * N + 7e-9 * n3) * SCALE.get(backend, 1.0)
     if backend == "ql":         # one threadgroup per matrix, as tg, at about a tenth of the work
@@ -314,7 +329,10 @@ def backends_for(N, b):
         ks.append("cpu")
     if N >= TRIDIAG_MIN_GRID_N and est_ms("tridiag", N, b) <= cap:
         ks.append("tridiag")
-    return ks + [k + VALS for k in ks]   # each again for eigenvalues alone
+    vals = [k + VALS for k in ks]        # each again for eigenvalues alone
+    if "tridiag" in ks and N >= BAND_MIN_GRID_N:
+        vals.append("band" + VALS)       # and the band backend, the region values_band_min_n decides
+    return ks + vals
 
 
 def point_grid(quick=False, max_n=512):
@@ -864,6 +882,7 @@ def fit_tridiag(params, times, current, tol):
 def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
     global QL, SHARE, BIG
     QL, SHARE, BIG = (0, 0), 0, (0, 0)    # stage 1 is the Jacobi split alone
+    btimes = band_values(times)            # stage 4b's, before the _vals names go
     times_full, vtimes_full = split_values(times)
     times, vtimes = without_tridiag(times_full), without_tridiag(vtimes_full)
     configure_grids(times)
@@ -1091,6 +1110,34 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
             tridiag[0 if which == "vectors" else 1] = th[0]
             tridiag_cap[0 if which == "vectors" else 1] = th[1]
         res["stage4"] = s4
+
+    # ---- stage 4b: the band backend (eigenvalues alone) before tridiag, from
+    # its own threshold, within the same batch cap
+    band = 0
+    vrule = (split + values) if values else params
+    bfull = {p: tv for p, tv in btimes.items() if rule_choice(vrule, p[1], p[0]) == "cpu"}
+    if bfull:
+        def band_choice(t, N, b):
+            if tridiag_cap[1] and b > tridiag_cap[1]:
+                return "cpu"
+            if t and N >= t:
+                return "band"
+            return "tridiag" if tridiag[1] and N >= tridiag[1] else "cpu"
+        cands = [0] + sorted({N for (_, N) in bfull})
+        bscores = {t: _score3(evaluate(lambda N, b, t=t: band_choice(t, N, b), bfull)) for t in cands}
+        best_b = min(v[0] for v in bscores.values())
+        near_b = {t: v for t, v in bscores.items() if v[0] <= best_b * (1 + tol)}
+        band = CURRENT_BAND if CURRENT_BAND in near_b else min(near_b, key=lambda t: (near_b[t][1], -t if t else 0))
+        res["stage4b"] = {
+            "n_points": len(bfull), "chosen": band, "current": CURRENT_BAND,
+            "with": _strip(evaluate(lambda N, b: band_choice(band, N, b), bfull)),
+            "without": _strip(evaluate(lambda N, b: band_choice(0, N, b), bfull)),
+            "curve": [[t, v[0], v[1]] for t, v in sorted(bscores.items())],
+            "speedup_vs_tridiag": sorted([[N, b, tv["tridiag"] / tv["band"]] for (b, N), tv in bfull.items()]),
+            "speedup_vs_cpu": sorted([[N, b, tv["cpu"] / tv["band"]] for (b, N), tv in bfull.items()]),
+        }
+    res["band_chosen"] = band
+    res["current_band"] = CURRENT_BAND
     res["tridiag_chosen"] = tridiag
     res["current_tridiag"] = list(CURRENT_TRIDIAG)
     res["tridiag_cap_chosen"] = tridiag_cap
@@ -1163,7 +1210,8 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
     if (tuple(params) != tuple(CURRENT) or (values and tuple(values) != tuple(CURRENT_VALUES or ()))
             or tuple(res.get("tridiag_chosen", (0, 0))) != tuple(CURRENT_TRIDIAG)
             or tuple(tridiag_cap) != tuple(CURRENT_TRIDIAG_CAP)
-            or tuple(ql) != tuple(CURRENT_QL) or share != CURRENT_SHARE or tuple(big) != tuple(CURRENT_BIG)):
+            or tuple(ql) != tuple(CURRENT_QL) or share != CURRENT_SHARE or tuple(big) != tuple(CURRENT_BIG)
+            or res.get("band_chosen", 0) != CURRENT_BAND):
         warns.append(f"the fitted policy differs from the one in effect ({device.get('source', 'unknown')}): "
                      f"update this device's row in kTuned[] in src/eigh.mm")
     res["warnings"] = warns
@@ -1192,8 +1240,9 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
     if not have_ql:
         warns.append("no ql timings (a run from before the backend existed): the row's ql window is "
                      "0, 0, so the backend stays off on this device")
-    res["tuned_row"] = tuned_row(device, params, values, tridiag, ql, tridiag_cap, share, big)
-    res["env_line"] = env_line(params, values, tridiag, ql, tridiag_cap, share, big)
+    band = res.get("band_chosen", 0)
+    res["tuned_row"] = tuned_row(device, params, values, tridiag, ql, tridiag_cap, share, big, band)
+    res["env_line"] = env_line(params, values, tridiag, ql, tridiag_cap, share, big, band)
     res["big_chosen"] = list(big)
     res["n_candidates"] = {"split": len(SIMD_MAXS) * len(BLOCK_MINS),
                            "routing": len(GPU_MAX_NS) * len(MIN_BNS) * len(MIN_BATCHES)}
@@ -1327,7 +1376,8 @@ def write_report(res, path):
     L.append("// device, GPU cores,   simd_max_n, block_min_n, block_min_n_batched, block_min_batch,   "
              "gpu_max_n, gpu_min_batch_times_n, gpu_min_batch,   values_gpu_max_n, "
              "values_gpu_min_batch_times_n, values_gpu_min_batch,   tridiag_min_n, values_tridiag_min_n, "
-             "tridiag_max_batch, values_tridiag_max_batch,   ql_min_n, ql_max_n")
+             "tridiag_max_batch, values_tridiag_max_batch,   ql_min_n, ql_max_n,   share_min_batch,   "
+             "gpu_big_batch_max_n, gpu_big_batch_min,   values_band_min_n")
     L.append(res["tuned_row"])
     L.append("```")
     L.append("")
@@ -1572,6 +1622,21 @@ def write_report(res, path):
                          "N x batch: " + ", ".join(f"{N}x{b} {r:.2f}x" for N, b, r in e["speedup_vs_cpu"]))
                 L.append("")
 
+    s4b = res.get("stage4b")
+    if s4b:
+        L += ["## Stage 4b: the band backend for eigenvalues alone", "",
+              "For eigenvalues alone, where the rules above choose the CPU or tridiag, the `band` backend "
+              "(the two-stage reduction: A to a band on the GPU in blocks whose work is matrix products, the "
+              "band to tridiagonal on the CPU's cores, then bisection on the GPU) from a threshold N on (0: "
+              f"never), within tridiag's batch cap, fitted on the {s4b['n_points']} points where it was timed "
+              f"(N >= {BAND_MIN_GRID_N}) against the CPU, tridiag and band.", "",
+              f"Chosen: {s4b['chosen'] or 'never'} (in effect: {s4b['current'] or 'never'}): "
+              f"{s4b['with']['geomean']:.4f} geometric-mean regret, worst {s4b['with']['worst']:.2f}x; without "
+              f"band {s4b['without']['geomean']:.4f}, worst {s4b['without']['worst']:.2f}x.", "",
+              "band over tridiag, N x batch: " +
+              ", ".join(f"{N}x{b} {r:.2f}x" for N, b, r in s4b["speedup_vs_tridiag"]), "",
+              "band over the CPU, N x batch: " +
+              ", ".join(f"{N}x{b} {r:.2f}x" for N, b, r in s4b["speedup_vs_cpu"]), ""]
     L.append("## Noise floor")
     L.append("")
     nf = res["noise"]
@@ -1596,6 +1661,7 @@ def write_report(res, path):
 
 def main():
     global CURRENT, CURRENT_VALUES, CURRENT_TRIDIAG, CURRENT_TRIDIAG_CAP, CURRENT_QL, QL_LIMIT, CURRENT_SHARE, CURRENT_BIG
+    global CURRENT_BAND
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("binary", nargs="?", help="path to the built sweep_eigh")
@@ -1660,6 +1726,7 @@ def main():
             CURRENT = policy_to_tuple(pol)
             CURRENT_VALUES = policy_values(pol)
             CURRENT_TRIDIAG = (pol.get("tridiag_min_n", 0), pol.get("values_tridiag_min_n", 0))
+            CURRENT_BAND = pol.get("values_band_min_n", 0)
             CURRENT_TRIDIAG_CAP = (pol.get("tridiag_max_batch", 0), pol.get("values_tridiag_max_batch", 0))
             CURRENT_QL = (pol.get("ql_min_n", 0), pol.get("ql_max_n", 0))
             CURRENT_SHARE = pol.get("share_min_batch", 0)
@@ -1714,6 +1781,10 @@ def main():
         print(f"tridiag ({which}): {_fmt_td((s4['chosen'], s4.get('cap', 0)))}   ({s4['with']['geomean']:.4f}x, worst "
               f"{s4['with']['worst']:.2f}x; without it {s4['without']['geomean']:.4f}x, worst {s4['without']['worst']:.2f}x; "
               f"held out {s4['holdout']['test']['geomean']:.4f}x vs {s4['holdout']['without_test']['geomean']:.4f}x)")
+    if res.get("stage4b"):
+        b4 = res["stage4b"]
+        print(f"band (values): {b4['chosen'] or 'never'}   ({b4['with']['geomean']:.4f}x, worst "
+              f"{b4['with']['worst']:.2f}x; without {b4['without']['geomean']:.4f}x)")
     print(f"\nkTuned[] row:  {res['tuned_row']}" +
           ("" if res["trustworthy"] else "     <-- indicative only, do not paste (see first warning)"))
     for w in res["warnings"]:

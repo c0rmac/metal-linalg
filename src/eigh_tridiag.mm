@@ -64,7 +64,7 @@ constexpr uint32_t kPanel     = 32;    // columns per panel of the reduction (nb
 constexpr uint32_t kBackBlock = 128;   // reflectors per pass of the back-transformation
 constexpr uint32_t kTile      = 64;    // must match TILE in Eigh_Tridiag.metal
 constexpr uint32_t kGroup     = 256;   // must match GROUP in Eigh_Tridiag.metal
-constexpr uint32_t kRows      = 32;    // must match ROWS: td_update's and td_apply's rows per threadgroup
+constexpr uint32_t kRows      = 32;    // must match GROUP / LANES: td_update's and td_apply's rows per threadgroup
 
 // Must match TdParams and PackParams in Eigh_Tridiag.metal.
 struct TdParams   { uint32_t nn, lda, ldw, i, k, ng, ngp, tiles; };
@@ -418,7 +418,12 @@ void eigh_tridiag(const Matrices& a, bool lower, float* w_out, float* v_out, uin
         Slot& sl = slots[s];
         L N = n, info = 0;
         if (!vectors) {
-            ssterf_(&N, sl.d.data(), sl.e.data(), &info);
+            // By bisection on the GPU where it is the faster, else ssterf.
+            std::vector<float> w(n);
+            if (metal_linalg::detail::tridiagonal_eigenvalues(n, sl.d.data(), sl.e.data(), w.data()))
+                sl.d = std::move(w);
+            else
+                ssterf_(&N, sl.d.data(), sl.e.data(), &info);
         } else {
             float* Z = static_cast<float*>(ws.Z[s].contents);
             char compz = 'I';

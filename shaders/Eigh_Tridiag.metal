@@ -49,7 +49,6 @@ using namespace metal;
 constant constexpr uint TILE  = 64;    // td_symv's tiles
 constant constexpr uint GROUP = 256;   // threads per threadgroup of td_update and td_apply
 constant constexpr uint LANES = 8;     // their threads per row: each sums every LANES-th term
-constant constexpr uint ROWS  = GROUP / LANES;   // rows per threadgroup
 
 // The sum over a row's LANES consecutive lanes, in a fixed order; every lane
 // gets it.
@@ -107,7 +106,7 @@ static Reflector reflector(device const float* npart, uint ng, float alpha, uint
     return r;
 }
 
-// LANES threads per row i + r of Ak(i:, i), ROWS rows per threadgroup. Only
+// LANES threads per row i + r of Ak(i:, i), GROUP / LANES rows per threadgroup. Only
 // a row's threads write W(row, i-1) and Ak(row, i); W(i, i-1), which every row
 // reads, is finished on the fly by each and never stored (nothing reads it
 // later).
@@ -256,7 +255,7 @@ kernel void td_symv(device const float* Ak [[buffer(0)]], device const float* W 
     }
 }
 
-// LANES threads per row i + 1 + r, ROWS rows per threadgroup.
+// LANES threads per row i + 1 + r, GROUP / LANES rows per threadgroup.
 kernel void td_apply(device float* Ak [[buffer(0)]], device float* W [[buffer(1)]],
                      device const float* P [[buffer(2)]], device const float* tmp [[buffer(3)]],
                      device const float* tau [[buffer(4)]], device const float* scal [[buffer(5)]],
@@ -327,4 +326,62 @@ kernel void td_restore_e(device float* Ak [[buffer(0)]], device const float* e [
                          constant PackParams& q [[buffer(2)]], constant uint& k [[buffer(3)]],
                          uint j [[thread_position_in_grid]]) {
     if (j < q.nb) Ak[j + 1 + j * q.lda] = e[k + j];
+}
+
+// =============================================================================
+// Eigenvalues of a symmetric tridiagonal by bisection (src/bisect.mm): a
+// thread an eigenvalue, the k-th smallest found by halving an interval with
+// Sturm counts, the number of eigenvalues below x being the number of
+// negative pivots of T - x I = L D L^T. Every thread reads the same diagonal
+// entries at the same step, so they are staged through threadgroup memory a
+// chunk at a time, and every thread runs the same number of halvings (enough
+// for float32's precision on the interval), keeping the threadgroup in step.
+// The singular values of an upper bidiagonal are the eigenvalues of its
+// Golub-Kahan form, of order 2n with a zero diagonal and off-diagonal
+// d0, e0, d1, e1, ..., in plus-minus pairs: `tgk` reads no diagonal.
+// A pivot smaller than pivmin is replaced by -pivmin, as LAPACK's slaebz does.
+// =============================================================================
+
+struct SturmParams {
+    uint  n;        // eigenvalues to find: indices offset .. offset + n - 1, ascending
+    uint  size;     // the tridiagonal's order
+    uint  offset;
+    uint  tgk;      // no diagonal (the Golub-Kahan form)
+    float lo, hi;   // an interval holding them all
+    float pivmin;
+    uint  passes;   // halvings
+};
+
+constant constexpr uint STURM_CHUNK = 1024;
+
+kernel void sturm_bisect(device const float* d [[buffer(0)]], device const float* e2 [[buffer(1)]],
+                         device float* out [[buffer(2)]], constant SturmParams& p [[buffer(3)]],
+                         uint t [[thread_position_in_grid]], uint tid [[thread_index_in_threadgroup]],
+                         uint nt [[threads_per_threadgroup]]) {
+    threadgroup float sd[STURM_CHUNK], se[STURM_CHUNK];
+    const uint k = t + p.offset;
+    float lo = p.lo, hi = p.hi;
+    for (uint pass = 0; pass < p.passes; ++pass) {
+        const float mid = 0.5f * (lo + hi);
+        uint  below = 0;
+        float q = 1.0f;
+        for (uint c0 = 0; c0 < p.size; c0 += STURM_CHUNK) {
+            const uint m = min(STURM_CHUNK, p.size - c0);
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+            for (uint i = tid; i < m; i += nt) {
+                sd[i] = p.tgk ? 0.0f : d[c0 + i];
+                se[i] = c0 + i == 0 ? 0.0f : e2[c0 + i - 1];   // e(i-1)^2; none before the first pivot
+            }
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+            for (uint i = 0; i < m; ++i) {
+                float v = sd[i] - mid - se[i] / q;
+                if (fabs(v) < p.pivmin) v = -p.pivmin;
+                q = v;
+                below += v < 0.0f;
+            }
+        }
+        if (below > k) hi = mid;
+        else           lo = mid;
+    }
+    if (t < p.n) out[t] = 0.5f * (lo + hi);
 }

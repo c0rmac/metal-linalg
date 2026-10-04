@@ -7,7 +7,8 @@
 //             threadgroup per matrix, eigh_ql.mm; N up to its device limit), ql_share (ql and the
 //             CPU path sharing the batch, share_min_batch); each also as <name>_vals,
 //             eigenvalues alone (eigvalsh: the CPU path is then LAPACK ssyevd_2stage
-//             from N = 128), which has its own GPU-or-CPU boundary
+//             from N = 128), which has its own GPU-or-CPU boundary; band_vals, eigenvalues alone
+//             by the two-stage reduction (eigh_band.mm)
 //   out:   batch,N,backend,ok,ms,p25,p75,reps   (one row per backend)
 //
 //   usage: sweep_eigh --policy
@@ -111,6 +112,9 @@ std::pair<array, array> solve_tridiag(const array& A) {
 }
 std::pair<array, array> vals_tridiag(const array& A) {
     array w = detail::eigh_tridiag(A, false, true).eigenvalues; return {w, w};
+}
+std::pair<array, array> vals_band(const array& A) {
+    array w = detail::eigh_band(A, true).eigenvalues; return {w, w};
 }
 std::pair<array, array> solve_ql(const array& A) {
     EighResult r = detail::eigh_ql(A, true, true);
@@ -226,7 +230,7 @@ int main(int argc, char** argv) {
                     "\"tridiag_min_n\": %u, \"values_tridiag_min_n\": %u, "
                     "\"ql_min_n\": %u, \"ql_max_n\": %u, \"ql_limit\": %u, \"cpu_threads\": %u, "
                     "\"tridiag_max_batch\": %u, \"values_tridiag_max_batch\": %u, \"share_min_batch\": %u, "
-                    "\"gpu_big_batch_max_n\": %u, \"gpu_big_batch_min\": %u}\n",
+                    "\"gpu_big_batch_max_n\": %u, \"gpu_big_batch_min\": %u, \"values_band_min_n\": %u}\n",
                     device_name(), p.gpu_cores, eigh_policy_source(),
                     p.simd_max_n, p.block_min_n, p.block_min_n_batched, p.block_min_batch,
                     p.gpu_max_n, p.gpu_min_batch_times_n, p.gpu_min_batch,
@@ -234,11 +238,11 @@ int main(int argc, char** argv) {
                     p.tridiag_min_n, p.values_tridiag_min_n, p.ql_min_n, p.ql_max_n,
                     metal_linalg::detail::eigh_ql_max_n(), cpu_threads(),
                     p.tridiag_max_batch, p.values_tridiag_max_batch, p.share_min_batch,
-                    p.gpu_big_batch_max_n, p.gpu_big_batch_min);
+                    p.gpu_big_batch_max_n, p.gpu_big_batch_min, p.values_band_min_n);
         return 0;
     }
     if (argc != 4) {
-        std::fprintf(stderr, "usage: %s <batch> <N> <cpu|simd|tg|block|tridiag|ql|ql_share>[_vals][,...]\n"
+        std::fprintf(stderr, "usage: %s <batch> <N> <cpu|simd|tg|block|tridiag|ql|ql_share>[_vals]|band_vals[,...]\n"
                              "       %s --policy\n", argv[0], argv[0]);
         return 2;
     }
@@ -261,6 +265,7 @@ int main(int argc, char** argv) {
         else if (name == "block_vals") solvers.push_back({name, vals_block, false});
         else if (name == "tridiag")      solvers.push_back({name, solve_tridiag});
         else if (name == "tridiag_vals") solvers.push_back({name, vals_tridiag, false});
+        else if (name == "band_vals")    solvers.push_back({name, vals_band, false});
         else if (name == "ql")           solvers.push_back({name, solve_ql});
         else if (name == "ql_vals")      solvers.push_back({name, vals_ql, false});
         else if (name == "ql_share")      solvers.push_back({name, solve_ql_share});

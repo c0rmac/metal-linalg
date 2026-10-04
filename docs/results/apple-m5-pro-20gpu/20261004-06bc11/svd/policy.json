@@ -1,0 +1,99 @@
+{
+ "policy": {
+  "device": "Apple M5 Pro",
+  "gpu_cores": 20,
+  "source": "tuned:Apple M5 Pro",
+  "qr_min_rows": 512,
+  "qr_min_k": 32,
+  "block_min_k": 192,
+  "block_min_k_batched": 64,
+  "block_min_batch": 64,
+  "gpu_max_k": 56,
+  "gpu_min_batch_times_k": 16384,
+  "gpu_min_batch": 1,
+  "gpu_max_l": 256,
+  "bidiag_min_k": 1024,
+  "values_bidiag_min_k": 1024,
+  "bidiag_max_batch": 2,
+  "values_bidiag_max_batch": 2,
+  "gk_min_k": 8,
+  "gk_max_k": 80,
+  "gk_limit": 83,
+  "values_gpu_max_k": 56,
+  "values_gpu_min_batch_times_k": 16384,
+  "values_gpu_min_batch": 1,
+  "values_gpu_max_l": 56,
+  "share_min_batch": 1024,
+  "gpu_big_batch_max_k": 80,
+  "gpu_big_batch_min": 1024,
+  "values_band_min_k": 0
+ },
+ "calibration": {
+  "probe": {
+   "batch": 64,
+   "M": 128,
+   "N": 32,
+   "ms": {
+    "jacobi": 1.063792,
+    "block": 2.256792,
+    "qr": 1.305292,
+    "qrblock": 2.373,
+    "cpu": 0.561042,
+    "gk": 0.961
+   }
+  },
+  "scale": {
+   "jacobi": 0.10261992827239451,
+   "block": 0.2476099107512762,
+   "qr": 0.17664273199139788,
+   "qrblock": 0.22511155971100724,
+   "cpu": 0.07587488964478604,
+   "bidiag": 1.0,
+   "gk": 0.4008923923055359
+  }
+ },
+ "machine": {
+  "start": {
+   "load_1m": 4.798828125,
+   "cpus": 18,
+   "power": "mains",
+   "low_power_mode": 0,
+   "busy_processes": 1
+  },
+  "end": {
+   "load_1m": 4.7919921875,
+   "cpus": 18,
+   "power": "mains",
+   "low_power_mode": 0,
+   "busy_processes": 0
+  }
+ },
+ "drift": {
+  "before_ms": {
+   "jacobi": 1.063792,
+   "block": 2.256792,
+   "qr": 1.305292,
+   "qrblock": 2.373,
+   "cpu": 0.561042,
+   "gk": 0.961
+  },
+  "after_ms": {
+   "jacobi": 1.043083,
+   "block": 2.237833,
+   "qr": 1.294791,
+   "qrblock": 2.396917,
+   "cpu": 0.5585,
+   "gk": 0.958417
+  },
+  "ratio": {
+   "jacobi": 0.9805328485267796,
+   "block": 0.9915991371823368,
+   "qr": 0.9919550567995514,
+   "qrblock": 1.010078803202697,
+   "cpu": 0.995469144912502,
+   "gk": 0.997312174817898
+  },
+  "worst": 1.0198536453954288,
+  "ok": true
+ }
+}

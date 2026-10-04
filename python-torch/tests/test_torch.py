@@ -230,11 +230,11 @@ class Routing(unittest.TestCase):
 
     def test_backends(self):
         self.assertIn(mlt.qr_backend(64, 32, 16), {"cpu", "unblocked", "streaming_reduced"})
-        eigh = {"cpu", "simd", "threadgroup", "block", "tridiag", "ql"}
+        eigh = {"cpu", "simd", "threadgroup", "block", "tridiag", "ql", "band"}
         self.assertIn(mlt.eigh_backend(64, 16), eigh)
         self.assertIn(mlt.eigvalsh_backend(64, 16), eigh)
         svd = {"cpu", "jacobi", "block_jacobi", "qr_jacobi", "qr_block_jacobi", "bidiag",
-               "golub_kahan", "qr_golub_kahan"}
+               "golub_kahan", "qr_golub_kahan", "band"}
         self.assertIn(mlt.svd_backend(64, 32, 16), svd)
         self.assertIn(mlt.svdvals_backend(64, 32, 16), svd)
 
@@ -253,6 +253,17 @@ class Routing(unittest.TestCase):
                 set_(before)
             self.assertEqual(get(), before)
 
+    def test_eigvalsh_band_routing(self):
+        before = mlt.eigh_policy()
+        try:
+            mlt.set_eigh_policy(values_band_min_n=1)
+            self.assertEqual(mlt.eigvalsh_backend(300, 1), "band")
+            a = torch.randn(300, 300)
+            s = (a + a.T) / 2
+            self.assertLess(rel(mlt.eigvalsh(s), torch.linalg.eigvalsh(s)), 2e-5)
+        finally:
+            mlt.set_eigh_policy(before)
+
     def test_policy_changes_routing(self):
         before = mlt.svd_policy()
         try:
@@ -261,7 +272,10 @@ class Routing(unittest.TestCase):
             a = torch.randn(300, 80)
             U, S, Vh = mlt.svd(a)
             self.assertLess(rel((U * S.unsqueeze(-2)) @ Vh, a), 2e-5)
-            mlt.set_svd_policy(gpu_max_k=0, bidiag_min_k=0, values_bidiag_min_k=0)
+            mlt.set_svd_policy(values_band_min_k=1)
+            self.assertEqual(mlt.svdvals_backend(300, 80), "band")
+            self.assertLess(rel(mlt.svdvals(a), torch.linalg.svdvals(a)), 2e-5)
+            mlt.set_svd_policy(gpu_max_k=0, bidiag_min_k=0, values_bidiag_min_k=0, values_band_min_k=0)
             self.assertEqual(mlt.svd_backend(300, 80), "cpu")
             mlt.set_svd_policy(gpu_max_k=64, gpu_min_batch_times_k=0, gpu_min_batch=1, gk_min_k=8, gk_max_k=48)
             self.assertEqual(mlt.svd_backend(40, 24, 16), "golub_kahan")

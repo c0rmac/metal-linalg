@@ -554,6 +554,65 @@ int main() {
         else std::printf("  ok    %-44s\n", "bidiag NaN in one matrix of a batch");
     }
 
+    // The band backend, singular values alone by the two-stage reduction: the
+    // GPU's blocks of b columns while 2b remain, LAPACK the rest; a panel of
+    // up to 128 rows in one simdgroup, a taller one by TSQR (leaves of up to
+    // 128 rows) with its Householder vectors rebuilt, so the sizes straddle
+    // those boundaries, for each band width. Against the CPU's values.
+    std::printf("\n[ backend: band ]\n");
+    {
+        auto run_band = [&](const std::string& label, const array& A, uint32_t width) {
+            SvdResult r = detail::svd_band(A, width);
+            SvdResult c = detail::svd_cpu(A, false);
+            array info = reshape(r.info, {-1});
+            eval({r.S, c.S, info});
+            ++g_checks;
+            const float d = max_abs(subtract(r.S, c.S)) / std::max(max_abs(c.S), 1e-30f);
+            bool converged = true;
+            for (size_t i = 0; i < info.size(); ++i) converged &= detail::svd_converged(info.data<uint32_t>()[i]);
+            if (!(d <= 2e-5f) || !converged) fail(label, "|s - cpu| / s_max " + std::to_string(d));
+            else std::printf("  ok    %-44s |ds|=%.1e\n", label.c_str(), d);
+        };
+        for (uint32_t w : {8u, 16u, 32u})
+            for (auto [M, N] : std::vector<std::pair<int, int>>{{1, 1}, {3, 3}, {20, 20}, {64, 64}, {65, 64},
+                                                                 {128, 128}, {129, 129}, {300, 300}, {513, 500},
+                                                                 {300, 20}, {20, 300}, {600, 100}, {100, 600},
+                                                                 {1100, 1060}})
+                run_band("band b=" + std::to_string(w) + " " + dims(1, M, N), random_matrix(1, M, N, 2000 + M + N), w);
+        run_band("band " + dims(3, 150, 120), random_matrix(3, 150, 120, 2100), 8);
+        run_band("band zero 120x100", zeros({120, 100}), 8);
+        run_band("band identity 100x100", eye(100), 16);
+        run_band("band rank one 200x150",
+                 matmul(random_matrix(1, 200, 1, 2200), random_matrix(1, 1, 150, 2201)), 8);
+        for (float scale : {1e-30f, 1e30f}) {
+            char label[64];
+            std::snprintf(label, sizeof label, "band scaled by %.0e 160x140", scale);
+            run_band(label, multiply(random_matrix(1, 160, 140, 2300), array(scale / 5.0f)), 8);
+        }
+        {
+            std::vector<float> spec(90);
+            for (int i = 0; i < 90; ++i) spec[i] = i < 40 ? 3.0f : 1e-3f * (90 - i);
+            run_band("band repeated and tiny values 150x90", with_singular_values(150, 90, spec), 16);
+        }
+        {   // NaN in one matrix of a batch
+            const int M = 300, N = 260;
+            array A = random_matrix(2, M, N, 2400);
+            eval({A});
+            std::vector<float> data(A.data<float>(), A.data<float>() + 2 * M * N);
+            data[(size_t)M * N + 7] = NAN;
+            SvdResult r = detail::svd_band(from_values(data, {2, M, N}));
+            array info = reshape(r.info, {-1});
+            array s1 = slice(r.S, {1, 0}, {2, N}), s0 = slice(r.S, {0, 0}, {1, N});
+            eval({info, s0, s1});
+            ++g_checks;
+            const bool ok = all(isnan(s1)).item<bool>() && !has_non_finite(s0) &&
+                            !detail::svd_converged(info.data<uint32_t>()[1]) &&
+                            detail::svd_converged(info.data<uint32_t>()[0]);
+            if (!ok) fail("band NaN in one matrix of a batch", "not isolated");
+            else std::printf("  ok    %-44s\n", "band NaN in one matrix of a batch");
+        }
+    }
+
     // The golub_kahan backend keeps the matrix in threadgroup memory, so it
     // takes squares up to svd_gk_max_k() (longer matrices when tall); a wide
     // matrix is decomposed as its transpose, and through the QR first
@@ -850,6 +909,7 @@ int main() {
         p.gpu_max_k = 0;              // the CPU unless bidiag
         p.bidiag_min_k = 0;
         p.values_bidiag_min_k = 0;
+        p.values_band_min_k = 0;      // band, tested below
         set_svd_policy(p);
         expect("thresholds 0 -> never (4096x4096 -> cpu)",
                svd_backend(4096, 4096, 1) == SvdBackend::cpu && svdvals_backend(4096, 4096, 1) == SvdBackend::cpu);
@@ -880,6 +940,38 @@ int main() {
             c.values_bidiag_max_batch = 0;
             set_svd_policy(c);
         }
+        {   // the band backend, singular values alone, before bidiag
+            SvdPolicy c = svd_policy();
+            c.values_band_min_k = 2048;
+            set_svd_policy(c);
+            expect("values_band_min_k = 2048: svdvals k=1024 bidiag, k=2048 band; svd k=2048 bidiag",
+                   svdvals_backend(1024, 1024, 1) == SvdBackend::bidiag &&
+                   svdvals_backend(2048, 3000, 1) == SvdBackend::band &&
+                   svd_backend(2048, 2048, 1) == SvdBackend::bidiag);
+            c.values_bidiag_max_batch = 1;
+            set_svd_policy(c);
+            expect("band within values_bidiag_max_batch: svdvals k=2048 batch 2 cpu",
+                   svdvals_backend(2048, 2048, 2) == SvdBackend::cpu);
+            c.values_bidiag_max_batch = 0;
+            c.values_band_min_k = 256;
+            set_svd_policy(c);
+            {
+                array A = random_matrix(1, 400, 300, 1700);
+                array s = svdvals_accelerated(A);
+                SvdResult ref = detail::svd_cpu(A, false);
+                eval({s, ref.S});
+                ++g_checks;
+                const float d = max_abs(subtract(s, ref.S)) / max_abs(ref.S);
+                if (!(d <= 2e-5f)) fail("svdvals routed to band (400x300)", std::to_string(d));
+                else std::printf("  ok    %-44s |ds|=%.1e\n", "svdvals routed to band (400x300)", d);
+            }
+            c.values_band_min_k = 0;
+            set_svd_policy(c);
+            expect("values_band_min_k = 0: never", svdvals_backend(4096, 4096, 1) == SvdBackend::bidiag);
+        }
+        setenv("SVD_DEVICE", "band", 1);
+        expect("SVD_DEVICE=band: svdvals band, svd bidiag",
+               svdvals_backend(8, 8, 1) == SvdBackend::band && svd_backend(8, 8, 1) == SvdBackend::bidiag);
         setenv("SVD_DEVICE", "cpu", 1);
         expect("SVD_DEVICE=cpu keeps the CPU over bidiag", svd_backend(4096, 4096, 1) == SvdBackend::cpu);
         setenv("SVD_DEVICE", "bidiag", 1);
