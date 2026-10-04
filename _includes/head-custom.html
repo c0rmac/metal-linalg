@@ -1,0 +1,21 @@
+<!-- Added to every page's <head> by the theme (jekyll-theme-primer). -->
+{% if page.noindex %}
+<meta name="robots" content="noindex">
+{% endif %}
+{% if page.path == "README.md" %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareSourceCode",
+  "name": {{ site.title | jsonify }},
+  "description": {{ site.description | jsonify }},
+  "url": {{ "/" | absolute_url | jsonify }},
+  "codeRepository": "https://github.com/c0rmac/metal-linalg",
+  "programmingLanguage": ["C++", "Objective-C++", "Metal Shading Language", "Python", "Swift", "C"],
+  "runtimePlatform": ["macOS", "Apple Silicon", "MLX", "PyTorch"],
+  "keywords": "QR decomposition, eigendecomposition, eigh, SVD, singular value decomposition, linear algebra, Apple Silicon, Metal, GPU, MLX, PyTorch, MPS",
+  "license": "https://opensource.org/licenses/MIT",
+  "author": { "@type": "Person", "name": {{ site.author | jsonify }}, "url": "https://c0rmac.github.io/" }
+}
+</script>
+{% endif %}
