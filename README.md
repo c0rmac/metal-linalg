@@ -112,7 +112,8 @@ GPU's lead: the eigensolver's `ql` kernel (tridiagonalization and QL, new in
 2.9.0) and the SVD's `golub_kahan` (bidiagonalization and implicit QR, new in
 2.10.0, 1.6-3x faster than the Jacobi kernels it replaces there). From about
 1024 matrices a batch is shared between the GPU and the CPU, the two solving
-it at once (new in 2.11.0, 1.4-1.7x over either alone). On the M5 Pro, the
+it at once (new in 2.11.0, 1.4-1.7x over either alone); a QR batch is shared
+from 64 matrices (new in 2.12.0, 1.5x at 1024 of 128×128). On the M5 Pro, the
 best GPU route against the CPU alone:
 
 | | lone matrix | batch 16 | batch 256 | batch 4096 |
@@ -133,17 +134,19 @@ own. On the M5 Pro, one N×N matrix against the CPU:
 
 | | 1024 | 1536 | 2048 | 3072 | 4096 |
 |---|---|---|---|---|---|
-| eigh, with eigenvectors | 1.13x | 1.45x | 1.93x | 2.71x | 4.55x |
-| eigvalsh, eigenvalues alone | 0.68x | 0.86x | 0.94x | 1.13x | 1.22x |
-| SVD, with vectors | 1.02x | 1.12x | 1.43x | 1.89x | 2.03x |
-| svdvals, singular values alone | 0.74x | 0.89x | 1.17x | 1.75x | 1.91x |
+| eigh, with eigenvectors | 1.61x | 1.92x | 2.49x | 3.14x | 5.44x |
+| eigvalsh, eigenvalues alone | 1.09x | 1.28x | 1.40x | 1.47x | 1.58x |
+| SVD, with vectors | 1.40x | 1.35x | 1.75x | 2.10x | 2.26x |
+| svdvals, singular values alone | 1.35x | 1.43x | 1.73x | 2.08x | 2.32x |
 | QR | 1.14x | 1.30x | 1.89x | 2.15x | — |
 
 Each is used where the routing sweep found it ahead on that Mac: on the M5
-Pro from N = 1536 for eigh, 3072 for eigvalsh, 1024 for the SVD, 2048 for
-svdvals and 1024 for QR, for one matrix or a few (the reductions overlap one
-matrix's GPU work with the next one's CPU work, but the CPU spreads a batch
-over its cores). The full
+Pro from N = 1024 for eigh, the SVD, svdvals and QR, and 1536 for eigvalsh,
+for one matrix or a few (the reductions overlap one matrix's GPU work with the
+next one's CPU work, but the CPU spreads a batch over its cores). Since 2.12.0
+the reductions take three or four GPU dispatches per column rather than seven
+or twelve, which is most of the gain over 2.11.0's 1.13x (eigh) and 0.68x
+(eigvalsh) at 1024. The full
 tables are in the per-solver docs, and why the CPU path changed is in
 [the performance-headroom study](docs/studies/performance-headroom-apple-m5-pro.md).
 
@@ -373,24 +376,24 @@ The functions mirror their `torch.linalg` namesakes (arguments, result types,
 the input's device), support autograd with torch's own formulas, and compile
 with `torch.compile`: they are the custom operators
 `torch.ops.metal_linalg.*`. Computation is in float32. Against `torch.linalg`
-on an M5 Pro with PyTorch 2.14 and metal-linalg 2.11 (best of five; the same tensors on MPS for
+on an M5 Pro with PyTorch 2.14 and metal-linalg 2.12 (best of five; the same tensors on MPS for
 torch's MPS path and for this package, copies included):
 
 | | torch, CPU | torch, MPS | metal-linalg-torch |
 |---|---|---|---|
-| QR, 1024 × 128×128 | 161 ms | 1030 ms | 24 ms |
-| SVD, 256 × 128×64 | 65 ms | 11 ms | 7.2 ms |
-| SVD, 4096 × 32×32 | 217 ms | 27 ms | 7.7 ms |
+| QR, 1024 × 128×128 | 160 ms | 1210 ms | 19 ms |
+| SVD, 256 × 128×64 | 64 ms | 11 ms | 7.0 ms |
+| SVD, 4096 × 32×32 | 219 ms | 27 ms | 7.4 ms |
 | eigh, 4096 × 16×16 | 35 ms | 5.3 ms | 1.9 ms |
-| eigh, one 2048×2048 | 241 ms | 242 ms | 121 ms |
-| SVD, one 4096×4096 | 3.54 s | 3.56 s | 1.77 s |
+| eigh, one 2048×2048 | 240 ms | 239 ms | 90 ms |
+| SVD, one 4096×4096 | 3.42 s | 3.45 s | 1.56 s |
 
-It is ahead on every row: 1.5-3.5x over PyTorch's MPS kernels for batches of
+It is ahead on every row: 1.6-3.6x over PyTorch's MPS kernels for batches of
 small matrices (the SVD of 256 matrices of 128×64 runs on the library's CPU
 path, which spreads a batch over every core, so routing an MPS tensor to the
-CPU can still be the fast choice; the two batches of 4096 run on the GPU and
-the CPU at once), and 2-40x in QR and in large matrices, where torch falls
-back to the CPU.
+CPU can still be the fast choice; the two batches of 4096, and the QR batch,
+run on the GPU and the CPU at once), and 2-60x in QR and in large matrices,
+where torch falls back to the CPU.
 
 [python-torch/README.md](python-torch/README.md) has the details: what differs
 from `torch.linalg`, gradients, and MPS tensors.
@@ -579,8 +582,8 @@ ctest --test-dir build --output-on-failure    # test_qr, test_eigh, test_svd, te
 ./build/sweep_svd --policy                    # the device and the policy in effect
 ```
 
-The tests (110 QR, 256 eigh and 326 SVD checks through MLX, 208 on the buffer
-API and 62 on the C API) cover every backend directly and through the router,
+The tests (116 QR, 260 eigh and 329 SVD checks through MLX, 208 on the buffer
+API and 63 on the C API) cover every backend directly and through the router,
 shapes around every kernel boundary, batches, transposed views, structured
 and rank-deficient input, magnitudes from 1e-30 to 1e+37, NaN inside a batch
 (eigh, SVD), and the routing policies without assuming any device's values.

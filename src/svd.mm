@@ -215,6 +215,9 @@ struct TunedEntry {
     unsigned    gk_min_k;
     unsigned    gk_max_k;
     unsigned    share_min_batch;       // 0 = never, which rows measured before 2.11.0 leave
+    // The large-batch clause; 0, 0 = never, which rows from before 2.12.0 leave.
+    unsigned    gpu_big_batch_max_k;
+    unsigned    gpu_big_batch_min;
     unsigned    calibration;   // kCalibration* (calibration.h); rows without it are current
 };
 
@@ -224,7 +227,7 @@ struct TunedEntry {
 // docs/studies/. The last row keeps the array non-empty and matches nothing.
 constexpr TunedEntry kTuned[] = {
 #include "tuned/svd.inc"
-    {"", 0,   0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0},
+    {"", 0,   0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0, 0,   0},
 };
 
 struct ResolvedPolicy {
@@ -271,6 +274,8 @@ ResolvedPolicy resolve_policy() {
             r.policy.gk_min_k              = e.gk_min_k;
             r.policy.gk_max_k              = e.gk_max_k;
             r.policy.share_min_batch       = e.share_min_batch;
+            r.policy.gpu_big_batch_max_k   = e.gpu_big_batch_max_k;
+            r.policy.gpu_big_batch_min     = e.gpu_big_batch_min;
             r.source = detail::tuned_source_prefix(e.calibration) + r.device;
             detail::calibration_notice("SVD", e.calibration);
             break;
@@ -305,6 +310,8 @@ ResolvedPolicy resolve_policy() {
     over("SVD_GK_MIN_K",              r.policy.gk_min_k);
     over("SVD_GK_MAX_K",              r.policy.gk_max_k);
     over("SVD_SHARE_MIN_BATCH",       r.policy.share_min_batch);
+    over("SVD_GPU_BIG_BATCH_MAX_K",   r.policy.gpu_big_batch_max_k);
+    over("SVD_GPU_BIG_BATCH_MIN",     r.policy.gpu_big_batch_min);
     if (!env.empty()) r.source = "env:" + env;
     return r;
 }
@@ -708,6 +715,12 @@ bool gpu_rule(unsigned m, unsigned n, unsigned batch, unsigned max_k, unsigned m
 bool svd_uses_gpu(unsigned m, unsigned n, unsigned batch) {
     if (const int f = forced_device(); f >= 0) return f == 1;
     const SvdPolicy& p = policy_state().policy;
+    const unsigned k = std::min(m, n);
+    // gpu_max_k = 0 is never the GPU, the clause included.
+    if (p.gpu_big_batch_min && p.gpu_max_k && k > p.gpu_max_k && k <= p.gpu_big_batch_max_k &&
+        std::max(m, n) <= p.gpu_max_l && batch >= p.gpu_big_batch_min) {
+        return true;   // the large-batch clause, above the product rule's cap
+    }
     return gpu_rule(m, n, batch, p.gpu_max_k, p.gpu_min_batch_times_k, p.gpu_min_batch, p.gpu_max_l);
 }
 

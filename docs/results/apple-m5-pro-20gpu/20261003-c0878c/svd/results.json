@@ -3800,12 +3800,38 @@
    "n": 291
   },
   "chosen": {
-   "geomean": 1.0264524577,
-   "worst": 1.60047889936,
-   "over10": 22,
-   "total_ratio": 1.11367603944,
+   "geomean": 1.01887215046,
+   "worst": 1.54400644626,
+   "over10": 16,
+   "total_ratio": 1.10450265273,
    "estimated_picks": 1,
    "n": 291
+  },
+  "big": {
+   "chosen": [
+    80,
+    1024
+   ],
+   "current": [
+    0,
+    0
+   ],
+   "without": {
+    "geomean": 1.0264524577,
+    "worst": 1.60047889936,
+    "over10": 22,
+    "total_ratio": 1.11367603944,
+    "estimated_picks": 1,
+    "n": 291
+   },
+   "with": {
+    "geomean": 1.01887215046,
+    "worst": 1.54400644626,
+    "over10": 16,
+    "total_ratio": 1.10450265273,
+    "estimated_picks": 1,
+    "n": 291
+   }
   },
   "chosen_params": [
    56,
@@ -3837,51 +3863,51 @@
    "gpu_max_k": [
     {
      "value": 8,
-     "geomean": 1.06897710174,
-     "worst": 2.15506337023,
-     "over10": 46
+     "geomean": 1.01887215046,
+     "worst": 1.54400644626,
+     "over10": 16
     },
     {
      "value": 16,
-     "geomean": 1.05312131837,
-     "worst": 2.10393084783,
-     "over10": 36
+     "geomean": 1.01887215046,
+     "worst": 1.54400644626,
+     "over10": 16
     },
     {
      "value": 24,
-     "geomean": 1.04847333938,
-     "worst": 1.85247493236,
-     "over10": 34
+     "geomean": 1.01887215046,
+     "worst": 1.54400644626,
+     "over10": 16
     },
     {
      "value": 32,
-     "geomean": 1.03764816361,
-     "worst": 1.81121629489,
-     "over10": 28
+     "geomean": 1.01887215046,
+     "worst": 1.54400644626,
+     "over10": 16
     },
     {
      "value": 40,
-     "geomean": 1.03380769176,
-     "worst": 1.81121629489,
-     "over10": 26
+     "geomean": 1.01887215046,
+     "worst": 1.54400644626,
+     "over10": 16
     },
     {
      "value": 48,
-     "geomean": 1.02967790937,
-     "worst": 1.61415120043,
-     "over10": 24
+     "geomean": 1.01887215046,
+     "worst": 1.54400644626,
+     "over10": 16
     },
     {
      "value": 56,
-     "geomean": 1.0264524577,
-     "worst": 1.60047889936,
-     "over10": 22
+     "geomean": 1.01887215046,
+     "worst": 1.54400644626,
+     "over10": 16
     },
     {
      "value": 64,
-     "geomean": 1.02619565042,
+     "geomean": 1.02353459595,
      "worst": 1.69213851883,
-     "over10": 21
+     "over10": 19
     },
     {
      "value": 80,
@@ -3947,89 +3973,89 @@
    "min_bk": [
     {
      "value": 0,
-     "geomean": 1.58145353575,
+     "geomean": 1.56977456943,
      "worst": 62.0799080929,
-     "over10": 105
+     "over10": 99
     },
     {
      "value": 64,
-     "geomean": 1.25646800582,
+     "geomean": 1.24718904365,
      "worst": 8.41965960755,
-     "over10": 78
+     "over10": 72
     },
     {
      "value": 128,
-     "geomean": 1.20380363968,
+     "geomean": 1.1949136016,
      "worst": 8.11756019121,
-     "over10": 71
+     "over10": 65
     },
     {
      "value": 256,
-     "geomean": 1.12668765221,
+     "geomean": 1.11836711238,
      "worst": 4.37326166632,
-     "over10": 58
+     "over10": 52
     },
     {
      "value": 512,
-     "geomean": 1.09966336103,
+     "geomean": 1.09154239442,
      "worst": 4.37326166632,
-     "over10": 51
+     "over10": 45
     },
     {
      "value": 1024,
-     "geomean": 1.05604586505,
+     "geomean": 1.04824701177,
      "worst": 2.35224624722,
-     "over10": 38
+     "over10": 32
     },
     {
      "value": 2048,
-     "geomean": 1.04398480369,
+     "geomean": 1.03627502083,
      "worst": 2.35224624722,
-     "over10": 31
+     "over10": 25
     },
     {
      "value": 4096,
-     "geomean": 1.02729163394,
-     "worst": 1.60047889936,
-     "over10": 22
+     "geomean": 1.01970512942,
+     "worst": 1.59263888005,
+     "over10": 16
     },
     {
      "value": 8192,
-     "geomean": 1.02885648885,
-     "worst": 1.60047889936,
-     "over10": 23
+     "geomean": 1.02125842795,
+     "worst": 1.59263888005,
+     "over10": 17
     },
     {
      "value": 16384,
-     "geomean": 1.0264524577,
-     "worst": 1.60047889936,
-     "over10": 22
+     "geomean": 1.01887215046,
+     "worst": 1.54400644626,
+     "over10": 16
     },
     {
      "value": null,
-     "geomean": 1.07853463441,
+     "geomean": 1.07056970254,
      "worst": 2.15506337023,
-     "over10": 51
+     "over10": 45
     }
    ],
    "min_batch": [
     {
      "value": 1,
-     "geomean": 1.0264524577,
-     "worst": 1.60047889936,
-     "over10": 22
+     "geomean": 1.01887215046,
+     "worst": 1.54400644626,
+     "over10": 16
     },
     {
      "value": 4,
-     "geomean": 1.0264524577,
-     "worst": 1.60047889936,
-     "over10": 22
+     "geomean": 1.01887215046,
+     "worst": 1.54400644626,
+     "over10": 16
     },
     {
      "value": 16,
-     "geomean": 1.0264524577,
-     "worst": 1.60047889936,
-     "over10": 22
+     "geomean": 1.01887215046,
+     "worst": 1.54400644626,
+     "over10": 16
     }
    ],
    "gpu_max_l": [
@@ -4071,75 +4097,75 @@
     },
     {
      "value": 64,
-     "geomean": 1.03603725645,
+     "geomean": 1.03277730299,
      "worst": 1.6455911342,
-     "over10": 30
+     "over10": 28
     },
     {
      "value": 80,
-     "geomean": 1.03603725645,
+     "geomean": 1.03009918147,
      "worst": 1.6455911342,
-     "over10": 30
+     "over10": 26
     },
     {
      "value": 96,
-     "geomean": 1.03603725645,
+     "geomean": 1.03009918147,
      "worst": 1.6455911342,
-     "over10": 30
+     "over10": 26
     },
     {
      "value": 128,
-     "geomean": 1.02940157981,
-     "worst": 1.60047889936,
-     "over10": 25
+     "geomean": 1.02242920241,
+     "worst": 1.54400644626,
+     "over10": 19
     },
     {
      "value": 192,
-     "geomean": 1.02940157981,
-     "worst": 1.60047889936,
-     "over10": 25
+     "geomean": 1.02242920241,
+     "worst": 1.54400644626,
+     "over10": 19
     },
     {
      "value": 256,
-     "geomean": 1.0264524577,
-     "worst": 1.60047889936,
-     "over10": 22
+     "geomean": 1.01887215046,
+     "worst": 1.54400644626,
+     "over10": 16
     },
     {
      "value": 384,
-     "geomean": 1.0264524577,
-     "worst": 1.60047889936,
-     "over10": 22
+     "geomean": 1.01887215046,
+     "worst": 1.54400644626,
+     "over10": 16
     },
     {
      "value": 512,
-     "geomean": 1.02783612574,
-     "worst": 1.60047889936,
-     "over10": 24
+     "geomean": 1.0199258916,
+     "worst": 1.54400644626,
+     "over10": 18
     },
     {
      "value": 768,
-     "geomean": 1.02783612574,
-     "worst": 1.60047889936,
-     "over10": 24
+     "geomean": 1.0199258916,
+     "worst": 1.54400644626,
+     "over10": 18
     },
     {
      "value": 1024,
-     "geomean": 1.02803958674,
-     "worst": 1.60047889936,
-     "over10": 24
+     "geomean": 1.02016525014,
+     "worst": 1.54400644626,
+     "over10": 18
     },
     {
      "value": 2048,
-     "geomean": 1.02803958674,
-     "worst": 1.60047889936,
-     "over10": 24
+     "geomean": 1.02482795331,
+     "worst": 1.54400644626,
+     "over10": 19
     },
     {
      "value": null,
-     "geomean": 1.02803958674,
-     "worst": 1.60047889936,
-     "over10": 24
+     "geomean": 1.02482795331,
+     "worst": 1.54400644626,
+     "over10": 19
     }
    ]
   },
@@ -4148,24 +4174,24 @@
    "test_points": 128,
    "base": {
     "params": [
-     64,
+     8,
      16384,
      1,
-     64
+     256
     ],
     "train": {
-     "geomean": 1.02908187286,
+     "geomean": 1.02017567027,
      "worst": 1.54400644626,
-     "over10": 14,
-     "total_ratio": 1.00516038389,
+     "over10": 9,
+     "total_ratio": 1.00112180346,
      "estimated_picks": 0,
      "n": 163
     },
     "test": {
-     "geomean": 1.0400319344,
-     "worst": 1.6455911342,
-     "over10": 15,
-     "total_ratio": 1.22185389285,
+     "geomean": 1.01721461015,
+     "worst": 1.51596054725,
+     "over10": 7,
+     "total_ratio": 1.20768952444,
      "estimated_picks": 1,
      "n": 128
     }
@@ -4194,25 +4220,25 @@
      }
     },
     "train": {
-     "geomean": 1.02485599638,
+     "geomean": 1.01793456842,
      "worst": 1.59249072065,
-     "over10": 10,
-     "total_ratio": 1.00485157246,
+     "over10": 7,
+     "total_ratio": 1.00106889958,
      "estimated_picks": 0,
      "n": 163
     },
     "test": {
-     "geomean": 1.04827577932,
+     "geomean": 1.0336932491,
      "worst": 1.74560686137,
-     "over10": 17,
-     "total_ratio": 1.22211489476,
+     "over10": 13,
+     "total_ratio": 1.21592347963,
      "estimated_picks": 1,
      "n": 128
     },
     "bootstrap": {
-     "p_better": 0.022,
-     "gain_median": -0.00754522096514,
-     "gain_p05": -0.0167704006162
+     "p_better": 0.001,
+     "gain_median": -0.0154756297206,
+     "gain_p05": -0.0277201182386
     },
     "justified": false
    }
@@ -7362,10 +7388,10 @@
    "n": 291
   },
   "chosen": {
-   "geomean": 1.0264524577,
-   "worst": 1.60047889936,
-   "over10": 22,
-   "total_ratio": 1.11367603944,
+   "geomean": 1.01887215046,
+   "worst": 1.54400644626,
+   "over10": 16,
+   "total_ratio": 1.10450265273,
    "estimated_picks": 1,
    "n": 291
   }
@@ -10157,7 +10183,7 @@
     "gk_share": 9.031125,
     "cpu": 14.454125
    },
-   "rule": "cpu",
+   "rule": "gk_share",
    "rule_gpu": "gk_share",
    "gpu_speedup": 0.829160033845
   },
@@ -10174,7 +10200,7 @@
     "gk_share": 33.709667,
     "cpu": 52.697833
    },
-   "rule": "cpu",
+   "rule": "gk_share",
    "rule_gpu": "gk_share",
    "gpu_speedup": 0.813057797749
   },
@@ -10285,7 +10311,7 @@
     "gk_share": 18.338084,
     "cpu": 20.669916
    },
-   "rule": "cpu",
+   "rule": "gk_share",
    "rule_gpu": "gk_share",
    "gpu_speedup": 0.679659449445
   },
@@ -10304,7 +10330,7 @@
     "gk_share": 63.9225,
     "cpu": 76.93925
    },
-   "rule": "cpu",
+   "rule": "gk_share",
    "rule_gpu": "gk_share",
    "gpu_speedup": 0.677667643235
   },
@@ -10415,7 +10441,7 @@
     "gk_share": 24.463292,
     "cpu": 26.653917
    },
-   "rule": "cpu",
+   "rule": "gk_share",
    "rule_gpu": "gk_share",
    "gpu_speedup": 0.64499001586
   },
@@ -10434,7 +10460,7 @@
     "gk_share": 90.608167,
     "cpu": 99.490542
    },
-   "rule": "cpu",
+   "rule": "gk_share",
    "rule_gpu": "gk_share",
    "gpu_speedup": 0.618084204118
   },
@@ -10862,7 +10888,7 @@
     "gk_share": 18.073958,
     "cpu": 26.193062
    },
-   "rule": "cpu",
+   "rule": "gk_share",
    "rule_gpu": "gk_share",
    "gpu_speedup": 0.682155400742
   },
@@ -10879,7 +10905,7 @@
     "gk_share": 65.662584,
     "cpu": 96.455959
    },
-   "rule": "cpu",
+   "rule": "gk_share",
    "rule_gpu": "gk_share",
    "gpu_speedup": 0.652100295091
   },
@@ -12234,7 +12260,7 @@
  ],
  "trustworthy": true,
  "warnings": [
-  "chosen rule loses more than 25% at 64x64 batch=1024 (cpu, 1.60x), 64x64 batch=4096 (cpu, 1.56x), 48x48 batch=256 (cpu, 1.54x), 16x8 batch=1024 (cpu, 1.52x), 80x80 batch=4096 (cpu, 1.47x), 64x32 batch=256 (cpu, 1.47x), 80x80 batch=1024 (cpu, 1.45x), 40x40 batch=256 (cpu, 1.44x) ...",
+  "chosen rule loses more than 25% at 48x48 batch=256 (cpu, 1.54x), 16x8 batch=1024 (cpu, 1.52x), 64x32 batch=256 (cpu, 1.47x), 40x40 batch=256 (cpu, 1.44x), 32x8 batch=1024 (cpu, 1.43x), 4x4 batch=4096 (jacobi, 1.36x), 32x16 batch=256 (cpu, 1.34x), 8x8 batch=1024 (cpu, 1.31x)",
   "chosen rule picks a backend that was not timed at 1 points; the cost model's guess counts in the geomean and is kept out of the worst case: 1024x256 batch=1024 (cpu, est 1.64x)",
   "the fitted policy differs from the one in effect (tuned-stale:Apple M5 Pro)"
  ],
@@ -12290,8 +12316,12 @@
    }
   ]
  },
- "tuned_row": "{\"Apple M5 Pro\", 20,   512, 32,   192, 64, 64,   56, 16384, 1, 256,   56, 16384, 1, 56,   1024, 2048, 1, 1,   8, 80,   1024},",
- "env_line": "SVD_QR_MIN_ROWS=512 SVD_QR_MIN_K=32 SVD_BLOCK_MIN_K=192 SVD_BLOCK_MIN_K_BATCHED=64 SVD_BLOCK_MIN_BATCH=64 SVD_GPU_MAX_K=56 SVD_GPU_MIN_BATCH_TIMES_K=16384 SVD_GPU_MIN_BATCH=1 SVD_GPU_MAX_L=256 SVD_BIDIAG_MIN_K=1024 SVD_VALUES_BIDIAG_MIN_K=2048 SVD_BIDIAG_MAX_BATCH=1 SVD_VALUES_BIDIAG_MAX_BATCH=1 SVD_GK_MIN_K=8 SVD_GK_MAX_K=80 SVD_SHARE_MIN_BATCH=1024 SVD_VALUES_GPU_MAX_K=56 SVD_VALUES_GPU_MIN_BATCH_TIMES_K=16384 SVD_VALUES_GPU_MIN_BATCH=1 SVD_VALUES_GPU_MAX_L=56",
+ "tuned_row": "{\"Apple M5 Pro\", 20,   512, 32,   192, 64, 64,   56, 16384, 1, 256,   56, 16384, 1, 56,   1024, 2048, 1, 1,   8, 80,   1024,   80, 1024},",
+ "env_line": "SVD_QR_MIN_ROWS=512 SVD_QR_MIN_K=32 SVD_BLOCK_MIN_K=192 SVD_BLOCK_MIN_K_BATCHED=64 SVD_BLOCK_MIN_BATCH=64 SVD_GPU_MAX_K=56 SVD_GPU_MIN_BATCH_TIMES_K=16384 SVD_GPU_MIN_BATCH=1 SVD_GPU_MAX_L=256 SVD_BIDIAG_MIN_K=1024 SVD_VALUES_BIDIAG_MIN_K=2048 SVD_BIDIAG_MAX_BATCH=1 SVD_VALUES_BIDIAG_MAX_BATCH=1 SVD_GK_MIN_K=8 SVD_GK_MAX_K=80 SVD_SHARE_MIN_BATCH=1024 SVD_GPU_BIG_BATCH_MAX_K=80 SVD_GPU_BIG_BATCH_MIN=1024 SVD_VALUES_GPU_MAX_K=56 SVD_VALUES_GPU_MIN_BATCH_TIMES_K=16384 SVD_VALUES_GPU_MIN_BATCH=1 SVD_VALUES_GPU_MAX_L=56",
+ "big_chosen": [
+  80,
+  1024
+ ],
  "raw": [
   "docs/results/apple-m5-pro-20gpu/20261003-c0878c/svd/raw.csv"
  ],

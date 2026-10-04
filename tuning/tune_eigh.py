@@ -165,6 +165,13 @@ QL = (0, 0)
 # effect, and the one gpu_choice applies (0 = never; fitted in stage 1c).
 CURRENT_SHARE = 0
 SHARE = 0
+# The large-batch clause, (max_n, min_batch): the GPU also for N above
+# gpu_max_n up to max_n in a batch of at least min_batch; in effect, and the
+# one rule_choice applies ((0, 0) = never; fitted in stage 2 after the product
+# rule). It applies with eigenvectors only: a measured eigenvalues-alone rule
+# has none, as in the library.
+CURRENT_BIG = (0, 0)
+BIG = (0, 0)
 # ql_share is timed from this batch: below it a batch is too small to share.
 SHARE_MIN_GRID_BATCH = 64
 NO_LIMIT = 0xFFFFFFFF   # kEighNoLimit
@@ -233,7 +240,7 @@ def _route_fields(gm, mb, mbatch):
     return f"{'kEighNoLimit' if gm >= INF else gm}, {mb}, {mbatch}"
 
 
-def tuned_row(device, params, values=None, tridiag=(0, 0), ql=(0, 0), tridiag_cap=(0, 0), share=0):
+def tuned_row(device, params, values=None, tridiag=(0, 0), ql=(0, 0), tridiag_cap=(0, 0), share=0, big=(0, 0)):
     """The line to paste into kTuned[] in eigh.mm. `values` is the
     eigenvalues-alone boundary, or None (written as 0, 0, 0: as for eigenvectors);
     `tridiag` the two tridiag thresholds (0: never), `tridiag_cap` their batch
@@ -245,14 +252,15 @@ def tuned_row(device, params, values=None, tridiag=(0, 0), ql=(0, 0), tridiag_ca
     v = _route_fields(*values) if values else "0, 0, 0"
     return (f'{{"{device["name"]}", {device["gpu_cores"]},   {s}, {bm_s}, {lo}, {bh},   '
             f'{_route_fields(gm, mb, mbatch)},   {v},   {tridiag[0]}, {tridiag[1]}, '
-            f'{tridiag_cap[0]}, {tridiag_cap[1]},   {ql[0]}, {ql[1]},   {share}}},')
+            f'{tridiag_cap[0]}, {tridiag_cap[1]},   {ql[0]}, {ql[1]},   {share},   {big[0]}, {big[1]}}},')
 
 
-def env_line(params, values=None, tridiag=(0, 0), ql=(0, 0), tridiag_cap=(0, 0), share=0):
+def env_line(params, values=None, tridiag=(0, 0), ql=(0, 0), tridiag_cap=(0, 0), share=0, big=(0, 0)):
     s, bm, lo, bh, gm, mb, mbatch = params
     extra = (f" EIGH_TRIDIAG_MIN_N={tridiag[0]} EIGH_VALUES_TRIDIAG_MIN_N={tridiag[1]}"
              f" EIGH_TRIDIAG_MAX_BATCH={tridiag_cap[0]} EIGH_VALUES_TRIDIAG_MAX_BATCH={tridiag_cap[1]}"
-             f" EIGH_QL_MIN_N={ql[0]} EIGH_QL_MAX_N={ql[1]} EIGH_SHARE_MIN_BATCH={share}")
+             f" EIGH_QL_MIN_N={ql[0]} EIGH_QL_MAX_N={ql[1]} EIGH_SHARE_MIN_BATCH={share}"
+             f" EIGH_GPU_BIG_BATCH_MAX_N={big[0]} EIGH_GPU_BIG_BATCH_MIN={big[1]}")
     if values:
         vg, vm, vb = values
         if vm >= INF:
@@ -512,9 +520,39 @@ def gpu_choice(split, N, b, ql=None, share=None):
 def rule_choice(params, N, b):
     """params = (simd_max, block_min, block_lo, batch_hi, gpu_max_n, min_bn, min_batch)."""
     gpu_max_n, min_bn, min_batch = params[4], params[5], params[6]
+    bn, bb = BIG
+    if bb and gpu_max_n and gpu_max_n < N <= bn and b >= bb:
+        return gpu_choice(params[:4], N, b)   # the large-batch clause, above gpu_max_n
     if N > gpu_max_n or b * N < min_bn or b < min_batch:
         return "cpu"
     return gpu_choice(params[:4], N, b)
+
+
+def with_big(big, fn):
+    """fn() with the large-batch clause `big` in effect."""
+    global BIG
+    saved, BIG = BIG, tuple(big)
+    try:
+        return fn()
+    finally:
+        BIG = saved
+
+
+def fit_big(params, times, tol):
+    """The large-batch clause over the product rule `params`: N up to a
+    measured N above gpu_max_n, from a measured batch. (0, 0) unless it improves
+    the geomean regret by more than `tol`; inside that, the smallest worst case,
+    then the best geomean, then the larger batch. -> ((max_n, min_batch), scores)."""
+    ns = sorted({N for (_, N) in times})
+    bs = sorted({b for (b, _) in times if b > 1})
+    cands = [(0, 0)] + [(n, b) for n in ns if n > params[4] for b in bs]
+    scores = {c: with_big(c, lambda c=c: _score3(score_rule(params, times))) for c in cands}
+    base = scores[(0, 0)][0]
+    best = min(v[0] for v in scores.values())
+    if best >= base / (1 + tol):
+        return (0, 0), scores
+    near = {c: v for c, v in scores.items() if v[0] <= best * (1 + tol)}
+    return min(near, key=lambda c: (near[c][1], near[c][0], -c[1], c[0])), scores
 
 
 def evaluate(choice_fn, times):
@@ -653,6 +691,29 @@ def choose(near, current, current_score=None, best=None, tol=0.005):
 
 def _score3(e):
     return (e["geomean"], e["worst"], e["over10"])
+
+
+def fit_with_clause(sc2, gm_at, fit_big, score, with_big, current, current_score, tol):
+    """The product rule and the large-batch clause, fitted together: for each
+    cap (p[gm_at]) of the stage-2 grid `sc2`, the rule fitted without the
+    clause, the clause over it (fit_big(p) -> (max, min_batch)), and the rule
+    fitted again given that clause; then `choose` over every combination, keyed
+    (params, big), with the policy in effect as `current`. Fitting the rule
+    first and the clause over it alone can miss a lower cap plus the clause
+    beating a higher cap without one. -> ((params, big), {(params, big): score3})."""
+    combos = {}
+    for gm in sorted({p[gm_at] for p in sc2}):
+        sub = {p: v for p, v in sc2.items() if p[gm_at] == gm}
+        p0 = min(sub, key=lambda p: sub[p])
+        big = tuple(fit_big(p0))
+        if big == (0, 0):
+            combos[(p0, big)] = sub[p0]
+            continue
+        sub2 = with_big(big, lambda: {p: score(p) for p in sub})
+        p1 = min(sub2, key=lambda p: sub2[p])
+        combos[(p1, big)] = sub2[p1]
+    best, near = near_optimal(combos, tol)
+    return choose(near, current, current_score, best, tol), combos
 
 
 def split_points(times, seed=7):
@@ -801,8 +862,8 @@ def fit_tridiag(params, times, current, tol):
 
 
 def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
-    global QL, SHARE
-    QL, SHARE = (0, 0), 0    # stage 1 is the Jacobi split alone
+    global QL, SHARE, BIG
+    QL, SHARE, BIG = (0, 0), 0, (0, 0)    # stage 1 is the Jacobi split alone
     times_full, vtimes_full = split_values(times)
     times, vtimes = without_tridiag(times_full), without_tridiag(vtimes_full)
     configure_grids(times)
@@ -931,11 +992,18 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
 
     # ---- stage 2: CPU routing given the split ----
     cur_route = CURRENT[4:]
-    sc2 = fit_routing(split, times)
+    cur_e = with_big(CURRENT_BIG, lambda: score_rule(split + cur_route, times))
+    sc2 = fit_routing(split, times)                 # without the clause: the band and curves
     best2, near2 = near_optimal(sc2, tol)
-    params = choose(near2, split + cur_route, _score3(score_rule(split + cur_route, times)), best2, tol)
+    (params, big), _ = fit_with_clause(sc2, 4, lambda p: fit_big(p, times, tol)[0],
+                                       lambda p: _score3(score_rule(p, times)), with_big,
+                                       (split + cur_route, tuple(CURRENT_BIG)), _score3(cur_e), tol)
+    without_big = score_rule(params, times)
+    BIG = big
     s2 = {
-        "current": _strip(score_rule(split + cur_route, times)),
+        "big": {"chosen": list(big), "current": list(CURRENT_BIG), "without": _strip(without_big),
+                "with": _strip(score_rule(params, times))},
+        "current": _strip(cur_e),
         "chosen": _strip(score_rule(params, times)),
         "chosen_params": list(params[4:]),
         "band": {"n_near_optimal": len(near2), "gpu_max_n": _band(near2, 4),
@@ -964,6 +1032,8 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
     # ---- stage 3: CPU routing for eigenvalues alone, given the same split ----
     values = None
     if vtimes:
+        eigh_boundary = _strip(score_rule(params, vtimes))   # what eigvalsh would do without its own
+        BIG_EIGH, BIG = BIG, (0, 0)                          # a rule of its own has no clause
         cur_v = CURRENT_VALUES or cur_route          # none of its own: it follows stage 2's
         sc3 = fit_routing(split, vtimes)
         best3, near3 = near_optimal(sc3, tol)
@@ -976,7 +1046,7 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
             "n_points": len(vtimes),
             "current": _strip(score_rule(split + cur_v, vtimes)),
             "current_is_eigh_boundary": CURRENT_VALUES is None,
-            "eigh_boundary": _strip(score_rule(params, vtimes)),   # what eigvalsh would do without its own
+            "eigh_boundary": eigh_boundary,
             "chosen": _strip(score_rule(vfull, vtimes)),
             "chosen_params": list(values),
             "band": {"n_near_optimal": len(near3), "gpu_max_n": _band(near3, 4),
@@ -986,6 +1056,7 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
                         "test": _strip(evaluate(lambda N, b: rule_choice(tr_v, N, b), vtest)),
                         "eigh_boundary_test": _strip(evaluate(lambda N, b: rule_choice(params, N, b), vtest))},
         }
+        BIG = BIG_EIGH
     res["values_chosen"] = list(values) if values else None
 
     # ---- stage 4: the tridiag backend instead of the CPU ----
@@ -1028,7 +1099,7 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
 
     # ---- the whole rule ----
     res["chosen"] = list(params)
-    res["rules"] = {"current": _strip(score_rule(CURRENT, times)),
+    res["rules"] = {"current": _strip(with_big(CURRENT_BIG, lambda: score_rule(CURRENT, times))),
                     "chosen": _strip(score_rule(params, times))}
 
     # ---- surfaces ----
@@ -1092,7 +1163,7 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
     if (tuple(params) != tuple(CURRENT) or (values and tuple(values) != tuple(CURRENT_VALUES or ()))
             or tuple(res.get("tridiag_chosen", (0, 0))) != tuple(CURRENT_TRIDIAG)
             or tuple(tridiag_cap) != tuple(CURRENT_TRIDIAG_CAP)
-            or tuple(ql) != tuple(CURRENT_QL) or share != CURRENT_SHARE):
+            or tuple(ql) != tuple(CURRENT_QL) or share != CURRENT_SHARE or tuple(big) != tuple(CURRENT_BIG)):
         warns.append(f"the fitted policy differs from the one in effect ({device.get('source', 'unknown')}): "
                      f"update this device's row in kTuned[] in src/eigh.mm")
     res["warnings"] = warns
@@ -1121,8 +1192,9 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
     if not have_ql:
         warns.append("no ql timings (a run from before the backend existed): the row's ql window is "
                      "0, 0, so the backend stays off on this device")
-    res["tuned_row"] = tuned_row(device, params, values, tridiag, ql, tridiag_cap, share)
-    res["env_line"] = env_line(params, values, tridiag, ql, tridiag_cap, share)
+    res["tuned_row"] = tuned_row(device, params, values, tridiag, ql, tridiag_cap, share, big)
+    res["env_line"] = env_line(params, values, tridiag, ql, tridiag_cap, share, big)
+    res["big_chosen"] = list(big)
     res["n_candidates"] = {"split": len(SIMD_MAXS) * len(BLOCK_MINS),
                            "routing": len(GPU_MAX_NS) * len(MIN_BNS) * len(MIN_BATCHES)}
     return res
@@ -1402,6 +1474,16 @@ def write_report(res, path):
                                                     "total_ratio": 1.0, "estimated_picks": 0}))
     L.append(_stats_row(f"policy in effect {tuple(_fmt_v(v) for v in res['current'][4:])}", s2["current"]))
     L.append(_stats_row(f"fitted {tuple(_fmt_v(v) for v in s2['chosen_params'])}", s2["chosen"]))
+    if s2.get("big"):
+        bg = s2["big"]
+        L.append("")
+        L.append("Large batches: " + (f"the GPU also for N above gpu_max_n up to {bg['chosen'][0]} in a batch of at "
+                                      f"least {bg['chosen'][1]}, fitted with the product rule (per cap, the rule, "
+                                      "the clause over it and the rule again given the clause, the best kept)"
+                                      if bg["chosen"][1] else
+                                      "no clause; none beat the product rule alone by more than the tolerance") +
+                 f" (product rule alone {bg['without']['geomean']:.4f}, worst {bg['without']['worst']:.2f}x; "
+                 f"chosen {bg['with']['geomean']:.4f}, worst {bg['with']['worst']:.2f}x).")
     L.append("")
     b2 = s2["band"]
     L.append(f"{b2['n_near_optimal']} of {res['n_candidates']['routing']} combinations are "
@@ -1513,7 +1595,7 @@ def write_report(res, path):
 # ---------------------------------------------------------------------------
 
 def main():
-    global CURRENT, CURRENT_VALUES, CURRENT_TRIDIAG, CURRENT_TRIDIAG_CAP, CURRENT_QL, QL_LIMIT, CURRENT_SHARE
+    global CURRENT, CURRENT_VALUES, CURRENT_TRIDIAG, CURRENT_TRIDIAG_CAP, CURRENT_QL, QL_LIMIT, CURRENT_SHARE, CURRENT_BIG
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("binary", nargs="?", help="path to the built sweep_eigh")
@@ -1581,6 +1663,7 @@ def main():
             CURRENT_TRIDIAG_CAP = (pol.get("tridiag_max_batch", 0), pol.get("values_tridiag_max_batch", 0))
             CURRENT_QL = (pol.get("ql_min_n", 0), pol.get("ql_max_n", 0))
             CURRENT_SHARE = pol.get("share_min_batch", 0)
+            CURRENT_BIG = (pol.get("gpu_big_batch_max_n", 0), pol.get("gpu_big_batch_min", 0))
             QL_LIMIT = pol.get("ql_limit", 0)
         calibration = side.get("calibration")
         if calibration:
@@ -1620,6 +1703,9 @@ def main():
         print(f"ql window:   " + (f"N={lo_}..{hi_}" if hi_ else "never") +
               f"   ({s1b['with']['geomean']:.4f}x vs best GPU backend, worst {s1b['with']['worst']:.2f}x; "
               f"without it {s1b['without']['geomean']:.4f}x, worst {s1b['without']['worst']:.2f}x)")
+    if res.get("big_chosen") and res["big_chosen"][1]:
+        print(f"large batches: also the GPU for N above gpu_max_n up to {res['big_chosen'][0]} "
+              f"from batch {res['big_chosen'][1]}")
     if res.get("stage1c"):
         c1 = res["stage1c"]
         print(f"share with the CPU: {'from batch ' + str(c1['chosen']) if c1['chosen'] else 'never'}   "

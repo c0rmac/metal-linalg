@@ -187,6 +187,10 @@ std::pair<mx::array, mx::array> qr_cpu(const mx::array& a) {
     return run_qr(a, "qr_cpu", core::detail::qr_cpu);
 }
 
+std::pair<mx::array, mx::array> qr_shared(const mx::array& a) {
+    return run_qr(a, "qr", core::detail::qr_shared);
+}
+
 EighResult eigh_jacobi(const mx::array& a, bool compute_vectors, bool lower, const EighOptions& opt) {
     return run_eigh(a, compute_vectors, "eigh", [&](const core::Matrices& m, float* w, float* v, uint32_t* info) {
         core::detail::eigh_jacobi(m, lower, opt, w, v, info);

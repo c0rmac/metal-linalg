@@ -51,6 +51,10 @@ svd.mm encodes the answer as a per-device routing policy (SvdPolicy):
                                    singular values alone (0 = never)
     gk_min_k, gk_max_k             gk instead of the Jacobi backends for k in
                                    this window (0, 0 = never)
+    gpu_big_batch_max_k,           the GPU also for k above gpu_max_k up to this
+      gpu_big_batch_min            (and l up to gpu_max_l) in a batch of at least this
+                                   (0, 0 = never): large batches the product
+                                   rule cannot take without their small ones
     share_min_batch                from this batch, gk shares the batch with the
                                    CPU path (gk_share; 0 = never)
     values_gpu_max_k, ..._min_batch_times_k, ..._min_batch, ..._max_l
@@ -148,6 +152,11 @@ GK = (0, 0)
 # one gpu_choice applies (0 = never; fitted in stage 1c).
 CURRENT_SHARE = 0
 SHARE = 0
+# The large-batch clause, (max_k, min_batch): in effect, and the one
+# rule_choice applies ((0, 0) = never; fitted in stage 2 after the product rule,
+# which is then refitted with it in effect).
+CURRENT_BIG = (0, 0)
+BIG = (0, 0)
 # gk_share is timed from this batch: below it a batch is too small to share.
 SHARE_MIN_GRID_BATCH = 64
 
@@ -357,7 +366,8 @@ def _cxx_values(values):
     return (vgm, vmb, vmbatch, "kSvdNoLimit" if vml >= INF else vml)
 
 
-def tuned_row(device, params, bidiag=(0, 0), bidiag_cap=(0, 0), gk=(0, 0), values=(0, 0, 0, INF), share=0):
+def tuned_row(device, params, bidiag=(0, 0), bidiag_cap=(0, 0), gk=(0, 0), values=(0, 0, 0, INF), share=0,
+              big=(0, 0)):
     """The line for kTuned[] in svd.mm; `bidiag` the two bidiag thresholds (0: never),
     `bidiag_cap` their batch caps (0: any batch), `gk` the gk window (0, 0: never),
     `values` the values_gpu_* rule (min_batch 0: as with vectors)."""
@@ -365,10 +375,11 @@ def tuned_row(device, params, bidiag=(0, 0), bidiag_cap=(0, 0), gk=(0, 0), value
     vgm, vmb, vmbatch, vml = _cxx_values(values)
     return (f'{{"{device["name"]}", {device["gpu_cores"]},   {r}, {a},   {bm}, {lo}, {bh},   '
             f'{gm}, {mb}, {mbatch}, {ml},   {vgm}, {vmb}, {vmbatch}, {vml},   {bidiag[0]}, {bidiag[1]}, {bidiag_cap[0]}, {bidiag_cap[1]},   '
-            f'{gk[0]}, {gk[1]},   {share}}},')
+            f'{gk[0]}, {gk[1]},   {share},   {big[0]}, {big[1]}}},')
 
 
-def env_line(params, bidiag=(0, 0), bidiag_cap=(0, 0), gk=(0, 0), values=(0, 0, 0, INF), share=0):
+def env_line(params, bidiag=(0, 0), bidiag_cap=(0, 0), gk=(0, 0), values=(0, 0, 0, INF), share=0,
+             big=(0, 0)):
     r, a, bm, lo, bh, gm, mb, mbatch, ml = _cxx(params)
     vgm, vmb, vmbatch, vml = values
     gm = NO_LIMIT if gm == "kSvdNoLimit" else gm
@@ -379,6 +390,7 @@ def env_line(params, bidiag=(0, 0), bidiag_cap=(0, 0), gk=(0, 0), values=(0, 0, 
             f"SVD_BIDIAG_MIN_K={bidiag[0]} SVD_VALUES_BIDIAG_MIN_K={bidiag[1]} "
             f"SVD_BIDIAG_MAX_BATCH={bidiag_cap[0]} SVD_VALUES_BIDIAG_MAX_BATCH={bidiag_cap[1]} "
             f"SVD_GK_MIN_K={gk[0]} SVD_GK_MAX_K={gk[1]} SVD_SHARE_MIN_BATCH={share} "
+            f"SVD_GPU_BIG_BATCH_MAX_K={big[0]} SVD_GPU_BIG_BATCH_MIN={big[1]} "
             f"SVD_VALUES_GPU_MAX_K={vgm} SVD_VALUES_GPU_MIN_BATCH_TIMES_K={vmb} "
             f"SVD_VALUES_GPU_MIN_BATCH={vmbatch} SVD_VALUES_GPU_MAX_L={NO_LIMIT if vml >= INF else vml}")
 
@@ -408,10 +420,40 @@ def rule_choice(params, M, N, b):
     """params = (qr_min_rows, qr_min_k, block_min, block_lo, batch_hi, gpu_max_k, min_bk, min_batch,
     gpu_max_l)."""
     k = min(M, N)
+    bk, bb = BIG
+    if bb and params[N_SPLIT] and params[N_SPLIT] < k <= bk and max(M, N) <= params[N_SPLIT + 3] and b >= bb:
+        return gpu_choice(params[:N_SPLIT], M, N, b)   # the large-batch clause, above gpu_max_k
     if (k > params[N_SPLIT] or b * k < params[N_SPLIT + 1] or b < params[N_SPLIT + 2]
             or max(M, N) > params[N_SPLIT + 3]):
         return "cpu"
     return gpu_choice(params[:N_SPLIT], M, N, b)
+
+
+def with_big(big, fn):
+    """fn() with the large-batch clause `big` in effect."""
+    global BIG
+    saved, BIG = BIG, tuple(big)
+    try:
+        return fn()
+    finally:
+        BIG = saved
+
+
+def fit_big(params, times, tol):
+    """The large-batch clause over the product rule `params`: k up to a measured
+    k above gpu_max_k, from a measured batch. (0, 0) unless it improves the
+    geomean regret by more than `tol`; inside that, the smallest worst case,
+    then the best geomean, then the larger batch. -> ((max_k, min_batch), scores)."""
+    ks = sorted({min(M, N) for (_, M, N) in times})
+    bs = sorted({b for (b, _, _) in times if b > 1})
+    cands = [(0, 0)] + [(k, b) for k in ks if k > params[N_SPLIT] for b in bs]
+    scores = {c: with_big(c, lambda c=c: te._score3(score_rule(params, times))) for c in cands}
+    base = scores[(0, 0)][0]
+    best = min(v[0] for v in scores.values())
+    if best >= base / (1 + tol):
+        return (0, 0), scores
+    near = {c: v for c, v in scores.items() if v[0] <= best * (1 + tol)}
+    return min(near, key=lambda c: (near[c][1], near[c][0], -c[1], c[0])), scores
 
 
 def _th_cap(th):
@@ -665,8 +707,8 @@ def configure_grids(times):
 # ---------------------------------------------------------------------------
 
 def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
-    global GK, SHARE
-    GK, SHARE = (0, 0), 0    # stage 1 is the Jacobi split alone
+    global GK, SHARE, BIG
+    GK, SHARE, BIG = (0, 0), 0, (0, 0)    # stage 1 is the Jacobi split alone
     times_all = times
     times, vtimes, valtimes, gvaltimes = split_bidiag(times)
     if not times:
@@ -813,12 +855,19 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
     # ---- stage 2: CPU boundary
     R0, R1, R2, R3 = N_SPLIT, N_SPLIT + 1, N_SPLIT + 2, N_SPLIT + 3
     cur = tuple(split) + tuple(CURRENT[N_SPLIT:])
-    sc2 = fit_routing(split, times)
+    cur_e = with_big(CURRENT_BIG, lambda: score_rule(cur, times))
+    sc2 = fit_routing(split, times)                 # without the clause: the band and curves
     best2, near2 = te.near_optimal(sc2, tol)
-    params = te.choose(near2, cur, te._score3(score_rule(cur, times)), best2, tol)
+    (params, big), _ = te.fit_with_clause(sc2, R0, lambda p: fit_big(p, times, tol)[0],
+                                          lambda p: te._score3(score_rule(p, times)), with_big,
+                                          (cur, tuple(CURRENT_BIG)), te._score3(cur_e), tol)
+    without_big = score_rule(params, times)
+    BIG = big
     s2 = {
         "n_candidates": len(sc2),
-        "current": _strip(score_rule(cur, times)), "chosen": _strip(score_rule(params, times)),
+        "current": _strip(cur_e), "chosen": _strip(score_rule(params, times)),
+        "big": {"chosen": list(big), "current": list(CURRENT_BIG), "without": _strip(without_big),
+                "with": _strip(score_rule(params, times))},
         "chosen_params": list(params[N_SPLIT:]),
         "band": {"n_near_optimal": len(near2), "gpu_max_k": te._band(near2, R0),
                  "min_bk": te._band(near2, R1), "min_batch": te._band(near2, R2),
@@ -904,7 +953,7 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
     res["current_bidiag_cap"] = list(CURRENT_BIDIAG_CAP)
 
     res["chosen"] = list(params)
-    res["rules"] = {"current": _strip(score_rule(tuple(CURRENT), times)),
+    res["rules"] = {"current": _strip(with_big(CURRENT_BIG, lambda: score_rule(tuple(CURRENT), times))),
                     "chosen": _strip(score_rule(params, times))}
 
     cells = []
@@ -976,12 +1025,14 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
                      "0, 0, never; rerun the sweep with a current sweep_svd")
     if (tuple(params) != tuple(CURRENT) or tuple(bidiag) != tuple(CURRENT_BIDIAG)
             or tuple(bidiag_cap) != tuple(CURRENT_BIDIAG_CAP) or tuple(gk) != tuple(CURRENT_GK)
-            or tuple(values) != tuple(CURRENT_VALUES) or share != CURRENT_SHARE):
+            or tuple(values) != tuple(CURRENT_VALUES) or share != CURRENT_SHARE
+            or tuple(big) != tuple(CURRENT_BIG)):
         warns.append(f"the fitted policy differs from the one in effect ({device.get('source', 'unknown')})")
     res["warnings"] = warns
     res["noise"] = te.noise_floor(repeats)
-    res["tuned_row"] = tuned_row(device, params, bidiag, bidiag_cap, gk, values, share)
-    res["env_line"] = env_line(params, bidiag, bidiag_cap, gk, values, share)
+    res["tuned_row"] = tuned_row(device, params, bidiag, bidiag_cap, gk, values, share, big)
+    res["env_line"] = env_line(params, bidiag, bidiag_cap, gk, values, share, big)
+    res["big_chosen"] = list(big)
     return res
 
 
@@ -1054,7 +1105,7 @@ def write_report(res, path):
           "block_min_batch,   gpu_max_k, gpu_min_batch_times_k, gpu_min_batch, gpu_max_l,   "
           "values_gpu_max_k, values_gpu_min_batch_times_k, values_gpu_min_batch, values_gpu_max_l,   "
           "bidiag_min_k, values_bidiag_min_k, bidiag_max_batch, values_bidiag_max_batch,   gk_min_k, gk_max_k,   "
-          "share_min_batch",
+          "share_min_batch,   gpu_big_batch_max_k, gpu_big_batch_min",
           res["tuned_row"], "```", "", "To try it without rebuilding:", "", "```sh", res["env_line"], "```", "",
           f"The policy in effect on this device came from `{d.get('source', 'unknown')}`. "
           f"Against the best measured backend at every point the fitted rule scores "
@@ -1165,6 +1216,14 @@ def write_report(res, path):
           f"{fv(b2['gpu_max_k'][1])}, gpu_min_batch_times_k {fv(b2['min_bk'][0])} .. {fv(b2['min_bk'][1])}, "
           f"gpu_min_batch {fv(b2['min_batch'][0])} .. {fv(b2['min_batch'][1])}" +
           (f", gpu_max_l {fv(b2['max_l'][0])} .. {fv(b2['max_l'][1])}" if "max_l" in b2 else "") + ".", ""]
+    if s2.get("big"):
+        bg = s2["big"]
+        L += ["Large batches: " + (f"the GPU also for k above gpu_max_k up to {bg['chosen'][0]} (and l <= gpu_max_l) in a batch of at "
+                                   f"least {bg['chosen'][1]}, fitted with the product rule (per cap, the rule, the clause "
+                                   "over it and the rule again given the clause, the best kept)" if bg["chosen"][1] else
+                                   "no clause; none beat the product rule alone by more than the tolerance") +
+              f" (product rule alone {bg['without']['geomean']:.4f}, worst {bg['without']['worst']:.2f}x; "
+              f"chosen {bg['with']['geomean']:.4f}, worst {bg['with']['worst']:.2f}x).", ""]
     te._curve_block(L, "gpu_min_batch_times_k", s2["curves"]["min_bk"])
     if "gpu_max_l" in s2["curves"]:
         te._curve_block(L, "gpu_max_l", s2["curves"]["gpu_max_l"])
@@ -1246,7 +1305,7 @@ def write_report(res, path):
 # ---------------------------------------------------------------------------
 
 def main():
-    global CURRENT, CURRENT_BIDIAG, CURRENT_BIDIAG_CAP, CURRENT_GK, GK_LIMIT, CURRENT_VALUES, CURRENT_SHARE
+    global CURRENT, CURRENT_BIDIAG, CURRENT_BIDIAG_CAP, CURRENT_GK, GK_LIMIT, CURRENT_VALUES, CURRENT_SHARE, CURRENT_BIG
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("binary", nargs="?", help="path to the built sweep_svd")
     ap.add_argument("--out", default="svd-tune-results", help="output directory")
@@ -1308,6 +1367,7 @@ def main():
             CURRENT_BIDIAG_CAP = (pol.get("bidiag_max_batch", 0), pol.get("values_bidiag_max_batch", 0))
             CURRENT_GK = (pol.get("gk_min_k", 0), pol.get("gk_max_k", 0))
             CURRENT_SHARE = pol.get("share_min_batch", 0)
+            CURRENT_BIG = (pol.get("gpu_big_batch_max_k", 0), pol.get("gpu_big_batch_min", 0))
             CURRENT_VALUES = (pol.get("values_gpu_max_k", 0), pol.get("values_gpu_min_batch_times_k", 0),
                               pol.get("values_gpu_min_batch", 0), _cap(pol.get("values_gpu_max_l", NO_LIMIT)))
             GK_LIMIT = pol.get("gk_limit", 0)
@@ -1332,6 +1392,8 @@ def main():
     print(f"GPU backend: qr_min_rows={te._fmt_v(r)} qr_min_k={te._fmt_v(a)} block_min_k={te._fmt_v(bm)} "
           f"block_min_k_batched={te._fmt_v(lo)} block_min_batch={te._fmt_v(bh)}   "
           f"({res['stage1']['chosen']['geomean']:.4f}x vs best GPU backend, worst {res['stage1']['chosen']['worst']:.2f}x)")
+    if res.get("big_chosen") and res["big_chosen"][1]:
+        print(f"large batches: also the GPU for k above gpu_max_k up to {res['big_chosen'][0]} from batch {res['big_chosen'][1]}")
     print(f"CPU routing: gpu_max_k={te._fmt_v(gm)} gpu_max_l={te._fmt_v(ml)} "
           f"gpu_min_batch_times_k={te._fmt_v(mb)} gpu_min_batch={mbatch}   "
           f"({res['rules']['chosen']['geomean']:.4f}x vs best of all, worst {res['rules']['chosen']['worst']:.2f}x)")

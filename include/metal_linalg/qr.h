@@ -33,6 +33,10 @@ namespace metal_linalg {
 
         std::pair<mlx::core::array, mlx::core::array>
         qr_cpu(const mlx::core::array& a);
+
+        // The GPU kernel and qr_cpu sharing one batch (QrPolicy::share_min_batch).
+        std::pair<mlx::core::array, mlx::core::array>
+        qr_shared(const mlx::core::array& a);
     }
 
 } // namespace metal_linalg

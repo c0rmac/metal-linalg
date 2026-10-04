@@ -98,6 +98,17 @@ GPU, as the eigensolver's `tridiag` backend does for `ssytrd`:
    as two MPS GEMMs. The panels' command buffers are queued back to back and
    the host waits once per matrix. The last 33 columns or fewer are reduced
    by LAPACK.
+
+   A column's steps are four dispatches (since 2.12.0; twelve before), as
+   the `tridiag` backend's are three: the column's update with the previous
+   row's $X$ finished, then $A^T v$ with the column's Householder vector
+   formed from norm partials in every threadgroup, then the row's update with
+   $Y$, then $A u$ with the row's vector. Before, the row's vector alone took
+   9 µs a column at $k = 4096$ (one threadgroup reading a row three times with
+   a stride), and the small kernels together 52 µs, against 160 µs for the
+   two products. With the matrix also copied in on every core rather than
+   one, singular values alone are 1.2-1.8x faster at $k = 1024$-4096, and
+   with vectors 1.1-1.3x.
 2. **Bidiagonal SVD**: LAPACK `sbdsdc` (divide and conquer) on the CPU, with
    the singular vectors of $B$ or without.
 3. **Back-transformation**: the reflectors of $Q$ and of $P$ applied to the
@@ -111,30 +122,33 @@ $U = Q U_R$; a wide matrix goes through its transpose. Each matrix is scaled
 by a power of two first (exact). A batch is pipelined over two workspace
 slots (since 2.11.0): the CPU solves one matrix's bidiagonal problem while the
 GPU reduces the next, and solves the next while the GPU back-transforms this
-one. On an M5 Pro, per matrix of 2048×2048 with vectors, 308 ms alone, 202 ms
-in a batch of 4 and 186 ms in a batch of 8 (1.66x), so the GPU stays ahead of
+one. On an M5 Pro, per matrix of 2048×2048 with vectors, 253 ms alone, 168 ms
+in a batch of 4 and 155 ms in a batch of 8 (1.63x; 308, 202 and 186 ms before
+the reduction's dispatches were merged in 2.12.0), so the GPU stays ahead of
 the CPU path up to batches of 4 at that size. The backend is still for large
 matrices, not batches of small ones.
 `svdvals` (singular values alone) skips step 3 and the vectors of step 2.
 
 On an M5 Pro, one $k \times k$ matrix, against the CPU path (`sgesdd`), from
-the routing sweep in [`results/apple-m5-pro-20gpu/20261003-064803/svd/`](results/apple-m5-pro-20gpu/20261003-064803/svd/)
+the routing sweep in [`results/apple-m5-pro-20gpu/20261004-fd9bd8/svd/`](results/apple-m5-pro-20gpu/20261004-fd9bd8/svd/report.md)
 (min of two randomised passes):
 
 | $k$ | svd: CPU | bidiag | speedup | svdvals: CPU | bidiag | speedup |
 |---|---|---|---|---|---|---|
-| 512 | 16.8 ms | 25.7 ms | 0.65x | 7.7 ms | 18.8 ms | 0.41x |
-| 1024 | 77.4 ms | 76.0 ms | 1.02x | 35.5 ms | 47.2 ms | 0.75x |
-| 1536 | 178 ms | 159 ms | 1.12x | 84.6 ms | 95.4 ms | 0.89x |
-| 2048 | 437 ms | 306 ms | 1.43x | 196 ms | 169 ms | 1.16x |
-| 3072 | 1.30 s | 0.71 s | 1.83x | 0.71 s | 0.43 s | 1.65x |
-| 4096 | 3.44 s | 1.76 s | 1.95x | 2.00 s | 1.06 s | 1.88x |
+| 512 | 16.7 ms | 16.5 ms | 1.01x | 7.7 ms | 9.5 ms | 0.81x |
+| 1024 | 77.6 ms | 55.3 ms | 1.40x | 35.6 ms | 26.4 ms | 1.35x |
+| 1536 | 177 ms | 131 ms | 1.35x | 84.5 ms | 58.9 ms | 1.43x |
+| 2048 | 432 ms | 247 ms | 1.75x | 192 ms | 111 ms | 1.73x |
+| 3072 | 1.27 s | 0.60 s | 2.10x | 0.69 s | 0.33 s | 2.08x |
+| 4096 | 3.42 s | 1.51 s | 2.26x | 1.88 s | 0.81 s | 2.32x |
 
 The gain grows with $k$, as the CPU's reduction falls further behind memory
-bandwidth. The M5 Pro uses the backend from $k = 1024$ with vectors and from
-2048 for singular values alone, for a lone matrix only: it decomposes a batch
-one matrix after another, and the CPU path spreads one over every core
-(`bidiag_max_batch`). Up to 2048 it wins by a few percent to 1.4x. Accuracy
+bandwidth. The M5 Pro uses the backend from $k = 1024$, with vectors or
+without, for up to two matrices: it decomposes a batch one matrix after
+another (pipelined), and the CPU path spreads one over every core
+(`bidiag_max_batch`). Since the reduction's dispatches were merged (2.12.0)
+it wins by 1.35-1.75x from 1024 to 2048, where before it was 1.0-1.4x with
+vectors and lost below 2048 for singular values alone. Accuracy
 matches LAPACK's: at 2048 and 4096, square, tall and wide, reconstruction
 and orthogonality about $4 \times 10^{-6}$, singular values within
 $1.3 \times 10^{-6}$ of float64 LAPACK's relative to $\sigma_\text{max}$
@@ -247,8 +261,10 @@ keeps the Jacobi kernels.
 With $k = \min(M, N)$ and $l = \max(M, N)$:
 
 ```
-GPU iff  k <= gpu_max_k,  l <= gpu_max_l,  batch * k >= gpu_min_batch_times_k  and  batch >= gpu_min_batch,  else CPU
-         (svdvals: the values_gpu_* constants, unless values_gpu_min_batch = 0)
+GPU iff  k <= gpu_max_k,  l <= gpu_max_l,  batch * k >= gpu_min_batch_times_k  and  batch >= gpu_min_batch,
+     or  gpu_max_k < k <= gpu_big_batch_max_k,  l <= gpu_max_l  and  batch >= gpu_big_batch_min   (large batches)
+     else CPU
+         (svdvals: the values_gpu_* constants, without the large-batch clause, unless values_gpu_min_batch = 0)
 on the GPU:
   golub_kahan iff  gk_min_k <= k <= gk_max_k  (clipped to svd_gk_max_k()):
                    on the matrix if it fits, else after QR (qr_golub_kahan);
@@ -274,18 +290,20 @@ Metal device name and GPU core count:
 
 | GPU | cores | GPU iff | golub_kahan | QR from | block from | else bidiag | status |
 |---|---|---|---|---|---|---|---|
-| Apple M5 Pro | 20 | k <= 56, l <= 256 and batch * k >= 16384 (svdvals: l <= 56) | k = 8 .. 80, shared with the CPU from batch 1024 | 512 rows, k >= 32 | k = 192; k = 64 in batches of 64+ | from k = 1024 (svdvals 2048), lone matrices | measured — run [`20261003-c0878c`](results/apple-m5-pro-20gpu/20261003-c0878c/svd/report.md) |
+| Apple M5 Pro | 20 | k <= 56, l <= 256 and batch * k >= 16384, or 57 <= k <= 80 in batches of 1024+ (svdvals: k, l <= 56 and batch * k >= 16384) | k = 8 .. 80, shared with the CPU from batch 1024 | 512 rows, k >= 32 | k = 192; k = 64 in batches of 64+ | from k = 1024 (svdvals too), batches up to 2 | measured — run [`20261004-fd9bd8`](results/apple-m5-pro-20gpu/20261004-fd9bd8/svd/report.md) |
 | anything else | — | k <= 64 and batch * k >= 1024 | never | 512 rows, k >= 64 | k = 192 | never | **untuned default** |
 
 On the M5 Pro large batches of small matrices, up to 56×56 and a long side
 of 256, go to `golub_kahan` on the GPU, shared with the CPU from 1024
-matrices; everything else in a batch goes to the CPU, and one large matrix to
-`bidiag`. Against the best backend at each of the 291 points measured with
-2.11.0, the row scores 1.027 geometric-mean regret, worst 1.60x (1.039 and
-1.65x for the 2.10.0 row on the same data; the remaining misses are 64×64 and
-80×80 in batches of 1024 and more, which shared win by 1.5-1.6x but which one
-product rule cannot take without also taking their small batches, which the
-CPU wins). The long-side cap
+matrices, and so do batches of 1024 and more up to 80×80 (the large-batch
+clause, since 2.12.0); everything else in a batch goes to the CPU, and one
+or two large matrices to `bidiag`. Against the best backend at each of
+the 291 points measured, the row scores 1.020 geometric-mean regret, worst
+1.67x, against 1.028 for the product rule alone (on the previous run, 2.11.0's
+row scored 1.027 and 2.10.0's 1.039). The clause is what
+takes 64×64 and 80×80 in batches of 1024 and more, which shared win by
+1.5-1.6x but which one product rule cannot take without also taking their
+small batches, which the CPU wins. The long-side cap
 `gpu_max_l` (new in 2.10.0, no cap on a device without it) is what lets the
 rule take the square batches the GPU wins without the tall ones it loses:
 with a cap on k alone, the fit stopped at k = 24. In 2.9.0, measured against
@@ -307,8 +325,8 @@ reports `default:untuned-device` there too. Measuring a Mac is one command,
 `SVD_VALUES_GPU_MIN_BATCH_TIMES_K`, `SVD_VALUES_GPU_MIN_BATCH`,
 `SVD_VALUES_GPU_MAX_L`, `SVD_BIDIAG_MIN_K`, `SVD_VALUES_BIDIAG_MIN_K`,
 `SVD_BIDIAG_MAX_BATCH`, `SVD_VALUES_BIDIAG_MAX_BATCH`, `SVD_GK_MIN_K`,
-`SVD_GK_MAX_K`, `SVD_SHARE_MIN_BATCH` and `SVD_DEVICE=gpu|cpu|bidiag` override
-it.
+`SVD_GK_MAX_K`, `SVD_SHARE_MIN_BATCH`, `SVD_GPU_BIG_BATCH_MAX_K`,
+`SVD_GPU_BIG_BATCH_MIN` and `SVD_DEVICE=gpu|cpu|bidiag` override it.
 `svd_backend(m, n, batch)` and `svdvals_backend(m, n, batch)` say which of the
 eight backends a problem gets, with vectors and for singular values alone.
 
@@ -407,9 +425,9 @@ cmake --build build --target test_svd
 ./build/test_svd          # or: ctest --test-dir build
 ```
 
-326 checks: square, tall and wide shapes around the simdgroup, pair-count and
+329 checks: square, tall and wide shapes around the simdgroup, pair-count and
 block boundaries, batches, every simdgroup count, all seven GPU backends and
-each branch of the CPU one (the `bidiag` backend from 1×1 to 1024×1024, with
+each branch of the CPU one (the `bidiag` backend from 1×1 to 1100×1060, with
 QR first and through the transpose, with vectors and without; `golub_kahan`
 from 1×1 to its limit, either side of its chaser simdgroup, directly and
 after a QR), rank deficiency repeated over random instances per shape and

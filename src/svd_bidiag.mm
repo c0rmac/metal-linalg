@@ -2,7 +2,7 @@
 // the GPU.
 //
 //   1. Bidiagonalize, A = Q B P^T, entirely on the GPU (shaders/Svd_Bidiag.metal):
-//      blocked sgebrd (upper bidiagonal), per column slabrd's steps as small
+//      blocked sgebrd (upper bidiagonal), per column slabrd's steps as four
 //      kernels, per panel the trailing update as two MPS GEMMs; the panels'
 //      command buffers are queued and the host waits once per matrix. The last
 //      few columns, fewer than a panel, are reduced by LAPACK.
@@ -17,15 +17,15 @@
 // Why: for one large matrix the Jacobi backends lose to the CPU, and LAPACK's
 // sgesdd spends about half its time in step 1, bound by memory bandwidth, and
 // a quarter in step 3, which is matrix products. On an M5 Pro, one square
-// N x N with singular vectors: 1.3x the CPU's speed at N = 2048, 2.1x at
-// 4096. Below N ~ 1500 the launches and the per-panel work cost more than
-// they save; the routing policy's bidiag_min_k is measured for that.
+// N x N with singular vectors: 1.4x the CPU's speed at N = 1024, 1.75x at
+// 2048, 2.3x at 4096. Below N ~ 1000 the launches and the per-panel work cost
+// more than they save; the routing policy's bidiag_min_k is measured for that.
 //
 // A batch is pipelined over two workspace slots, as the eigensolver's tridiag
 // backend does: the CPU solves one matrix's bidiagonal problem while the GPU
 // reduces the next, and solves the next while the GPU back-transforms this
-// one: on an M5 Pro, per matrix of 2048 x 2048 with vectors, 308 ms alone,
-// 202 ms in a batch of 4, 186 ms in a batch of 8. Each matrix is scaled by a
+// one: on an M5 Pro, per matrix of 2048 x 2048 with vectors, 253 ms alone,
+// 168 ms in a batch of 4, 155 ms in a batch of 8. Each matrix is scaled by a
 // power of two first (exact), so magnitudes whose products over- or underflow
 // float32 work.
 
@@ -56,6 +56,7 @@ using metal_linalg::detail::MetalRuntime;
 using metal_linalg::detail::Part;
 using metal_linalg::detail::make_pipeline;
 using metal_linalg::detail::scan;
+using metal_linalg::detail::transpose_scaled;
 
 namespace metal_linalg {
 namespace {
@@ -63,19 +64,21 @@ namespace {
 constexpr uint32_t kPanel     = 32;    // columns per panel of the reduction
 constexpr uint32_t kBackBlock = 128;   // reflectors per pass of the back-transformations
 constexpr uint32_t kTile      = 64;    // must match TILE in Svd_Bidiag.metal
+constexpr uint32_t kGroup     = 256;   // must match GROUP
+constexpr uint32_t kRows      = 32;    // must match ROWS: bd_col's and bd_row's rows per threadgroup
 constexpr uint32_t kQrFirstMinK = 64;  // QR first for l >= 2k from this k
 
 // Must match Svd_Bidiag.metal.
-struct BdParams      { uint32_t mm, nn, lda, ldx, ldy, i, k; };
-struct LarfgParams   { uint32_t len, inc, idx; };
-struct GemvDims      { uint32_t rows, cols, ld, xinc; };
+struct BdParams      { uint32_t mm, nn, lda, ldx, ldy, i, k, ng, tiles, last; };
 struct RestoreParams { uint32_t nb, lda, k; };
+
+uint32_t groups(uint32_t rows) { return (rows + kRows - 1) / kRows; }
+uint32_t blocks(uint32_t n) { return (n + kTile - 1) / kTile; }
 
 using L = __LAPACK_int;
 
 struct Pipelines {
-    id<MTLComputePipelineState> col_update, row_update, larfg, gt_tiles, gt_reduce, gn_tiles, gn_reduce,
-        dots_col, dots_row, y_corr, x_corr, restore;
+    id<MTLComputePipelineState> col, gemv_t, row, gemv_n, restore;
 };
 
 // Buffers for one (m, n), m >= n, reused across a batch; only the latest kept.
@@ -83,6 +86,7 @@ struct Pipelines {
 struct Workspace {
     uint32_t      m = 0, n = 0, lda = 0;
     id<MTLBuffer> A[2], X, Y, P, t, d, e, tq, tp;
+    id<MTLBuffer> npart, scal;                    // a reflector's norm partials; the two reflectors' scales
     id<MTLBuffer> U[2], VT[2];                    // m x n and n x n, column-major
     id<MTLBuffer> V[2], T[2], Z, Z2;              // back-transformation blocks, two slots
 };
@@ -96,13 +100,14 @@ struct Cache {
     const Pipelines& pipelines() {
         if (!have) {
             auto mk = [&](NSString* n) { return make_pipeline(rt.device, rt.library, n, nil); };
-            p.col_update = mk(@"bd_col_update");   p.row_update = mk(@"bd_row_update");
-            p.larfg      = mk(@"bd_larfg");
-            p.gt_tiles   = mk(@"bd_gemv_t_tiles"); p.gt_reduce  = mk(@"bd_gemv_t_reduce");
-            p.gn_tiles   = mk(@"bd_gemv_n_tiles"); p.gn_reduce  = mk(@"bd_gemv_n_reduce");
-            p.dots_col   = mk(@"bd_dots_col");     p.dots_row   = mk(@"bd_dots_row");
-            p.y_corr     = mk(@"bd_y_corr");       p.x_corr     = mk(@"bd_x_corr");
-            p.restore    = mk(@"bd_restore");
+            p.col = mk(@"bd_col");  p.gemv_t = mk(@"bd_gemv_t");
+            p.row = mk(@"bd_row");  p.gemv_n = mk(@"bd_gemv_n");
+            p.restore = mk(@"bd_restore");
+            for (id<MTLComputePipelineState> ps : {p.col, p.gemv_t, p.row, p.gemv_n}) {
+                if (ps.maxTotalThreadsPerThreadgroup < kGroup) {
+                    throw std::runtime_error("[svd] bidiag: a pipeline allows fewer than 256 threads per threadgroup.");
+                }
+            }
             have = true;
         }
         return p;
@@ -125,6 +130,8 @@ struct Cache {
         w.Y  = priv((size_t)n * kPanel);
         w.P  = priv((size_t)((m + kTile - 1) / kTile) * m);
         w.t  = priv(2 * kPanel + 2);
+        w.npart = priv(2 * (groups(m) + 1));
+        w.scal  = priv(2);
         w.d  = shared(n); w.e = shared(n); w.tq = shared(n); w.tp = shared(n);
         if (vectors) {
             w.U[0] = shared((size_t)m * n);
@@ -158,11 +165,6 @@ void gemm(id<MTLDevice> dev, id<MTLCommandBuffer> cb, MPSMatrix* A, bool ta, MPS
     [g encodeToCommandBuffer:cb leftMatrix:A rightMatrix:B resultMatrix:C];
 }
 
-void run_threads(id<MTLComputeCommandEncoder> e, id<MTLComputePipelineState> ps, uint32_t n) {
-    [e dispatchThreads:MTLSizeMake(std::max<uint32_t>(n, 1), 1, 1)
-        threadsPerThreadgroup:MTLSizeMake(std::min<uint32_t>(256, (uint32_t)ps.maxTotalThreadsPerThreadgroup), 1, 1)];
-}
-
 void check(id<MTLCommandBuffer> cb) {
     if (cb.error) throw std::runtime_error(std::string("[svd] bidiag: GPU error: ") + cb.error.localizedDescription.UTF8String);
 }
@@ -173,7 +175,6 @@ void bidiagonalize(Cache& c, Workspace& ws, id<MTLBuffer> Abuf, float* d, float*
     const Pipelines& p = c.pipelines();
     id<MTLDevice> dev = c.rt.device;
     const uint32_t m = ws.m, n = ws.n, lda = ws.lda, nb = kPanel;
-    const uint32_t tg1024 = std::min<uint32_t>(1024, (uint32_t)p.larfg.maxTotalThreadsPerThreadgroup);
     id<MTLCommandBuffer> last = nil;
     uint32_t k = 0;
     for (; k + nb + 1 < n; k += nb) {
@@ -181,75 +182,54 @@ void bidiagonalize(Cache& c, Workspace& ws, id<MTLBuffer> Abuf, float* d, float*
         const uint32_t mm = m - k, nn = n - k;
         const size_t ok = (size_t)k * lda + k;
         id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+        // Column i's steps; with `last`, bd_col only finishes the panel's last column.
+        auto col = [&](uint32_t i, uint32_t last) {
+            const BdParams prm{mm, nn, lda, m, n, i, k, 0, 0, last};
+            [enc setComputePipelineState:p.col];
+            [enc setBuffer:Abuf offset:ok * 4 atIndex:0]; [enc setBuffer:ws.X offset:0 atIndex:1];
+            [enc setBuffer:ws.Y offset:0 atIndex:2];      [enc setBuffer:ws.P offset:0 atIndex:3];
+            [enc setBuffer:ws.t offset:0 atIndex:4];      [enc setBuffer:ws.tp offset:0 atIndex:5];
+            [enc setBuffer:ws.scal offset:0 atIndex:6];   [enc setBuffer:ws.npart offset:0 atIndex:7];
+            [enc setBytes:&prm length:sizeof prm atIndex:8];
+            [enc dispatchThreadgroups:MTLSizeMake(groups(mm - i), 1, 1) threadsPerThreadgroup:MTLSizeMake(kGroup, 1, 1)];
+        };
         for (uint32_t i = 0; i < nb; ++i) {
-            const BdParams prm{mm, nn, lda, m, n, i, k};
-            if (i > 0) {
-                [enc setComputePipelineState:p.col_update];
+            // Finish X(:, i-1) and store u(i-1); update Ak(i:, i); its norm partials.
+            col(i, 0);
+            {   // The column reflector; Ak(i:, i+1:)^T v in tiles; t1, t2.
+                const uint32_t tiles = blocks(mm - i) * blocks(nn - i - 1);
+                const BdParams prm{mm, nn, lda, m, n, i, k, groups(mm - i), tiles, 0};
+                [enc setComputePipelineState:p.gemv_t];
                 [enc setBuffer:Abuf offset:ok * 4 atIndex:0]; [enc setBuffer:ws.X offset:0 atIndex:1];
-                [enc setBuffer:ws.Y offset:0 atIndex:2]; [enc setBytes:&prm length:sizeof prm atIndex:3];
-                run_threads(enc, p.col_update, mm - i);
+                [enc setBuffer:ws.P offset:0 atIndex:2];      [enc setBuffer:ws.t offset:0 atIndex:3];
+                [enc setBuffer:ws.npart offset:0 atIndex:4];  [enc setBuffer:ws.d offset:0 atIndex:5];
+                [enc setBuffer:ws.tq offset:0 atIndex:6];     [enc setBuffer:ws.scal offset:0 atIndex:7];
+                [enc setBytes:&prm length:sizeof prm atIndex:8];
+                [enc dispatchThreadgroups:MTLSizeMake(tiles + 2 * i, 1, 1) threadsPerThreadgroup:MTLSizeMake(kGroup, 1, 1)];
             }
-            {   const LarfgParams lp{mm - i, 1, k + i};
-                [enc setComputePipelineState:p.larfg];
-                [enc setBuffer:Abuf offset:(ok + (size_t)i * lda + i) * 4 atIndex:0];
-                [enc setBuffer:ws.d offset:0 atIndex:1]; [enc setBuffer:ws.tq offset:0 atIndex:2];
-                [enc setBytes:&lp length:sizeof lp atIndex:3];
-                [enc dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(tg1024, 1, 1)]; }
-            {   // Y(i+1:, i) = Ak(i:, i+1:)^T v
-                const GemvDims gd{mm - i, nn - i - 1, lda, 1};
-                [enc setComputePipelineState:p.gt_tiles];
-                [enc setBuffer:Abuf offset:(ok + (size_t)(i + 1) * lda + i) * 4 atIndex:0];
-                [enc setBuffer:Abuf offset:(ok + (size_t)i * lda + i) * 4 atIndex:1];
-                [enc setBuffer:ws.P offset:0 atIndex:2]; [enc setBytes:&gd length:sizeof gd atIndex:3];
-                [enc dispatchThreadgroups:MTLSizeMake((gd.cols + kTile - 1) / kTile, (gd.rows + kTile - 1) / kTile, 1)
-                    threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
-                [enc setComputePipelineState:p.gt_reduce];
-                [enc setBuffer:ws.P offset:0 atIndex:0]; [enc setBuffer:ws.Y offset:((size_t)i * n + i + 1) * 4 atIndex:1];
-                [enc setBytes:&gd length:sizeof gd atIndex:2];
-                run_threads(enc, p.gt_reduce, gd.cols); }
-            if (i > 0) {
-                [enc setComputePipelineState:p.dots_col];
+            {   // Y(i+1:, i); store v; update Ak(i, i+1:); its norm partials.
+                const BdParams prm{mm, nn, lda, m, n, i, k, 0, 0, 0};
+                [enc setComputePipelineState:p.row];
                 [enc setBuffer:Abuf offset:ok * 4 atIndex:0]; [enc setBuffer:ws.X offset:0 atIndex:1];
-                [enc setBuffer:ws.t offset:0 atIndex:2]; [enc setBytes:&prm length:sizeof prm atIndex:3];
-                [enc dispatchThreadgroups:MTLSizeMake(2 * i, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+                [enc setBuffer:ws.Y offset:0 atIndex:2];      [enc setBuffer:ws.P offset:0 atIndex:3];
+                [enc setBuffer:ws.t offset:0 atIndex:4];      [enc setBuffer:ws.tq offset:0 atIndex:5];
+                [enc setBuffer:ws.scal offset:0 atIndex:6];   [enc setBuffer:ws.npart offset:0 atIndex:7];
+                [enc setBytes:&prm length:sizeof prm atIndex:8];
+                [enc dispatchThreadgroups:MTLSizeMake(groups(mm - i), 1, 1) threadsPerThreadgroup:MTLSizeMake(kGroup, 1, 1)];
             }
-            [enc setComputePipelineState:p.y_corr];
-            [enc setBuffer:Abuf offset:ok * 4 atIndex:0]; [enc setBuffer:ws.Y offset:0 atIndex:1];
-            [enc setBuffer:ws.t offset:0 atIndex:2]; [enc setBuffer:ws.tq offset:0 atIndex:3];
-            [enc setBytes:&prm length:sizeof prm atIndex:4];
-            run_threads(enc, p.y_corr, nn - i - 1);
-            [enc setComputePipelineState:p.row_update];
-            [enc setBuffer:Abuf offset:ok * 4 atIndex:0]; [enc setBuffer:ws.X offset:0 atIndex:1];
-            [enc setBuffer:ws.Y offset:0 atIndex:2]; [enc setBytes:&prm length:sizeof prm atIndex:3];
-            run_threads(enc, p.row_update, nn - i - 1);
-            {   const LarfgParams lp{nn - i - 1, lda, k + i};
-                [enc setComputePipelineState:p.larfg];
-                [enc setBuffer:Abuf offset:(ok + (size_t)(i + 1) * lda + i) * 4 atIndex:0];
-                [enc setBuffer:ws.e offset:0 atIndex:1]; [enc setBuffer:ws.tp offset:0 atIndex:2];
-                [enc setBytes:&lp length:sizeof lp atIndex:3];
-                [enc dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(tg1024, 1, 1)]; }
-            {   // X(i+1:, i) = Ak(i+1:, i+1:) u, u = Ak(i, i+1:) (stride lda)
-                const GemvDims gd{mm - i - 1, nn - i - 1, lda, lda};
-                [enc setComputePipelineState:p.gn_tiles];
-                [enc setBuffer:Abuf offset:(ok + (size_t)(i + 1) * lda + i + 1) * 4 atIndex:0];
-                [enc setBuffer:Abuf offset:(ok + (size_t)(i + 1) * lda + i) * 4 atIndex:1];
-                [enc setBuffer:ws.P offset:0 atIndex:2]; [enc setBytes:&gd length:sizeof gd atIndex:3];
-                [enc dispatchThreadgroups:MTLSizeMake((gd.cols + kTile - 1) / kTile, (gd.rows + kTile - 1) / kTile, 1)
-                    threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
-                [enc setComputePipelineState:p.gn_reduce];
-                [enc setBuffer:ws.P offset:0 atIndex:0]; [enc setBuffer:ws.X offset:((size_t)i * m + i + 1) * 4 atIndex:1];
-                [enc setBytes:&gd length:sizeof gd atIndex:2];
-                run_threads(enc, p.gn_reduce, gd.rows); }
-            [enc setComputePipelineState:p.dots_row];
-            [enc setBuffer:Abuf offset:ok * 4 atIndex:0]; [enc setBuffer:ws.Y offset:0 atIndex:1];
-            [enc setBuffer:ws.t offset:0 atIndex:2]; [enc setBytes:&prm length:sizeof prm atIndex:3];
-            [enc dispatchThreadgroups:MTLSizeMake(2 * i + 1, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
-            [enc setComputePipelineState:p.x_corr];
-            [enc setBuffer:Abuf offset:ok * 4 atIndex:0]; [enc setBuffer:ws.X offset:0 atIndex:1];
-            [enc setBuffer:ws.t offset:0 atIndex:2]; [enc setBuffer:ws.tp offset:0 atIndex:3];
-            [enc setBytes:&prm length:sizeof prm atIndex:4];
-            run_threads(enc, p.x_corr, mm - i - 1);
+            {   // The row reflector; Ak(i+1:, i+1:) u in tiles; t3, t4.
+                const uint32_t tiles = blocks(mm - i - 1) * blocks(nn - i - 1);
+                const BdParams prm{mm, nn, lda, m, n, i, k, groups(mm - i), tiles, 0};
+                [enc setComputePipelineState:p.gemv_n];
+                [enc setBuffer:Abuf offset:ok * 4 atIndex:0]; [enc setBuffer:ws.Y offset:0 atIndex:1];
+                [enc setBuffer:ws.P offset:0 atIndex:2];      [enc setBuffer:ws.t offset:0 atIndex:3];
+                [enc setBuffer:ws.npart offset:0 atIndex:4];  [enc setBuffer:ws.e offset:0 atIndex:5];
+                [enc setBuffer:ws.tp offset:0 atIndex:6];     [enc setBuffer:ws.scal offset:0 atIndex:7];
+                [enc setBytes:&prm length:sizeof prm atIndex:8];
+                [enc dispatchThreadgroups:MTLSizeMake(tiles + 2 * i + 1, 1, 1) threadsPerThreadgroup:MTLSizeMake(kGroup, 1, 1)];
+            }
         }
+        col(nb, 1);
         [enc endEncoding];
         // A22 -= V Y2^T + X2 U, as A22^T -= Y2 V^T + U^T X2^T on the row-major
         // views of the column-major buffers.
@@ -394,38 +374,38 @@ void svd_bidiag(const Matrices& a, float* u_out, float* s_out, float* vt_out, ui
     };
     Slot slots[2];
     for (Slot& sl : slots) {
-        sl.t.resize((size_t)l * K);
+        if (qr_first) sl.t.resize((size_t)l * K);
         if (qr_first && vectors) sl.q.resize((size_t)l * K);
         sl.d.resize(K); sl.e.resize(K); sl.tq.resize(K); sl.tp.resize(K);
         if (vectors) { sl.ub.resize((size_t)K * K); sl.vb.resize((size_t)K * K); }
     }
 
-    // Step 1 for matrix b in slot s: scale, transpose if wide, the QR if
-    // tall, then the bidiagonalization into A[s].
+    // Step 1 for matrix b in slot s: scale, the QR if much taller than wide
+    // (of A^T if wide), then the bidiagonalization into A[s] (column-major
+    // rows x K: A, or A^T if wide, which is A's row-major storage).
     auto reduce = [&](uint32_t b, int s) {
         Slot& sl = slots[s];
         int ex = 0;
         if (amax[b] > 0.0f) std::frexp(amax[b], &ex);
         sl.scale = std::ldexp(1.0f, -ex);
         const float* src = a.data + (size_t)b * M * N;
-        float* t = sl.t.data();
-        if (wide) {
-            for (uint32_t i = 0; i < N; ++i)
-                for (uint32_t j = 0; j < M; ++j) t[(size_t)i * M + j] = src[(size_t)j * N + i] * sl.scale;
-        } else {
-            for (size_t i = 0; i < (size_t)M * N; ++i) t[i] = src[i] * sl.scale;
-        }
-        const float* bd = t;   // row-major rows x K
-        std::vector<float> r;
-        if (qr_first) {
-            r.resize((size_t)K * K);
-            std::vector<float> qtmp(vectors ? 0 : (size_t)l * K);
-            core::qr(Matrices{t, 1, l, K}, vectors ? sl.q.data() : qtmp.data(), r.data());
-            bd = r.data();
-        }
         float* A = static_cast<float*>(ws.A[s].contents);
-        for (uint32_t j = 0; j < K; ++j)
-            for (uint32_t i = 0; i < rows; ++i) A[(size_t)j * ws.lda + i] = bd[(size_t)i * K + j];
+        if (qr_first) {
+            float* t = sl.t.data();   // row-major l x K, scaled
+            if (wide) transpose_scaled(src, N, t, K, M, N, sl.scale);
+            else      for (size_t i = 0; i < (size_t)M * N; ++i) t[i] = src[i] * sl.scale;
+            std::vector<float> r((size_t)K * K), qtmp(vectors ? 0 : (size_t)l * K);
+            core::qr(Matrices{t, 1, l, K}, vectors ? sl.q.data() : qtmp.data(), r.data());
+            transpose_scaled(r.data(), K, A, ws.lda, K, K, 1.0f);
+        } else if (wide) {
+            for (uint32_t j = 0; j < K; ++j) {
+                const float* row = src + (size_t)j * N;
+                float* col = A + (size_t)j * ws.lda;
+                for (uint32_t i = 0; i < N; ++i) col[i] = row[i] * sl.scale;
+            }
+        } else {
+            transpose_scaled(src, N, A, ws.lda, M, N, sl.scale);
+        }
         bidiagonalize(cache, ws, ws.A[s], sl.d.data(), sl.e.data(), sl.tq.data(), sl.tp.data());
     };
 

@@ -111,6 +111,7 @@ typedef struct metal_linalg_qr_policy {
     uint32_t gpu_large_min_k;       /* the GPU also from this k (0: never), */
     uint32_t gpu_large_max_batch;   /* for batches up to this (0: any) */
     uint32_t gpu_min_k;             /* the rule above only from this k (0: no lower bound) */
+    uint32_t share_min_batch;       /* a GPU batch shared with the CPU from this batch (0: never) */
 } metal_linalg_qr_policy;
 
 typedef struct metal_linalg_eigh_policy {
@@ -132,6 +133,8 @@ typedef struct metal_linalg_eigh_policy {
     uint32_t tridiag_max_batch;          /* tridiag only for batches up to this; */
     uint32_t values_tridiag_max_batch;   /* 0: any batch */
     uint32_t share_min_batch;        /* a ql batch shared with the CPU from this batch (0: never) */
+    uint32_t gpu_big_batch_max_n;    /* the GPU also for N up to this in a batch of at least */
+    uint32_t gpu_big_batch_min;      /* gpu_big_batch_min (0: never) */
 } metal_linalg_eigh_policy;
 
 typedef struct metal_linalg_svd_policy {
@@ -156,6 +159,8 @@ typedef struct metal_linalg_svd_policy {
     uint32_t values_gpu_min_batch;
     uint32_t values_gpu_max_l;
     uint32_t share_min_batch;       /* a golub_kahan batch shared with the CPU from this batch (0: never) */
+    uint32_t gpu_big_batch_max_k;   /* the GPU also for k up to this in a batch of at least */
+    uint32_t gpu_big_batch_min;     /* gpu_big_batch_min (0: never) */
 } metal_linalg_svd_policy;
 
 metal_linalg_qr_policy   metal_linalg_qr_policy_get(void);

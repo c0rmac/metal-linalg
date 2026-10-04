@@ -1,0 +1,54 @@
+  grid coverage: near-square 29, square 82, tall 44, wide 30
+  185 shapes x 3 backends (and sharing from batch 64) x 2 passes = 1172 timed runs
+    25/1172  elapsed 0.1m  eta 2.9m
+    50/1172  elapsed 0.1m  eta 2.9m
+    75/1172  elapsed 0.2m  eta 2.7m
+    100/1172  elapsed 0.2m  eta 2.5m
+    125/1172  elapsed 0.3m  eta 2.6m
+    150/1172  elapsed 0.5m  eta 3.3m
+    175/1172  elapsed 0.6m  eta 3.2m
+    200/1172  elapsed 0.6m  eta 3.0m
+    225/1172  elapsed 0.7m  eta 2.9m
+    250/1172  elapsed 0.8m  eta 2.8m
+    275/1172  elapsed 0.8m  eta 2.8m
+    300/1172  elapsed 1.0m  eta 2.8m
+    325/1172  elapsed 1.0m  eta 2.7m
+    350/1172  elapsed 1.1m  eta 2.6m
+    375/1172  elapsed 1.2m  eta 2.6m
+    400/1172  elapsed 1.3m  eta 2.5m
+    425/1172  elapsed 1.4m  eta 2.4m
+    450/1172  elapsed 1.6m  eta 2.5m
+    475/1172  elapsed 1.6m  eta 2.4m
+    500/1172  elapsed 1.7m  eta 2.4m
+    525/1172  elapsed 2.0m  eta 2.4m
+    550/1172  elapsed 2.1m  eta 2.4m
+    575/1172  elapsed 2.2m  eta 2.2m
+    600/1172  elapsed 2.3m  eta 2.2m
+    625/1172  elapsed 2.3m  eta 2.0m
+    650/1172  elapsed 2.4m  eta 1.9m
+    675/1172  elapsed 2.5m  eta 1.9m
+    700/1172  elapsed 2.6m  eta 1.7m
+    725/1172  elapsed 2.7m  eta 1.7m
+    750/1172  elapsed 2.8m  eta 1.6m
+    775/1172  elapsed 2.9m  eta 1.5m
+    800/1172  elapsed 3.0m  eta 1.4m
+    825/1172  elapsed 3.2m  eta 1.4m
+    850/1172  elapsed 3.3m  eta 1.3m
+    875/1172  elapsed 3.4m  eta 1.2m
+    900/1172  elapsed 3.5m  eta 1.1m
+    925/1172  elapsed 3.6m  eta 1.0m
+    950/1172  elapsed 3.6m  eta 0.9m
+    975/1172  elapsed 3.7m  eta 0.8m
+    1000/1172  elapsed 3.9m  eta 0.7m
+    1025/1172  elapsed 4.0m  eta 0.6m
+    1050/1172  elapsed 4.0m  eta 0.5m
+    1075/1172  elapsed 4.1m  eta 0.4m
+    1100/1172  elapsed 4.2m  eta 0.3m
+    1125/1172  elapsed 4.2m  eta 0.2m
+    1150/1172  elapsed 4.4m  eta 0.1m
+    1172/1172  elapsed 4.4m  eta 0.0m
+
+  band 480..512   ship M >= 512   (1.0172x geomean regret)
+  CPU routing: GPU iff 0 <= k <= 128, batch*k >= 40960, batch >= 1, or k >= 1024 and batch <= 4; shared with the CPU from batch 64   (1.0013x vs 2.5263x always GPU, worst 1.17x)
+  kTuned entry:  {"Apple M5 Pro", 20, 512, 512, 16,   128, 40960, 1, 0,   1024, 4,   64},
+  -> /Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261004-4d6208/qr/report.md, /Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261004-4d6208/qr/results.json, /Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261004-4d6208/qr/raw.csv

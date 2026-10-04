@@ -268,6 +268,32 @@
  ],
  "share_chosen": 0,
  "stage2": {
+  "big": {
+   "chosen": [
+    64,
+    16
+   ],
+   "current": [
+    0,
+    0
+   ],
+   "without": {
+    "geomean": 1.13913901101,
+    "worst": 3.72232202939,
+    "over10": 39,
+    "total_ratio": 1.12616364114,
+    "estimated_picks": 0,
+    "n": 174
+   },
+   "with": {
+    "geomean": 1.01521502917,
+    "worst": 1.31606588685,
+    "over10": 9,
+    "total_ratio": 1.03808363276,
+    "estimated_picks": 0,
+    "n": 174
+   }
+  },
   "current": {
    "geomean": 1.02289059069,
    "worst": 1.70384793547,
@@ -277,15 +303,15 @@
    "n": 174
   },
   "chosen": {
-   "geomean": 1.02289059069,
-   "worst": 1.70384793547,
-   "over10": 13,
-   "total_ratio": 1.03819645023,
+   "geomean": 1.01521502917,
+   "worst": 1.31606588685,
+   "over10": 9,
+   "total_ratio": 1.03808363276,
    "estimated_picks": 0,
    "n": 174
   },
   "chosen_params": [
-   64,
+   16,
    1024,
    1
   ],
@@ -309,27 +335,27 @@
    "gpu_max_n": [
     {
      "value": 16,
-     "geomean": 1.13913901101,
-     "worst": 3.72232202939,
-     "over10": 39
+     "geomean": 1.01521502917,
+     "worst": 1.31606588685,
+     "over10": 9
     },
     {
      "value": 24,
-     "geomean": 1.08999572644,
-     "worst": 2.46539705829,
-     "over10": 32
+     "geomean": 1.019846032,
+     "worst": 1.70384793547,
+     "over10": 11
     },
     {
      "value": 32,
-     "geomean": 1.0561056343,
-     "worst": 1.90184630009,
-     "over10": 24
+     "geomean": 1.0212353413,
+     "worst": 1.70384793547,
+     "over10": 12
     },
     {
      "value": 48,
-     "geomean": 1.0307684078,
+     "geomean": 1.02289059069,
      "worst": 1.70384793547,
-     "over10": 16
+     "over10": 13
     },
     {
      "value": 64,
@@ -383,107 +409,107 @@
    "min_bn": [
     {
      "value": 0,
-     "geomean": 1.52674082224,
+     "geomean": 1.3898784189,
      "worst": 12.4368932039,
-     "over10": 57
+     "over10": 42
     },
     {
      "value": 64,
-     "geomean": 1.18879220568,
-     "worst": 6.88639885053,
-     "over10": 36
+     "geomean": 1.12604758448,
+     "worst": 6.08070655271,
+     "over10": 25
     },
     {
      "value": 128,
-     "geomean": 1.09980803734,
+     "geomean": 1.07385400045,
      "worst": 4.44646571686,
-     "over10": 27
-    },
-    {
-     "value": 256,
-     "geomean": 1.04406536779,
-     "worst": 2.80653156437,
-     "over10": 18
-    },
-    {
-     "value": 512,
-     "geomean": 1.02064877593,
-     "worst": 1.68124185249,
-     "over10": 12
-    },
-    {
-     "value": 1024,
-     "geomean": 1.02289059069,
-     "worst": 1.70384793547,
-     "over10": 13
-    },
-    {
-     "value": 2048,
-     "geomean": 1.04437966603,
-     "worst": 2.29566536517,
      "over10": 20
     },
     {
+     "value": 256,
+     "geomean": 1.03743991455,
+     "worst": 2.80653156437,
+     "over10": 15
+    },
+    {
+     "value": 512,
+     "geomean": 1.01820979315,
+     "worst": 1.68124185249,
+     "over10": 10
+    },
+    {
+     "value": 1024,
+     "geomean": 1.01521502917,
+     "worst": 1.31606588685,
+     "over10": 9
+    },
+    {
+     "value": 2048,
+     "geomean": 1.02625233172,
+     "worst": 1.92484326007,
+     "over10": 13
+    },
+    {
      "value": 4096,
-     "geomean": 1.08055733906,
+     "geomean": 1.04970202876,
      "worst": 2.84374193925,
-     "over10": 29
+     "over10": 18
     },
     {
      "value": 8192,
-     "geomean": 1.13026456755,
+     "geomean": 1.08428399453,
      "worst": 3.55859821289,
-     "over10": 38
+     "over10": 23
     },
     {
      "value": 16384,
-     "geomean": 1.19537052943,
+     "geomean": 1.13036951454,
      "worst": 4.60200209713,
-     "over10": 47
+     "over10": 28
     },
     {
      "value": null,
-     "geomean": 1.37102160532,
+     "geomean": 1.22187171679,
      "worst": 8.05918729459,
-     "over10": 63
+     "over10": 33
     }
    ],
    "min_batch": [
     {
      "value": 1,
-     "geomean": 1.02289059069,
-     "worst": 1.70384793547,
-     "over10": 13
+     "geomean": 1.01521502917,
+     "worst": 1.31606588685,
+     "over10": 9
     },
     {
      "value": 2,
-     "geomean": 1.02289059069,
-     "worst": 1.70384793547,
-     "over10": 13
+     "geomean": 1.01521502917,
+     "worst": 1.31606588685,
+     "over10": 9
     },
     {
      "value": 4,
-     "geomean": 1.02289059069,
-     "worst": 1.70384793547,
-     "over10": 13
+     "geomean": 1.01521502917,
+     "worst": 1.31606588685,
+     "over10": 9
     },
     {
      "value": 8,
-     "geomean": 1.02289059069,
-     "worst": 1.70384793547,
-     "over10": 13
+     "geomean": 1.01521502917,
+     "worst": 1.31606588685,
+     "over10": 9
     },
     {
      "value": 16,
-     "geomean": 1.02289059069,
-     "worst": 1.70384793547,
-     "over10": 13
+     "geomean": 1.01521502917,
+     "worst": 1.31606588685,
+     "over10": 9
     },
     {
      "value": 32,
-     "geomean": 1.02276553991,
-     "worst": 1.70384793547,
-     "over10": 13
+     "geomean": 1.01521502917,
+     "worst": 1.31606588685,
+     "over10": 9
     }
    ]
   },
@@ -581,7 +607,7 @@
   96,
   1000000000,
   1000000000,
-  64,
+  16,
   1024,
   1
  ],
@@ -595,10 +621,10 @@
    "n": 174
   },
   "chosen": {
-   "geomean": 1.02289059069,
-   "worst": 1.70384793547,
-   "over10": 13,
-   "total_ratio": 1.03819645023,
+   "geomean": 1.01521502917,
+   "worst": 1.31606588685,
+   "over10": 9,
+   "total_ratio": 1.03808363276,
    "estimated_picks": 0,
    "n": 174
   }
@@ -1528,7 +1554,7 @@
     "tg": 0.53425,
     "cpu": 0.692209
    },
-   "rule": "cpu",
+   "rule": "tg",
    "rule_gpu": "tg",
    "gpu_speedup": 1.29566495087
   },
@@ -1543,7 +1569,7 @@
     "block": 5.203875,
     "cpu": 1.04725
    },
-   "rule": "cpu",
+   "rule": "tg",
    "rule_gpu": "tg",
    "gpu_speedup": 1.26728180306
   },
@@ -1557,7 +1583,7 @@
     "block": 7.470813,
     "cpu": 2.70575
    },
-   "rule": "cpu",
+   "rule": "tg",
    "rule_gpu": "tg",
    "gpu_speedup": 1.32550855047
   },
@@ -1738,7 +1764,7 @@
     "tg": 0.753417,
     "cpu": 1.283708
    },
-   "rule": "cpu",
+   "rule": "tg",
    "rule_gpu": "tg",
    "gpu_speedup": 1.70384793547
   },
@@ -3046,8 +3072,9 @@
   }
  ],
  "warnings": [
-  "chosen rule loses more than 25% at N=24 batch=32 (cpu, 1.70x), N=48 batch=16 (cpu, 1.33x), N=12 batch=64 (cpu, 1.32x), N=64 batch=4096 (tg, 1.30x), N=24 batch=16 (cpu, 1.30x), N=64 batch=2048 (tg, 1.27x), N=32 batch=16 (cpu, 1.27x), N=64 batch=1024 (tg, 1.25x)",
+  "chosen rule loses more than 25% at N=12 batch=64 (cpu, 1.32x), N=64 batch=4096 (tg, 1.30x), N=64 batch=2048 (tg, 1.27x), N=64 batch=1024 (tg, 1.25x)",
   "GPU split loses more than 25% against the best GPU backend at N=96 batch=2 (block, 1.49x), N=96 batch=8 (block, 1.48x), N=96 batch=4 (block, 1.43x), N=96 batch=1 (block, 1.37x), N=64 batch=4096 (tg, 1.30x), N=64 batch=2048 (tg, 1.27x), N=64 batch=1024 (tg, 1.25x)",
+  "the fitted policy differs from the one in effect (tuned:Apple M1): update this device's row in kTuned[] in src/eigh.mm",
   "no eigenvalues-alone timings (a run from before they were measured): the row's values_* fields are 0, so eigvalsh follows eigh's boundary",
   "no tridiag timings (a run from before the backend existed): the row's tridiag thresholds are 0, so the backend stays off on this device",
   "no ql timings (a run from before the backend existed): the row's ql window is 0, 0, so the backend stays off on this device"
@@ -3106,8 +3133,12 @@
  },
  "trustworthy": true,
  "machine": null,
- "tuned_row": "{\"Apple M1\", 8,   8, 96, 0, 0,   64, 1024, 1,   0, 0, 0,   0, 0, 0, 0,   0, 0,   0},",
- "env_line": "EIGH_SIMD_MAX_N=8 EIGH_BLOCK_MIN_N=96 EIGH_BLOCK_MIN_N_BATCHED=0 EIGH_BLOCK_MIN_BATCH=0 EIGH_GPU_MAX_N=64 EIGH_GPU_MIN_BATCH_TIMES_N=1024 EIGH_GPU_MIN_BATCH=1 EIGH_TRIDIAG_MIN_N=0 EIGH_VALUES_TRIDIAG_MIN_N=0 EIGH_TRIDIAG_MAX_BATCH=0 EIGH_VALUES_TRIDIAG_MAX_BATCH=0 EIGH_QL_MIN_N=0 EIGH_QL_MAX_N=0 EIGH_SHARE_MIN_BATCH=0",
+ "tuned_row": "{\"Apple M1\", 8,   8, 96, 0, 0,   16, 1024, 1,   0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   64, 16},",
+ "env_line": "EIGH_SIMD_MAX_N=8 EIGH_BLOCK_MIN_N=96 EIGH_BLOCK_MIN_N_BATCHED=0 EIGH_BLOCK_MIN_BATCH=0 EIGH_GPU_MAX_N=16 EIGH_GPU_MIN_BATCH_TIMES_N=1024 EIGH_GPU_MIN_BATCH=1 EIGH_TRIDIAG_MIN_N=0 EIGH_VALUES_TRIDIAG_MIN_N=0 EIGH_TRIDIAG_MAX_BATCH=0 EIGH_VALUES_TRIDIAG_MAX_BATCH=0 EIGH_QL_MIN_N=0 EIGH_QL_MAX_N=0 EIGH_SHARE_MIN_BATCH=0 EIGH_GPU_BIG_BATCH_MAX_N=64 EIGH_GPU_BIG_BATCH_MIN=16",
+ "big_chosen": [
+  64,
+  16
+ ],
  "n_candidates": {
   "split": 80,
   "routing": 792

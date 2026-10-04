@@ -225,14 +225,16 @@ int main(int argc, char** argv) {
                     "\"values_gpu_min_batch_times_n\": %u, \"values_gpu_min_batch\": %u, "
                     "\"tridiag_min_n\": %u, \"values_tridiag_min_n\": %u, "
                     "\"ql_min_n\": %u, \"ql_max_n\": %u, \"ql_limit\": %u, \"cpu_threads\": %u, "
-                    "\"tridiag_max_batch\": %u, \"values_tridiag_max_batch\": %u, \"share_min_batch\": %u}\n",
+                    "\"tridiag_max_batch\": %u, \"values_tridiag_max_batch\": %u, \"share_min_batch\": %u, "
+                    "\"gpu_big_batch_max_n\": %u, \"gpu_big_batch_min\": %u}\n",
                     device_name(), p.gpu_cores, eigh_policy_source(),
                     p.simd_max_n, p.block_min_n, p.block_min_n_batched, p.block_min_batch,
                     p.gpu_max_n, p.gpu_min_batch_times_n, p.gpu_min_batch,
                     p.values_gpu_max_n, p.values_gpu_min_batch_times_n, p.values_gpu_min_batch,
                     p.tridiag_min_n, p.values_tridiag_min_n, p.ql_min_n, p.ql_max_n,
                     metal_linalg::detail::eigh_ql_max_n(), cpu_threads(),
-                    p.tridiag_max_batch, p.values_tridiag_max_batch, p.share_min_batch);
+                    p.tridiag_max_batch, p.values_tridiag_max_batch, p.share_min_batch,
+                    p.gpu_big_batch_max_n, p.gpu_big_batch_min);
         return 0;
     }
     if (argc != 4) {

@@ -165,6 +165,12 @@ int main(void) {
         sp.gk_max_k = 48;
         metal_linalg_svd_policy_set(&sp);
         CHECK(metal_linalg_svd_policy_get().gk_max_k == 48, "gk_max_k not set");
+        sp.gpu_big_batch_max_k = 80;
+        sp.gpu_big_batch_min = 1024;
+        metal_linalg_svd_policy_set(&sp);
+        CHECK(metal_linalg_svd_policy_get().gpu_big_batch_max_k == 80 &&
+              metal_linalg_svd_policy_get().gpu_big_batch_min == 1024, "SVD large-batch clause not set");
+        sp.gpu_big_batch_min = 0;
         CHECK(strcmp(metal_linalg_svd_backend(40, 24, 16), "golub_kahan") == 0, "gk window: 40x24 routes to %s",
               metal_linalg_svd_backend(40, 24, 16));
         CHECK(strcmp(metal_linalg_svd_backend(4000, 16, 16), "qr_golub_kahan") == 0, "gk window: 4000x16 routes to %s",

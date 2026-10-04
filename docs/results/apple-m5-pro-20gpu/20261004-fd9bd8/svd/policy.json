@@ -1,0 +1,98 @@
+{
+ "policy": {
+  "device": "Apple M5 Pro",
+  "gpu_cores": 20,
+  "source": "tuned:Apple M5 Pro",
+  "qr_min_rows": 512,
+  "qr_min_k": 32,
+  "block_min_k": 192,
+  "block_min_k_batched": 64,
+  "block_min_batch": 64,
+  "gpu_max_k": 56,
+  "gpu_min_batch_times_k": 16384,
+  "gpu_min_batch": 1,
+  "gpu_max_l": 256,
+  "bidiag_min_k": 1024,
+  "values_bidiag_min_k": 2048,
+  "bidiag_max_batch": 1,
+  "values_bidiag_max_batch": 1,
+  "gk_min_k": 8,
+  "gk_max_k": 80,
+  "gk_limit": 83,
+  "values_gpu_max_k": 56,
+  "values_gpu_min_batch_times_k": 16384,
+  "values_gpu_min_batch": 1,
+  "values_gpu_max_l": 56,
+  "share_min_batch": 1024,
+  "gpu_big_batch_max_k": 80,
+  "gpu_big_batch_min": 1024
+ },
+ "calibration": {
+  "probe": {
+   "batch": 64,
+   "M": 128,
+   "N": 32,
+   "ms": {
+    "jacobi": 1.0065,
+    "block": 2.215291,
+    "qr": 1.270625,
+    "qrblock": 2.361917,
+    "cpu": 0.555208,
+    "gk": 0.943458
+   }
+  },
+  "scale": {
+   "jacobi": 0.09709318908787155,
+   "block": 0.2430565186326899,
+   "qr": 0.17195131153532692,
+   "qrblock": 0.224060185325724,
+   "cpu": 0.07508590396067027,
+   "bidiag": 1.0,
+   "gk": 0.3935745417895904
+  }
+ },
+ "machine": {
+  "start": {
+   "load_1m": 1.64892578125,
+   "cpus": 18,
+   "power": "mains",
+   "low_power_mode": 0,
+   "busy_processes": 0
+  },
+  "end": {
+   "load_1m": 4.01513671875,
+   "cpus": 18,
+   "power": "mains",
+   "low_power_mode": 0,
+   "busy_processes": 0
+  }
+ },
+ "drift": {
+  "before_ms": {
+   "jacobi": 1.0065,
+   "block": 2.215291,
+   "qr": 1.270625,
+   "qrblock": 2.361917,
+   "cpu": 0.555208,
+   "gk": 0.943458
+  },
+  "after_ms": {
+   "jacobi": 0.952417,
+   "block": 2.231458,
+   "qr": 1.23625,
+   "qrblock": 2.37975,
+   "cpu": 0.5455,
+   "gk": 0.884
+  },
+  "ratio": {
+   "jacobi": 0.9462662692498758,
+   "block": 1.007297912554152,
+   "qr": 0.972946384653222,
+   "qrblock": 1.0075502229756592,
+   "cpu": 0.9825146611720291,
+   "gk": 0.9369786466382182
+  },
+  "worst": 1.0672601809954751,
+  "ok": true
+ }
+}

@@ -33,6 +33,7 @@ struct QRPipelines {
 
 // Recycled GPU allocations, to keep repeat calls off the OS allocator.
 struct Workspace {
+    uint          capacity = 0;   // matrices the buffers hold
     id<MTLBuffer> buf_A_pad;
     id<MTLBuffer> buf_Q_pad;
     id<MTLBuffer> buf_R_out;
@@ -44,7 +45,7 @@ struct Cache {
     MetalRuntime& rt = MetalRuntime::shared(METAL_LINALG_SHADER(QR_Unblocked), "qr_unblocked");
 
     std::map<std::pair<uint, uint>, QRPipelines>     pipelines;   // keyed by (M, N)
-    std::map<std::tuple<uint, uint, uint>, Workspace> workspaces; // keyed by (batch, M, N)
+    std::map<std::pair<uint, uint>, Workspace>        workspaces; // keyed by (M, N): the latest shape's
 
     QRPipelines get_pipelines(uint M, uint N, uint M_pad, uint N_pad) {
         auto key = std::make_pair(M, N);
@@ -70,11 +71,15 @@ struct Cache {
         return pipelines[key] = p;
     }
 
+    // Buffers for at least `batch` matrices of M x N: the latest shape's are
+    // kept and grown, so that varying batches (and the chunks of a batch
+    // shared with the CPU) reuse them, and many shapes do not accumulate.
     Workspace get_workspace(uint batch, uint M, uint N, uint M_pad, uint N_pad, uint K) {
-        auto key = std::make_tuple(batch, M, N);
-        if (auto it = workspaces.find(key); it != workspaces.end()) {
+        auto key = std::make_pair(M, N);
+        if (auto it = workspaces.find(key); it != workspaces.end() && it->second.capacity >= batch) {
             return it->second;
         }
+        workspaces.clear();
 
         const MTLResourceOptions opt = MTLResourceStorageModeShared;
         Workspace w;
@@ -82,6 +87,7 @@ struct Cache {
         w.buf_Q_pad = [rt.device newBufferWithLength:((size_t)batch * M_pad * M_pad * sizeof(float)) options:opt];
         w.buf_R_out = [rt.device newBufferWithLength:((size_t)batch * K * N * sizeof(float))         options:opt];
         w.buf_Q_out = [rt.device newBufferWithLength:((size_t)batch * M * K * sizeof(float))         options:opt];
+        w.capacity  = batch;
 
         return workspaces[key] = w;
     }

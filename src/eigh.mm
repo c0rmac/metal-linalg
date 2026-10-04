@@ -172,6 +172,9 @@ struct TunedEntry {
     unsigned    ql_min_n;
     unsigned    ql_max_n;
     unsigned    share_min_batch;   // 0 = never, which rows measured before 2.11.0 leave
+    // The large-batch clause; 0, 0 = never, which rows from before 2.12.0 leave.
+    unsigned    gpu_big_batch_max_n;
+    unsigned    gpu_big_batch_min;
     unsigned    calibration;   // kCalibration* (calibration.h); rows without it are current
 };
 
@@ -181,7 +184,7 @@ struct TunedEntry {
 // docs/studies/. The last row keeps the array non-empty and matches nothing.
 constexpr TunedEntry kTuned[] = {
 #include "tuned/eigh.inc"
-    {"", 0,   0, 0, 0, 0,   0, 0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0},
+    {"", 0,   0, 0, 0, 0,   0, 0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0, 0,   0},
 };
 
 struct ResolvedPolicy {
@@ -227,6 +230,8 @@ ResolvedPolicy resolve_policy() {
             r.policy.ql_min_n                     = e.ql_min_n;
             r.policy.ql_max_n                     = e.ql_max_n;
             r.policy.share_min_batch              = e.share_min_batch;
+            r.policy.gpu_big_batch_max_n          = e.gpu_big_batch_max_n;
+            r.policy.gpu_big_batch_min            = e.gpu_big_batch_min;
             r.source = detail::tuned_source_prefix(e.calibration) + r.device;
             detail::calibration_notice("eigh", e.calibration);
             break;
@@ -265,6 +270,8 @@ ResolvedPolicy resolve_policy() {
     over("EIGH_QL_MIN_N",                     r.policy.ql_min_n);
     over("EIGH_QL_MAX_N",                     r.policy.ql_max_n);
     over("EIGH_SHARE_MIN_BATCH",              r.policy.share_min_batch);
+    over("EIGH_GPU_BIG_BATCH_MAX_N",          r.policy.gpu_big_batch_max_n);
+    over("EIGH_GPU_BIG_BATCH_MIN",            r.policy.gpu_big_batch_min);
     if (!env.empty()) r.source = "env:" + env;
     return r;
 }
@@ -615,6 +622,11 @@ bool gpu_rule(unsigned n, unsigned batch, unsigned max_n, unsigned min_bn, unsig
 
 bool eigh_uses_gpu(unsigned n, unsigned batch) {
     const EighPolicy& p = policy_state().policy;
+    // gpu_max_n = 0 is never the GPU, the clause included.
+    if (!std::getenv("EIGH_DEVICE") && p.gpu_big_batch_min && p.gpu_max_n && n > p.gpu_max_n &&
+        n <= p.gpu_big_batch_max_n && batch >= p.gpu_big_batch_min) {
+        return true;   // the large-batch clause, above the product rule's cap
+    }
     return gpu_rule(n, batch, p.gpu_max_n, p.gpu_min_batch_times_n, p.gpu_min_batch);
 }
 

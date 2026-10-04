@@ -24,7 +24,7 @@ The optimum is flat from **352 to 384** rows (every threshold within 0.3% of the
 Paste into `kTuned[]` in `src/qr.mm`:
 
 ```c
-    {"Apple M1", 8, 384, 384, 16,   kQrNoLimit, 0, 1, 0,   0, 0},
+    {"Apple M1", 8, 384, 384, 16,   kQrNoLimit, 0, 1, 0,   0, 0,   0},
 ```
 
 ### Cost of missing the band

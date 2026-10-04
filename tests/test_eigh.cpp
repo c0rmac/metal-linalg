@@ -521,7 +521,9 @@ int main() {
     // tridiag: the reduction runs on the GPU in panels of 32 columns while more
     // than 33 remain, and LAPACK takes the rest, so the sizes straddle every
     // boundary of that: no GPU panel at all (N <= 33), exactly one, a partial
-    // last one, many. The back-transformation goes 128 reflectors at a time.
+    // last one, many; and above 1024, more threadgroups' norm and dot partials
+    // per column than a simdgroup has lanes. The back-transformation goes 128
+    // reflectors at a time.
     // -------------------------------------------------------------------------
     std::printf("\n[ tridiag backend ]\n");
     {
@@ -530,7 +532,7 @@ int main() {
             eval({r.eigenvalues, r.eigenvectors, r.info});
             return r;
         };
-        for (int n : {1, 2, 3, 31, 33, 34, 35, 64, 65, 66, 97, 129, 130, 257, 300, 513, 1024}) {
+        for (int n : {1, 2, 3, 31, 33, 34, 35, 64, 65, 66, 97, 129, 130, 257, 300, 513, 1024, 1100}) {
             array A = random_symmetric(1, n, 1000 + n);
             check("tridiag " + std::to_string(n) + "x" + std::to_string(n), A, tri(A, true, true));
         }
@@ -963,6 +965,24 @@ int main() {
                 eval({w, w_ref});
                 const float d = max_abs(subtract(w, w_ref)) / std::max(frobenius(A), 1.0f);
                 expect("eigvalsh routed to ql (16 x 30x30) == LAPACK", d < kEigTol, "differ by " + std::to_string(d));
+            }
+            // The large-batch clause: above gpu_max_n, up to its own cap, from its batch.
+            {
+                EighPolicy c = q;
+                c.gpu_max_n = 48;  c.gpu_min_batch_times_n = 8192;  c.gpu_min_batch = 1;
+                c.gpu_big_batch_max_n = 64;  c.gpu_big_batch_min = 1024;
+                set_eigh_policy(c);
+                expect("big-batch clause (49..64 from 1024): N=64 b1024 gpu, b1023 cpu, N=65 b4096 cpu, N=32 b256 "
+                       "by the product rule",
+                       eigh_uses_gpu(64, 1024) && !eigh_uses_gpu(64, 1023) && !eigh_uses_gpu(65, 4096) &&
+                       eigh_uses_gpu(32, 256) && !eigh_uses_gpu(16, 256));
+                c.values_gpu_max_n = 48;  c.values_gpu_min_batch_times_n = 16384;  c.values_gpu_min_batch = 1;
+                set_eigh_policy(c);
+                expect("a rule of its own for eigvalsh has no clause (N=64 b4096 cpu)", !eigvalsh_uses_gpu(64, 4096));
+                c.values_gpu_min_batch = 0;
+                set_eigh_policy(c);
+                expect("eigvalsh as for eigenvectors takes the clause (N=64 b1024 gpu)", eigvalsh_uses_gpu(64, 1024));
+                set_eigh_policy(q);
             }
             // Sharing a batch with the CPU, from share_min_batch on, ql only.
             q.share_min_batch = 256;

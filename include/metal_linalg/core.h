@@ -82,6 +82,14 @@ namespace metal_linalg {
         unsigned gpu_large_min_k     = 0;
         unsigned gpu_large_max_batch = 0;
 
+        // From this batch on, a batch that goes to the GPU is shared with the
+        // CPU path: the GPU takes chunks from the front, the CPU from the
+        // back, at once, as EighPolicy::share_min_batch describes. Where the
+        // two are close (on an M5 Pro 1024 of 128 x 128: 23.7 ms on the GPU,
+        // 24.4 on the CPU) the batch takes about half the time. 0 means never,
+        // which is what a device without measurements has.
+        unsigned share_min_batch = 0;
+
         // Device properties this was resolved against. Informational: they are
         // detected, not assumed, and are what a retune should be keyed on.
         unsigned gpu_cores = 0;           // 0 if it could not be detected
@@ -103,6 +111,10 @@ namespace metal_linalg {
     // What a QR call does with a problem under the policy in effect.
     // QR_DEVICE=gpu or QR_DEVICE=cpu forces the first part of the decision.
     QrBackend qr_backend(unsigned m, unsigned n, unsigned batch);
+
+    // True iff a QR call of this shape shares its batch between the GPU and
+    // the CPU (share_min_batch).
+    bool qr_shares_batch(unsigned m, unsigned n, unsigned batch);
 
     // The GPU kernel the policy picks, regardless of the CPU routing. This is
     // what a forced-GPU call runs.
@@ -190,6 +202,17 @@ namespace metal_linalg {
         // the CPU wins whatever N is.
         unsigned tridiag_max_batch        = 0;
         unsigned values_tridiag_max_batch = 0;
+
+        // Large batches: the GPU also for N above gpu_max_n, up to
+        // gpu_big_batch_max_n, in a batch of at least gpu_big_batch_min (with
+        // eigenvectors, and for eigenvalues alone while values_gpu_min_batch
+        // is 0). With a batch shared between the GPU and the CPU
+        // (share_min_batch) the GPU wins large batches of matrices that the
+        // product rule cannot take without also taking their small batches,
+        // which the CPU wins. 0 means never, which is what a device without
+        // measurements has; so does gpu_max_n = 0, which is never the GPU.
+        unsigned gpu_big_batch_max_n = 0;
+        unsigned gpu_big_batch_min   = 0;
 
         // --- the ql backend, for N in [ql_min_n, ql_max_n] ---
         // On the GPU, inside this window, the ql backend (Householder
@@ -351,6 +374,12 @@ namespace metal_linalg {
         // them: 0.72x on the GPU), while large batches of 32 x 32 are the
         // GPU's (1.65x); a cap on k alone cannot say both.
         unsigned gpu_max_l             = 0xFFFFFFFFu;
+        // Large batches: the GPU also for k above gpu_max_k, up to
+        // gpu_big_batch_max_k (and l <= gpu_max_l), in a batch of at least
+        // gpu_big_batch_min, as EighPolicy::gpu_big_batch_max_n describes.
+        // 0 means never; so does gpu_max_k = 0, which is never the GPU.
+        unsigned gpu_big_batch_max_k   = 0;
+        unsigned gpu_big_batch_min     = 0;
 
         // --- GPU or CPU for singular values alone (svdvals) ---
         // The same rule with constants of its own. Both sides skip the
@@ -575,6 +604,11 @@ namespace metal_linalg {
             // spread over cpu_threads() threads. A matrix holding a NaN or an
             // infinity gives NaN for its Q and R.
             void qr_cpu(const Matrices& a, float* q, float* r);
+
+            // The GPU kernel qr_gpu_backend() picks and qr_cpu on one batch at
+            // once, sharing it as QrPolicy::share_min_batch describes,
+            // whatever the policy.
+            void qr_shared(const Matrices& a, float* q, float* r);
 
             // One team (threadgroup or simdgroup) per matrix. Honours opt.mode
             // only between simd and threadgroup; `block` falls back to

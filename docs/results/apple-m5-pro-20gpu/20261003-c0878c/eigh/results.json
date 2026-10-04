@@ -1253,6 +1253,32 @@
  },
  "share_chosen": 1024,
  "stage2": {
+  "big": {
+   "chosen": [
+    64,
+    1024
+   ],
+   "current": [
+    0,
+    0
+   ],
+   "without": {
+    "geomean": 1.01530682855,
+    "worst": 1.59954169856,
+    "over10": 9,
+    "total_ratio": 1.00360521293,
+    "estimated_picks": 0,
+    "n": 205
+   },
+   "with": {
+    "geomean": 1.00891857367,
+    "worst": 1.59954169856,
+    "over10": 6,
+    "total_ratio": 1.00035318932,
+    "estimated_picks": 0,
+    "n": 205
+   }
+  },
   "current": {
    "geomean": 1.01530682855,
    "worst": 1.59954169856,
@@ -1262,10 +1288,10 @@
    "n": 205
   },
   "chosen": {
-   "geomean": 1.01530682855,
+   "geomean": 1.00891857367,
    "worst": 1.59954169856,
-   "over10": 9,
-   "total_ratio": 1.00360521293,
+   "over10": 6,
+   "total_ratio": 1.00035318932,
    "estimated_picks": 0,
    "n": 205
   },
@@ -1294,27 +1320,27 @@
    "gpu_max_n": [
     {
      "value": 16,
-     "geomean": 1.04459701176,
-     "worst": 2.18046865304,
-     "over10": 20
+     "geomean": 1.01117167377,
+     "worst": 1.53595974323,
+     "over10": 8
     },
     {
      "value": 24,
-     "geomean": 1.0339189305,
-     "worst": 2.0697677305,
-     "over10": 16
+     "geomean": 1.01005673661,
+     "worst": 1.53595974323,
+     "over10": 7
     },
     {
      "value": 32,
-     "geomean": 1.0235417239,
-     "worst": 1.9220669542,
-     "over10": 12
+     "geomean": 1.00898812736,
+     "worst": 1.53595974323,
+     "over10": 6
     },
     {
      "value": 48,
-     "geomean": 1.01530682855,
+     "geomean": 1.00891857367,
      "worst": 1.59954169856,
-     "over10": 9
+     "over10": 6
     },
     {
      "value": 64,
@@ -1404,107 +1430,107 @@
    "min_bn": [
     {
      "value": 0,
-     "geomean": 1.86037181352,
+     "geomean": 1.8486664561,
      "worst": 115.8,
-     "over10": 84
+     "over10": 81
     },
     {
      "value": 64,
-     "geomean": 1.34998992509,
+     "geomean": 1.34149586252,
      "worst": 11.9042243345,
-     "over10": 63
+     "over10": 60
     },
     {
      "value": 128,
-     "geomean": 1.238377352,
+     "geomean": 1.23058554962,
      "worst": 9.91799544419,
-     "over10": 55
+     "over10": 52
     },
     {
      "value": 256,
-     "geomean": 1.15822466986,
+     "geomean": 1.15093718376,
      "worst": 5.81883503018,
-     "over10": 47
+     "over10": 44
     },
     {
      "value": 512,
-     "geomean": 1.10357242895,
+     "geomean": 1.09662881175,
      "worst": 4.27884009547,
-     "over10": 39
+     "over10": 36
     },
     {
      "value": 1024,
-     "geomean": 1.0709664223,
+     "geomean": 1.06422796031,
      "worst": 3.20715350224,
-     "over10": 31
+     "over10": 28
     },
     {
      "value": 2048,
-     "geomean": 1.04277562007,
+     "geomean": 1.03621453306,
      "worst": 2.2006764557,
-     "over10": 23
+     "over10": 20
     },
     {
      "value": 4096,
-     "geomean": 1.02290563306,
+     "geomean": 1.01646956692,
      "worst": 1.59954169856,
-     "over10": 15
+     "over10": 12
     },
     {
      "value": 8192,
-     "geomean": 1.01530682855,
+     "geomean": 1.00891857367,
      "worst": 1.59954169856,
-     "over10": 9
+     "over10": 6
     },
     {
      "value": 16384,
-     "geomean": 1.01465172785,
-     "worst": 1.58109528833,
-     "over10": 10
+     "geomean": 1.00826759483,
+     "worst": 1.41783362933,
+     "over10": 7
     },
     {
      "value": null,
-     "geomean": 1.05383098555,
+     "geomean": 1.04720033879,
      "worst": 2.18046865304,
-     "over10": 26
+     "over10": 23
     }
    ],
    "min_batch": [
     {
      "value": 1,
-     "geomean": 1.01530682855,
+     "geomean": 1.00891857367,
      "worst": 1.59954169856,
-     "over10": 9
+     "over10": 6
     },
     {
      "value": 2,
-     "geomean": 1.01530682855,
+     "geomean": 1.00891857367,
      "worst": 1.59954169856,
-     "over10": 9
+     "over10": 6
     },
     {
      "value": 4,
-     "geomean": 1.01530682855,
+     "geomean": 1.00891857367,
      "worst": 1.59954169856,
-     "over10": 9
+     "over10": 6
     },
     {
      "value": 8,
-     "geomean": 1.01530682855,
+     "geomean": 1.00891857367,
      "worst": 1.59954169856,
-     "over10": 9
+     "over10": 6
     },
     {
      "value": 16,
-     "geomean": 1.01530682855,
+     "geomean": 1.00891857367,
      "worst": 1.59954169856,
-     "over10": 9
+     "over10": 6
     },
     {
      "value": 32,
-     "geomean": 1.01530682855,
+     "geomean": 1.00891857367,
      "worst": 1.59954169856,
-     "over10": 9
+     "over10": 6
     }
    ]
   },
@@ -1518,18 +1544,18 @@
      1
     ],
     "train": {
-     "geomean": 1.01349749304,
-     "worst": 1.58109528833,
-     "over10": 5,
-     "total_ratio": 1.00398222988,
+     "geomean": 1.00539681652,
+     "worst": 1.26259466222,
+     "over10": 3,
+     "total_ratio": 1.00027913276,
      "estimated_picks": 0,
      "n": 112
     },
     "test": {
-     "geomean": 1.01749010114,
+     "geomean": 1.01317620759,
      "worst": 1.59954169856,
-     "over10": 4,
-     "total_ratio": 1.00243611518,
+     "over10": 3,
+     "total_ratio": 1.00058283246,
      "estimated_picks": 0,
      "n": 93
     }
@@ -1577,9 +1603,9 @@
      "n": 93
     },
     "bootstrap": {
-     "p_better": 0.461,
-     "gain_median": -0.000482558750824,
-     "gain_p05": -0.0091617573279
+     "p_better": 0.2535,
+     "gain_median": -0.00439992457722,
+     "gain_p05": -0.016255291637
     },
     "justified": false
    }
@@ -1597,10 +1623,10 @@
   },
   "current_is_eigh_boundary": false,
   "eigh_boundary": {
-   "geomean": 1.02569307855,
+   "geomean": 1.02089686197,
    "worst": 1.84558380867,
-   "over10": 17,
-   "total_ratio": 1.00383065023,
+   "over10": 14,
+   "total_ratio": 1.00079661667,
    "estimated_picks": 0,
    "n": 205
   },
@@ -4395,10 +4421,10 @@
    "n": 205
   },
   "chosen": {
-   "geomean": 1.01530682855,
+   "geomean": 1.00891857367,
    "worst": 1.59954169856,
-   "over10": 9,
-   "total_ratio": 1.00360521293,
+   "over10": 6,
+   "total_ratio": 1.00035318932,
    "estimated_picks": 0,
    "n": 205
   }
@@ -7001,7 +7027,7 @@
     "ql_share": 6.807958,
     "cpu": 10.10698
    },
-   "rule": "cpu",
+   "rule": "ql_share",
    "rule_gpu": "ql_share",
    "gpu_speedup": 0.870756539625
   },
@@ -7199,7 +7225,7 @@
     "ql_share": 12.364167,
     "cpu": 19.210833
    },
-   "rule": "cpu",
+   "rule": "ql_share",
    "rule_gpu": "ql_share",
    "gpu_speedup": 0.834594424247
   },
@@ -7384,7 +7410,7 @@
     "ql_share": 23.394041,
     "cpu": 36.988208
    },
-   "rule": "cpu",
+   "rule": "ql_share",
    "rule_gpu": "ql_share",
    "gpu_speedup": 0.828134379653
   },
@@ -7429,10 +7455,10 @@
   }
  ],
  "warnings": [
-  "chosen rule loses more than 25% at N=48 batch=256 (ql, 1.60x), N=64 batch=4096 (cpu, 1.58x), N=64 batch=2048 (cpu, 1.55x), N=12 batch=1024 (ql_share, 1.54x), N=64 batch=1024 (cpu, 1.48x), N=48 batch=512 (ql, 1.26x), N=16 batch=1024 (ql_share, 1.26x)",
+  "chosen rule loses more than 25% at N=48 batch=256 (ql, 1.60x), N=12 batch=1024 (ql_share, 1.54x), N=48 batch=512 (ql, 1.26x), N=16 batch=1024 (ql_share, 1.26x)",
   "GPU split loses more than 25% against the best GPU backend at N=32 batch=1 (ql, 1.63x), N=32 batch=4 (ql, 1.49x), N=32 batch=2 (ql, 1.46x), N=32 batch=16 (ql, 1.45x), N=24 batch=16 (ql, 1.40x), N=32 batch=8 (ql, 1.39x), N=96 batch=16 (block, 1.38x), N=24 batch=4 (ql, 1.35x) ...",
   "the fitted policy differs from the one in effect (tuned-stale:Apple M5 Pro): update this device's row in kTuned[] in src/eigh.mm",
-  "eigenvalues alone: the chosen boundary loses more than 25% at N=64 batch=1024 (cpu, 1.43x), N=64 batch=4096 (cpu, 1.39x), N=32 batch=512 (ql, 1.38x), N=4 batch=4096 (tg, 1.35x), N=64 batch=2048 (cpu, 1.32x), N=8 batch=2048 (tg, 1.26x)"
+  "eigenvalues alone: the chosen boundary loses more than 25% at N=32 batch=512 (ql, 1.38x), N=4 batch=4096 (tg, 1.35x), N=8 batch=2048 (tg, 1.26x)"
  ],
  "noise": {
   "overall": {
@@ -7503,8 +7529,12 @@
    "busy_processes": 0
   }
  },
- "tuned_row": "{\"Apple M5 Pro\", 20,   0, 96, 0, 0,   48, 8192, 1,   48, 16384, 1,   1536, 3072, 2, 1,   12, 64,   1024},",
- "env_line": "EIGH_SIMD_MAX_N=0 EIGH_BLOCK_MIN_N=96 EIGH_BLOCK_MIN_N_BATCHED=0 EIGH_BLOCK_MIN_BATCH=0 EIGH_GPU_MAX_N=48 EIGH_GPU_MIN_BATCH_TIMES_N=8192 EIGH_GPU_MIN_BATCH=1 EIGH_TRIDIAG_MIN_N=1536 EIGH_VALUES_TRIDIAG_MIN_N=3072 EIGH_TRIDIAG_MAX_BATCH=2 EIGH_VALUES_TRIDIAG_MAX_BATCH=1 EIGH_QL_MIN_N=12 EIGH_QL_MAX_N=64 EIGH_SHARE_MIN_BATCH=1024 EIGH_VALUES_GPU_MAX_N=48 EIGH_VALUES_GPU_MIN_BATCH_TIMES_N=16384 EIGH_VALUES_GPU_MIN_BATCH=1",
+ "tuned_row": "{\"Apple M5 Pro\", 20,   0, 96, 0, 0,   48, 8192, 1,   48, 16384, 1,   1536, 3072, 2, 1,   12, 64,   1024,   64, 1024},",
+ "env_line": "EIGH_SIMD_MAX_N=0 EIGH_BLOCK_MIN_N=96 EIGH_BLOCK_MIN_N_BATCHED=0 EIGH_BLOCK_MIN_BATCH=0 EIGH_GPU_MAX_N=48 EIGH_GPU_MIN_BATCH_TIMES_N=8192 EIGH_GPU_MIN_BATCH=1 EIGH_TRIDIAG_MIN_N=1536 EIGH_VALUES_TRIDIAG_MIN_N=3072 EIGH_TRIDIAG_MAX_BATCH=2 EIGH_VALUES_TRIDIAG_MAX_BATCH=1 EIGH_QL_MIN_N=12 EIGH_QL_MAX_N=64 EIGH_SHARE_MIN_BATCH=1024 EIGH_GPU_BIG_BATCH_MAX_N=64 EIGH_GPU_BIG_BATCH_MIN=1024 EIGH_VALUES_GPU_MAX_N=48 EIGH_VALUES_GPU_MIN_BATCH_TIMES_N=16384 EIGH_VALUES_GPU_MIN_BATCH=1",
+ "big_chosen": [
+  64,
+  1024
+ ],
  "n_candidates": {
   "split": 128,
   "routing": 1188
