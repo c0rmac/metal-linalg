@@ -12,7 +12,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "metal-linalg-torch"
-version = "2.12.0"
+version = "2.12.1"
 description = "QR, symmetric eigendecomposition and SVD for batches of matrices on Apple Silicon GPUs, for PyTorch"
 readme = "README.md"
 keywords = ["linear-algebra", "qr", "eigh", "eigendecomposition", "svd", "singular-value-decomposition", "pytorch", "torch", "mps", "apple-silicon", "metal", "gpu", "batched"]
