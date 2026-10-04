@@ -23,11 +23,6 @@ cheap enough to fold into whichever of these next needs an eigh re-measure.
 
 **Not code, but open:**
 
-- Releasing 2.13.0 (GitHub release, PyPI wheels, Homebrew formula) once the
-  branch is merged.
-- PyPI's trusted publisher for `metal-linalg-torch`, if it is still missing:
-  only the account owner can add it on pypi.org, then the Release workflow is
-  rerun with `pypi_version`.
 - Measurements from other Macs: the M1's eigh and QR runs are stale and it has
   no SVD row; every other chip runs the untuned default. Each needs someone
   with that Mac to run `python3 tuning/run.py` on an idle machine.
