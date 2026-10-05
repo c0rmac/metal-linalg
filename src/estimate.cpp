@@ -39,24 +39,46 @@ constexpr double   kMarginSameGeneration  = 1.25;
 constexpr double   kMarginOtherGeneration = 1.5;
 constexpr double   kMarginCoreCounts      = 2.0;
 
+// A chip name as the table compares it: lower case, single spaces, without
+// the " GPU" iPadOS appends to MTLDevice.name (tuning/chip_specs.py's
+// canonical()), so that a spelling the table did not foresee still matches.
+std::string canonical(const std::string& name) {
+    std::vector<std::string> words;
+    std::string w;
+    for (char c : name + " ") {
+        if (std::isspace((unsigned char)c)) {
+            if (!w.empty()) words.push_back(w);
+            w.clear();
+        } else {
+            w += (char)std::tolower((unsigned char)c);
+        }
+    }
+    if (words.size() > 2 && words.back() == "gpu") words.pop_back();
+    std::string out;
+    for (const std::string& x : words) out += (out.empty() ? "" : " ") + x;
+    return out;
+}
+
 // The listed entry for that Mac: the exact CPU core count if listed, else the
 // first with that chip and GPU core count.
 const ChipSpec* find_spec(const std::string& name, unsigned gpu_cores, unsigned cpu_cores) {
     const ChipSpec* first = nullptr;
+    const std::string key = canonical(name);
     for (const ChipSpec& c : kChips) {
-        if (c.name[0] == '\0' || name != c.name || c.gpu_cores != gpu_cores) continue;
+        if (c.name[0] == '\0' || key != canonical(c.name) || c.gpu_cores != gpu_cores) continue;
         if (c.cpu_cores == cpu_cores) return &c;
         if (!first) first = &c;
     }
     return first;
 }
 
-// "Apple M5 Pro" -> "M5", "Apple A18 Pro" -> "A18"; "" for anything else.
-std::string generation(const std::string& name) {
-    if (name.rfind("Apple ", 0) != 0) return "";
+// "Apple M5 Pro" -> "m5", "Apple A18 Pro" -> "a18"; "" for anything else.
+std::string generation(const std::string& raw) {
+    const std::string name = canonical(raw);
+    if (name.rfind("apple ", 0) != 0) return "";
     const size_t end = name.find(' ', 6);
     const std::string g = name.substr(6, end == std::string::npos ? std::string::npos : end - 6);
-    if (g.size() < 2 || (g[0] != 'M' && g[0] != 'A')) return "";
+    if (g.size() < 2 || (g[0] != 'm' && g[0] != 'a')) return "";
     for (size_t i = 1; i < g.size(); ++i)
         if (!std::isdigit((unsigned char)g[i])) return "";
     return g;
@@ -109,7 +131,7 @@ EstimateTarget estimate_target(bool* forced) {
         t.device = parts[0];
         // Cores not given: those listed for the chip, else this Mac's.
         for (const ChipSpec& c : kChips) {
-            if (c.name[0] != '\0' && t.device == c.name) {
+            if (c.name[0] != '\0' && canonical(t.device) == canonical(c.name)) {
                 t.gpu_cores = c.gpu_cores;
                 t.cpu_cores = c.cpu_cores;
                 break;

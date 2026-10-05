@@ -39,7 +39,8 @@ static void expect(const std::vector<Anchor>& anchors, const EstimateTarget& t, 
     const std::string what = t.device + " " + std::to_string(t.gpu_cores) + "/" + std::to_string(t.cpu_cores);
     check(ok && e.anchor == anchor && e.small_x100 == small && e.large_x100 == large &&
               e.source.find(std::string(basis) + ")") != std::string::npos &&
-              starts(e.source, "estimated:" + t.device + " (from " + anchors[anchor].device),
+              starts(e.source, "estimated:" + t.device + " (from ") &&
+              e.source.find("(from " + anchors[anchor].device) != std::string::npos,
           what + ": x" + std::to_string(small) + "/x" + std::to_string(large) + " from " + anchors[anchor].device,
           ok ? e.source : "no estimate");
 }
@@ -69,6 +70,8 @@ int main() {
     expect(m5, {"Apple M4 Pro", 20, 14}, 0, 150, 150, "benchmarks");
     expect(m5, {"Apple A18 Pro", 5, 6}, 0, 150, 175, "benchmarks");     // bandwidth: the large backends slower
     expect(m5, {"Apple M3", 10, 8}, 0, 150, 175, "benchmarks");
+    expect(m5, {"Apple M3 GPU", 10, 8}, 0, 150, 175, "benchmarks");     // iPadOS's form of the name
+    expect(m5, {"  apple   m3 ", 10, 8}, 0, 150, 175, "benchmarks");     // case and spacing
     expect(m5, {"Apple M9", 30, 14}, 0, 115, 115, "core counts");       // not listed: core counts
     expect(m5, {"Apple M9", 0, 14}, 0, 400, 400, "unknown cores");      // GPU cores unknown: the most cautious
 

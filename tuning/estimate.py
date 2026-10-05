@@ -85,9 +85,9 @@ BACKENDS = {
 # ---------------------------------------------------------------------------
 
 def generation(name):
-    """'Apple M5 Pro' -> 'M5', 'Apple A18 Pro' -> 'A18'; None for anything else."""
-    parts = name.split()
-    if len(parts) >= 2 and parts[0] == "Apple" and parts[1][:1] in ("M", "A") and parts[1][1:].isdigit():
+    """'Apple M5 Pro' -> 'm5', 'Apple A18 Pro' -> 'a18'; None for anything else."""
+    parts = chip_specs.canonical(name).split()
+    if len(parts) >= 2 and parts[0] == "apple" and parts[1][:1] in ("m", "a") and parts[1][1:].isdigit():
         return parts[1]
     return None
 

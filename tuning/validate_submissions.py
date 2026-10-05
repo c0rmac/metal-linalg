@@ -9,7 +9,10 @@ the folder is docs/results/<device>/<id>/ with <device> matching the chip and
 GPU core count in submission.json and <id> of the form 20260930-27b6c2; only
 the files tuning/run.py writes are present, none of them oversized; every
 decomposition it reports has a raw.csv with the expected columns and sane
-values; and it is a complete, full run rather than a smoke test.
+values; and it is a complete, full run rather than a smoke test. And, as a
+warning that fails nothing: whether tuning/chip_specs.py lists the Mac, under
+the name Metal reported for it, so that Macs like it are estimated from its
+benchmarks rather than its core counts.
 """
 
 import csv
@@ -21,6 +24,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
+import chip_specs          # noqa: E402
 import submissions as sub   # noqa: E402
 
 RESULTS = os.path.join(ROOT, "docs", "results")
@@ -71,7 +75,7 @@ def check_raw(full, op, errors):
             errors.append(f"{path}: no measurements")
 
 
-def check_submission(device, sid, errors):
+def check_submission(device, sid, errors, warnings):
     d = os.path.join(RESULTS, device, sid)
     rel = os.path.relpath(d, ROOT)
     try:
@@ -86,6 +90,10 @@ def check_submission(device, sid, errors):
         errors.append(f"{rel}: submission.json lacks the device name and GPU core count")
     elif sub.device_slug(dev["name"], dev["gpu_cores"]) != device:
         errors.append(f"{rel}: device folder should be {sub.device_slug(dev['name'], dev['gpu_cores'])}")
+    elif not chip_specs.find(dev["name"], dev["gpu_cores"], (info.get("cpu") or {}).get("cores")):
+        warnings.append(f"{rel}: {dev['name']!r} with {dev['gpu_cores']} GPU cores is not in "
+                        f"tuning/chip_specs.py under that name; add its Geekbench scores and bandwidth "
+                        f"so that Macs like it are estimated from them")
     if sid != "legacy" and not (info.get("machine") or {}).get("model_identifier"):
         errors.append(f"{rel}: submission.json lacks the machine model; run it again with the "
                       f"current tuning/run.py")
@@ -125,7 +133,7 @@ def check_submission(device, sid, errors):
 
 
 def main():
-    errors, count = [], 0
+    errors, warnings, count = [], [], 0
     for device in sorted(os.listdir(RESULTS)):
         ddir = os.path.join(RESULTS, device)
         if not os.path.isdir(ddir):
@@ -137,8 +145,10 @@ def main():
             if not os.path.isdir(os.path.join(ddir, sid)):
                 errors.append(f"docs/results/{device}/{sid}: unexpected file")
                 continue
-            check_submission(device, sid, errors)
+            check_submission(device, sid, errors, warnings)
             count += 1
+    for w in warnings:
+        print(f"warning: {w}")
     for e in errors:
         print(f"error: {e}")
     print(f"{count} submissions checked, {len(errors)} problems")

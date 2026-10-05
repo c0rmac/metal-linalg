@@ -17,7 +17,17 @@ from the same chip with more GPU cores, scaled by core count, or for the M5
 Ultra from the GPU chart (https://browser.geekbench.com/metal-benchmarks) and
 the Ultra-to-Max multi-core ratio of M1 to M3 (1.6).
 
-A Mac missing here is estimated from its core counts instead (estimate.mm).
+The names are what Metal reports on macOS (MTLDevice.name), which the
+library looks the table up by. Geekbench records the same string as a Metal
+result's "Device Name": "Apple M4 Max" and "Apple M1 Ultra" in macOS results,
+"Apple M5 Pro" and "Apple M1" in this repository's own runs, and every name
+below in the Metal chart, which groups results by it (and so lists iPads apart,
+as "Apple M1 GPU": iPadOS appends " GPU"). The lookup ignores case, extra
+spaces and that suffix (same_chip); a name it still does not find falls back to
+the core-count estimate, which the policy source then names, and
+tuning/validate_submissions.py warns when a submitted Mac is not listed.
+
+A Mac missing here is estimated from its core counts instead (estimate.cpp).
 Add new Macs as they appear in the chart; tuning/generate_tables.py writes
 this table into src/tuned/chips.inc.
 """
@@ -68,9 +78,19 @@ SPECS = [
 ]
 
 
+def canonical(name):
+    """A chip name as the table compares it: lower case, single spaces, without
+    the " GPU" iPadOS appends (src/estimate.cpp's canonical() is the same)."""
+    words = name.lower().split()
+    if len(words) > 2 and words[-1] == "gpu":
+        words = words[:-1]
+    return " ".join(words)
+
+
 def find(name, gpu_cores, cpu_cores=None):
     """The entry for that Mac: the exact CPU core count if one is given and
     listed, else the first with that chip and GPU core count; None if none."""
-    rows = [s for s in SPECS if s[0] == name and s[1] == gpu_cores]
+    key = canonical(name)
+    rows = [s for s in SPECS if canonical(s[0]) == key and s[1] == gpu_cores]
     exact = [s for s in rows if s[2] == cpu_cores]
     return (exact or rows or [None])[0]
