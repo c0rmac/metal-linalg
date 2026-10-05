@@ -100,38 +100,65 @@ as well when their input requires grad, since the gradient needs them.
 
 ## Performance
 
-Against `torch.linalg` on an M5 Pro with PyTorch 2.14 and metal-linalg 2.13
-(best of five; the same tensors on MPS for torch's MPS path and for this
-package, copies included):
+Against `torch.linalg` on an M5 Pro with PyTorch 2.13 (conda-forge's, its CPU
+LAPACK from Accelerate) and metal-linalg 2.14 (best of five,
+[`benchmarks/benchmark_torch.py`](https://github.com/c0rmac/metal-linalg/blob/main/benchmarks/benchmark_torch.py);
+the same tensors on MPS for torch's MPS path and for this package, which uses
+them in place, see [MPS tensors](#mps-tensors)):
 
 | | torch, CPU | torch, MPS | metal-linalg-torch |
 |---|---|---|---|
-| QR, 1024 × 128×128 | 160 ms | 1.04 s | 19 ms |
-| SVD, 256 × 128×64 | 65 ms | 12 ms | 6.9 ms |
-| SVD, 4096 × 32×32 | 219 ms | 27 ms | 8.0 ms |
-| eigh, 4096 × 16×16 | 35 ms | 5.3 ms | 2.0 ms |
-| eigh, one 2048×2048 | 238 ms | 241 ms | 91 ms |
-| SVD, one 4096×4096 | 3.58 s | 3.62 s | 1.61 s |
-| eigvalsh, one 4096×4096 | 4.39 s | 4.37 s | 165 ms |
-| svdvals, one 4096×4096 | 1.96 s | 3.57 s | 233 ms |
+| QR, 1024 × 128×128 | 201 ms | 34 ms | 15 ms |
+| SVD, 256 × 128×64 | 68 ms | 71 ms | 5.5 ms |
+| SVD, 4096 × 32×32 | 224 ms | 227 ms | 7.4 ms |
+| eigh, 4096 × 16×16 | 32 ms | 34 ms | 2.1 ms |
+| eigh, one 2048×2048 | 248 ms | 261 ms | 89 ms |
+| SVD, one 4096×4096 | 3.56 s | 3.58 s | 1.59 s |
+| eigvalsh, one 4096×4096 | 1.78 s | 1.79 s | 157 ms |
+| svdvals, one 4096×4096 | 2.00 s | 2.00 s | 229 ms |
 
-It is ahead on every row: 1.7-3.4x over PyTorch's MPS kernels for batches of
+It is ahead on every row. Of these calls PyTorch 2.13 runs only QR on the GPU
+for MPS tensors, and this is 2.3x faster there; its SVD takes as long on MPS
+as on the CPU, and eigh, eigvalsh and svdvals have no MPS kernels and go
+through its CPU fallback. Against those, 12-31x for the other batches of
 small matrices (the SVD of 256 matrices of 128×64 runs on the library's CPU
-path, which spreads a batch over every core, so routing an MPS tensor to the
-CPU can still be the fast choice; the two batches of 4096, and the QR batch,
-run on the GPU and the CPU at once), and 2-55x in QR and in large matrices,
-where torch falls back to the CPU: for the eigenvalues or singular values
-alone of a large matrix 8-27x, by a two-stage reduction. Which
+path, which spreads a batch over every core; the two batches of 4096, and the
+QR batch, run on the GPU and the CPU at once), 2.2-2.9x for one large matrix
+with its vectors, and 9-11x for its eigenvalues or singular values alone, by
+a two-stage reduction. Which
 backend a shape gets on your Mac: `mlt.svd_backend(m, n, batch)` and its
 siblings.
 
 ## MPS tensors
 
-The library runs its own Metal kernels on host memory. An MPS tensor is
-copied to the CPU (which waits for the work PyTorch has queued on the GPU)
-and the results are copied back: two copies at memory bandwidth around a
-decomposition. A CPU tensor is used in place, and its results stay on the
-CPU, though the work still runs on the GPU where that is faster.
+An MPS tensor is used in place. On Apple Silicon PyTorch keeps MPS tensors in
+Metal buffers in shared storage, which the CPU can address too: the library
+reads its input there and writes its results into new MPS tensors, with no
+copy to the CPU and back. Its kernels run on a Metal command queue of its
+own, so a call first waits for the work PyTorch has queued on the GPU
+(`torch.mps.synchronize()`), which may still be writing the input, and
+returns when its results are written. `mlt.mps_in_place()` says whether this
+applies; where it does not (a torch that keeps MPS tensors in private
+storage), or with `METAL_LINALG_TORCH_MPS_COPY=1`, an MPS tensor is copied to
+the CPU and the results back.
+
+Up to 2.13 every MPS call made those copies. They cost most where the
+decomposition costs least: 9-12x for a handful of matrices, 1.2-1.8x for
+large batches, a few percent for one large matrix (M5 Pro, PyTorch 2.13, best
+of five with the two alternating, `benchmarks/benchmark_torch.py --mps-ab`):
+
+| | copied (2.13) | in place |
+|---|---|---|
+| eigh, 16 × 16×16 | 1.2 ms | 0.10 ms |
+| QR, 16 × 48×16 | 0.69 ms | 0.08 ms |
+| SVD, 1024 × 32×32 | 4.4 ms | 3.0 ms |
+| QR, 16384 × 64×32 | 25 ms | 14 ms |
+| eigh, 16384 × 32×32 | 22 ms | 17 ms |
+| eigh, one 2048×2048 | 93 ms | 90 ms |
+| svdvals, one 4096×4096 | 231 ms | 227 ms |
+
+A CPU tensor is used in place too, and its results stay on the CPU, though
+the work still runs on the GPU where that is faster.
 
 Calls are thread-safe; they are serialised, and release the GIL.
 

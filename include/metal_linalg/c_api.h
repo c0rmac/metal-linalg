@@ -58,6 +58,22 @@ metal_linalg_status metal_linalg_svd(const float* a, uint32_t batch, uint32_t ro
 #define METAL_LINALG_INFO_RANK_DEFICIENT(info) (((info) >> 18) & 1u)
 
 /* ---------------------------------------------------------------------------
+ * Metal buffers
+ * ------------------------------------------------------------------------- */
+
+/* The CPU address of `bytes` bytes at byte `offset` in a Metal buffer, so
+ * that the functions above can read their input from, and write their outputs
+ * to, memory a GPU framework owns (a PyTorch MPS tensor's, say) without a
+ * copy. `buffer` is an Objective-C object as a pointer, an id<MTLBuffer> for
+ * an address, or NULL; a pointer that is not a heap block (a buffer's
+ * contents, say) also gives NULL. NULL is returned unless the object is a
+ * buffer in shared storage (which the CPU can read and write) holding the
+ * whole range. The caller makes sure no GPU work on the buffer
+ * is pending first (torch.mps.synchronize(), say): the decompositions read
+ * and write it from their own command queue and from the CPU. */
+void* metal_linalg_buffer_contents(const void* buffer, uint64_t offset, uint64_t bytes);
+
+/* ---------------------------------------------------------------------------
  * Device and routing
  * ------------------------------------------------------------------------- */
 

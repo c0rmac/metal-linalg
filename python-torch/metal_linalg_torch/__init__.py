@@ -27,7 +27,7 @@ from ._build import version as __version__
 
 __all__ = [
     "qr", "eigh", "eigvalsh", "svd", "svdvals",
-    "device_name", "gpu_core_count", "cpu_threads", "set_cpu_threads",
+    "device_name", "gpu_core_count", "cpu_threads", "set_cpu_threads", "mps_in_place",
     "qr_backend", "eigh_backend", "eigvalsh_backend", "svd_backend", "svdvals_backend",
     "qr_policy", "eigh_policy", "svd_policy",
     "set_qr_policy", "set_eigh_policy", "set_svd_policy",
@@ -184,6 +184,14 @@ def set_cpu_threads(n):
     on threads of its own; 0 restores every core. ``METAL_LINALG_CPU_THREADS``
     sets it from the environment."""
     _lib.set_cpu_threads(int(n))
+
+
+def mps_in_place():
+    """Whether MPS tensors are used in place: the library reads their memory
+    and writes its results into MPS tensors, with no copy to the CPU and back.
+    True where torch keeps MPS tensors in shared memory, as on Apple Silicon;
+    ``METAL_LINALG_TORCH_MPS_COPY=1`` forces the copies."""
+    return _ops.mps_in_place()
 
 
 def qr_backend(m, n, batch=1):

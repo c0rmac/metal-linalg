@@ -31,6 +31,7 @@ let coreSources = [
     "src/svd_bidiag.mm",
     "src/svd_golub_kahan.mm",
     "src/c_api.cpp",
+    "src/c_api_metal.mm",
     "swift/CMetalLinalg/embedded_shaders.c",
 ]
 
@@ -72,10 +73,13 @@ var targets: [Target] = [
 
 if withMLX {
     products.append(.library(name: "MetalLinalgMLX", targets: ["MetalLinalgMLX"]))
-    dependencies.append(.package(url: "https://github.com/ml-explore/mlx-swift", from: "0.25.0"))
+    // 0.32.2: MLXArray(rawPointer:_:dtype:finalizer:), through which the
+    // results become MLXArrays without a copy, releases what its finalizer
+    // captures (it leaked it before).
+    dependencies.append(.package(url: "https://github.com/ml-explore/mlx-swift", from: "0.32.2"))
     targets.append(.target(
         name: "MetalLinalgMLX",
-        dependencies: ["MetalLinalg", .product(name: "MLX", package: "mlx-swift")],
+        dependencies: ["MetalLinalg", "CMetalLinalg", .product(name: "MLX", package: "mlx-swift")],
         path: "swift/Sources/MetalLinalgMLX"
     ))
     targets.append(.testTarget(

@@ -55,6 +55,64 @@ final class MetalLinalgMLXTests: XCTestCase {
         }
     }
 
+    // The input is read where MLX keeps it: a strided view or another dtype
+    // must arrive as the matrix it stands for, and the input must be left as
+    // it was.
+    func testViewsAndDtypes() throws {
+        try onCPU {
+            let base = MLXRandom.normal([6, 12, 20])
+            let before = base * 1
+            for a in [base.transposed(0, 2, 1),                // strided
+                      base[0..., 2..., 0 ..< 8],                // an offset and strides
+                      base.asType(.float16)] {                 // converted
+                let (q, r) = try qrAccelerated(a)
+                XCTAssertEqual(q.dtype, .float32)
+                XCTAssertLessThan(maxAbs(matmul(q, r) - a.asType(.float32)), 1e-3)
+            }
+            XCTAssertEqual(maxAbs(base - before), 0)
+        }
+    }
+
+    // Results are memory the output arrays own: they outlive the input and
+    // one another, and many calls run without the memory going astray.
+    func testOutputsOwnTheirMemory() throws {
+        try onCPU {
+            var results: [(MLXArray, MLXArray, MLXArray)] = []
+            for _ in 0 ..< 200 {
+                let a = MLXRandom.normal([3, 7, 5])
+                let (q, r) = try qrAccelerated(a)
+                results.append((a * 1, q, r))
+            }
+            for (a, q, r) in results.suffix(20) {
+                XCTAssertLessThan(maxAbs(matmul(q, r) - a), 1e-4)
+            }
+        }
+    }
+
+    func testEmpty() throws {
+        try onCPU {
+            let (q, r) = try qrAccelerated(MLXArray.zeros([0, 5, 3]))
+            XCTAssertEqual(q.shape, [0, 5, 3])
+            XCTAssertEqual(r.shape, [0, 3, 3])
+            let (w, v) = try eighAccelerated(MLXArray.zeros([2, 0, 0]))
+            XCTAssertEqual(w.shape, [2, 0])
+            XCTAssertEqual(v.shape, [2, 0, 0])
+            XCTAssertEqual(try svdvalsAccelerated(MLXArray.zeros([4, 6, 0])).shape, [4, 0])
+        }
+    }
+
+    // A batch large enough for the GPU on a measured Mac.
+    func testLargeBatch() throws {
+        try onCPU {
+            let x = MLXRandom.normal([4096, 32, 32])
+            let s = x + x.transposed(0, 2, 1)
+            let (w, v) = try eighAccelerated(s)
+            XCTAssertLessThan(maxAbs(matmul(s, v) - v * w.expandedDimensions(axis: 1)), 1e-3)
+            let (u, sv, vt) = try svdAccelerated(x)
+            XCTAssertLessThan(maxAbs(matmul(u * sv.expandedDimensions(axis: 1), vt) - x), 1e-3)
+        }
+    }
+
     func testErrors() throws {
         try onCPU {
             XCTAssertThrowsError(try qrAccelerated(MLXArray([1, 2, 3] as [Float])))   // 1-D
