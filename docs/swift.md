@@ -54,10 +54,14 @@ let (w, v) = try eighAccelerated(matmul(a.transposed(0, 2, 1), a))
 ```
 
 Same names, overloaded on `MLXArray`; batch dimensions are arbitrary and the
-results are float32. Each call copies the input out of MLX and the results
-back in, which costs little next to the decompositions. mlx-swift exposes MLX
-to other packages through Swift and MLX's C API only, which is why this layer
-goes through the library's C API rather than its MLX C++ one.
+results are float32. The input is read where MLX keeps it, once evaluated (a
+strided view, a transpose say, is made contiguous first), and the results are
+written into memory each output `MLXArray` then owns, which MLX wraps as a
+Metal buffer without a copy where Metal accepts it (and copies once where it
+does not). Up to 2.13 each call copied the input out of MLX and the results
+back in. `MetalLinalgMLX` needs mlx-swift 0.32.2 or later. mlx-swift exposes
+MLX to other packages through Swift and MLX's C API only, which is why this
+layer goes through the library's C API rather than its MLX C++ one.
 
 ## Routing
 

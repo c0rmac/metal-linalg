@@ -6,9 +6,10 @@
   keeps MPS tensors in Metal buffers in shared storage, and the library now
   reads its input there and writes its results into new MPS tensors, instead
   of copying the input to the CPU and the results back. A call waits for the
-  work queued on MPS first (`torch.mps.synchronize()`). The copies cost
-  about 0.5 ms a call even for a handful of matrices; an MPS tensor now costs
-  what a CPU tensor does. `mlt.mps_in_place()` says whether it applies (a
+  work queued on MPS first (`torch.mps.synchronize()`). On an M5 Pro the
+  copies made a handful of matrices 9-12x slower (eigh of 16 matrices of
+  16×16: 1.2 ms, now 0.10 ms), large batches 1.2-1.8x, and one large matrix a
+  few percent. `mlt.mps_in_place()` says whether it applies (a
   torch that keeps MPS tensors in private storage still copies), and
   `METAL_LINALG_TORCH_MPS_COPY=1` forces the copies.
 - The C API gains `metal_linalg_buffer_contents(buffer, offset, bytes)`: the
@@ -18,6 +19,19 @@
   decompositions without a copy ([docs/c-api.md](docs/c-api.md)).
   `tests/test_c_api_metal.mm` runs each decomposition on buffers
   sub-allocated from a shared heap, as PyTorch's allocator lays them out.
+- **`MLXArray` in place** in the Swift package's `MetalLinalgMLX`: the input
+  is read where MLX keeps it once evaluated (`asData(access:
+  .noCopyIfContiguous)`), and the results are written into page-aligned
+  memory that each output `MLXArray` then owns
+  (`MLXArray(rawPointer:_:dtype:finalizer:)`), instead of copying the input
+  into a `[Float]` and the results back. `MetalLinalgMLX` now needs mlx-swift
+  0.32.2 or later (was 0.25.0): that initializer leaked what its finalizer
+  captures before 0.32.2. The C++ MLX API and the Python MLX package already
+  used MLX arrays in place.
+- `benchmarks/benchmark_torch.py`: the README's comparison with
+  `torch.linalg`, and (`--mps-ab`) MPS tensors in place against copied. The
+  comparison in both READMEs re-measured with it (PyTorch 2.13 from
+  conda-forge, its CPU LAPACK from Accelerate; it was PyTorch 2.14's).
 
 ## 2.13.0 (2026-10-04)
 

@@ -21,7 +21,7 @@ public struct MetalLinalgError: Error, CustomStringConvertible, Sendable {
     }
 }
 
-func check(_ status: metal_linalg_status) throws {
+package func check(_ status: metal_linalg_status) throws {
     if status == METAL_LINALG_OK { return }
     let kind: MetalLinalgError.Kind
     switch status {
@@ -32,7 +32,7 @@ func check(_ status: metal_linalg_status) throws {
     throw MetalLinalgError(kind: kind, message: String(cString: metal_linalg_last_error()))
 }
 
-func dimension(_ value: Int, _ name: String, _ who: String) throws -> UInt32 {
+package func dimension(_ value: Int, _ name: String, _ who: String) throws -> UInt32 {
     guard let v = UInt32(exactly: value) else {
         throw MetalLinalgError(kind: .invalidArgument, message: "[\(who)] \(name) = \(value) is out of range.")
     }
