@@ -1,6 +1,7 @@
 #import <Metal/Metal.h>
 
 #include "calibration.h"
+#include "estimate.h"
 #include "metal_runtime.h"
 #include <metal_linalg/core.h>
 #include <metal_linalg/device.h>
@@ -26,6 +27,9 @@ constexpr unsigned kUnblockedThreadgroupBytes = 5120;
 // throughput. The C term is weak -- 8 to 80 cores moves it about 6%, inside the
 // flat optimum -- but R rises across GPU generations and pushes the other way,
 // so the net is not predictable without measuring. Hence a table, not a formula.
+// A GPU with no entry gets an estimated row (kEstimated below): a measured
+// GPU's timings refitted for one weaker against its CPU by what published
+// benchmarks say, with a margin (estimate.h).
 struct TunedEntry {
     const char* device_name;   // exact MTLDevice.name
     unsigned    gpu_cores;     // guards against same-name parts with different core counts
@@ -55,6 +59,38 @@ constexpr TunedEntry kTuned[] = {
 #include "tuned/qr.inc"
     {"", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 };
+
+// The estimated rows, for every slowdown pair on tuning/estimate.py's ladder
+// and every measured GPU that serves as an anchor. Generated with kTuned.
+struct EstimatedEntry {
+    unsigned   small_x100;        // batched kernels' slowdown x 100
+    unsigned   large_x100;        // the streaming kernel's slowdown x 100
+    unsigned   anchor_cpu_cores;
+    TunedEntry row;
+};
+constexpr EstimatedEntry kEstimated[] = {
+#include "tuned/qr_estimated.inc"
+    {0, 0, 0, {"", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
+};
+
+void apply(const TunedEntry& e, QrPolicy& p) {
+    p.m_crossover_small_batch = e.m_small_batch;
+    p.m_crossover_large_batch = e.m_large_batch;
+    p.batch_threshold         = e.batch_threshold;
+    if (e.gpu_min_batch == 0) {          // measured before the CPU path
+        p.gpu_max_k             = kQrNoLimit;
+        p.gpu_min_batch_times_k = 0;
+        p.gpu_min_batch         = 1;
+    } else {
+        p.gpu_max_k             = e.gpu_max_k;
+        p.gpu_min_batch_times_k = e.gpu_min_batch_times_k;
+        p.gpu_min_batch         = e.gpu_min_batch;
+        p.gpu_min_k             = e.gpu_min_k;
+    }
+    p.gpu_large_min_k     = e.gpu_large_min_k;
+    p.gpu_large_max_batch = e.gpu_large_max_batch;
+    p.share_min_batch     = e.share_min_batch;
+}
 
 struct ResolvedPolicy {
     QrPolicy    policy;
@@ -90,33 +126,31 @@ ResolvedPolicy resolve() {
             r.policy.concurrent_matrices = per_core * r.policy.gpu_cores;
         }
 
+        bool forced = false;   // METAL_LINALG_ESTIMATE_AS: estimate even a measured GPU
+        const detail::EstimateTarget target = detail::estimate_target(&forced);
         for (const auto& e : kTuned) {
+            if (forced) break;
             if (e.device_name[0] != '\0' && name == e.device_name &&
                 r.policy.gpu_cores == e.gpu_cores) {
-                r.policy.m_crossover_small_batch = e.m_small_batch;
-                r.policy.m_crossover_large_batch = e.m_large_batch;
-                r.policy.batch_threshold         = e.batch_threshold;
-                if (e.gpu_min_batch == 0) {          // measured before the CPU path
-                    r.policy.gpu_max_k             = kQrNoLimit;
-                    r.policy.gpu_min_batch_times_k = 0;
-                    r.policy.gpu_min_batch         = 1;
-                } else {
-                    r.policy.gpu_max_k             = e.gpu_max_k;
-                    r.policy.gpu_min_batch_times_k = e.gpu_min_batch_times_k;
-                    r.policy.gpu_min_batch         = e.gpu_min_batch;
-                    r.policy.gpu_min_k             = e.gpu_min_k;
-                }
-                r.policy.gpu_large_min_k     = e.gpu_large_min_k;
-                r.policy.gpu_large_max_batch = e.gpu_large_max_batch;
-                r.policy.share_min_batch     = e.share_min_batch;
+                apply(e, r.policy);
                 r.source = detail::tuned_source_prefix(e.calibration) + name;
                 detail::calibration_notice("QR", e.calibration);
                 break;
             }
         }
+        if (r.source.empty() && !target.device.empty()) {
+            // No measurements for this GPU: a measured one's, refitted for
+            // this one's GPU against its CPU (estimate.h).
+            std::string source;
+            if (const EstimatedEntry* e = detail::estimated_row(kEstimated, target, source)) {
+                apply(e->row, r.policy);
+                r.source = source;
+                detail::calibration_notice("QR", kUncalibrated);
+            }
+        }
         if (r.source.empty()) {
-            // No measurements for this GPU, so bias to the safe side rather than
-            // reusing a tuned entry verbatim.
+            // Nothing to estimate from (no measured anchor), so bias to the
+            // safe side rather than reusing a tuned entry verbatim.
             //
             // The penalty is asymmetric: on the measured M1, 320 costs 0.6% and
             // 256 costs 2.3%, while 448 costs 0.6% and 512 costs 2.6% -- and the

@@ -258,7 +258,8 @@ def set_svd_policy(policy=None, **fields):
 
 
 def qr_policy_source():
-    """Where the QR policy came from: ``"tuned:<device>"``,
+    """Where the QR policy came from: ``"tuned:<device>"``, ``"estimated:<device>
+    (from <measured device>, ...)"`` on a Mac nobody has measured,
     ``"default:untuned-device (<device>)"``, ``"env:..."`` or ``"user"``."""
     return _lib.text(_lib.qr_policy_source())
 
@@ -291,12 +292,13 @@ def calibration_status():
     ``{"qr": state, "eigh": state, "svd": state}``, each ``"current"``,
     ``"stale"`` (measured on older kernels, still used), ``"incomplete"``
     (from before a newer backend, which stays off) or ``"uncalibrated"``
-    (the untuned default). See https://c0rmac.github.io/metal-linalg/docs/measurements."""
+    (not measured: settings estimated from a measured Mac). See https://c0rmac.github.io/metal-linalg/docs/measurements."""
     out = {}
     for key, source in (("qr", qr_policy_source), ("eigh", eigh_policy_source),
                         ("svd", svd_policy_source)):
         s = source()
-        out[key] = ("uncalibrated" if s.startswith("default:") else "stale" if s.startswith("tuned-stale:")
+        out[key] = ("uncalibrated" if s.startswith(("default:", "estimated:"))
+                    else "stale" if s.startswith("tuned-stale:")
                     else "incomplete" if s.startswith("tuned-incomplete:") else "current")
     return out
 

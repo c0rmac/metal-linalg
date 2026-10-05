@@ -112,7 +112,7 @@ class Routing(unittest.TestCase):
         self.assertGreaterEqual(ml.gpu_core_count(), 0)
         for source in (ml.qr_policy_source(), ml.eigh_policy_source(), ml.svd_policy_source()):
             self.assertTrue(source.split(":")[0] in ("tuned", "tuned-stale", "tuned-incomplete",
-                                                     "default", "env", "user"), source)
+                                                     "estimated", "default", "env", "user"), source)
 
     def test_calibration_status(self):
         st = ml.calibration_status()
@@ -178,7 +178,8 @@ class Routing(unittest.TestCase):
                 with mx.stream(mx.cpu):
                     self.assertLess(mx.max(mx.abs((u * s[None, :]) @ vt - a)).item(), 1e-4)
                 # the golub_kahan window, on the GPU
-                ml.set_svd_policy(gpu_max_k=64, gpu_min_batch_times_k=0, gpu_min_batch=1, gk_min_k=8, gk_max_k=48)
+                ml.set_svd_policy(gpu_max_k=64, gpu_min_batch_times_k=0, gpu_min_batch=1, gpu_max_l=2**32 - 1,
+                                  gk_min_k=8, gk_max_k=48)
                 self.assertEqual(ml.svd_backend(40, 24, 16), "golub_kahan")
                 self.assertEqual(ml.svd_backend(60, 49, 16), "jacobi")   # k = 49, past the window
                 a = mx.random.normal((16, 40, 24))

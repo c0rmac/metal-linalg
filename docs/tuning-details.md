@@ -98,8 +98,8 @@ measures run-to-run noise rather than the spread between machines.
 **The epoch** (`EPOCH` in `tuning/submissions.py`, recorded in every
 `submission.json`). When a kernel or its launch parameters change enough that
 earlier timings no longer describe the library, bump it: older runs then stop
-counting, and a device falls back to the untuned default until it is measured
-again.
+counting, and a device is estimated from the measured ones (and its own
+measurements stop being an anchor for the others) until it is measured again.
 
 **Diagnosing disagreement.** The combined `summary.md` for each device ends
 with a table of its runs: each run's machine, memory, macOS and conditions,

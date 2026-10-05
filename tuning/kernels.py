@@ -19,15 +19,21 @@ decomposition, by hand:
                   tuning/check_kernel_epochs.py warns on a pull request that
                   changes them without bumping the epoch; a person decides.
 
+  MIN_EPOCHS      the oldest kernel version whose runs are used at all: those
+                  from before 2.9.0, when the CPU path ran on one core, are
+                  not, since every GPU-or-CPU boundary moved with it. A Mac
+                  with only such runs is estimated instead (tuning/estimate.py).
+
 How the combiner uses them (tuning/combine.py): runs at the current epoch are
-used if there are any; otherwise the newest older runs, marked stale, rather
-than nothing (an untuned default is usually worse than slightly old
-measurements). The library reports the state at run time
+used if there are any; otherwise the newest older runs from MIN_EPOCHS on,
+marked stale, rather than an estimate. The library reports the state at run time
 (policy source "tuned-stale:" / "tuned-incomplete:", and a one-line notice),
 and docs/measurements.md shows it for every chip.
 """
 
 KERNEL_EPOCHS = {"qr": 3, "eigh": 5, "svd": 7}
+# The versions from which the CPU path spreads a batch over every core (2.9.0).
+MIN_EPOCHS = {"qr": 2, "eigh": 2, "svd": 3}
 
 # (decomposition, epoch, library version, date, why)
 HISTORY = [

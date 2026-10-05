@@ -3,6 +3,7 @@
 #endif
 #include <metal_linalg/core.h>
 #include "calibration.h"
+#include "estimate.h"
 #include "metal_runtime.h"
 #include "shaders.h"
 
@@ -140,7 +141,10 @@ struct Cache {
 // core counts). Extrapolating between entries is not safe: the GPU/CPU
 // boundary depends on the ratio of GPU throughput to CPU throughput, both of
 // which change across generations, and the block crossover on core count and
-// launch latency. Hence a table, not a formula.
+// launch latency. Hence a table, not a formula. A device with no entry gets
+// an estimated row (kEstimated below): a measured device's timings refitted
+// for a GPU weaker against its CPU by what published benchmarks say, with a
+// margin (estimate.h).
 //
 // To add a device: run `python3 tuning/tune_eigh.py build/sweep_eigh` on it and
 // paste the row it prints.
@@ -188,6 +192,42 @@ constexpr TunedEntry kTuned[] = {
     {"", 0,   0, 0, 0, 0,   0, 0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0, 0,   0,   0},
 };
 
+// The estimated rows, for every slowdown pair on tuning/estimate.py's ladder
+// and every measured device that serves as an anchor. Generated with kTuned.
+struct EstimatedEntry {
+    unsigned   small_x100;        // batched kernels' slowdown x 100
+    unsigned   large_x100;        // large-matrix backends' slowdown x 100
+    unsigned   anchor_cpu_cores;
+    TunedEntry row;
+};
+constexpr EstimatedEntry kEstimated[] = {
+#include "tuned/eigh_estimated.inc"
+    {0, 0, 0, {"", 0,   0, 0, 0, 0,   0, 0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0, 0,   0,   0}},
+};
+
+void apply(const TunedEntry& e, EighPolicy& p) {
+    p.simd_max_n                   = e.simd_max_n;
+    p.block_min_n                  = e.block_min_n;
+    p.block_min_n_batched          = e.block_min_n_batched;
+    p.block_min_batch              = e.block_min_batch;
+    p.gpu_max_n                    = e.gpu_max_n;
+    p.gpu_min_batch_times_n        = e.gpu_min_batch_times_n;
+    p.gpu_min_batch                = e.gpu_min_batch;
+    p.values_gpu_max_n             = e.values_gpu_max_n;
+    p.values_gpu_min_batch_times_n = e.values_gpu_min_batch_times_n;
+    p.values_gpu_min_batch         = e.values_gpu_min_batch;
+    p.tridiag_min_n                = e.tridiag_min_n;
+    p.values_tridiag_min_n         = e.values_tridiag_min_n;
+    p.tridiag_max_batch            = e.tridiag_max_batch;
+    p.values_tridiag_max_batch     = e.values_tridiag_max_batch;
+    p.ql_min_n                     = e.ql_min_n;
+    p.ql_max_n                     = e.ql_max_n;
+    p.share_min_batch              = e.share_min_batch;
+    p.gpu_big_batch_max_n          = e.gpu_big_batch_max_n;
+    p.gpu_big_batch_min            = e.gpu_big_batch_min;
+    p.values_band_min_n            = e.values_band_min_n;
+}
+
 struct ResolvedPolicy {
     EighPolicy  policy;
     std::string source;
@@ -211,41 +251,31 @@ ResolvedPolicy resolve_policy() {
     r.device = device_name();
     r.policy.gpu_cores = gpu_core_count();
 
+    bool forced = false;   // METAL_LINALG_ESTIMATE_AS: estimate even a measured Mac
+    const detail::EstimateTarget target = detail::estimate_target(&forced);
     for (const auto& e : kTuned) {
+        if (forced) break;
         if (e.device_name[0] != '\0' && r.device == e.device_name &&
             r.policy.gpu_cores == e.gpu_cores) {
-            r.policy.simd_max_n            = e.simd_max_n;
-            r.policy.block_min_n           = e.block_min_n;
-            r.policy.block_min_n_batched   = e.block_min_n_batched;
-            r.policy.block_min_batch       = e.block_min_batch;
-            r.policy.gpu_max_n             = e.gpu_max_n;
-            r.policy.gpu_min_batch_times_n = e.gpu_min_batch_times_n;
-            r.policy.gpu_min_batch         = e.gpu_min_batch;
-            r.policy.values_gpu_max_n             = e.values_gpu_max_n;
-            r.policy.values_gpu_min_batch_times_n = e.values_gpu_min_batch_times_n;
-            r.policy.values_gpu_min_batch         = e.values_gpu_min_batch;
-            r.policy.tridiag_min_n                = e.tridiag_min_n;
-            r.policy.values_tridiag_min_n         = e.values_tridiag_min_n;
-            r.policy.tridiag_max_batch            = e.tridiag_max_batch;
-            r.policy.values_tridiag_max_batch     = e.values_tridiag_max_batch;
-            r.policy.ql_min_n                     = e.ql_min_n;
-            r.policy.ql_max_n                     = e.ql_max_n;
-            r.policy.share_min_batch              = e.share_min_batch;
-            r.policy.gpu_big_batch_max_n          = e.gpu_big_batch_max_n;
-            r.policy.gpu_big_batch_min            = e.gpu_big_batch_min;
-            r.policy.values_band_min_n            = e.values_band_min_n;
+            apply(e, r.policy);
             r.source = detail::tuned_source_prefix(e.calibration) + r.device;
             detail::calibration_notice("eigh", e.calibration);
             break;
         }
     }
+    if (r.source.empty() && !target.device.empty()) {
+        // No measurements for this GPU: a measured one's, refitted for this
+        // one's GPU against its CPU (estimate.h).
+        std::string source;
+        if (const EstimatedEntry* e = detail::estimated_row(kEstimated, target, source)) {
+            apply(e->row, r.policy);
+            r.source = source;
+            detail::calibration_notice("eigh", kUncalibrated);
+        }
+    }
     if (r.source.empty()) {
-        // No measurements for this GPU: the EighPolicy defaults, which are the
-        // M1 values. They err toward the CPU, and that is the safe direction,
-        // since the CPU path is never catastrophic: the cost of being untuned
-        // is a missed GPU win, not a call routed to a backend that takes
-        // seconds. A GPU with more cores than an M1 will want a higher
-        // gpu_max_n than this.
+        // Nothing to estimate from (no Metal device, or no measured anchor):
+        // the EighPolicy defaults.
         r.source = "default:untuned-device" + (r.device.empty() ? "" : " (" + r.device + ")");
         detail::calibration_notice("eigh", kUncalibrated);
     }

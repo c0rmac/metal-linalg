@@ -905,8 +905,12 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
     }
     res["stage2"] = s2
 
-    # ---- stage 2b: GPU or CPU for singular values alone
-    gval = {p: tv for p, tv in gvaltimes.items() if gpu_choice(params[:N_SPLIT], *p[1:], p[0]) == "gk"}
+    # ---- stage 2b: GPU or CPU for singular values alone, where gk is the
+    # GPU's choice, shared with the CPU or not: leaving out the shared batches
+    # left the rule unconstrained above SHARE, and a low SHARE (on a GPU that
+    # gains from sharing early) left only batches the CPU wins, any rule tying.
+    gval = {p: tv for p, tv in gvaltimes.items()
+            if gpu_choice(params[:N_SPLIT], *p[1:], p[0]) in ("gk", "gk_share")}
     values = (0, 0, 0, INF)
     if gval:
         values, vscores = fit_values(gval, params, tol)

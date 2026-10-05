@@ -189,7 +189,8 @@ void metal_linalg_qr_policy_set(const metal_linalg_qr_policy* p);
 void metal_linalg_eigh_policy_set(const metal_linalg_eigh_policy* p);
 void metal_linalg_svd_policy_set(const metal_linalg_svd_policy* p);
 
-/* Where the policy in effect came from: "tuned:<device>", "env:<variables>",
+/* Where the policy in effect came from: "tuned:<device>", "estimated:<device>
+ * (from <measured device>, ...)" on a Mac nobody has measured, "env:<variables>",
  * "user" or "default:untuned-device (<device>)". Valid until that policy is
  * next set. */
 const char* metal_linalg_qr_policy_source(void);

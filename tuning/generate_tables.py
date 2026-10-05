@@ -7,7 +7,10 @@ library.
 
 For each device under docs/results/, combines its runs (tuning/combine.py)
 and writes the rows into src/tuned/qr.inc, eigh.inc and svd.inc, which the
-kTuned[] tables in src/qr.mm, src/eigh.mm and src/svd.mm include. It also
+kTuned[] tables in src/qr.mm, src/eigh.mm and src/svd.mm include. From the
+devices measured at the current kernels it refits the estimated rows for the
+Macs nobody has measured (tuning/estimate.py) into src/tuned/*_estimated.inc,
+and writes tuning/chip_specs.py into src/tuned/chips.inc. It also
 rewrites the tables of measured devices in README.md and docs/tuning.md
 (between the marker comments there), so they never fall behind the results. The GitHub
 Action in .github/workflows/tuned-policies.yml runs this on every pull request
@@ -16,6 +19,7 @@ it). Needs Python 3.8+ and nothing else: no GPU, no build.
 """
 
 import argparse
+import json
 import os
 import shutil
 import sys
@@ -24,7 +28,9 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
+import chip_specs         # noqa: E402
 import combine            # noqa: E402
+import estimate           # noqa: E402
 import measurements_page  # noqa: E402
 
 RESULTS = os.path.join("docs", "results")
@@ -70,7 +76,27 @@ def generate():
                     row = row[:row.rindex("}")].rstrip() + f",   {MARKER[st['state']]}}}"
                 lines.append(row + ",")
         files[op] = "\n".join(lines) + "\n"
+    for name, text in estimate.generate(anchors(per_device)).items():
+        files[name if name == "chips" else f"{name}_estimated"] = text
     return files, per_device
+
+
+def anchors(per_device):
+    """{op: [(chip_specs row, [raw.csv paths])]}: the devices whose runs for
+    that decomposition are current, and which tuning/chip_specs.py lists, as
+    tuning/estimate.py takes them."""
+    out = {op: [] for op, _, _ in combine.OPS}
+    for d, res in per_device.items():
+        dev = res["device"]
+        for op, _, _ in combine.OPS:
+            e = res["ops"][op]
+            if not e["row"] or e["status"]["state"] != "current":
+                continue
+            sub = json.load(open(os.path.join(ROOT, RESULTS, d, e["used"][0], "submission.json")))
+            spec = chip_specs.find(dev["name"], dev["gpu_cores"], (sub.get("cpu") or {}).get("cores"))
+            if spec:
+                out[op].append((spec, [os.path.join(RESULTS, d, n, op, "raw.csv") for n in e["used"]]))
+    return out
 
 
 def doc_table(doc, per_device):
@@ -79,6 +105,8 @@ def doc_table(doc, per_device):
     def measured(res, op, no):
         e = res["ops"][op]
         if not e["row"]:
+            if any("before 2.9.0" in s for s in e["skipped"]):
+                return "out of date" if no == "—" else f"{no} (out of date)"
             return no
         return {"current": "measured", "incomplete": "measured (incomplete)",
                 "stale": "measured (stale)"}[e["status"]["state"]]
@@ -87,8 +115,8 @@ def doc_table(doc, per_device):
         for res in per_device.values():
             dev = res["device"]
             L.append(f"| {dev['name']}, {dev['gpu_cores']} GPU cores | "
-                     + " | ".join(measured(res, op, "untuned") for op in ops) + " |")
-        L.append("| anything else | untuned default | untuned default | untuned default |")
+                     + " | ".join(measured(res, op, "estimated") for op in ops) + " |")
+        L.append("| anything else | estimated | estimated | estimated |")
         L.append("")
         L.append("Every chip, and what is current: [the measurements page](https://c0rmac.github.io/metal-linalg/docs/measurements).")
     else:

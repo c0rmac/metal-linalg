@@ -57,10 +57,10 @@ namespace metal_linalg {
         // (or by the large-matrix clause below). gpu_max_k = 0 means
         // never, kQrNoLimit no cap; gpu_min_batch_times_k = 0 with
         // gpu_min_batch = 1 means always the GPU, which is what a device
-        // measured before QR had a CPU path gets. The defaults, for an
-        // untuned device, send lone and small-batch calls to the CPU, the
-        // safe direction: LAPACK is never slow, while a GPU launch for one
-        // small matrix is.
+        // measured before QR had a CPU path gets. The defaults, for a device
+        // with nothing to estimate its policy from (estimate.h), send lone
+        // and small-batch calls to the CPU: LAPACK is never slow, while a GPU
+        // launch for one small matrix is.
         unsigned gpu_max_k             = kQrNoLimit;
         unsigned gpu_min_batch_times_k = 1024;
         unsigned gpu_min_batch         = 1;
@@ -97,7 +97,8 @@ namespace metal_linalg {
     };
 
     // The policy in effect, resolved once on first use; where it came from
-    // ("user", "env:<variables>", "tuned:<device>" or
+    // ("user", "env:<variables>", "tuned:<device>", "estimated:<device> (from
+    // <measured device>, ...)" on a Mac nobody has measured, or
     // "default:untuned-device (<device>)"); and a way to replace it, which
     // takes precedence over the environment and the tuned table.
     QrPolicy    qr_policy();
@@ -243,7 +244,8 @@ namespace metal_linalg {
     EighPolicy eigh_policy();
 
     // Where that policy came from: "user", "env:<variables>", "tuned:<device>",
-    // or "default:untuned-device (<device>)".
+    // "estimated:<device> (from <measured device>, ...)" on a Mac nobody has
+    // measured, or "default:untuned-device (<device>)".
     const char* eigh_policy_source();
 
     // Override the policy programmatically. Takes precedence over the
@@ -448,8 +450,9 @@ namespace metal_linalg {
     constexpr unsigned kSvdNoLimit = 0xFFFFFFFFu;
 
     // The policy in effect, where it came from ("user", "env:<variables>",
-    // "tuned:<device>" or "default:untuned-device (<device>)"), and a way to
-    // replace it.
+    // "tuned:<device>", "estimated:<device> (from <measured device>, ...)" on a
+    // Mac nobody has measured, or "default:untuned-device (<device>)"), and a
+    // way to replace it.
     SvdPolicy   svd_policy();
     const char* svd_policy_source();
     void        set_svd_policy(const SvdPolicy& p);

@@ -2,6 +2,39 @@
 
 ## 2.14.0 (2026-10-05)
 
+- **Estimated policies for the Macs nobody has measured**, in place of the
+  untuned default (the M1's 2.0-era thresholds, with every newer backend
+  off), which on the M5 Pro's own timings is 1.3-1.9x the best routing on
+  geometric mean and up to 16x at a point. A measured Mac's timings are
+  refitted, by the same analysis that fits a run, as if its GPU were slower
+  against its CPU by as much as Geekbench 7's Metal against multi-core scores
+  say (and the memory bandwidth too, for the large-matrix backends), with a
+  margin of 1.25x in the measured Mac's generation and 1.5x outside it; a Mac
+  without published scores is estimated from its core counts, with 2x. On
+  Macs simulated with a GPU 1-4x weaker, the estimates are within 0-3% of the
+  best routing on geometric mean, where the untuned default was 1.3-3x
+  ([the study](docs/studies/estimated-policies.md)). Policy sources say
+  `estimated:<chip> (from Apple M5 Pro, ...)`, and `calibration_status()`
+  reports `uncalibrated` for them as before; the notice still asks for a
+  measurement. `METAL_LINALG_ESTIMATE_AS="<chip>[:<GPU cores>[:<CPU
+  cores>]]"` estimates as that Mac, even on a measured one.
+  `tuning/chip_specs.py` holds every Mac's scores and bandwidth,
+  `tuning/estimate.py` the refit; `tuning/generate_tables.py` writes the
+  estimated rows (`src/tuned/*_estimated.inc`, `chips.inc`) with the measured
+  ones, so every new measurement refits its neighbours' estimates.
+  `tests/test_estimate.cpp`, and the correctness suites run again under an
+  estimated M1's routing.
+- **Runs from before 2.9.0 are no longer used** (`MIN_EPOCHS` in
+  `tuning/kernels.py`): the CPU path then ran on one core, and every
+  GPU-or-CPU boundary has moved since. The M1's QR and eigh rows were such;
+  the M1 is now estimated like any other unmeasured Mac, and the tables and
+  the measurements page mark its runs out of date.
+- **A fault in the SVD harness's fit for singular values alone**: stage 2b
+  left out the batches shared with the CPU, which on a GPU sharing from small
+  batches left the rule unconstrained. Fixed; the M5 Pro's refitted row moves
+  `values_gpu_max_l` from 56 to 256, so tall batches of singular values alone
+  (1024 and more of 64-256 x 8-32) go to `golub_kahan` shared with the CPU,
+  1.15-1.9x faster (svdvals 1.029x the best on geometric mean, from 1.043x).
 - **MPS tensors in place** in the PyTorch package: on Apple Silicon PyTorch
   keeps MPS tensors in Metal buffers in shared storage, and the library now
   reads its input there and writes its results into new MPS tensors, instead
