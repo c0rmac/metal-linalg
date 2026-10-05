@@ -317,6 +317,23 @@ class MpsInPlace(unittest.TestCase):
 
 
 class Routing(unittest.TestCase):
+    def test_estimated_policy(self):
+        # Any Mac nobody has measured is estimated; METAL_LINALG_ESTIMATE_AS
+        # makes this one look like an M1, and the calls still compute right.
+        import subprocess
+        import sys
+        code = ("import torch, metal_linalg_torch as mlt\n"
+                "a = torch.randn(16, 20, 12)\n"
+                "Q, R = mlt.qr(a)\n"
+                "print(mlt.eigh_policy_source()); print(mlt.calibration_status()['svd'])\n"
+                "print(float(((Q @ R) - a).abs().max()))\n")
+        env = dict(os.environ, METAL_LINALG_ESTIMATE_AS="Apple M1:8:8", METAL_LINALG_NO_CALIBRATION_NOTICE="1")
+        out = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True)
+        source, status, err = out.stdout.strip().splitlines()
+        self.assertTrue(source.startswith("estimated:Apple M1 (from "), source)
+        self.assertEqual(status, "uncalibrated")
+        self.assertLess(float(err), 1e-4)
+
     def test_device(self):
         self.assertTrue(mlt.device_name().startswith("Apple"))
         self.assertGreaterEqual(mlt.gpu_core_count(), 0)

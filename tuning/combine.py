@@ -147,6 +147,9 @@ def eligible(subs, op, device_dir):
             skipped.append(f"{name} (interrupted)")
         elif not r.get("trustworthy"):
             skipped.append(f"{name} ({r.get('why') or 'not trustworthy'})")
+        elif kernels.run_epoch(info, op) < kernels.MIN_EPOCHS[op]:
+            skipped.append(f"{name} (measured before 2.9.0, when the CPU path ran on one core: "
+                           f"out of date, so this Mac is estimated)")
         else:
             usable.append((name, raw, kernels.run_epoch(info, op)))
     status = {"state": "none", "epoch": None, "current_epoch": current, "missing": []}

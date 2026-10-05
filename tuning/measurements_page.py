@@ -38,11 +38,12 @@ def _cell(state, lines):
 
 def _op_cell(res, op):
     if res is None:
-        return _cell("none", ["untuned default"])
+        return _cell("none", ["estimated"])
     e = res["ops"][op]
     st = e["status"]
     if not e["row"]:
-        return _cell("none", ["untuned default"])
+        old = any("before 2.9.0" in s for s in e["skipped"])
+        return _cell("none", ["estimated"] + (["its runs predate 2.9.0: out of date"] if old else []))
     info = res["sub_info"]
     used = e["used"]
     dates = sorted(info[n]["date"] for n in used if info[n].get("date"))
@@ -105,8 +106,11 @@ def render(per_device):
          f"| {STATES['incomplete'][0]} | **incomplete** | still valid, but a newer backend was never timed on this "
          "chip, so it stays off there |",
          f"| {STATES['stale'][0]} | **stale** | measured on older kernels; still used, as the best "
-         "available, until remeasured |",
-         f"| {STATES['none'][0]} | **not measured** | the untuned default: safe, but it misses GPU wins |", "",
+         "available, until remeasured (runs from before 2.9.0, when the CPU path ran on one core, are "
+         "out of date and not used: such a chip is estimated) |",
+         f"| {STATES['none'][0]} | **not measured** | estimated from a measured Mac and published benchmarks "
+         "([how](https://github.com/c0rmac/metal-linalg/blob/main/docs/studies/estimated-policies.md)): "
+         "conservative, so it misses some GPU wins |", "",
          f"**Have one of these Macs?** One command measures it, in about an hour and a half, and a pull request "
          f"submits it: [how to contribute]({REPO}/blob/main/CONTRIBUTING.md). Every run improves the "
          f"library for everyone with that chip; the library prints a notice on chips that need one.", "",

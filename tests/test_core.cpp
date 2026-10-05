@@ -411,7 +411,7 @@ int main() {
     }
 
     // Calibration: each policy source names its state, and the notice text
-    // agrees with it -- on any Mac, current, stale, incomplete or untuned.
+    // agrees with it -- on any Mac, current, stale, incomplete, estimated or untuned.
     std::printf("\n[ calibration ]\n");
     {
         set_calibration_notices(false);
@@ -419,7 +419,8 @@ int main() {
             {"QR", qr_policy_source()}, {"eigh", eigh_policy_source()}, {"SVD", svd_policy_source()}};
         for (const auto& s : solvers) {
             const std::string src = s.source, msg = calibration_message(s.what);
-            const bool untuned = src.rfind("default:untuned-device", 0) == 0;
+            const bool untuned = src.rfind("default:untuned-device", 0) == 0 ||
+                                 src.rfind("estimated:", 0) == 0;
             const bool stale = src.rfind("tuned-stale:", 0) == 0;
             const bool incomplete = src.rfind("tuned-incomplete:", 0) == 0;
             const bool current = src.rfind("tuned:", 0) == 0;

@@ -366,8 +366,8 @@ Metal device name and GPU core count:
 
 | GPU | cores | GPU iff | golub_kahan | QR from | block from | else bidiag | status |
 |---|---|---|---|---|---|---|---|
-| Apple M5 Pro | 20 | k <= 56, l <= 256 and batch * k >= 16384, or 57 <= k <= 80 in batches of 1024+ (svdvals: k, l <= 56 and batch * k >= 16384) | k = 8 .. 80, shared with the CPU from batch 1024 | 512 rows, k >= 32 | k = 192; k = 64 in batches of 64+ | from k = 1024 (svdvals too, and `band` from 1536), batches up to 2 | measured — run [`20261004-06bc11`](results/apple-m5-pro-20gpu/20261004-06bc11/svd/report.md) |
-| anything else | — | k <= 64 and batch * k >= 1024 | never | 512 rows, k >= 64 | k = 192 | never | **untuned default** |
+| Apple M5 Pro | 20 | k <= 56, l <= 256 and batch * k >= 16384, or 57 <= k <= 80 in batches of 1024+ (svdvals: k <= 56, l <= 256 and batch * k >= 16384) | k = 8 .. 80, shared with the CPU from batch 1024 | 512 rows, k >= 32 | k = 192; k = 64 in batches of 64+ | from k = 1024 (svdvals too, and `band` from 1536), batches up to 2 | measured — run [`20261004-06bc11`](results/apple-m5-pro-20gpu/20261004-06bc11/svd/report.md) |
+| anything else | — | estimated | estimated | estimated | estimated | estimated | **estimated** from the M5 Pro's timings ([how](tuning.md#macs-nobody-has-measured)) |
 
 On the M5 Pro large batches of small matrices, up to 56×56 and a long side
 of 256, go to `golub_kahan` on the GPU, shared with the CPU from 1024
@@ -389,10 +389,13 @@ the same CPU path, the Jacobi kernels won only for large batches of the
 smallest matrices; before 2.9.0 the row sent batches up to k = 1024 to the
 GPU, measured against one CPU core.
 
-The M1 has no row. The defaults come from measurements on an M1 taken while
-the machine was heavily loaded by other jobs, good enough to place the
-crossovers roughly and not for a table entry, so `svd_policy_source()`
-reports `default:untuned-device` there too. Measuring a Mac is one command,
+The M1 has no row, so it is estimated from the M5 Pro's timings like any Mac
+nobody has measured ([how](tuning.md#macs-nobody-has-measured)): `svd_policy_source()` reports
+`estimated:Apple M1 (from Apple M5 Pro, ...)`. The `SvdPolicy` defaults, which
+come from measurements on an M1 taken while the machine was heavily loaded by
+other jobs, good enough to place the crossovers roughly and not for a table
+entry, remain only for a Mac with nothing to estimate from
+(`default:untuned-device`). Measuring a Mac is one command,
 `python3 tuning/run.py`, which covers all three decompositions; see
 [`tuning.md`](tuning.md).
 

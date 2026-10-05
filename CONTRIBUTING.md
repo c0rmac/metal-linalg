@@ -3,7 +3,8 @@
 The most useful contribution needs no code: **measuring your Mac**. metal-linalg
 picks the fastest kernel for each problem, or the CPU, from measurements made
 on each kind of Mac, and every new chip needs its own. A Mac nobody has
-measured runs a cautious default that misses much of what its GPU can do.
+measured runs settings estimated from another Mac's measurements and published
+benchmarks, which lean toward the CPU and miss some of what its GPU can do.
 One command measures it, and a pull request sends the results.
 
 Any number of people with the same Mac can contribute: every run is saved

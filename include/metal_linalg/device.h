@@ -39,7 +39,8 @@ namespace metal_linalg {
     // On by default; set_calibration_notices(false), or the environment
     // variable METAL_LINALG_NO_CALIBRATION_NOTICE=1, turns them off. The
     // policy sources (qr_policy_source() etc.) report the same state:
-    // "default:untuned-device", "tuned-stale:<device>", "tuned-incomplete:<device>".
+    // "estimated:<device> (...)" (or "default:untuned-device" with nothing to
+    // estimate from), "tuned-stale:<device>", "tuned-incomplete:<device>".
     void set_calibration_notices(bool enabled);
     bool calibration_notices();
 

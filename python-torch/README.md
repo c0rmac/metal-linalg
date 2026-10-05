@@ -167,8 +167,9 @@ Calls are thread-safe; they are serialised, and release the GIL.
 Each Mac's routing comes from measurements of that Mac. On one that has
 none (or older ones), the import raises a `CalibrationWarning` once per
 decomposition, and `mlt.calibration_status()` says where each stands. The
-library works either way, with a cautious default; measuring the Mac takes
-one command and improves it for everyone with that Mac: see
+library works either way, with settings estimated from a measured Mac and
+published benchmarks, which lean toward the CPU; measuring the Mac takes one
+command and improves it for everyone with that Mac: see
 [which Macs are measured](https://c0rmac.github.io/metal-linalg/docs/measurements)
 and [how to contribute](https://github.com/c0rmac/metal-linalg/blob/main/CONTRIBUTING.md).
 `METAL_LINALG_NO_CALIBRATION_NOTICE=1` silences the warning.

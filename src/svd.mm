@@ -3,6 +3,7 @@
 #endif
 #include <metal_linalg/core.h>
 #include "calibration.h"
+#include "estimate.h"
 #include "metal_runtime.h"
 #include "shaders.h"
 
@@ -231,6 +232,46 @@ constexpr TunedEntry kTuned[] = {
     {"", 0,   0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0, 0,   0,   0},
 };
 
+// A device with no entry gets an estimated row: a measured device's timings
+// refitted for a GPU weaker against its CPU, for every slowdown pair on
+// tuning/estimate.py's ladder (estimate.h). Generated with kTuned.
+struct EstimatedEntry {
+    unsigned   small_x100;        // batched kernels' slowdown x 100
+    unsigned   large_x100;        // large-matrix backends' slowdown x 100
+    unsigned   anchor_cpu_cores;
+    TunedEntry row;
+};
+constexpr EstimatedEntry kEstimated[] = {
+#include "tuned/svd_estimated.inc"
+    {0, 0, 0, {"", 0,   0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0, 0,   0,   0}},
+};
+
+void apply(const TunedEntry& e, SvdPolicy& p) {
+    p.qr_min_rows                  = e.qr_min_rows;
+    p.qr_min_k                     = e.qr_min_k;
+    p.block_min_k                  = e.block_min_k;
+    p.block_min_k_batched          = e.block_min_k_batched;
+    p.block_min_batch              = e.block_min_batch;
+    p.gpu_max_k                    = e.gpu_max_k;
+    p.gpu_min_batch_times_k        = e.gpu_min_batch_times_k;
+    p.gpu_min_batch                = e.gpu_min_batch;
+    p.gpu_max_l                    = e.gpu_max_l;
+    p.values_gpu_max_k             = e.values_gpu_max_k;
+    p.values_gpu_min_batch_times_k = e.values_gpu_min_batch_times_k;
+    p.values_gpu_min_batch         = e.values_gpu_min_batch;
+    p.values_gpu_max_l             = e.values_gpu_max_l;
+    p.bidiag_min_k                 = e.bidiag_min_k;
+    p.values_bidiag_min_k          = e.values_bidiag_min_k;
+    p.bidiag_max_batch             = e.bidiag_max_batch;
+    p.values_bidiag_max_batch      = e.values_bidiag_max_batch;
+    p.gk_min_k                     = e.gk_min_k;
+    p.gk_max_k                     = e.gk_max_k;
+    p.share_min_batch              = e.share_min_batch;
+    p.gpu_big_batch_max_k          = e.gpu_big_batch_max_k;
+    p.gpu_big_batch_min            = e.gpu_big_batch_min;
+    p.values_band_min_k            = e.values_band_min_k;
+}
+
 struct ResolvedPolicy {
     SvdPolicy   policy;
     std::string source;
@@ -252,38 +293,30 @@ ResolvedPolicy resolve_policy() {
     r.device = device_name();
     r.policy.gpu_cores = gpu_core_count();
 
+    bool forced = false;   // METAL_LINALG_ESTIMATE_AS: estimate even a measured Mac
+    const detail::EstimateTarget target = detail::estimate_target(&forced);
     for (const auto& e : kTuned) {
+        if (forced) break;
         if (e.device_name[0] != '\0' && r.device == e.device_name &&
             r.policy.gpu_cores == e.gpu_cores) {
-            r.policy.qr_min_rows           = e.qr_min_rows;
-            r.policy.qr_min_k              = e.qr_min_k;
-            r.policy.block_min_k           = e.block_min_k;
-            r.policy.block_min_k_batched   = e.block_min_k_batched;
-            r.policy.block_min_batch       = e.block_min_batch;
-            r.policy.gpu_max_k             = e.gpu_max_k;
-            r.policy.gpu_min_batch_times_k = e.gpu_min_batch_times_k;
-            r.policy.gpu_min_batch         = e.gpu_min_batch;
-            r.policy.gpu_max_l             = e.gpu_max_l;
-            r.policy.values_gpu_max_k             = e.values_gpu_max_k;
-            r.policy.values_gpu_min_batch_times_k = e.values_gpu_min_batch_times_k;
-            r.policy.values_gpu_min_batch         = e.values_gpu_min_batch;
-            r.policy.values_gpu_max_l             = e.values_gpu_max_l;
-            r.policy.bidiag_min_k          = e.bidiag_min_k;
-            r.policy.values_bidiag_min_k   = e.values_bidiag_min_k;
-            r.policy.bidiag_max_batch        = e.bidiag_max_batch;
-            r.policy.values_bidiag_max_batch = e.values_bidiag_max_batch;
-            r.policy.gk_min_k              = e.gk_min_k;
-            r.policy.gk_max_k              = e.gk_max_k;
-            r.policy.share_min_batch       = e.share_min_batch;
-            r.policy.gpu_big_batch_max_k   = e.gpu_big_batch_max_k;
-            r.policy.gpu_big_batch_min     = e.gpu_big_batch_min;
-            r.policy.values_band_min_k     = e.values_band_min_k;
+            apply(e, r.policy);
             r.source = detail::tuned_source_prefix(e.calibration) + r.device;
             detail::calibration_notice("SVD", e.calibration);
             break;
         }
     }
+    if (r.source.empty() && !target.device.empty()) {
+        // No measurements for this GPU: a measured one's, refitted for this
+        // one's GPU against its CPU (estimate.h).
+        std::string source;
+        if (const EstimatedEntry* e = detail::estimated_row(kEstimated, target, source)) {
+            apply(e->row, r.policy);
+            r.source = source;
+            detail::calibration_notice("SVD", kUncalibrated);
+        }
+    }
     if (r.source.empty()) {
+        // Nothing to estimate from (no Metal device, or no measured anchor).
         r.source = "default:untuned-device" + (r.device.empty() ? "" : " (" + r.device + ")");
         detail::calibration_notice("SVD", kUncalibrated);
     }

@@ -299,9 +299,9 @@ the M5 Pro the second effect won.
 
 | GPU | cores | `m_crossover` | GPU or CPU | status |
 |---|---|---|---|---|
-| Apple M1 | 8 | 384 | always the GPU (measured before the CPU path) | measured before 2.9.0 — see [`studies/qr-routing-apple-m1.md`](studies/qr-routing-apple-m1.md) |
+| Apple M1 | 8 | — | — | measured before 2.9.0, out of date and no longer used since 2.14.0: estimated like any unmeasured Mac (the old row's study: [`studies/qr-routing-apple-m1.md`](studies/qr-routing-apple-m1.md)) |
 | Apple M5 Pro | 20 | 512 | GPU iff `k <= 128` and `batch * k >= 40960`, or `k >= 1024` and `batch <= 4`; shared with the CPU from batch 64 | measured — run [`20261004-4d6208`](results/apple-m5-pro-20gpu/20261004-4d6208/qr/report.md) |
-| anything else | — | 384 | GPU iff `batch * k >= 1024` | **untuned default** |
+| anything else | — | estimated | estimated | **estimated** from the M5 Pro's timings ([how](tuning.md#macs-nobody-has-measured)) |
 
 The GPU-or-CPU boundary is measured by every run made since QR had a CPU path;
 a device's row sends every call to the GPU until such a run has been submitted
@@ -322,8 +322,11 @@ of 16×16 take 3.7 ms there against 2.1 ms on the CPU, a shape the grid does not
 reach (its batches stop at 1024). Before 2.9.0 this Mac sent every
 batch with `batch * k >= 512` to the GPU, measured against one CPU core.
 
-`qr_policy_source()` reports `default:untuned-device (<name>)` on any GPU
-without a table entry, so an untuned device is visible rather than silent.
+On any GPU without a table entry `qr_policy_source()` reports
+`estimated:<name> (from Apple M5 Pro, ...)`: the M5 Pro's timings refitted
+for that GPU against its CPU ([how](tuning.md#macs-nobody-has-measured)), so an unmeasured device is visible
+rather than silent. The defaults in the row above it remain only for a Mac
+with nothing to estimate from, reported as `default:untuned-device (<name>)`.
 
 **To measure another Mac**, run `python3 tuning/run.py`, which measures all
 three decompositions in one go (`--only qr` for QR alone); see

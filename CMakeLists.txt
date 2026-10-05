@@ -195,6 +195,7 @@ else ()
 endif ()
 add_library(metal_linalg ${_ml_kind}
     src/device.mm
+    src/estimate.cpp
     src/metal_runtime.mm
     src/band_chase.cpp
     src/band_reduce.mm
@@ -330,6 +331,18 @@ if (METAL_LINALG_BUILD_TESTS)
     target_compile_options(test_c_api_metal PRIVATE -fobjc-arc)
     target_link_libraries(test_c_api_metal PRIVATE metal_linalg "-framework Metal" "-framework Foundation")
     add_test(NAME c_api_metal COMMAND test_c_api_metal)
+
+    # The estimated policies, and the correctness suites again under one: the
+    # routing an unmeasured M1 gets, on whatever Mac runs them.
+    add_executable(test_estimate tests/test_estimate.cpp)
+    target_include_directories(test_estimate PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(test_estimate PRIVATE metal_linalg)
+    add_test(NAME estimate COMMAND test_estimate)
+    foreach (_t qr eigh svd)
+        add_test(NAME ${_t}_correctness_estimated COMMAND test_${_t})
+        set_tests_properties(${_t}_correctness_estimated PROPERTIES
+                             ENVIRONMENT "METAL_LINALG_ESTIMATE_AS=Apple M1:8:8")
+    endforeach ()
 
     metal_linalg_add_tool(benchmark_qr   benchmarks/benchmark_qr.cpp)
     metal_linalg_add_tool(benchmark_eigh benchmarks/benchmark_eigh.cpp)

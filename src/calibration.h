@@ -13,7 +13,7 @@ namespace metal_linalg {
 constexpr unsigned kCalibrationCurrent    = 0;   // measured at the current kernels
 constexpr unsigned kCalibrationStale      = 1;   // measured on older kernels; still used
 constexpr unsigned kCalibrationIncomplete = 2;   // a newer backend never timed; it stays off
-constexpr unsigned kUncalibrated          = 3;   // no row: the untuned default
+constexpr unsigned kUncalibrated          = 3;   // no row: estimated (estimate.h), or the untuned default
 
 namespace detail {
 

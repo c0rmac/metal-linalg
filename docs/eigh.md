@@ -588,9 +588,9 @@ rather than constants:
 
 | GPU | cores | simd up to | block from | ql for | GPU iff | tridiag | status |
 |---|---|---|---|---|---|---|---|
-| Apple M1 | 8 | N = 8 | N = 96 | never | N <= 64 and batch * N >= 1024 | never | measured before 2.9.0 (incomplete) — see [`studies/eigh-routing-apple-m1.md`](studies/eigh-routing-apple-m1.md) |
+| Apple M1 | 8 | — | — | — | — | — | measured before 2.9.0, out of date and no longer used since 2.14.0: estimated like any unmeasured Mac (the old row's study: [`studies/eigh-routing-apple-m1.md`](studies/eigh-routing-apple-m1.md)) |
 | Apple M5 Pro | 20 | never | N = 96 | N = 12-64, shared with the CPU from batch 1024 | N <= 48 and batch * N >= 16384, or N = 49-64 in batches of 1024+ (eigvalsh: N <= 48 and batch * N >= 16384) | from N = 1024, batch <= 4 (eigvalsh: from 1536, batch <= 2, and `band` from 4096) | measured — run [`20261004-06bc11`](results/apple-m5-pro-20gpu/20261004-06bc11/eigh/report.md) |
-| anything else | — | N = 8 | N = 96 | never | N <= 64 and batch * N >= 1024 | never | **untuned default** |
+| anything else | — | estimated | estimated | estimated | estimated | estimated | **estimated** from the M5 Pro's timings ([how](tuning.md#macs-nobody-has-measured)) |
 
 The M5 Pro row is the first measured against the CPU path that spreads a
 batch over every core (2.9.0). Against it the GPU keeps two regions: large
@@ -624,12 +624,13 @@ sweep's eigenvalue-only timings (`<backend>_vals`); `values_gpu_min_batch = 0`
 means "as for eigenvectors". The sweep reaches N = 2048 for lone matrices and
 small batches, so `gpu_max_n` is a measured cap rather than the edge of the
 grid.
-`eigh_policy_source()` reports `default:untuned-device (<name>)` on any GPU
-without a table entry, so an untuned device is visible rather than silent. The
-default errs toward the CPU, which is the safe direction: the CPU path is
-never catastrophic, so being untuned costs a missed GPU win, not a call routed
-to a backend that takes seconds. A GPU with more cores than an M1 will want a
-higher `gpu_max_n` than this, as the M5 Pro row shows.
+On any GPU without a table entry `eigh_policy_source()` reports
+`estimated:<name> (from Apple M5 Pro, ...)`: the M5 Pro's timings refitted
+for that GPU against its CPU ([how](tuning.md#macs-nobody-has-measured)), so an unmeasured device is visible
+rather than silent, and routed close to its best. The `EighPolicy` defaults
+(the M1's values from before the CPU path used every core, with no `ql`,
+`tridiag` or sharing) remain only for a Mac with nothing to estimate from,
+reported as `default:untuned-device (<name>)`.
 
 **To measure another Mac**, run `python3 tuning/run.py`, which measures all
 three decompositions in one go (about an hour and a half); see [`tuning.md`](tuning.md).
