@@ -387,7 +387,8 @@ class Routing(unittest.TestCase):
             self.assertLess(rel(mlt.svdvals(a), torch.linalg.svdvals(a)), 2e-5)
             mlt.set_svd_policy(gpu_max_k=0, bidiag_min_k=0, values_bidiag_min_k=0, values_band_min_k=0)
             self.assertEqual(mlt.svd_backend(300, 80), "cpu")
-            mlt.set_svd_policy(gpu_max_k=64, gpu_min_batch_times_k=0, gpu_min_batch=1, gk_min_k=8, gk_max_k=48)
+            mlt.set_svd_policy(gpu_max_k=64, gpu_min_batch_times_k=0, gpu_min_batch=1, gpu_max_l=2**32 - 1,
+                               gk_min_k=8, gk_max_k=48)
             self.assertEqual(mlt.svd_backend(40, 24, 16), "golub_kahan")
             a = torch.randn(16, 40, 24)
             U, S, Vh = mlt.svd(a)

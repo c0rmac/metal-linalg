@@ -142,6 +142,8 @@ final class MetalLinalgTests: XCTestCase {
         p.gpu_max_n = 0              // never the Jacobi backends
         p.tridiag_min_n = 1          // so every eigh is tridiag
         p.values_tridiag_min_n = 1
+        p.tridiag_max_batch = 0      // at any batch (an estimated policy may cap it)
+        p.values_tridiag_max_batch = 0
         eighPolicy = p
         for n in [3, 70, 150] {
             XCTAssertEqual(eighBackend(n: n, batch: 2), "tridiag")
