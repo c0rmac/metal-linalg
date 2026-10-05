@@ -31,6 +31,7 @@ let coreSources = [
     "src/svd_bidiag.mm",
     "src/svd_golub_kahan.mm",
     "src/c_api.cpp",
+    "src/c_api_metal.mm",
     "swift/CMetalLinalg/embedded_shaders.c",
 ]
 

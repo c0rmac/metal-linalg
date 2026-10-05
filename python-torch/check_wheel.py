@@ -45,7 +45,8 @@ def check(wheel):
         if archs != ["arm64"]:
             errors.append(f"architectures {archs}")
         syms = subprocess.run(["nm", "-gU", lib], capture_output=True, text=True).stdout
-        for sym in ("_metal_linalg_qr", "_metal_linalg_eigh", "_metal_linalg_svd", "_metal_linalg_calibration_message"):
+        for sym in ("_metal_linalg_qr", "_metal_linalg_eigh", "_metal_linalg_svd", "_metal_linalg_calibration_message",
+                    "_metal_linalg_buffer_contents"):
             if sym not in syms.split():
                 errors.append(f"does not export {sym}")
     return errors

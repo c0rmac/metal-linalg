@@ -223,6 +223,99 @@ class Arguments(unittest.TestCase):
         self.assertLess(rel(Q @ R, a), 2e-5)
 
 
+def _mps_storage_is_shared():
+    """Whether MPS tensors' Metal buffers are in shared storage, asked of the
+    buffer through the Objective-C runtime rather than through the library."""
+    import ctypes
+    objc = ctypes.cdll.LoadLibrary("/usr/lib/libobjc.A.dylib")
+    objc.sel_registerName.restype = ctypes.c_void_p
+    objc.sel_registerName.argtypes = [ctypes.c_char_p]
+    send = ctypes.CFUNCTYPE(ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p)(
+        ctypes.cast(objc.objc_msgSend, ctypes.c_void_p).value)
+    t = torch.ones(1024, device="mps")
+    torch.mps.synchronize()
+    return send(t.untyped_storage().data_ptr(), objc.sel_registerName(b"storageMode")) == 0
+
+
+@unittest.skipUnless(MPS, "MPS is not available")
+class MpsInPlace(unittest.TestCase):
+    """MPS tensors used in place: the CPU path's results, with inputs that MPS
+    is still writing and outputs that MPS reads next. Each shape at a batch the
+    CPU takes and at one the GPU takes on a measured Mac."""
+
+    def test_in_place_where_shared(self):
+        self.assertEqual(mlt.mps_in_place(), _mps_storage_is_shared())
+
+    def test_matches_cpu(self):
+        for batch in (3, 4096):
+            a = torch.randn(batch, 48, 16)
+            s = spd(batch, n=32).float()
+            for name, f, x in (("qr", mlt.qr, a), ("eigh", mlt.eigh, s), ("eigvalsh", mlt.eigvalsh, s),
+                               ("svd", mlt.svd, a), ("svdvals", mlt.svdvals, a)):
+                on_mps = f(x.to("mps"))
+                on_cpu = f(x)
+                outs = (on_mps,) if isinstance(on_mps, torch.Tensor) else tuple(on_mps)
+                refs = (on_cpu,) if isinstance(on_cpu, torch.Tensor) else tuple(on_cpu)
+                for o, r in zip(outs, refs):
+                    self.assertEqual(o.device.type, "mps", name)
+                    self.assertEqual(o.shape, r.shape, name)
+                if name == "qr":
+                    Q, R = outs
+                    self.assertLess(rel(Q @ R, x), 2e-5, name)
+                    self.assertLess(orth_err(Q), 2e-5, name)
+                    self.assertLess(rel(R.abs(), refs[1].abs()), 1e-4, name)
+                elif name == "eigh":
+                    w, V = outs
+                    self.assertLess(rel(w, refs[0]), 2e-5, name)
+                    self.assertLess(rel((V * w.unsqueeze(-2)) @ V.mT, x), 2e-5, name)
+                elif name == "svd":
+                    U, S, Vh = outs
+                    self.assertLess(rel(S, refs[1]), 2e-5, name)
+                    self.assertLess(rel((U * S.unsqueeze(-2)) @ Vh, x), 2e-5, name)
+                else:
+                    self.assertLess(rel(outs[0], refs[0]), 2e-5, name)
+
+    def test_input_still_being_written(self):
+        # A chain of MPS work the call must wait for before reading its input.
+        x = torch.randn(2048, 32, 32, device="mps")
+        a = x
+        for _ in range(20):
+            a = 0.5 * (a + a.mT) + x
+        w = mlt.eigvalsh(a)
+        self.assertLess(rel(w, torch.linalg.eigvalsh(a.cpu())), 2e-5)
+
+    def test_outputs_read_by_mps(self):
+        a = torch.randn(4096, 64, 32, device="mps")
+        Q, R = mlt.qr(a)
+        back = Q @ R                                   # MPS reads the outputs at once
+        self.assertLess(rel(back, a), 2e-5)
+
+    def test_views_and_dtypes(self):
+        base = torch.randn(64, 40, 24, device="mps")
+        before = base.cpu()
+        for x in (base[5:37],                          # an offset into the storage
+                  base[::3, 2:, ::2],                  # strided
+                  base[0].expand(8, 40, 24),           # broadcast
+                  base[:16].half()):                   # converted on MPS
+            U, S, Vh = mlt.svd(x)
+            self.assertEqual(S.dtype, torch.float32)
+            self.assertLess(rel((U * S.unsqueeze(-2)) @ Vh, x.float()), 1e-4)
+        self.assertTrue(torch.equal(base.cpu(), before))   # the input is left as it was
+
+    def test_forced_copy(self):
+        import subprocess
+        import sys
+        code = ("import torch, metal_linalg_torch as mlt\n"
+                "a = torch.randn(16, 20, 12, device='mps')\n"
+                "Q, R = mlt.qr(a)\n"
+                "print(mlt.mps_in_place(), Q.device.type, float(((Q @ R) - a).abs().max()))\n")
+        env = dict(os.environ, METAL_LINALG_TORCH_MPS_COPY="1", METAL_LINALG_NO_CALIBRATION_NOTICE="1")
+        out = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True)
+        in_place, device, err = out.stdout.split()
+        self.assertEqual((in_place, device), ("False", "mps"))
+        self.assertLess(float(err), 1e-4)
+
+
 class Routing(unittest.TestCase):
     def test_device(self):
         self.assertTrue(mlt.device_name().startswith("Apple"))

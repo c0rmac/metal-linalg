@@ -389,7 +389,8 @@ the input's device), support autograd with torch's own formulas, and compile
 with `torch.compile`: they are the custom operators
 `torch.ops.metal_linalg.*`. Computation is in float32. Against `torch.linalg`
 on an M5 Pro with PyTorch 2.14 and metal-linalg 2.13 (best of five; the same tensors on MPS for
-torch's MPS path and for this package, copies included):
+torch's MPS path and for this package, which in 2.13 still copied them to the CPU and back; from
+2.14 they are used in place):
 
 | | torch, CPU | torch, MPS | metal-linalg-torch |
 |---|---|---|---|

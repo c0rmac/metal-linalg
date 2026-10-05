@@ -3,7 +3,7 @@ if (NOT CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
     message(FATAL_ERROR "metal-linalg runs on Apple Silicon Macs only (Metal and Accelerate); "
                         "it cannot be built on ${CMAKE_HOST_SYSTEM_NAME}.")
 endif ()
-project(metal_linalg VERSION 2.13.0 LANGUAGES CXX OBJCXX
+project(metal_linalg VERSION 2.14.0 LANGUAGES CXX OBJCXX
         DESCRIPTION "QR, symmetric eigendecomposition and SVD on Apple GPUs, for MLX")
 
 set(CMAKE_CXX_STANDARD 20)
@@ -214,6 +214,7 @@ add_library(metal_linalg ${_ml_kind}
     src/svd_block_jacobi.mm
     src/svd_golub_kahan.mm
     src/c_api.cpp
+    src/c_api_metal.mm
     ${_ml_embedded}
 )
 if (METAL_LINALG_WITH_MLX)
@@ -324,6 +325,11 @@ if (METAL_LINALG_BUILD_TESTS)
     set_target_properties(test_c_api PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON)
     target_link_libraries(test_c_api PRIVATE metal_linalg)
     add_test(NAME c_api COMMAND test_c_api)
+
+    add_executable(test_c_api_metal tests/test_c_api_metal.mm)
+    target_compile_options(test_c_api_metal PRIVATE -fobjc-arc)
+    target_link_libraries(test_c_api_metal PRIVATE metal_linalg "-framework Metal" "-framework Foundation")
+    add_test(NAME c_api_metal COMMAND test_c_api_metal)
 
     metal_linalg_add_tool(benchmark_qr   benchmarks/benchmark_qr.cpp)
     metal_linalg_add_tool(benchmark_eigh benchmarks/benchmark_eigh.cpp)

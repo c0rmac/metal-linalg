@@ -40,6 +40,8 @@ last_error = _fn("metal_linalg_last_error", _cstr)
 _qr = _fn("metal_linalg_qr", ctypes.c_int, _f32p, _u32, _u32, _u32, _f32p, _f32p)
 _eigh = _fn("metal_linalg_eigh", ctypes.c_int, _f32p, _u32, _u32, ctypes.c_int, _f32p, _f32p, _u32p)
 _svd = _fn("metal_linalg_svd", ctypes.c_int, _f32p, _u32, _u32, _u32, _f32p, _f32p, _f32p, _u32p)
+buffer_contents = _fn("metal_linalg_buffer_contents", ctypes.c_void_p,
+                      ctypes.c_void_p, ctypes.c_uint64, ctypes.c_uint64)
 
 device_name = _fn("metal_linalg_device_name", _cstr)
 gpu_core_count = _fn("metal_linalg_gpu_core_count", _u32)

@@ -6,11 +6,19 @@ gives torch.compile the output shapes without running anything, and its
 autograd formula is the one torch.linalg uses for the same decomposition, so
 the operators train, compile and export like built-in ones.
 
-The library works on its own Metal command queue, on host memory: an MPS
-tensor is copied to the CPU (which waits for MPS to finish the work queued
-on it) and the results back, two copies at memory bandwidth around a
-decomposition. A CPU tensor is used in place.
+The library works on its own Metal command queue, on memory the CPU can
+address. A CPU tensor is used in place. So is an MPS tensor: on Apple
+Silicon its memory is a Metal buffer in shared storage, which the library's
+kernels and its CPU path read and write directly, and its results go into
+MPS tensors allocated for them. The call first waits for the work MPS has
+queued (torch.mps.synchronize()), since that work may still be writing the
+input. Where MPS memory is not in shared storage, or with
+METAL_LINALG_TORCH_MPS_COPY=1, an MPS tensor is copied to the CPU and the
+results back instead.
 """
+
+import ctypes
+import os
 
 import torch
 from torch import Tensor
@@ -36,12 +44,73 @@ def _host(a):
     return a.detach().to(device="cpu", dtype=torch.float32).contiguous()
 
 
-def _empty(shape):
-    return torch.empty(shape, dtype=torch.float32)
+def _empty(shape, device="cpu"):
+    return torch.empty(shape, dtype=torch.float32, device=device)
 
 
 def _back(device, *ts):
     return tuple(t if device.type == "cpu" else t.to(device) for t in ts)
+
+
+def _mps_address(t):
+    """The CPU address of contiguous MPS tensor t's memory, or None if the
+    library cannot use it in place. An MPS storage's data pointer is its
+    id<MTLBuffer>."""
+    return _lib.buffer_contents(t.untyped_storage().data_ptr(),
+                                t.storage_offset() * t.element_size(), t.numel() * t.element_size())
+
+
+def _probe_mps():
+    """Whether MPS tensors are in memory the library can read and write in
+    place: a CPU read of a tensor MPS wrote, and an MPS read of a CPU write."""
+    try:
+        if not torch.backends.mps.is_available():
+            return False
+        t = torch.arange(1, 65, dtype=torch.float32, device="mps") * 2
+        torch.mps.synchronize()
+        address = _mps_address(t)
+        if not address:
+            return False
+        seen = (ctypes.c_float * 64).from_address(address)
+        if list(seen) != [2.0 * i for i in range(1, 65)]:
+            return False
+        seen[0] = -1.0
+        return t[0].item() == -1.0
+    except Exception:   # pragma: no cover - a torch whose MPS storage is not a Metal buffer
+        return False
+
+
+_mps_in_place = None
+
+
+def mps_in_place():
+    """Whether MPS tensors are read and written in place (else copied)."""
+    global _mps_in_place
+    if _mps_in_place is None:
+        _mps_in_place = (os.environ.get("METAL_LINALG_TORCH_MPS_COPY", "0") in ("", "0")
+                         and _probe_mps())
+    return _mps_in_place
+
+
+def _run(a, shapes, call):
+    """Runs the library on `a` into new float32 outputs of `shapes` on a's
+    device: call(input_address, *output_addresses) on memory the library
+    reads and writes in place."""
+    device = a.device
+    if device.type == "mps" and mps_in_place():
+        x = a.detach().to(dtype=torch.float32).contiguous()
+        outs = tuple(_empty(s, device) for s in shapes)
+        # The work MPS has queued may still be writing x (or reading the
+        # memory the outputs were given); the library uses its own queue.
+        torch.mps.synchronize()
+        addresses = [_mps_address(t) for t in (x, *outs)]
+        if all(addresses):
+            call(*addresses)
+            return outs
+    x = _host(a)
+    outs = tuple(_empty(s) for s in shapes)
+    call(x.data_ptr(), *(t.data_ptr() for t in outs))
+    return _back(device, *outs)
 
 
 # ---------------------------------------------------------------------------
@@ -52,11 +121,10 @@ def _back(device, *ts):
 def qr(a: Tensor) -> tuple[Tensor, Tensor]:
     lead, batch, m, n = _dims(a, "qr")
     k = min(m, n)
-    q, r = _empty((*lead, m, k)), _empty((*lead, k, n))
-    if batch and k:
-        h = _host(a)
-        _lib.qr(h.data_ptr(), batch, m, n, q.data_ptr(), r.data_ptr())
-    return _back(a.device, q, r)
+    shapes = ((*lead, m, k), (*lead, k, n))
+    if not (batch and k):
+        return tuple(_empty(s, a.device) for s in shapes)
+    return _run(a, shapes, lambda x, q, r: _lib.qr(x, batch, m, n, q, r))
 
 
 @qr.register_fake
@@ -127,11 +195,10 @@ def _square(a, name):
 def eigh(a: Tensor, lower: bool) -> tuple[Tensor, Tensor]:
     _square(a, "eigh")
     lead, batch, n, _ = _dims(a, "eigh")
-    w, v = _empty((*lead, n)), _empty((*lead, n, n))
-    if batch and n:
-        h = _host(a)
-        _lib.eigh(h.data_ptr(), batch, n, lower, w.data_ptr(), v.data_ptr())
-    return _back(a.device, w, v)
+    shapes = ((*lead, n), (*lead, n, n))
+    if not (batch and n):
+        return tuple(_empty(s, a.device) for s in shapes)
+    return _run(a, shapes, lambda x, w, v: _lib.eigh(x, batch, n, lower, w, v))
 
 
 @eigh.register_fake
@@ -144,11 +211,9 @@ def _(a, lower):
 def eigvalsh(a: Tensor, lower: bool) -> Tensor:
     _square(a, "eigvalsh")
     lead, batch, n, _ = _dims(a, "eigvalsh")
-    w = _empty((*lead, n))
-    if batch and n:
-        h = _host(a)
-        _lib.eigh(h.data_ptr(), batch, n, lower, w.data_ptr(), None)
-    return _back(a.device, w)[0]
+    if not (batch and n):
+        return _empty((*lead, n), a.device)
+    return _run(a, ((*lead, n),), lambda x, w: _lib.eigh(x, batch, n, lower, w, None))[0]
 
 
 @eigvalsh.register_fake
@@ -214,11 +279,10 @@ eigvalsh.register_autograd(_eigvalsh_backward, setup_context=_eigvalsh_setup)
 def svd(a: Tensor) -> tuple[Tensor, Tensor, Tensor]:
     lead, batch, m, n = _dims(a, "svd")
     k = min(m, n)
-    u, s, vt = _empty((*lead, m, k)), _empty((*lead, k)), _empty((*lead, k, n))
-    if batch and k:
-        h = _host(a)
-        _lib.svd(h.data_ptr(), batch, m, n, u.data_ptr(), s.data_ptr(), vt.data_ptr())
-    return _back(a.device, u, s, vt)
+    shapes = ((*lead, m, k), (*lead, k), (*lead, k, n))
+    if not (batch and k):
+        return tuple(_empty(s, a.device) for s in shapes)
+    return _run(a, shapes, lambda x, u, s, vt: _lib.svd(x, batch, m, n, u, s, vt))
 
 
 @svd.register_fake
@@ -232,11 +296,9 @@ def _(a):
 def svdvals(a: Tensor) -> Tensor:
     lead, batch, m, n = _dims(a, "svdvals")
     k = min(m, n)
-    s = _empty((*lead, k))
-    if batch and k:
-        h = _host(a)
-        _lib.svd(h.data_ptr(), batch, m, n, None, s.data_ptr(), None)
-    return _back(a.device, s)[0]
+    if not (batch and k):
+        return _empty((*lead, k), a.device)
+    return _run(a, ((*lead, k),), lambda x, s: _lib.svd(x, batch, m, n, None, s, None))[0]
 
 
 @svdvals.register_fake

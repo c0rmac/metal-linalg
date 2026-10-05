@@ -1,5 +1,24 @@
 # Changes
 
+## 2.14.0 (2026-10-05)
+
+- **MPS tensors in place** in the PyTorch package: on Apple Silicon PyTorch
+  keeps MPS tensors in Metal buffers in shared storage, and the library now
+  reads its input there and writes its results into new MPS tensors, instead
+  of copying the input to the CPU and the results back. A call waits for the
+  work queued on MPS first (`torch.mps.synchronize()`). The copies cost
+  about 0.5 ms a call even for a handful of matrices; an MPS tensor now costs
+  what a CPU tensor does. `mlt.mps_in_place()` says whether it applies (a
+  torch that keeps MPS tensors in private storage still copies), and
+  `METAL_LINALG_TORCH_MPS_COPY=1` forces the copies.
+- The C API gains `metal_linalg_buffer_contents(buffer, offset, bytes)`: the
+  CPU address of a range of a Metal buffer in shared storage, NULL for one in
+  private storage, for a range it does not hold, or for an object that is not
+  a buffer. It is what passes a GPU framework's tensor memory to the
+  decompositions without a copy ([docs/c-api.md](docs/c-api.md)).
+  `tests/test_c_api_metal.mm` runs each decomposition on buffers
+  sub-allocated from a shared heap, as PyTorch's allocator lays them out.
+
 ## 2.13.0 (2026-10-04)
 
 - **Two-stage reductions for eigenvalues alone and singular values alone**:

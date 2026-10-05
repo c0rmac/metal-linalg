@@ -102,7 +102,8 @@ as well when their input requires grad, since the gradient needs them.
 
 Against `torch.linalg` on an M5 Pro with PyTorch 2.14 and metal-linalg 2.13
 (best of five; the same tensors on MPS for torch's MPS path and for this
-package, copies included):
+package, which in 2.13 still copied them to the CPU and back; from 2.14 they
+are used in place, see [MPS tensors](#mps-tensors)):
 
 | | torch, CPU | torch, MPS | metal-linalg-torch |
 |---|---|---|---|
@@ -127,11 +128,31 @@ siblings.
 
 ## MPS tensors
 
-The library runs its own Metal kernels on host memory. An MPS tensor is
-copied to the CPU (which waits for the work PyTorch has queued on the GPU)
-and the results are copied back: two copies at memory bandwidth around a
-decomposition. A CPU tensor is used in place, and its results stay on the
-CPU, though the work still runs on the GPU where that is faster.
+An MPS tensor is used in place. On Apple Silicon PyTorch keeps MPS tensors in
+Metal buffers in shared storage, which the CPU can address too: the library
+reads its input there and writes its results into new MPS tensors, with no
+copy to the CPU and back. Its kernels run on a Metal command queue of its
+own, so a call first waits for the work PyTorch has queued on the GPU
+(`torch.mps.synchronize()`), which may still be writing the input, and
+returns when its results are written. `mlt.mps_in_place()` says whether this
+applies; where it does not (a torch that keeps MPS tensors in private
+storage), or with `METAL_LINALG_TORCH_MPS_COPY=1`, an MPS tensor is copied to
+the CPU and the results back.
+
+Up to 2.13 every MPS call made those copies, about 0.5 ms even for a handful
+of matrices. An MPS tensor now costs what a CPU tensor does (M5 Pro,
+PyTorch 2.13, median of repeated calls):
+
+| | MPS, copied (2.13) | MPS, in place | CPU tensor |
+|---|---|---|---|
+| eigh, 16 × 16×16 | 0.64 ms | 0.15 ms | 0.09 ms |
+| QR, 16 × 48×16 | 0.51 ms | 0.08 ms | 0.08 ms |
+| SVD, 1024 × 32×32 | 4.7 ms | 2.6 ms | 2.5 ms |
+| eigh, 16384 × 32×32 | 19.6 ms | 13.4 ms | 15.4 ms |
+| QR, 16384 × 64×32 | 25.9 ms | 15.5 ms | 14.2 ms |
+
+A CPU tensor is used in place too, and its results stay on the CPU, though
+the work still runs on the GPU where that is faster.
 
 Calls are thread-safe; they are serialised, and release the GIL.
 
