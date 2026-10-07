@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <random>
 #include <string>
 #include <vector>
@@ -532,7 +533,9 @@ int main() {
             eval({r.eigenvalues, r.eigenvectors, r.info});
             return r;
         };
-        for (int n : {1, 2, 3, 31, 33, 34, 35, 64, 65, 66, 97, 129, 130, 257, 300, 513, 1024, 1100}) {
+        // From 2048 the divide and conquer's top merges run their products
+        // on the GPU (one matrix: divide_conquer.h's GpuGemm).
+        for (int n : {1, 2, 3, 31, 33, 34, 35, 64, 65, 66, 97, 129, 130, 257, 300, 513, 1024, 1100, 2048}) {
             array A = random_symmetric(1, n, 1000 + n);
             check("tridiag " + std::to_string(n) + "x" + std::to_string(n), A, tri(A, true, true));
         }
@@ -583,6 +586,36 @@ int main() {
             for (int i = 0; i < 150; ++i) spec[i] = i < 100 ? 1.0f : 2.0f + i;
             array R = with_spectrum(spec);
             check("tridiag repeated eigenvalues 150x150", R, tri(R, true, true));
+        }
+        // From N = 129 the eigenvectors come from the parallel divide and
+        // conquer (divide_conquer.cpp): its deflations (a zero z entry, close
+        // values rotated together, a split tridiagonal) on matrices large
+        // enough to be divided several times.
+        check("tridiag zero matrix 300x300", zeros({300, 300}), tri(zeros({300, 300}), true, true));
+        check("tridiag identity 300x300", eye(300), tri(eye(300), true, true));
+        {
+            std::vector<float> dvals(400);
+            for (int i = 0; i < 400; ++i) dvals[i] = (float)(i % 7) - 3.0f;
+            array D = diag(from_values(dvals, {400}));
+            check("tridiag diagonal 400x400", D, tri(D, true, true));
+            std::vector<float> spec(500), close(450);
+            for (int i = 0; i < 500; ++i) spec[i] = i < 300 ? 1.0f : 2.0f + (float)(i % 5);
+            array R = with_spectrum(spec);
+            check("tridiag repeated eigenvalues 500x500", R, tri(R, true, true));
+            for (int i = 0; i < 450; ++i) close[i] = 1.0f + 1e-6f * (float)i;
+            array C = with_spectrum(close);
+            check("tridiag clustered eigenvalues 450x450", C, tri(C, true, true));
+            // Blocks coupled by nothing: the tridiagonal splits into
+            // independent ones
+            std::vector<float> blk((size_t)600 * 600, 0.0f);
+            array S = random_symmetric(1, 150, 1450);
+            eval({S});
+            for (int b = 0; b < 4; ++b)
+                for (int i = 0; i < 150; ++i)
+                    for (int j = 0; j < 150; ++j)
+                        blk[(size_t)(b * 150 + i) * 600 + b * 150 + j] = S.data<float>()[i * 150 + j] * (float)(b + 1);
+            array B = from_values(blk, {600, 600});
+            check("tridiag block diagonal 4 x 150 in 600x600", B, tri(B, true, true));
         }
         // A NaN in one matrix of a batch: that matrix NaN and flagged, the rest intact.
         {
@@ -638,6 +671,21 @@ int main() {
             band("band upper, junk below 300x300", add(triu(S), tril(junk, -1)), false, 16);
         }
         band("band batch 3 x 150x150", random_symmetric(3, 150, 3200), true, 16);
+        // One matrix alone has its chase run under its reduction, trailing
+        // the GPU; in a batch, after it: the same eigenvalues bit for bit.
+        for (int n : {49, 700, 2048}) {
+            array A = random_symmetric(1, n, 3150 + n);
+            eval({A});
+            std::vector<float> two(A.data<float>(), A.data<float>() + (size_t)n * n);
+            two.insert(two.end(), two.begin(), two.end());
+            EighResult one = detail::eigh_band(A, true, 16), pair = detail::eigh_band(from_values(two, {2, n, n}), true, 16);
+            array w1 = reshape(one.eigenvalues, {n}), w2 = reshape(slice(pair.eigenvalues, {0, 0}, {1, n}), {n});
+            eval({w1, w2});
+            ++g_checks;
+            const std::string label = "band chase under the reduction " + std::to_string(n) + ": bit for bit";
+            if (std::memcmp(w1.data<float>(), w2.data<float>(), (size_t)n * 4) != 0) fail(label, "differ");
+            else std::printf("  ok    %-44s\n", label.c_str());
+        }
         band("band zero 100x100", zeros({100, 100}), true, 16);
         band("band identity 600x600", eye(600), true, 16);
         {
@@ -1009,6 +1057,16 @@ int main() {
                     eval({w, w_ref});
                     const float d = max_abs(subtract(w, w_ref)) / std::max(frobenius(A), 1.0f);
                     expect("eigvalsh routed to band (700x700) == LAPACK", d < kEigTol, "differ by " + std::to_string(d));
+                    for (unsigned width : {8u, 32u}) {   // the policy's band width reaches the backend
+                        c.values_band_width = width;
+                        set_eigh_policy(c);
+                        array wb = eigvalsh_accelerated(A);
+                        eval({wb});
+                        const float db = max_abs(subtract(wb, w_ref)) / std::max(frobenius(A), 1.0f);
+                        expect("eigvalsh band, values_band_width = " + std::to_string(width) + " == LAPACK",
+                               db < kEigTol && max_abs(subtract(wb, w)) > 0.0f, "differ by " + std::to_string(db));
+                    }
+                    c.values_band_width = 0;
                 }
                 c.values_band_min_n = 0;
                 set_eigh_policy(c);

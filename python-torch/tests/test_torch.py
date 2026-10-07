@@ -385,7 +385,12 @@ class Routing(unittest.TestCase):
             mlt.set_svd_policy(values_band_min_k=1)
             self.assertEqual(mlt.svdvals_backend(300, 80), "band")
             self.assertLess(rel(mlt.svdvals(a), torch.linalg.svdvals(a)), 2e-5)
-            mlt.set_svd_policy(gpu_max_k=0, bidiag_min_k=0, values_bidiag_min_k=0, values_band_min_k=0)
+            mlt.set_svd_policy(band_min_k=1)   # with vectors by the two-stage reduction
+            self.assertEqual(mlt.svd_backend(300, 80), "band")
+            U, S, Vh = mlt.svd(a)
+            self.assertLess(rel((U * S.unsqueeze(-2)) @ Vh, a), 2e-5)
+            mlt.set_svd_policy(gpu_max_k=0, bidiag_min_k=0, values_bidiag_min_k=0, values_band_min_k=0,
+                               band_min_k=0)
             self.assertEqual(mlt.svd_backend(300, 80), "cpu")
             mlt.set_svd_policy(gpu_max_k=64, gpu_min_batch_times_k=0, gpu_min_batch=1, gpu_max_l=2**32 - 1,
                                gk_min_k=8, gk_max_k=48)

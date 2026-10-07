@@ -4,15 +4,11 @@
 #include <metal_linalg/device.h>
 
 #include <Accelerate/Accelerate.h>
-// BLASSetThreading, from the macOS 15 SDK on. Built with an older SDK, the
-// library cannot switch Accelerate's threading off and splits a batch only
-// where Accelerate would not thread anyway (see lapack_batches).
-#if __has_include(<vecLib/thread_api.h>)
-#include <vecLib/thread_api.h>
-#define METAL_LINALG_HAVE_BLAS_THREADING 1
-#else
-#define METAL_LINALG_HAVE_BLAS_THREADING 0
-#endif
+#import <MetalPerformanceShaders/MetalPerformanceShaders.h>
+// Built with an SDK older than macOS 15's, the library cannot switch
+// Accelerate's threading off and splits a batch only where Accelerate would
+// not thread anyway (see lapack_batches).
+#include "blas_threading.h"
 
 #include <atomic>
 #include <chrono>
@@ -216,6 +212,114 @@ void transpose_scaled(const float* src, size_t ld_src, float* dst, size_t ld_dst
     });
 }
 
+void MpsGemm::add_buffer(id<MTLBuffer> buffer) {
+    regions_.push_back({static_cast<const char*>(buffer.contents), (size_t)buffer.length, buffer});
+}
+
+// Wrapping costs tens of microseconds, and most of a solve's temporaries
+// never reach the GPU's products: only when one does.
+void MpsGemm::add(const float* base, size_t floats) {
+    regions_.push_back({reinterpret_cast<const char*>(base), floats * sizeof(float), nil});
+}
+
+void MpsGemm::remove(const float* base) {
+    const char* b = reinterpret_cast<const char*>(base);
+    regions_.erase(std::remove_if(regions_.begin(), regions_.end(), [&](const Region& r) { return r.base == b; }),
+                   regions_.end());
+}
+
+id<MTLBuffer> MpsGemm::find(const float* p, long rows, long cols, long ld, size_t& offset) {
+    const char* a = reinterpret_cast<const char*>(p);
+    const size_t span = ((size_t)(cols - 1) * ld + rows) * sizeof(float);
+    for (Region& r : regions_)
+        if (a >= r.base && a + span <= r.base + r.bytes) {
+            offset = (size_t)(a - r.base);
+            if (!r.buffer) r.buffer = wrap_host(device_, reinterpret_cast<float*>(const_cast<char*>(r.base)), r.bytes / sizeof(float));
+            return r.buffer;
+        }
+    return nil;
+}
+
+bool MpsGemm::gemm(long m, long n, long k, const float* A, long lda, const float* B, long ldb, float* C, long ldc,
+                   bool accumulate) {
+    if (after_ && after_.status < MTLCommandBufferStatusCompleted) return false;   // the GPU still busy
+    size_t oa = 0, ob = 0, oc = 0;
+    id<MTLBuffer> ba = find(A, m, k, lda, oa), bb = find(B, k, n, ldb, ob), bc = find(C, m, n, ldc, oc);
+    if (!ba || !bb || !bc) return false;
+    // On the row-major views of the column-major operands: C^T = B^T A^T.
+    auto view = [](id<MTLBuffer> b, size_t off, long rows, long cols, long ld) {
+        MPSMatrixDescriptor* d = [MPSMatrixDescriptor matrixDescriptorWithRows:(NSUInteger)rows
+                                                                       columns:(NSUInteger)cols
+                                                                      rowBytes:(NSUInteger)ld * sizeof(float)
+                                                                      dataType:MPSDataTypeFloat32];
+        return [[MPSMatrix alloc] initWithBuffer:b offset:off descriptor:d];
+    };
+    @autoreleasepool {
+        id<MTLCommandBuffer> cb = [queue_ commandBuffer];
+        MPSMatrixMultiplication* g = [[MPSMatrixMultiplication alloc] initWithDevice:device_ transposeLeft:NO
+                                     transposeRight:NO resultRows:(NSUInteger)n resultColumns:(NSUInteger)m
+                                     interiorColumns:(NSUInteger)k alpha:1.0 beta:accumulate ? 1.0 : 0.0];
+        [g encodeToCommandBuffer:cb leftMatrix:view(bb, ob, n, k, ldb) rightMatrix:view(ba, oa, k, m, lda)
+                    resultMatrix:view(bc, oc, n, m, ldc)];
+        [cb commit];
+        [cb waitUntilCompleted];
+        if (cb.error)   // C may be partly written: not one for the CPU to redo
+            throw std::runtime_error(std::string("divide and conquer: GPU error in a product: ") +
+                                     cb.error.localizedDescription.UTF8String);
+    }
+    return true;
+}
+
+uint32_t jacobi_round_budget(double solve_core_ms, uint32_t rounds, const char* env) {
+    constexpr double kSweeps = 8.0;   // a typical solve's, for the cost of a round
+    double target = 40.0;
+    if (const char* s = env ? std::getenv(env) : nullptr) {   // fractions too (the tests split to a round)
+        const double v = std::strtod(s, nullptr);
+        if (v > 0.0) target = v;
+    }
+    if (rounds == 0 || solve_core_ms <= target) return 0;
+    const double round_ms = solve_core_ms / (kSweeps * rounds);
+    return (uint32_t)std::max(1.0, std::floor(target / round_ms));
+}
+
+void run_split_jacobi(id<MTLCommandQueue> queue, id<MTLBuffer> state, size_t offset, uint32_t count,
+                      uint32_t per_buffer, uint32_t max_dispatches,
+                      const std::function<void(id<MTLComputeCommandEncoder>)>& encode, const std::string& what) {
+    constexpr uint32_t kDone = 2;   // kJacobiDone
+    auto* st = static_cast<unsigned char*>(state.contents) + offset;
+    std::memset(st, 0, (size_t)count * kJacobiStateBytes);
+    for (uint32_t sent = 0; sent < max_dispatches;) {
+        id<MTLCommandBuffer> cmd = [queue commandBuffer];
+        id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
+        for (uint32_t d = 0; d < per_buffer && sent < max_dispatches; ++d, ++sent) encode(enc);
+        [enc endEncoding];
+        [cmd commit];
+        [cmd waitUntilCompleted];
+        if (cmd.error)
+            throw std::runtime_error(what + ": GPU kernel error: " + cmd.error.localizedDescription.UTF8String);
+        bool all = true;
+        for (uint32_t b = 0; b < count && all; ++b) {
+            uint32_t flags;
+            std::memcpy(&flags, st + (size_t)b * kJacobiStateBytes + 20, 4);
+            all = (flags & kDone) != 0;
+        }
+        if (all) return;
+    }
+}
+
+void compact_wy_t(uint32_t m, uint32_t kb, const float* V, const float* tau, float* T, uint32_t ldt) {
+    std::vector<float> G((size_t)kb * kb);
+    cblas_ssyrk(CblasColMajor, CblasUpper, CblasTrans, (int)kb, (int)m, 1.0f, V, (int)m, 0.0f, G.data(), (int)kb);
+    for (uint32_t j = 0; j < kb; ++j) {   // T(0:j, j) = -tau_j T(0:j, 0:j) G(0:j, j)
+        for (uint32_t i = 0; i < j; ++i) {
+            float s = 0.0f;
+            for (uint32_t k = i; k < j; ++k) s += T[i + (size_t)k * ldt] * G[k + (size_t)j * kb];
+            T[i + (size_t)j * ldt] = -tau[j] * s;
+        }
+        T[j + (size_t)j * ldt] = tau[j];
+    }
+}
+
 namespace {
 
 // Chunks per thread in lapack_batches: more than one, so that threads on the
@@ -226,38 +330,6 @@ constexpr uint32_t kChunksPerThread = 4;
 // matrix lapack_batches splits a batch of: well under the sizes Accelerate
 // threads one call across cores.
 constexpr size_t kUnthreadedMaxFloats = 256 * 256;
-
-// Accelerate's BLAS and LAPACK single-threaded on this thread while in scope,
-// where macOS supports choosing (15 and later, and an SDK that declares it).
-class SingleThreadedBlas {
-public:
-    SingleThreadedBlas() {
-#if METAL_LINALG_HAVE_BLAS_THREADING
-        if (@available(macOS 15.0, *)) {
-            old_ = (int)BLASGetThreading();
-            BLASSetThreading(BLAS_THREADING_SINGLE_THREADED);
-        }
-#endif
-    }
-    ~SingleThreadedBlas() {
-#if METAL_LINALG_HAVE_BLAS_THREADING
-        if (@available(macOS 15.0, *)) {
-            if (old_ >= 0) BLASSetThreading((BLAS_THREADING)old_);
-        }
-#endif
-    }
-    SingleThreadedBlas(const SingleThreadedBlas&) = delete;
-    SingleThreadedBlas& operator=(const SingleThreadedBlas&) = delete;
-private:
-    int old_ = -1;
-};
-
-bool can_single_thread_blas() {
-#if METAL_LINALG_HAVE_BLAS_THREADING
-    if (@available(macOS 15.0, *)) return true;
-#endif
-    return false;
-}
 
 // Set on share_batch's CPU workers, each of which is already one of the
 // cores' worth: lapack_batches then solves its matrices on the calling thread.

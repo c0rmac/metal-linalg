@@ -1,8 +1,16 @@
 # Fusing the band reduction's small products
 
-Status: proposal, not started (2026-10-04). Low value on its own; worth doing
-only alongside the [TSQR top kernel](tsqr-top-kernel.md), while the panel
-code is open.
+Status: **done in 2.15.0** (2026-10-07). Each block's three small MPS
+products are two kernels: `bd_small_partial` (partials of the b x b product
+over 256 rows a threadgroup, staged in threadgroup memory) and `bd_sy_apply`
+or `bd_ge_apply` (the partials summed in order, then the b-wide work in one
+pass). A first version, a thread an entry over its rows straight from device
+memory, was slower than MPS: latency, not work. eigvalsh on `band` 2-5%
+faster at 1024-2048, svdvals 1-3% at 2048, nothing measurable at 4096: as
+estimated. MPS's b x b product summed over n rows took 10-20 us whatever n
+was. See [the study](../studies/proposals-2-15-apple-m5-pro.md), section 3.
+
+What follows is the proposal as written on 2026-10-04.
 
 ## What
 

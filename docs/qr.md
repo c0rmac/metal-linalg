@@ -164,6 +164,45 @@ $Y$ and $T$ are loaded into threadgroup memory (L1 cache) once per tile and reus
 
 **Kernel 4 — Haar fix.** Ensures the output $Q$ is a uniform sample from the Haar measure on $O(M)$ and that $R$ has non-negative diagonal. For each column $k$ where $R_{kk} < 0$, the signs of column $k$ in both $Q$ and $R$ are flipped. If the resulting $\det(Q) < 0$, the final column is negated to enforce $\det(Q) = +1$, placing $Q$ in $SO(M)$.
 
+### Algorithm: `qr_blocked` (since 2.15.0, block size $b = 16$, aggregates of 128)
+
+The streaming kernels above factor each 32-column panel in one threadgroup
+and stream every panel's trailing update through threadgroups a tile at a
+time: on an M5 Pro one 4096×4096 ran at 0.8 TFLOP/s. The blocked QR does the
+same Householder QR with the two-stage reduction's machinery
+([svd.md](svd.md)), its work as matrix products:
+
+1. **Panels of 16 columns**, factored by the band reduction's panel kernels:
+   a panel of up to 128 rows in one simdgroup, rows in registers; a taller
+   one by TSQR (leaves of 128 rows a simdgroup each, their stacked
+   triangles' QR a tree of pairs, the Householder vectors rebuilt from TSQR's
+   Q), so that every panel gives the compact $H = I - V T V^T$.
+2. **Aggregates of 128 columns.** Inside one, each panel's $H$ is applied to
+   the aggregate's columns right of it, $W = (VT)^T C$ and $C \mathrel{-}= V W$;
+   the aggregate's $T_a$ is merged from its panels' $T$'s and the Gram matrix
+   $Y^T Y$ (a small kernel), and $I - Y T_a Y^T$ is applied to every column
+   right of the aggregate as three MPS products, $Z = Y^T C$,
+   $W = T_a^T Z$, $C \mathrel{-}= Y W$: rank-128 updates.
+3. **Q** from $[I; 0]$ by the aggregates backwards, three products each.
+
+Each matrix is padded with zero rows and columns to whole panels with twice
+their width in rows (the panel kernels' need), which changes neither R nor
+Q, so the GPU takes every column. Each is factored row-major in place (a
+panel's rows are read contiguously), so neither the input nor Q is
+transposed. A batch is one pass of kernels: every kernel takes the matrix as
+its grid's z, every product is one batched MPS product. The forward pass is
+committed a panel, then an aggregate, at a time, so that the GPU starts
+while the CPU encodes the rest; Q's formation is queued at once behind an
+event the CPU signals after writing Q's start. Up to $2^{22}$ rows (the TSQR
+tree's $2^{15}$ leaves of 128); taller matrices go to the streaming kernels.
+
+On an M5 Pro, one 4096×4096 takes 62 ms against the streaming kernels' 231
+and the CPU's 634: the forward pass 42 ms (its panels about 25, latency
+rather than arithmetic), Q's formation 16 (6 TFLOP/s). Accuracy is LAPACK's
+or a little better (reconstruction and orthogonality 2.1e-6 at 4096 against
+2.4e-6). See [the proposal](proposals/qr-blocked.md#done-2026-10-07) for
+the measurements behind each choice.
+
 ## How it works
 
 Two Metal backends and a CPU path handle different regimes, with a dispatcher that selects between them at runtime (a third Metal backend is retained but unused):
@@ -172,7 +211,7 @@ Two Metal backends and a CPU path handle different regimes, with a dispatcher th
 
 **`qr_unblocked`** — Standard Householder QR in a single kernel dispatch. Used for smaller matrices where the overhead of multi-pass streaming is not worth it.
 
-**`qr_streaming_amx_reduced`** — Multi-pass panel factorisation with grid-parallel trailing matrix updates, designed to saturate the GPU for large matrices. Factorises column panels of width 32, computes the T-matrix for each WY representation, then launches a grid of threadgroups for the trailing update. Q is accumulated directly at its economic width of `K = min(M, N)` columns via a backward pass.
+**`qr_streaming_amx_reduced`** — The GPU path for large matrices. Since 2.15.0 it hands every call it can to the blocked QR (`qr_blocked`, above; `QR_BLOCKED=0` turns that off), which beat its own kernels at every shape and batch measured (1.8-3.5x on an M5 Pro). Its own kernels, kept for matrices taller than $2^{22}$ rows: multi-pass panel factorisation with grid-parallel trailing matrix updates, column panels of width 32, the T-matrix for each WY representation, then a grid of threadgroups for the trailing update, Q accumulated at its economic width of `K = min(M, N)` columns by a backward pass.
 
 **`qr_streaming_amx_complete`** — The same panel factorisation, but accumulating the full `M x M` orthogonal factor inside the forward loop and slicing Q down to `K` columns at the end. Measured to be within noise of the reduced backend, so it is no longer dispatched to.
 
@@ -196,7 +235,7 @@ Two decisions, as for the eigensolver and the SVD. First GPU or CPU, with
 
 ```
 GPU iff  gpu_min_k <= k <= gpu_max_k,  batch * k >= gpu_min_batch_times_k  and  batch >= gpu_min_batch,
-     or  k >= gpu_large_min_k  and  batch <= gpu_large_max_batch       (large matrices)
+     or  sqrt(M k) >= gpu_large_min_k  and  batch <= gpu_large_max_batch       (large matrices)
 else CPU
 on the GPU, from a batch of share_min_batch: the batch shared with the CPU path
 ```
@@ -218,9 +257,18 @@ The GPU needs enough work to pay for a launch, so lone and small-batch calls go
 to LAPACK. Since 2.9.0 the CPU path also spreads a batch over every core,
 which beats the GPU kernels for batches of small and mid-size matrices too,
 while one large matrix, which Accelerate threads only weakly, is still faster
-on the GPU (on an M5 Pro 1.9x at 2048×2048, 2.2x at 3072×3072). The product
+on the GPU (on an M5 Pro 1.9x at 2048×2048, 2.2x at 3072×3072 in 2.14; with
+2.15.0's blocked QR 5.1x and 7.1x, and batches of 1024×1024 and larger too:
+16 of them 1.9x). The product
 rule cannot say both, hence the large-matrix clause; `gpu_large_max_batch = 0`
-means any batch, and `gpu_large_min_k = 0` turns the clause off.
+means any batch, and `gpu_large_min_k = 0` turns the clause off. Since 2.15.0
+the clause compares `sqrt(M k)`, rows and `k` both, rather than `k`: `k` for
+a square or wide matrix, more for a tall one. One 8192×512 takes 8.5 ms on
+the GPU's blocked QR and 48 on the CPU, where a rule on `k = 512` sent it to
+the CPU; a wide one stays the CPU's longer, its path factoring the leading
+square block and the rest by one product. Fitted on the same measurements,
+`sqrt(M k)` scored 1.0133x geometric-mean regret (1.0274x held out), the
+work's own size `cbrt(max(M, N) k^2)` 1.0225x (1.0314x).
 
 The lower bound `gpu_min_k` (2.10.0; 0 = none) keeps the smallest matrices on
 the CPU however large the batch. On an M5 Pro the CPU wins every square batch
@@ -236,7 +284,7 @@ the measured row is `k <= 128` with `batch * k >= 40960`, no lower bound. Then,
 on the GPU, which kernel:
 
 ```
-M >= m_crossover  ->  qr_streaming_amx_reduced      (384 on an M1, 512 on an M5 Pro)
+M >= m_crossover  ->  qr_streaming_amx_reduced      (384 on an M1; 512 on an M5 Pro, 128 since 2.15.0's blocked QR)
 otherwise         ->  qr_unblocked
 ```
 
@@ -280,9 +328,12 @@ but unused.
 
 A QR factorisation is unique only up to the signs of R's diagonal (with the
 matching columns of Q), and the backends do not all choose the same ones. The
-CPU path and `qr_unblocked` use LAPACK's Householder convention, so about half
-of R's diagonal is negative; `qr_streaming_amx_reduced` makes the diagonal
-non-negative and, for square input, flips the last column of Q so that
+CPU path, `qr_unblocked` and the blocked QR keep the Householder reflections'
+signs (the CPU path and `qr_unblocked` LAPACK's convention exactly), so about
+half of R's diagonal is negative; the streaming kernels
+(`qr_streaming_amx_reduced` where it does not hand the call to the blocked
+QR: taller than $2^{22}$ rows, or `QR_BLOCKED=0`) make the diagonal
+non-negative and, for square input, flip the last column of Q so that
 det(Q) = +1. Every result satisfies `Q R = A`; a caller that needs one
 convention, for example to sample Haar-distributed rotations, normalises it:
 flip column `i` of Q and row `i` of R wherever `R[i][i] < 0`.
@@ -290,8 +341,9 @@ flip column `i` of Q and row `i` of R wherever `R[i][i] < 0`.
 ### Tuning
 
 **The crossover is hardware-specific.** `384` was measured on an 8-core Apple
-M1 over 421 shapes; on a 20-core M5 Pro it is `512`. Neither is a universal
-constant. The library ships a table of measured values rather than a formula,
+M1 over 421 shapes; on a 20-core M5 Pro it was `512`, and is `128` since the
+grid-parallel backend hands its calls to the blocked QR (2.15.0). None is a
+universal constant. The library ships a table of measured values rather than a formula,
 because the crossover depends on both core count and per-core throughput and the
 two push in opposite directions across GPU generations: more cores favour the
 grid-parallel backend, a faster core favours the single-threadgroup one, and on
@@ -300,15 +352,19 @@ the M5 Pro the second effect won.
 | GPU | cores | `m_crossover` | GPU or CPU | status |
 |---|---|---|---|---|
 | Apple M1 | 8 | — | — | measured before 2.9.0, out of date and no longer used since 2.14.0: estimated like any unmeasured Mac (the old row's study: [`studies/qr-routing-apple-m1.md`](studies/qr-routing-apple-m1.md)) |
-| Apple M5 Pro | 20 | 512 | GPU iff `k <= 128` and `batch * k >= 40960`, or `k >= 1024` and `batch <= 4`; shared with the CPU from batch 64 | measured — run [`20261004-4d6208`](results/apple-m5-pro-20gpu/20261004-4d6208/qr/report.md) |
+| Apple M5 Pro | 20 | 128 | GPU iff `16 <= k <= 256` and `batch * k >= 20480`, or `sqrt(M k) >= 512` and `batch <= 64`; shared with the CPU from batch 1024 | measured — run [`20261007-82345e`](results/apple-m5-pro-20gpu/20261007-82345e/qr/report.md) |
 | anything else | — | estimated | estimated | **estimated** from the M5 Pro's timings ([how](tuning.md#macs-nobody-has-measured)) |
 
 The GPU-or-CPU boundary is measured by every run made since QR had a CPU path;
 a device's row sends every call to the GPU until such a run has been submitted
 for it (`python3 tuning/run.py --only qr` measures QR alone in about 4
-minutes). Against the best backend at each of the 185 shapes of its run, the
-M5 Pro row scores 1.0013 geometric-mean regret, worst 1.17x (2.11.0's row on
-the same data: 1.0081, worst 1.45x). The M5 Pro row of 2.9.0 was the first measured against the CPU path that
+minutes). Against the best backend at each of the 207 shapes of its run
+(2.15.0, with the blocked QR), the M5 Pro row scores 1.0133 geometric-mean
+regret, worst 1.72x (4 of 2048×64, which the GPU takes in 1.0 ms and the
+rule sends to the CPU's 1.7), 1.0274 held out; always the CPU would score
+1.223, always the GPU 1.89. The CPU is the fastest at 131 of the 207 shapes:
+lone matrices up to about 384, batches of up to 64 of 128-256. Before the
+blocked QR, the 2.12 row scored 1.0013 on its own run's 185 shapes. The M5 Pro row of 2.9.0 was the first measured against the CPU path that
 spreads a batch over every core (2.9.0), and against it the CPU was fastest at
 151 of the 178 shapes measured. The GPU keeps one or a few large matrices
 (1.3x at 1536×1536, 1.9x at 2048×2048, 2.2x at 3072×3072, alone) and large

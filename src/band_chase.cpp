@@ -31,6 +31,9 @@
 // being one row and column apart. With 16 threads, 35 ms at width 16 and 39
 // at 32 (the symmetric one 35 and 34).
 //
+// For the SVD with vectors the chase keeps its reflectors (ChaseReflectors),
+// straight into the blocks svd_bidiag.mm's bd_chase_apply applies.
+//
 // Each sweep runs on one thread (sweep s on thread s mod P) and publishes how
 // many tasks it has done; a thread waits for the previous sweep by spinning
 // on that count. The threads are std::threads, all running at once, because a
@@ -40,7 +43,9 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <climits>
+#include <memory>
 #include <cmath>
 #include <thread>
 #include <vector>
@@ -120,8 +125,23 @@ struct Sweep {
     bool  done;
     float tq = 0.0f, tp = 0.0f;
     std::vector<float> v, u, w;
+    const ChaseReflectors* rec;
 
-    Sweep(long nb) : v(nb + 1), u(nb + 1), w(nb + 1) {}
+    Sweep(long nb, const ChaseReflectors* r) : v(nb + 1), u(nb + 1), w(nb + 1), rec(r) {}
+
+    // Keeps reflector (s, j): left (rows) or right (columns).
+    void keep(bool left, long j, const float* x, long len, float tau, long) const {
+        if (!rec || !rec->L || len < 2) return;
+        const size_t G = (size_t)s / 16, c = (size_t)s % 16, pm = rec->pmax;
+        const size_t b = G * (pm + 1) - G * (G - 1) / 2 + (size_t)j;
+        // Column c lies in V's column tile c / 8, in its three row tiles from
+        // c / 8 (tiles 0-2 or 3-5), 24 rows from 8 (c / 8).
+        const size_t ct = c / 8, r0 = 8 * ct;
+        float* blk = (left ? rec->L : rec->R) + b * kChaseBlockFloats + ct * 3 * 64 + c % 8;
+        for (size_t r = r0; r < r0 + 24; ++r)
+            blk[(r - r0) / 8 * 64 + (r % 8) * 8] = r >= c && r < c + (size_t)len ? x[r - c] : 0.0f;
+        (left ? rec->Ltau : rec->Rtau)[b * 16 + c] = tau;
+    }
 
     void start(long sweep, long n, long nb) {
         s = sweep;
@@ -137,8 +157,10 @@ struct Sweep {
         if (task == 0) {
             const long len = ed - st + 1;
             tq = reflector(len, A.at(s, st), A.ld - 1, v.data());
+            keep(false, 0, v.data(), len, tq, nb);
             apply_right(A, st, ed, st, ed, v.data(), tq, w.data());
             tp = reflector(len, A.at(st, st), 1, u.data());
+            keep(true, 0, u.data(), len, tp, nb);
             apply_left(A, st, ed, st + 1, ed, u.data(), tp);
         } else if (task % 2 == 1) {
             const long j1 = ed + 1, j2 = std::min(ed + nb, n - 1);
@@ -153,12 +175,14 @@ struct Sweep {
                 return true;
             }
             tq = reflector(j2 - j1 + 1, A.at(st, j1), A.ld - 1, v.data());
+            keep(false, (task + 1) / 2, v.data(), j2 - j1 + 1, tq, nb);
             apply_right(A, st + 1, ed, j1, j2, v.data(), tq, w.data());
             st = j1;
             ed = j2;
         } else {
             apply_right(A, st, ed, st, ed, v.data(), tq, w.data());
             tp = reflector(ed - st + 1, A.at(st, st), 1, u.data());
+            keep(true, task / 2, u.data(), ed - st + 1, tp, nb);
             apply_left(A, st, ed, st + 1, ed, u.data(), tp);
         }
         ++task;
@@ -212,7 +236,7 @@ struct SymSweep {
     float tau = 0.0f;
     std::vector<float> u, w;
 
-    SymSweep(long kd) : u(kd + 1), w(kd + 1) {}
+    SymSweep(long kd, const ChaseReflectors*) : u(kd + 1), w(kd + 1) {}
 
     void start(long sweep, long n, long kd) {
         s = sweep;
@@ -266,35 +290,104 @@ struct SymSweep {
 };
 
 // Sweeps 0 .. n - 2 pipelined over P threads, as described above.
+// Waits for ok(): spinning, then yielding, and after a long wait (as for the
+// GPU's band reduction, which the chase can trail) sleeping between looks.
+template <class F>
+void wait_until(const F& ok) {
+    for (int spins = 0, yields = 0; !ok();)
+        if (++spins == 64) {
+            spins = 0;
+            if (++yields < 256) std::this_thread::yield();
+            else std::this_thread::sleep_for(std::chrono::microseconds(20));
+        }
+}
+
 template <class S, class M>
-void pipeline(long n, long nb, long P, const M& A) {
+void pipeline(long n, long nb, long P, const M& A, const ChaseReflectors* rec = nullptr) {
     std::vector<std::atomic<long>> done(n);   // per sweep: tasks done, LONG_MAX when over
     for (auto& x : done) x.store(0, std::memory_order_relaxed);
+    const std::atomic<long>* ready = rec ? rec->ready_rows : nullptr;
+    // Whether sweep s's next task (`task`) may run: the sweep before has run
+    // two tasks further, or, for sweep 0 trailing the band reduction, the
+    // rows its task reaches (about (task / 2 + 2) nb) are final.
+    auto may = [&](long s, long task) {
+        if (s > 0) return done[s - 1].load(std::memory_order_acquire) >= task + 3;
+        return !ready || ready->load(std::memory_order_acquire) >= std::min(n, (task / 2 + 2) * nb + 1);
+    };
+    auto over = [&](long s) {
+        done[s].store(LONG_MAX, std::memory_order_release);
+        if (rec && rec->frontier) {   // the leading sweeps finished
+            long f = rec->frontier->load(std::memory_order_acquire);
+            while (f < n - 1 && done[f].load(std::memory_order_acquire) == LONG_MAX)
+                if (rec->frontier->compare_exchange_weak(f, f + 1, std::memory_order_acq_rel)) ++f;
+        }
+    };
+    // A sweep a thread at a time, each thread's sweeps s = p, p + P, ...
     auto worker = [&](long p) {
-        S sweep(nb);
+        S sweep(nb, rec);
         for (long s = p; s < n - 1; s += P) {
             sweep.start(s, n, nb);
             for (;;) {
-                if (s > 0) {
-                    const long need = sweep.task + 3;
-                    for (int spins = 0; done[s - 1].load(std::memory_order_acquire) < need;)
-                        if (++spins == 64) {
-                            std::this_thread::yield();
-                            spins = 0;
-                        }
-                }
+                wait_until([&] { return may(s, sweep.task); });
                 if (!sweep.step(A, n, nb)) break;
                 done[s].store(sweep.task, std::memory_order_release);
             }
-            done[s].store(LONG_MAX, std::memory_order_release);
+            over(s);
+        }
+    };
+    // Trailing the band reduction, every sweep stops where the band is not
+    // final yet, so a thread keeps several of its sweeps open and runs
+    // whichever may go on: the later sweeps' work on the finished rows runs
+    // while the first ones wait for the GPU, where one sweep a thread would
+    // have held all the threads at the GPU's frontier.
+    auto trailing = [&](long p) {
+        std::vector<std::unique_ptr<S>> open;
+        long next = p;
+        for (int idle = 0;;) {
+            bool moved = false;
+            for (size_t i = 0; i < open.size();) {
+                S& sw = *open[i];
+                bool ended = false;
+                while (may(sw.s, sw.task)) {
+                    moved = true;
+                    if (!sw.step(A, n, nb)) {
+                        ended = true;
+                        break;
+                    }
+                    done[sw.s].store(sw.task, std::memory_order_release);
+                }
+                if (ended) {
+                    over(sw.s);
+                    open.erase(open.begin() + (long)i);
+                } else {
+                    ++i;
+                }
+            }
+            if (next < n - 1 && may(next, 0)) {
+                open.push_back(std::make_unique<S>(nb, rec));
+                open.back()->start(next, n, nb);
+                next += P;
+                moved = true;
+            }
+            if (open.empty() && next >= n - 1) break;
+            if (moved) {
+                idle = 0;
+            } else if (++idle < 256) {
+                std::this_thread::yield();
+            } else {
+                std::this_thread::sleep_for(std::chrono::microseconds(20));
+            }
         }
     };
     if (P == 1) {
-        worker(0);
+        ready ? trailing(0) : worker(0);
         return;
     }
     std::vector<std::thread> pool;
-    for (long p = 0; p < P; ++p) pool.emplace_back(worker, p);
+    for (long p = 0; p < P; ++p) {
+        if (ready) pool.emplace_back(trailing, p);
+        else pool.emplace_back(worker, p);
+    }
     for (auto& t : pool) t.join();
 }
 
@@ -307,20 +400,23 @@ long pipeline_threads(long n, long nb, unsigned threads) {
 } // namespace
 
 void band_to_bidiagonal(uint32_t n, uint32_t nb, float* W, size_t ld, size_t ku, float* d, float* e,
-                        unsigned threads) {
+                        unsigned threads, const ChaseReflectors* rec) {
     const Band A{W, (long)ld, (long)ku};
     const long N = n, NB = std::max<uint32_t>(nb, 1);
-    if (N > 1 && NB > 1) pipeline<Sweep>(N, NB, pipeline_threads(N, NB, threads), A);
+    if (N > 1 && NB > 1) pipeline<Sweep>(N, NB, pipeline_threads(N, NB, threads), A, rec);
+    if (rec && rec->ready_rows) wait_until([&] { return rec->ready_rows->load(std::memory_order_acquire) >= N; });
     for (long i = 0; i < N; ++i) {
         d[i] = *A.at(i, i);
         if (i + 1 < N) e[i] = *A.at(i, i + 1);
     }
 }
 
-void band_to_tridiagonal(uint32_t n, uint32_t kd, float* W, size_t ld, float* d, float* e, unsigned threads) {
+void band_to_tridiagonal(uint32_t n, uint32_t kd, float* W, size_t ld, float* d, float* e, unsigned threads,
+                         const ChaseReflectors* rec) {
     const SymBand A{W, (long)ld};
     const long N = n, KD = std::max<uint32_t>(kd, 1);
-    if (N > 1 && KD > 1) pipeline<SymSweep>(N, KD, pipeline_threads(N, KD, threads), A);
+    if (N > 1 && KD > 1) pipeline<SymSweep>(N, KD, pipeline_threads(N, KD, threads), A, rec);
+    if (rec && rec->ready_rows) wait_until([&] { return rec->ready_rows->load(std::memory_order_acquire) >= N; });
     for (long i = 0; i < N; ++i) {
         d[i] = *A.at(i, i);
         if (i + 1 < N) e[i] = *A.at(i + 1, i);

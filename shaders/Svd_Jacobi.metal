@@ -63,6 +63,7 @@ struct SvdParams {
     uint  max_sweeps;
     float tol;         // a pair is rotated iff |gamma| > tol * sqrt(alpha * beta)
     float null_tol;    // a column below null_tol * (largest column) is numerically null
+    uint  round_budget;   // rounds per dispatch, resumed from `st` (0: the whole solve)
 };
 
 constant uint kSvdConverged     = 1u << 16;
@@ -89,6 +90,7 @@ kernel void svd_jacobi(
     device float*        Vt   [[buffer(5)]],  // [batch, n, n] row-major
     device uint*         info [[buffer(6)]],  // [batch] sweeps | flags
     constant SvdParams&  prm  [[buffer(7)]],
+    device JacobiState*  st   [[buffer(8)]],  // [batch] (round_budget > 0)
     threadgroup float*   tg   [[threadgroup(0)]],  // red[32] flags[32] sig[n] rank[n]
     uint b    [[threadgroup_position_in_grid]],
     uint tid  [[thread_index_in_threadgroup]],
@@ -109,6 +111,18 @@ kernel void svd_jacobi(
     device float*       g = G    + (ulong)b * mn;
     device float*       v = Vw   + (ulong)b * nn;
 
+    // Split over dispatches: a finished matrix is left alone, a started one
+    // resumes where it stopped.
+    const bool split = prm.round_budget != 0;
+    const JacobiState s0 = split ? st[b] : JacobiState{0, 0.0f, 0.0f, 0u, 0u, 0u};
+    if (s0.flags & kJacobiDone) return;
+    const bool resume = (s0.flags & kJacobiStarted) != 0;
+
+    int expo = 0;
+    bool nonfinite = false;
+    if (resume) {
+        expo = s0.expo;
+    } else {
     // -------------------------------------------------------------------------
     // Load by column, V = I, largest entry, non-finite scan
     // -------------------------------------------------------------------------
@@ -129,25 +143,31 @@ kernel void svd_jacobi(
     }
     threadgroup_barrier(mem_flags::mem_device);
     amax = team_max(amax, false, red, sg, lane, n_sg);
-    const bool nonfinite = team_sum(bad, false, red, sg, lane, n_sg) > 0.0f;
+    nonfinite = team_sum(bad, false, red, sg, lane, n_sg) > 0.0f;
 
     // Scale by a power of two so the largest entry is in [0.5, 1): the inner
     // products square entries, which would overflow or underflow float32 for
     // inputs far from unit magnitude.
-    int expo = 0;
     if (amax > 0.0f) frexp(amax, expo);
     if (!nonfinite) {
         for (uint idx = tid; idx < mn; idx += T) g[idx] = ldexp(g[idx], -expo);
         threadgroup_barrier(mem_flags::mem_device);
+    }
     }
 
     // -------------------------------------------------------------------------
     // Sweeps. A sweep that rotates nothing is the convergence test, so the
     // count includes that final verifying sweep.
     // -------------------------------------------------------------------------
-    uint sweeps = 0;
-    bool converged = false;
+    uint sweeps = s0.sweeps, round0 = s0.round, budget = split ? prm.round_budget : 0xFFFFFFFFu;
+    const uint last = n_even - 1;   // rounds a sweep
+    bool converged = false, paused = false;
+    float null2 = s0.a, negl2 = s0.b;
+    // Resumed mid-sweep: whether a pair has rotated so far this sweep.
+    if (round0 > 0 && lane == 0) flags[sg] = (sg == 0 && (s0.flags & kJacobiRotated)) ? 1.0f : 0.0f;
     while (!nonfinite && sweeps < prm.max_sweeps) {
+        if (budget == 0) { paused = true; break; }
+        if (round0 == 0) {
         // Null columns. A column whose norm is below null_tol times the
         // largest column's has no direction of its own left: in a rank-
         // deficient matrix it is what remains after cancellation, rounding
@@ -185,14 +205,16 @@ kernel void svd_jacobi(
             cmax = fmax(cmax, simd_sum(acc));
         }
         const float cmax2 = team_max(cmax, false, red, sg, lane, n_sg);
-        const float null2 = prm.null_tol * prm.null_tol * cmax2;
-        const float negl2 = kNegligible * kNegligible * cmax2;
+        null2 = prm.null_tol * prm.null_tol * cmax2;
+        negl2 = kNegligible * kNegligible * cmax2;
 
         // Only this simdgroup writes its flag, and it is only read after the
         // barrier that ends the sweep.
         if (lane == 0) flags[sg] = 0.0f;
+        }
 
-        for (uint round = 0; round + 1 < n_even; ++round) {
+        const uint r1 = last - round0 <= budget ? last : round0 + budget;
+        for (uint round = round0; round < r1; ++round) {
             bool rotated = false;
             for (uint j = sg; j < np; j += n_sg) {
                 uint p, q;
@@ -220,16 +242,16 @@ kernel void svd_jacobi(
                 // Relative test, so a column of any magnitude is judged on
                 // its angle to the other; a zero column gives 0 > 0.
                 const float ab = alpha * beta;
-                if (fabs(gamma) > prm.tol * sqrt(ab)) {
-                    const float zeta = (beta - alpha) / (2.0f * gamma);
+                if (fabs(gamma) > prm.tol * j_sqrt(ab)) {
+                    const float zeta = j_div(beta - alpha, 2.0f * gamma);
                     float t;
                     if (fabs(zeta) > kZetaAsymptotic) {
-                        t = 0.5f / zeta;
+                        t = j_div(0.5f, zeta);
                     } else {
-                        t = 1.0f / (fabs(zeta) + sqrt(1.0f + zeta * zeta));
+                        t = j_div(1.0f, fabs(zeta) + j_sqrt(1.0f + zeta * zeta));
                         if (zeta < 0.0f) t = -t;
                     }
-                    const float c = rsqrt(1.0f + t * t);
+                    const float c = j_rsqrt(1.0f + t * t);
                     const float s = c * t;
 
                     for (uint i = lane; i < m; i += 32) {
@@ -261,12 +283,24 @@ kernel void svd_jacobi(
             // columns that other simdgroups have just written.
             threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
         }
+        if (split) budget -= r1 - round0;
+        round0 = r1;
+        if (round0 < last) continue;
+        round0 = 0;
         ++sweeps;
 
         float any = 0.0f;
         for (uint k = 0; k < n_sg; ++k) any += flags[k];
         threadgroup_barrier(mem_flags::mem_threadgroup);   // readers done before the reset above
         if (any == 0.0f) { converged = true; break; }
+    }
+    if (paused) {   // the next dispatch resumes here
+        float any = 0.0f;
+        for (uint k = 0; k < n_sg; ++k) any += flags[k];
+        if (tid == 0)
+            st[b] = JacobiState{expo, null2, negl2, sweeps, round0,
+                                kJacobiStarted | (round0 > 0 && any != 0.0f ? kJacobiRotated : 0u)};
+        return;
     }
 
     // -------------------------------------------------------------------------
@@ -280,7 +314,7 @@ kernel void svd_jacobi(
             acc += x * x;
         }
         const float s2 = simd_sum(acc);
-        if (lane == 0) sig[c] = sqrt(s2);
+        if (lane == 0) sig[c] = j_sqrt(s2);
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
@@ -322,7 +356,7 @@ kernel void svd_jacobi(
                 const uint c = idx / m;
                 const uint i = idx - c * m;
                 const float sc = sig[c];
-                out_u[(ulong)i * n + rank[c]] = (sc > thr) ? g[idx] / sc : 0.0f;
+                out_u[(ulong)i * n + rank[c]] = (sc > thr) ? j_div(g[idx], sc) : 0.0f;
             }
             for (uint idx = tid; idx < nn; idx += T) {
                 const uint c = idx / n;
@@ -335,5 +369,6 @@ kernel void svd_jacobi(
     if (tid == 0) {
         info[b] = sweeps | (converged ? kSvdConverged : 0u) | (nonfinite ? kSvdNonFinite : 0u)
                          | ((deficient && !nonfinite) ? kSvdRankDeficient : 0u);
+        if (split) st[b] = JacobiState{expo, null2, negl2, sweeps, 0u, kJacobiStarted | kJacobiDone};
     }
 }

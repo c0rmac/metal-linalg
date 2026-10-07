@@ -149,9 +149,10 @@ held-out validation. Then the CPU boundary, `gpu_max_k`,
 `gpu_min_batch_times_k`, `gpu_min_batch` and `gpu_min_k` (the GPU only from
 this k, so that the smallest matrices stay on the CPU at any batch; 0 in a run
 from before 2.10.0), the large-matrix clause,
-`gpu_large_min_k` and `gpu_large_max_batch`: the GPU also for `k` from the
-first in a batch of at most the second (0: any; `0, 0`: never, which a run
-from before 2.9.0 gives). Since the CPU path spreads a batch over every core
+`gpu_large_min_k` and `gpu_large_max_batch`: the GPU also from the first in
+a batch of at most the second (0: any; `0, 0`: never, which a run from
+before 2.9.0 gives), the size being `k` before 2.15.0 and `sqrt(M k)` since,
+so that a tall matrix counts by its rows too. Since the CPU path spreads a batch over every core
 it wins batches of small and mid-size matrices, while one large matrix is
 still faster on the GPU, and one product rule cannot say both. Last,
 `share_min_batch`: from this batch a GPU batch is shared with the CPU path
@@ -195,7 +196,10 @@ Last, `values_band_min_n`: for eigenvalues alone, from this N the `band`
 backend (the two-stage reduction) instead of `tridiag` or the CPU, within
 `values_tridiag_max_batch` (0: never, which a run from before 2.13.0 gives);
 stage 4b fits it, after `tridiag`'s thresholds, on the points where
-`band_vals` was timed (N >= 512).
+`band_vals` was timed (N >= 512). Then `values_band_width`, the band's width
+(8, 16 or 32; 0: 16, which a run from before 2.15.0 gives): stage 4b chooses
+it first, from `band8_vals`, `band_vals` and `band32_vals` at those points,
+and fits the threshold on its times.
 
 **SVD** (`src/svd.mm`): device name, GPU cores, then `qr_min_rows`,
 `qr_min_k`, `block_min_k`, `block_min_k_batched`, `block_min_batch`,
@@ -227,7 +231,13 @@ for the eigensolver. Last, `values_band_min_k`: for singular values alone,
 from this k the `band` backend (the two-stage reduction) instead of `bidiag`
 or the CPU, within `values_bidiag_max_batch` (0: never, which a run from
 before 2.13.0 gives); stage 3b fits it, after `bidiag`'s threshold, on the
-points where `band_vals` was timed (k >= 512, where `bidiag_vals` is).
+points where `band_vals` was timed (k >= 512, where `bidiag_vals` is). Then
+`values_band_width`, chosen by stage 3b as stage 4b does for the
+eigensolver. And `band_min_k` (since 2.15.0): with singular vectors, from
+this k the `band` backend instead of `bidiag` or the CPU, within
+`bidiag_max_batch` (0: never, which a run from before 2.15.0 gives); stage 3c
+fits it as stage 3b does, on the points where `band` was timed with vectors
+(k >= 512).
 
 ## 5. Reading a report
 
@@ -314,6 +324,7 @@ and [`studies/svd-design-notes.md`](studies/svd-design-notes.md).
 | symptom | cause and fix |
 |---|---|
 | `Impacting Interactivity` in an error message | macOS stopped a GPU command buffer that ran for several seconds. The library splits large batches to avoid this; during a sweep the point is retried and then recorded as failed. Lower `EIGH_CHUNK_MS` or `SVD_CHUNK_MS` (default 750) if it recurs |
+| `GPU Hang Error` in an error message | with the display busy, macOS stopped a threadgroup that ran for more than about a quarter of a second. Since 2.15.0 the whole-matrix Jacobi kernels split a long solve over dispatches (`EIGH_DISPATCH_MS`, `SVD_DISPATCH_MS`, default 40); if another kernel shows it, measure with the Mac idle |
 | rows with `ok` = 0 in `raw.csv` | the backend failed its correctness gate or timed out at that point, and the point is excluded. A few are harmless; many at small sizes indicate a real fault |
 | `sweep_eigh --policy failed` (or another sweep) | the binary is older than the harness; rebuild it |
 | `missing Metal Toolchain` | only matters when changing a shader; the build otherwise uses `shaders/prebuilt/`. `xcodebuild -downloadComponent MetalToolchain` installs it |
@@ -348,7 +359,8 @@ in the policy source.
 | `EIGH_SHARE_MIN_BATCH` | eigensolver: a ql batch shared with the CPU from this batch (0: never) |
 | `EIGH_GPU_BIG_BATCH_MAX_N`, `EIGH_GPU_BIG_BATCH_MIN` | eigensolver: the GPU also for N above `gpu_max_n` up to this, in batches of at least this (0: never) |
 | `EIGH_VALUES_BAND_MIN_N` | eigenvalues alone: the `band` backend (the two-stage reduction) from this N (0: never) |
-| `EIGH_BAND_WIDTH` | the eigensolver's `band` backend's band width: 8, 16 (default) or 32 |
+| `EIGH_VALUES_BAND_WIDTH` | eigenvalues alone: the `band` backend's band width, 8, 16 or 32 (0: 16) |
+| `EIGH_BAND_WIDTH` | the eigensolver's `band` backend's band width where the policy's is 0: 8, 16 (default) or 32 |
 | `METAL_LINALG_CPU_THREADS` | every decomposition: CPU threads a batch is spread over (default: every core) |
 | `EIGH_DEVICE=tridiag` | eigensolver: every call on the tridiag backend |
 | `EIGH_DEVICE=band` | eigensolver: eigenvalues alone on the band backend (with eigenvectors, tridiag) |
@@ -363,7 +375,8 @@ in the policy source.
 | `SVD_SHARE_MIN_BATCH` | SVD: a golub_kahan batch shared with the CPU from this batch (0: never) |
 | `SVD_GPU_BIG_BATCH_MAX_K`, `SVD_GPU_BIG_BATCH_MIN` | SVD: the GPU also for k above `gpu_max_k` up to this, in batches of at least this (0: never) |
 | `SVD_VALUES_BAND_MIN_K` | singular values alone: the `band` backend (the two-stage reduction) from this k (0: never) |
-| `SVD_BAND_WIDTH` | the `band` backend's band width: 8, 16 (default) or 32 |
+| `SVD_VALUES_BAND_WIDTH` | singular values alone: the `band` backend's band width, 8, 16 or 32 (0: 16) |
+| `SVD_BAND_WIDTH` | the `band` backend's band width where the policy's is 0: 8, 16 (default) or 32 |
 | `SVD_VALUES_GPU_MAX_K`, `SVD_VALUES_GPU_MIN_BATCH_TIMES_K`, `SVD_VALUES_GPU_MIN_BATCH`, `SVD_VALUES_GPU_MAX_L` | SVD, singular values alone: the GPU/CPU boundary (`SVD_VALUES_GPU_MIN_BATCH=0`: as with vectors) |
 | `SVD_DEVICE=bidiag` | SVD: every call on the bidiag backend |
 | `SVD_DEVICE=band` | SVD: singular values alone on the band backend (with vectors, bidiag) |

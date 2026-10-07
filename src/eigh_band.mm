@@ -10,8 +10,13 @@
 // columns instead of once a column, and the chase runs on every core.
 //
 // A batch is pipelined over two slots: while the CPU chases and solves one
-// matrix, the GPU reduces the next. Each matrix is scaled by a power of two
-// first (exact), so magnitudes whose products over- or underflow float32 work.
+// matrix, the GPU reduces the next. One matrix alone has its chase run under
+// its own reduction instead, trailing the GPU down the band a block of
+// columns at a time (the CPU being idle then); each sweep runs to the band's
+// end, which the GPU finishes last, so only about 6% of the chase's work can
+// go before it: on an M5 Pro 1.04-1.05x. Each matrix is scaled by a power of
+// two first (exact), so magnitudes whose products over- or underflow float32
+// work.
 
 #ifndef ACCELERATE_NEW_LAPACK
 #define ACCELERATE_NEW_LAPACK
@@ -26,8 +31,11 @@
 #import <Metal/Metal.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <exception>
 #include <future>
+#include <thread>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -111,13 +119,16 @@ void eigh_band(const Matrices& a, bool lower, float* w_out, uint32_t* info_out, 
     struct Work {
         std::vector<float> band, d, e;
         float scale = 1.0f;
+        bool chased = false;   // the chase done under the reduction
     };
     Work work[2];
     const size_t ld = 2 * (size_t)b + 1;
     for (Work& wk : work) { wk.d.resize(n); wk.e.resize(n); }
 
-    // Stage 1 for matrix m in slot s: scale, copy in both triangles, reduce.
-    auto reduce = [&](uint32_t m, int s) {
+    // Stage 1 for matrix m in slot s: scale, copy in both triangles, reduce;
+    // with `chase`, stage 2's chase too, on threads of its own, as the GPU
+    // finishes each block of the band's columns.
+    auto reduce = [&](uint32_t m, int s, bool chase) {
         Work& wk = work[s];
         int ex = 0;
         if (amax[m] > 0.0f) std::frexp(amax[m], &ex);
@@ -136,19 +147,63 @@ void eigh_band(const Matrices& a, bool lower, float* w_out, uint32_t* info_out, 
             });
         }
         mirror_lower(A, lda, n);
-        if (!metal_linalg::detail::band_reduce_symmetric(slots.A[s], n, (uint32_t)lda, b))
-            throw std::logic_error("[eigh] band: band_fit and band_reduce_symmetric disagree.");
         wk.band.assign(ld * n, 0.0f);
-        for (uint32_t c = 0; c < n; ++c)
-            for (uint32_t r = c; r < n && r <= c + b; ++r) wk.band[(size_t)c * ld + r - c] = A[(size_t)c * lda + r];
+        auto columns = [&](uint32_t c0, uint32_t c1) {   // the band's columns c0 .. c1 - 1
+            for (uint32_t c = c0; c < std::min(c1, n); ++c)
+                for (uint32_t r = c; r < n && r <= c + b; ++r) wk.band[(size_t)c * ld + r - c] = A[(size_t)c * lda + r];
+        };
+        wk.chased = chase;
+        if (!chase) {
+            if (!metal_linalg::detail::band_reduce_symmetric(slots.A[s], n, (uint32_t)lda, b))
+                throw std::logic_error("[eigh] band: band_fit and band_reduce_symmetric disagree.");
+            columns(0, n);
+            return;
+        }
+        std::atomic<long> ready{0};
+        metal_linalg::detail::ChaseReflectors rec;
+        rec.ready_rows = &ready;
+        std::exception_ptr failed;
+        std::thread chaser([&] {
+            try {
+                metal_linalg::detail::band_to_tridiagonal(n, b, wk.band.data(), ld, wk.d.data(), wk.e.data(),
+                                                          metal_linalg::detail::cpu_threads_beside_gpu(), &rec);
+            } catch (...) {
+                failed = std::current_exception();
+            }
+        });
+        // Released and joined whatever happens (on garbage, if the GPU failed).
+        struct Join {
+            std::thread& thread;
+            std::atomic<long>& ready;
+            long n;
+            ~Join() {
+                ready.store(n, std::memory_order_release);
+                if (thread.joinable()) thread.join();
+            }
+        } join{chaser, ready, (long)n};
+        metal_linalg::detail::BandWatch watch;
+        watch.while_gpu = [&](metal_linalg::detail::BandWatch& w) {
+            for (size_t k = 0; k < w.done.size(); ++k) {
+                [w.done[k] waitUntilCompleted];
+                columns((uint32_t)k * b, (uint32_t)(k + 1) * b);
+                ready.store((long)(k + 1) * b, std::memory_order_release);
+            }
+        };
+        if (!metal_linalg::detail::band_reduce_symmetric(slots.A[s], n, (uint32_t)lda, b, &watch))
+            throw std::logic_error("[eigh] band: band_fit and band_reduce_symmetric disagree.");
+        columns((uint32_t)watch.done.size() * b, n);   // the last columns, LAPACK's
+        ready.store(n, std::memory_order_release);
+        chaser.join();
+        if (failed) std::rethrow_exception(failed);
     };
 
     // Stage 2 for matrix m in slot s, on the CPU: the chase (on the cores but
     // two, which the GPU's host work keeps), then ssterf.
     auto solve = [&](uint32_t m, int s) {
         Work& wk = work[s];
-        metal_linalg::detail::band_to_tridiagonal(n, b, wk.band.data(), ld, wk.d.data(), wk.e.data(),
-                                                  std::max(1u, cpu_threads() - 2));
+        if (!wk.chased)
+            metal_linalg::detail::band_to_tridiagonal(n, b, wk.band.data(), ld, wk.d.data(), wk.e.data(),
+                                                      metal_linalg::detail::cpu_threads_beside_gpu());
         L N = n, info = 0;
         // By bisection on the GPU where it is the faster, else ssterf.
         std::vector<float> wb(n);
@@ -166,15 +221,15 @@ void eigh_band(const Matrices& a, bool lower, float* w_out, uint32_t* info_out, 
     };
 
     // The pipeline: matrix t in slot t % 2; the CPU solves t while the GPU
-    // reduces t + 1.
+    // reduces t + 1. One matrix alone, its chase under its reduction.
     const size_t count = todo.size();
-    reduce(todo[0], 0);
+    reduce(todo[0], 0, count == 1);
     for (size_t t = 0; t < count; ++t) {
         const int s = (int)(t % 2);
         std::future<void> solving = std::async(std::launch::async, solve, todo[t], s);
         if (t + 1 < count) {
             try {
-                reduce(todo[t + 1], s ^ 1);
+                reduce(todo[t + 1], s ^ 1, false);
             } catch (...) {
                 solving.wait();
                 throw;

@@ -24,15 +24,19 @@ namespace metal_linalg {
     // matrices and a grid-parallel one for long. With k = min(M, N):
     //
     //   GPU or CPU   GPU iff gpu_min_k <= k <= gpu_max_k, batch * k >=
-    //                gpu_min_batch_times_k and batch >= gpu_min_batch, or k >=
-    //                gpu_large_min_k in a batch of at most gpu_large_max_batch
+    //                gpu_min_batch_times_k and batch >= gpu_min_batch, or
+    //                sqrt(M k) >= gpu_large_min_k in a batch of at most
+    //                gpu_large_max_batch
     //   kernel       grid-parallel iff M >= m_crossover_*, else single-threadgroup
     //
-    // The sign of R's diagonal is the one each backend produces: LAPACK's
-    // Householder convention for the CPU and the single-threadgroup kernel,
-    // non-negative (and, for square input, det(Q) = +1) for the grid-parallel
-    // one. A caller that needs one convention normalises it: flip column i of
-    // Q and row i of R wherever R[i][i] < 0.
+    // The sign of R's diagonal is the one each backend produces: the
+    // Householder reflections' (about half negative, as LAPACK's) for the
+    // CPU, the single-threadgroup kernel and the grid-parallel path's blocked
+    // QR; non-negative (and, for square
+    // input, det(Q) = +1) for its streaming kernels, which take only matrices
+    // taller than 2^22 rows (or every call with QR_BLOCKED=0). A caller that
+    // needs one convention normalises it: flip column i of Q and row i of R
+    // wherever R[i][i] < 0.
 
     // gpu_max_k value meaning "no upper limit on k".
     constexpr unsigned kQrNoLimit = 0xFFFFFFFFu;
@@ -71,9 +75,10 @@ namespace metal_linalg {
         // on the GPU, and 1024 of 128x128 21 ms on the GPU and 24 on the CPU.
         unsigned gpu_min_k             = 0;
 
-        // Large matrices: the GPU also for k >= gpu_large_min_k in a batch of
-        // at most gpu_large_max_batch (0: any batch), whatever the rule above
-        // says. Since the CPU path spreads a batch over every core, it beats
+        // Large matrices: the GPU also from gpu_large_min_k in a batch of at
+        // most gpu_large_max_batch (0: any batch), whatever the rule above
+        // says; the size is sqrt(M k), rows and k both (k for a square or
+        // wide matrix), so that a tall one counts by its rows too. Since the CPU path spreads a batch over every core, it beats
         // the GPU kernels for batches of small and mid-size matrices, while
         // one large matrix, which Accelerate threads only weakly, is still
         // faster on the GPU (on an M5 Pro 2x at 2048 x 2048); one product
@@ -209,6 +214,12 @@ namespace metal_linalg {
         // matrix products, the band to tridiagonal on the CPU's cores. 0
         // means never.
         unsigned values_band_min_n = 0;
+        // ... and the band's width, 8, 16 or 32 (0: 16, or EIGH_BAND_WIDTH).
+        // A wider band halves the GPU's panels and doubles each one's
+        // columns, and makes the CPU's chase dearer; which is best depends on
+        // the GPU and the CPU together (on an M5 Pro 16: at 4096 x 4096, 262,
+        // 165 and 166 ms for 8, 16 and 32).
+        unsigned values_band_width = 0;
 
         // Large batches: the GPU also for N above gpu_max_n, up to
         // gpu_big_batch_max_n, in a batch of at least gpu_big_batch_min (with
@@ -427,6 +438,17 @@ namespace metal_linalg {
         // matrix products, then the band to bidiagonal on the CPU (on an M5
         // Pro 1.8x the bidiag backend at 4096 x 4096). 0 means never.
         unsigned values_band_min_k = 0;
+        // ... and the band's width, 8, 16 or 32 (0: 16, or SVD_BAND_WIDTH),
+        // as EighPolicy::values_band_width (on an M5 Pro 16: at 4096 x 4096,
+        // 329, 235 and 275 ms for 8, 16 and 32).
+        unsigned values_band_width = 0;
+        // With singular vectors, from k >= band_min_k (within
+        // bidiag_max_batch), the band backend before bidiag: the two-stage
+        // reduction, its reflectors and the bulge chase's applied on the GPU
+        // while the CPU solves the bidiagonal problem (width 16; on an M5 Pro
+        // 2.3x the bidiag backend at 4096 x 4096). 0 means never, which is
+        // what a device without measurements of it has.
+        unsigned band_min_k = 0;
 
         // --- the golub_kahan backend, for k in [gk_min_k, gk_max_k] ---
         // On the GPU, inside this window, LAPACK's method in one threadgroup
@@ -602,8 +624,20 @@ namespace metal_linalg {
 
             // Multi-pass streaming panel factorisation that accumulates Q
             // directly at its economic K-column width via a backward pass. The
-            // grid-parallel path for large matrices.
+            // grid-parallel path for large matrices. Everything qr_blocked
+            // takes goes there instead (qr_blocked_preferred; QR_BLOCKED=0
+            // keeps it here).
             void qr_streaming_amx_reduced(const Matrices& a, float* q, float* r);
+
+            // By blocks of columns, a batch at once: the panels by the band
+            // reduction's kernels, the updates and Q's formation as MPS
+            // products. For up to 16384 rows (qr_blocked_fits; throws
+            // otherwise).
+            void qr_blocked(const Matrices& a, float* q, float* r);
+            bool qr_blocked_fits(uint32_t m, uint32_t n);
+            // Whether qr_streaming_amx_reduced hands the call to qr_blocked:
+            // wherever it fits, unless QR_BLOCKED=0.
+            bool qr_blocked_preferred(uint32_t m, uint32_t n, uint32_t batch);
 
             // As above, but accumulates the full M x M orthogonal factor
             // before slicing Q down to K columns.
@@ -691,6 +725,12 @@ namespace metal_linalg {
             // (sbdsqr) on the CPU. `width` the band's, 8, 16 or 32 (0: the
             // default, or SVD_BAND_WIDTH). See svd_bidiag.mm.
             void svd_band(const Matrices& a, float* s, uint32_t* info, uint32_t width = 0);
+
+            // The SVD with vectors by the two-stage reduction: the band's
+            // reflectors and the chase's kept and applied on the GPU while
+            // the CPU solves the bidiagonal problem. Width 16. See
+            // svd_bidiag.mm.
+            void svd_band_vectors(const Matrices& a, float* u, float* s, float* vt, uint32_t* info);
 
             // Householder bidiagonalization and implicit bidiagonal QR, one
             // threadgroup per matrix, for shapes that

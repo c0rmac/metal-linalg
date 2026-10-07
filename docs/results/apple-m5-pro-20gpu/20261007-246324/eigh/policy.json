@@ -1,0 +1,83 @@
+{
+ "policy": {
+  "device": "Apple M5 Pro",
+  "gpu_cores": 20,
+  "source": "tuned-stale:Apple M5 Pro",
+  "simd_max_n": 0,
+  "block_min_n": 96,
+  "block_min_n_batched": 0,
+  "block_min_batch": 0,
+  "gpu_max_n": 48,
+  "gpu_min_batch_times_n": 16384,
+  "gpu_min_batch": 1,
+  "values_gpu_max_n": 48,
+  "values_gpu_min_batch_times_n": 16384,
+  "values_gpu_min_batch": 1,
+  "tridiag_min_n": 1024,
+  "values_tridiag_min_n": 1536,
+  "ql_min_n": 12,
+  "ql_max_n": 64,
+  "ql_limit": 87,
+  "cpu_threads": 18,
+  "tridiag_max_batch": 4,
+  "values_tridiag_max_batch": 2,
+  "share_min_batch": 1024,
+  "gpu_big_batch_max_n": 64,
+  "gpu_big_batch_min": 1024,
+  "values_band_min_n": 3072,
+  "values_band_width": 0
+ },
+ "calibration": {
+  "probe": {
+   "batch": 64,
+   "N": 128,
+   "ms": {
+    "tg": 29.588292,
+    "block": 12.338334,
+    "cpu": 2.754209
+   }
+  },
+  "scale": {
+   "tg": 1.0,
+   "simd": 1.0,
+   "block": 0.13684638646803163,
+   "cpu": 0.08415477273321038,
+   "ql": 1.0
+  }
+ },
+ "machine": {
+  "start": {
+   "load_1m": 2.03564453125,
+   "cpus": 18,
+   "power": "mains",
+   "low_power_mode": 0,
+   "busy_processes": 0
+  },
+  "end": {
+   "load_1m": 2.24609375,
+   "cpus": 18,
+   "power": "mains",
+   "low_power_mode": 0,
+   "busy_processes": 0
+  }
+ },
+ "drift": {
+  "before_ms": {
+   "tg": 29.588292,
+   "block": 12.338334,
+   "cpu": 2.754209
+  },
+  "after_ms": {
+   "tg": 30.439625,
+   "block": 12.272666,
+   "cpu": 2.772958
+  },
+  "ratio": {
+   "tg": 1.0287726307419165,
+   "block": 0.9946777255340956,
+   "cpu": 1.0068073991479949
+  },
+  "worst": 1.0287726307419165,
+  "ok": true
+ }
+}

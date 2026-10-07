@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <random>
 #include <string>
 #include <tuple>
@@ -200,6 +201,12 @@ void run_qr_block(const std::string& label, const array& A) {
 
 void run_bidiag(const std::string& label, const array& A) {
     SvdResult r = detail::svd_bidiag(A, true);
+    eval({r.U, r.S, r.Vt, r.info});
+    check(label, A, r);
+}
+
+void run_band_vectors(const std::string& label, const array& A) {
+    SvdResult r = detail::svd_band_vectors(A);
     eval({r.U, r.S, r.Vt, r.info});
     check(label, A, r);
 }
@@ -496,7 +503,10 @@ int main() {
     for (auto [M, N] : std::vector<std::pair<int, int>>{{1, 1}, {3, 3}, {33, 33}, {34, 34}, {35, 35},
                                                          {65, 64}, {64, 65}, {100, 97}, {129, 130},
                                                          {300, 300}, {513, 500}, {300, 20}, {20, 300},
-                                                         {600, 100}, {100, 600}, {1024, 1024}, {1100, 1060}})
+                                                         {600, 100}, {100, 600}, {1024, 1024}, {1100, 1060},
+                                                         // the divide and conquer's top products on the GPU,
+                                                         // and U's first K rows of a taller matrix
+                                                         {2048, 2048}, {3000, 2048}})
         run_bidiag("bidiag " + dims(1, M, N), random_matrix(1, M, N, 1000 + M * 3 + N));
     run_bidiag("bidiag " + dims(3, 150, 120), random_matrix(3, 150, 120, 1100));
     // Batches are pipelined over two workspace slots: odd and even counts,
@@ -525,6 +535,26 @@ int main() {
         std::vector<float> spec(90);
         for (int i = 0; i < 90; ++i) spec[i] = i < 40 ? 3.0f : 1e-3f * (90 - i);
         run_bidiag("bidiag repeated and tiny values 150x90", with_singular_values(150, 90, spec));
+    }
+    // From k = 129 the singular vectors come from the parallel divide and
+    // conquer (divide_conquer.cpp): its deflations on matrices large enough
+    // to be divided several times.
+    run_bidiag("bidiag rank one 500x400", matmul(random_matrix(1, 500, 1, 1310), random_matrix(1, 1, 400, 1311)));
+    run_bidiag("bidiag zero 320x300", zeros({320, 300}));
+    run_bidiag("bidiag identity 300x300", eye(300));
+    {
+        std::vector<float> spec(400), close(350);
+        for (int i = 0; i < 400; ++i) spec[i] = i < 200 ? 3.0f : 1e-3f * (float)(400 - i);
+        run_bidiag("bidiag repeated and tiny values 450x400", with_singular_values(450, 400, spec));
+        for (int i = 0; i < 350; ++i) close[i] = 1.0f + 1e-6f * (float)i;
+        run_bidiag("bidiag clustered values 350x350", with_singular_values(350, 350, close));
+        std::vector<float> big(2048);   // deflation in the merges whose products run on the GPU
+        for (int i = 0; i < 2048; ++i) big[i] = i < 900 ? 3.0f : 1e-3f * (float)(2048 - i);
+        run_bidiag("bidiag repeated and tiny values 2100x2048", with_singular_values(2100, 2048, big));
+        // One on which LAPACK's sbdsdc, and the divide and conquer like it,
+        // fails to converge (info 1): solved again in double precision.
+        random::seed(12);
+        run_bidiag("bidiag sbdsdc's failure 2100x2048", with_singular_values(2100, 2048, big));
     }
     {   // singular values alone == with vectors
         array A = random_matrix(1, 300, 260, 1400);
@@ -580,6 +610,22 @@ int main() {
                                                                  {1100, 1060}})
                 run_band("band b=" + std::to_string(w) + " " + dims(1, M, N), random_matrix(1, M, N, 2000 + M + N), w);
         run_band("band " + dims(3, 150, 120), random_matrix(3, 150, 120, 2100), 8);
+        // One matrix alone has its chase run under its reduction, trailing
+        // the GPU; in a batch, after it: the same values bit for bit.
+        for (auto [M, N] : std::vector<std::pair<int, int>>{{49, 49}, {700, 650}, {2048, 2048}, {3000, 1500}}) {
+            array A = random_matrix(1, M, N, 2150 + M + N);
+            eval({A});
+            std::vector<float> two(A.data<float>(), A.data<float>() + (size_t)M * N);
+            two.insert(two.end(), two.begin(), two.end());
+            const int K = std::min(M, N);
+            SvdResult one = detail::svd_band(A, 16), pair = detail::svd_band(from_values(two, {2, M, N}), 16);
+            array s1 = reshape(one.S, {K}), s2 = reshape(slice(pair.S, {0, 0}, {1, K}), {K});
+            eval({s1, s2});
+            ++g_checks;
+            const std::string label = "band chase under the reduction " + dims(1, M, N) + ": bit for bit";
+            if (std::memcmp(s1.data<float>(), s2.data<float>(), (size_t)K * 4) != 0) fail(label, "differ");
+            else std::printf("  ok    %-44s\n", label.c_str());
+        }
         run_band("band zero 120x100", zeros({120, 100}), 8);
         run_band("band identity 100x100", eye(100), 16);
         run_band("band rank one 200x150",
@@ -611,6 +657,56 @@ int main() {
             if (!ok) fail("band NaN in one matrix of a batch", "not isolated");
             else std::printf("  ok    %-44s\n", "band NaN in one matrix of a batch");
         }
+    }
+
+    // The band backend with vectors: the GPU's blocks' reflectors (16 columns
+    // a block, aggregated 8 at a time), the LAPACK tail's (the last 16 to 31
+    // columns), and the chase's (bd_chase_apply: blocks of 16 sweeps, the
+    // groups pipelined 4 or 8 to a threadgroup). Sizes straddle the tail
+    // alone (k < 32), a partial aggregate, the chase's tiles (k - 1 a multiple
+    // of 16 or not), the narrow and wide chase kernels (2048 columns), and
+    // the TSQR panels (over 128 rows).
+    std::printf("\n[ backend: band, with vectors ]\n");
+    for (auto [M, N] : std::vector<std::pair<int, int>>{{1, 1}, {2, 2}, {3, 3}, {17, 17}, {31, 31}, {32, 32},
+                                                        {33, 33}, {47, 47}, {48, 48}, {49, 49}, {64, 64},
+                                                        {65, 64}, {64, 65}, {129, 129}, {161, 161}, {300, 300},
+                                                        {513, 500}, {300, 20}, {20, 300}, {600, 100},
+                                                        {100, 600}, {700, 450}, {450, 700}, {1024, 1024},
+                                                        {1100, 1060}, {2049, 2049}})
+        run_band_vectors("band " + dims(1, M, N), random_matrix(1, M, N, 3000 + M * 3 + N));
+    run_band_vectors("band " + dims(3, 150, 120), random_matrix(3, 150, 120, 3100));
+    run_band_vectors("band " + dims(2, 300, 80) + " (QR first)", random_matrix(2, 300, 80, 3101));
+    run_band_vectors("band " + dims(2, 70, 200) + " (wide)", random_matrix(2, 70, 200, 3102));
+    for (float s : {1e-30f, 1e20f, 1e37f}) {
+        char label[64];
+        std::snprintf(label, sizeof label, "band scaled by %.0e 160x140", s);
+        run_band_vectors(label, multiply(random_matrix(1, 160, 140, 3200), array(s / 5.0f)));
+    }
+    run_band_vectors("band rank one 500x400", matmul(random_matrix(1, 500, 1, 3300), random_matrix(1, 1, 400, 3301)));
+    run_band_vectors("band zero 320x300", zeros({320, 300}));
+    run_band_vectors("band identity 300x300", eye(300));
+    {
+        std::vector<float> spec(400), close(350);
+        for (int i = 0; i < 400; ++i) spec[i] = i < 200 ? 3.0f : 1e-3f * (float)(400 - i);
+        run_band_vectors("band repeated and tiny values 450x400", with_singular_values(450, 400, spec));
+        for (int i = 0; i < 350; ++i) close[i] = 1.0f + 1e-6f * (float)i;
+        run_band_vectors("band clustered values 350x350", with_singular_values(350, 350, close));
+    }
+    {   // NaN in one matrix of a batch
+        const int M = 300, N = 260;
+        array A = random_matrix(2, M, N, 3400);
+        eval({A});
+        std::vector<float> data(A.data<float>(), A.data<float>() + 2 * M * N);
+        data[(size_t)M * N + 7] = NAN;
+        SvdResult r = detail::svd_band_vectors(from_values(data, {2, M, N}));
+        array info = reshape(r.info, {-1});
+        array s1 = slice(r.S, {1, 0}, {2, N}), s0 = slice(r.S, {0, 0}, {1, N});
+        eval({info, s0, s1});
+        ++g_checks;
+        const bool ok = all(isnan(s1)).item<bool>() && !has_non_finite(s0) &&
+                        !detail::svd_converged(info.data<uint32_t>()[1]) && detail::svd_converged(info.data<uint32_t>()[0]);
+        if (!ok) fail("band with vectors NaN in one matrix of a batch", "not isolated");
+        else std::printf("  ok    %-44s\n", "band with vectors NaN in one matrix of a batch");
     }
 
     // The golub_kahan backend keeps the matrix in threadgroup memory, so it
@@ -910,6 +1006,7 @@ int main() {
         p.bidiag_min_k = 0;
         p.values_bidiag_min_k = 0;
         p.values_band_min_k = 0;      // band, tested below
+        p.band_min_k = 0;
         set_svd_policy(p);
         expect("thresholds 0 -> never (4096x4096 -> cpu)",
                svd_backend(4096, 4096, 1) == SvdBackend::cpu && svdvals_backend(4096, 4096, 1) == SvdBackend::cpu);
@@ -964,14 +1061,46 @@ int main() {
                 const float d = max_abs(subtract(s, ref.S)) / max_abs(ref.S);
                 if (!(d <= 2e-5f)) fail("svdvals routed to band (400x300)", std::to_string(d));
                 else std::printf("  ok    %-44s |ds|=%.1e\n", "svdvals routed to band (400x300)", d);
+                for (unsigned width : {8u, 32u}) {   // the policy's band width reaches the backend
+                    c.values_band_width = width;
+                    set_svd_policy(c);
+                    array sb = svdvals_accelerated(A);
+                    eval({sb});
+                    ++g_checks;
+                    const float db = max_abs(subtract(sb, ref.S)) / max_abs(ref.S);
+                    const std::string label = "svdvals band, values_band_width = " + std::to_string(width);
+                    if (!(db <= 2e-5f) || !(max_abs(subtract(sb, s)) > 0.0f)) fail(label, std::to_string(db));
+                    else std::printf("  ok    %-44s |ds|=%.1e\n", label.c_str(), db);
+                }
+                c.values_band_width = 0;
             }
             c.values_band_min_k = 0;
             set_svd_policy(c);
             expect("values_band_min_k = 0: never", svdvals_backend(4096, 4096, 1) == SvdBackend::bidiag);
+            // band_min_k: the SVD with vectors, within bidiag's cap; svd_accelerated
+            // reaches the backend
+            const SvdPolicy before = c;
+            c.gpu_max_k = 0;   // no GPU kernels: the CPU's region, then bidiag, then band
+            c.gpu_big_batch_max_k = 0;
+            c.bidiag_min_k = 128;
+            c.band_min_k = 256;
+            set_svd_policy(c);
+            expect("band_min_k: with vectors from its k", svd_backend(400, 300, 1) == SvdBackend::band &&
+                                                          svd_backend(200, 200, 1) == SvdBackend::bidiag &&
+                                                          svdvals_backend(400, 300, 1) != SvdBackend::band);
+            {
+                array A = random_matrix(1, 400, 300, 1710);
+                auto [U, S, Vt] = svd_accelerated(A);
+                eval({U, S, Vt});
+                check("svd routed to band (400x300)", A, SvdResult{U, S, Vt, full({}, (uint32_t)(1u | (1u << 16)))});
+            }
+            c = before;
+            set_svd_policy(c);
+            expect("band_min_k = 0: never", svd_backend(4096, 4096, 1) == SvdBackend::bidiag);
         }
         setenv("SVD_DEVICE", "band", 1);
-        expect("SVD_DEVICE=band: svdvals band, svd bidiag",
-               svdvals_backend(8, 8, 1) == SvdBackend::band && svd_backend(8, 8, 1) == SvdBackend::bidiag);
+        expect("SVD_DEVICE=band: svdvals and svd band",
+               svdvals_backend(8, 8, 1) == SvdBackend::band && svd_backend(8, 8, 1) == SvdBackend::band);
         setenv("SVD_DEVICE", "cpu", 1);
         expect("SVD_DEVICE=cpu keeps the CPU over bidiag", svd_backend(4096, 4096, 1) == SvdBackend::cpu);
         setenv("SVD_DEVICE", "bidiag", 1);

@@ -152,6 +152,29 @@ defaults:
       description: >-
         How metal-linalg's SVD was built, why it looks the way it does, and
         what was measured along the way.
+  - scope: { path: docs/studies/two-stage-apple-m5-pro.md }
+    values:
+      description: >-
+        Eigenvalues and singular values of large matrices in two stages, a
+        band on the GPU then bulge chasing on every CPU core, on an Apple M5
+        Pro: 8.6x the CPU for svdvals at 4096.
+  - scope: { path: docs/studies/estimated-policies.md }
+    values:
+      description: >-
+        Routing policies for Macs nobody has measured, refitted from a
+        measured Mac's timings, and how close they come to the best routing.
+  - scope: { path: docs/studies/proposals-2-15-apple-m5-pro.md }
+    values:
+      description: >-
+        A parallel divide and conquer, a TSQR tree, one-triangle updates, the
+        two-stage SVD with vectors and IEEE arithmetic found in the way:
+        metal-linalg 2.15.0's eigh and SVD work, measured on an Apple M5 Pro.
+  - scope: { path: docs/proposals/README.md }
+    values:
+      title: "metal-linalg: proposals"
+      description: >-
+        Work on metal-linalg that was scoped but not done, each with its
+        measurements, plan and expected gain, and what was done and dropped.
   # Each submitted measurement run: dozens of near-identical tables, useful
   # from the links to them but not as search results. A device's combined
   # reports, the ones the routing is generated from, stay in.

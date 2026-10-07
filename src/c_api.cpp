@@ -153,7 +153,7 @@ metal_linalg_eigh_policy metal_linalg_eigh_policy_get(void) {
             p.values_gpu_max_n, p.values_gpu_min_batch_times_n, p.values_gpu_min_batch,
             p.tridiag_min_n, p.values_tridiag_min_n, p.ql_min_n, p.ql_max_n,
             p.tridiag_max_batch, p.values_tridiag_max_batch, p.share_min_batch,
-            p.gpu_big_batch_max_n, p.gpu_big_batch_min, p.values_band_min_n};
+            p.gpu_big_batch_max_n, p.gpu_big_batch_min, p.values_band_min_n, p.values_band_width};
 }
 
 metal_linalg_svd_policy metal_linalg_svd_policy_get(void) {
@@ -163,7 +163,8 @@ metal_linalg_svd_policy metal_linalg_svd_policy_get(void) {
             p.bidiag_min_k, p.values_bidiag_min_k, p.bidiag_max_batch, p.values_bidiag_max_batch,
             p.gk_min_k, p.gk_max_k, p.gpu_max_l,
             p.values_gpu_max_k, p.values_gpu_min_batch_times_k, p.values_gpu_min_batch, p.values_gpu_max_l,
-            p.share_min_batch, p.gpu_big_batch_max_k, p.gpu_big_batch_min, p.values_band_min_k};
+            p.share_min_batch, p.gpu_big_batch_max_k, p.gpu_big_batch_min, p.values_band_min_k, p.values_band_width,
+            p.band_min_k};
 }
 
 // The informational fields keep the detected values.
@@ -206,6 +207,7 @@ void metal_linalg_eigh_policy_set(const metal_linalg_eigh_policy* c) {
     p.gpu_big_batch_max_n          = c->gpu_big_batch_max_n;
     p.gpu_big_batch_min            = c->gpu_big_batch_min;
     p.values_band_min_n            = c->values_band_min_n;
+    p.values_band_width            = c->values_band_width;
     set_eigh_policy(p);
 }
 
@@ -235,6 +237,8 @@ void metal_linalg_svd_policy_set(const metal_linalg_svd_policy* c) {
     p.gpu_big_batch_max_k          = c->gpu_big_batch_max_k;
     p.gpu_big_batch_min            = c->gpu_big_batch_min;
     p.values_band_min_k            = c->values_band_min_k;
+    p.values_band_width            = c->values_band_width;
+    p.band_min_k                   = c->band_min_k;
     set_svd_policy(p);
 }
 

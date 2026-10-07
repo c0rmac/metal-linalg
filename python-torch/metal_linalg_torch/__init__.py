@@ -216,13 +216,14 @@ def eigvalsh_backend(n, batch=1):
 def svd_backend(m, n, batch=1):
     """Which backend :func:`svd` uses: ``"cpu"``, ``"jacobi"``,
     ``"block_jacobi"``, ``"qr_jacobi"``, ``"qr_block_jacobi"``, ``"bidiag"``,
+    ``"band"`` (the two-stage reduction, from the policy's ``band_min_k``),
     ``"golub_kahan"`` or ``"qr_golub_kahan"``."""
     return _lib.text(_lib.svd_backend(m, n, batch))
 
 
 def svdvals_backend(m, n, batch=1):
-    """Which backend :func:`svdvals` uses: as :func:`svd_backend`, or
-    ``"band"`` (the two-stage reduction, singular values alone)."""
+    """Which backend :func:`svdvals` uses: as :func:`svd_backend`, with
+    ``"band"`` from the policy's ``values_band_min_k``."""
     return _lib.text(_lib.svdvals_backend(m, n, batch))
 
 

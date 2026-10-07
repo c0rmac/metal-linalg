@@ -30,6 +30,27 @@ inline bool non_finite(float x) {
 // position per round, and position i pairs with position n_even-1-i. Over
 // n_even-1 rounds every pair meets exactly once and the pairs within a round
 // are disjoint, which is what lets them be rotated simultaneously.
+// x / y, sqrt(x) and 1 / sqrt(x) to about an ulp: the fast approximations
+// and a Newton step (as Svd_Bidiag.metal's and Eigh_Tridiag.metal's div1 and
+// sqrt1). The files including this are built with -fno-fast-math, which makes
+// `/`, sqrt() and rsqrt() the IEEE sequences, and a kernel with any of them
+// in it compiles all of its arithmetic in IEEE mode. j_div's y is never zero;
+// j_sqrt returns x for x <= 0 (and NaN); j_rsqrt's x is positive.
+inline float j_div(float x, float y) {
+    const float r = fast::divide(1.0f, y), q = x * r;
+    return fma(fma(-y, q, x), r, q);
+}
+inline float j_sqrt(float x) {
+    if (!(x > 0.0f)) return x;
+    const float s = fast::sqrt(x);
+    return fma(fma(-s, s, x), fast::divide(0.5f, s), s);
+}
+inline float j_rsqrt(float x) {
+    float r = fast::rsqrt(x);
+    r = fma(fma(-0.5f * x * r, r, 0.5f), r, r);
+    return fma(fma(-0.5f * x * r, r, 0.5f), r, r);
+}
+
 inline void tournament_pair(uint round, uint j, uint n_even,
                             thread uint& p, thread uint& q) {
     const uint m = n_even - 1;
@@ -202,15 +223,15 @@ inline void jacobi_phase2(uint n, uint np, uint t, uint T, WPtr w, VPtr v,
     }
 }
 
-// One full sweep: n_even - 1 rounds of the tournament, three phases each.
-// `w` and `v` are n x n row-major with leading dimension n. Both barriers
-// after the rotation phases carry both flags, since w may be in either
-// address space; the cost difference is not measurable.
+// Rounds r0 .. r1 - 1 of a sweep's tournament (of n_even - 1), three phases
+// each. `w` and `v` are n x n row-major with leading dimension n. Both
+// barriers after the rotation phases carry both flags, since w may be in
+// either address space; the cost difference is not measurable.
 template <typename WPtr, typename VPtr>
-inline void jacobi_sweep(uint n, uint np, uint t, uint T, bool simd,
-                         WPtr w, VPtr v, bool vectors, JacobiScratch sc, float null2 = -1.0f) {
+inline void jacobi_rounds(uint r0, uint r1, uint n, uint np, uint t, uint T, bool simd,
+                          WPtr w, VPtr v, bool vectors, JacobiScratch sc, float null2 = -1.0f) {
     const uint n_even = 2 * np;
-    for (uint round = 0; round + 1 < n_even; ++round) {
+    for (uint round = r0; round < r1; ++round) {
         jacobi_phase0(round, n, np, n_even, t, T, w, sc, null2);
         team_barrier(simd, mem_flags::mem_threadgroup);
 
@@ -221,6 +242,29 @@ inline void jacobi_sweep(uint n, uint np, uint t, uint T, bool simd,
         team_barrier(simd, mem_flags::mem_device | mem_flags::mem_threadgroup);
     }
 }
+
+// One full sweep: all n_even - 1 rounds.
+template <typename WPtr, typename VPtr>
+inline void jacobi_sweep(uint n, uint np, uint t, uint T, bool simd,
+                         WPtr w, VPtr v, bool vectors, JacobiScratch sc, float null2 = -1.0f) {
+    jacobi_rounds(0, 2 * np - 1, n, np, t, T, simd, w, v, vectors, sc, null2);
+}
+
+// A long solve split over dispatches (round_budget > 0): where one stopped,
+// per matrix. With the display busy, macOS ends a command buffer whose
+// threadgroup runs for more than about a quarter of a second ("GPU Hang
+// Error"); a threadgroup's whole Jacobi solve takes that from N ~ 400 on an
+// M5 Pro, a few rounds of it a few milliseconds.
+struct JacobiState {
+    int   expo;     // the input's scale
+    float a, b;     // the kernel's own: the eigensolver's ||A||_F^2; the SVD's null and negligible levels
+    uint  sweeps;
+    uint  round;    // the next round of the current sweep
+    uint  flags;    // kJacobiStarted, kJacobiDone, kJacobiRotated
+};
+constant uint kJacobiStarted = 1u;
+constant uint kJacobiDone    = 2u;
+constant uint kJacobiRotated = 4u;   // the SVD: a pair rotated so far this sweep
 
 // Rank sort of the first n diagonal entries of `w` (leading dimension ld):
 // stages them in `lam`, leaves rank[i] = position of entry i in ascending

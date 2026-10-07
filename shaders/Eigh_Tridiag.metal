@@ -77,6 +77,41 @@ static float finish_coeff(device const float* dpart, uint ngp, float tau, uint l
     return -0.5f * tau * simd_sum(q);
 }
 
+// x / y and sqrt(x) to about an ulp: the fast approximations and a Newton
+// step. This file is built with -fno-fast-math, which makes `/` and sqrt()
+// the IEEE sequences, and a kernel with any of them in it compiles all of
+// its arithmetic in IEEE mode (an untaken sqrt() was enough). In the kernels
+// whose steps are chains of dependent scalar work (a reflector a column,
+// computed in every threadgroup; bisection's Sturm counts) that cost from 5% to a
+// third of the time on an M5 Pro,
+// so those kernels use these and nothing IEEE. div1's y is never zero; sqrt1
+// returns x for x <= 0 (and NaN).
+__attribute__((always_inline)) static float div1(float x, float y) {
+    const float r = fast::divide(1.0f, y), q = x * r;
+    return fma(fma(-y, q, x), r, q);
+}
+__attribute__((always_inline)) static float sqrt1(float x) {
+    if (!(x > 0.0f)) return x;
+    const float s = fast::sqrt(x);
+    return fma(fma(-s, s, x), fast::divide(0.5f, s), s);
+}
+
+// A Householder reflector from alpha and the norm of the rest, as LAPACK's
+// slarfg: beta (alpha's replacement), tau, and the rest's scale
+// 1 / (alpha - beta); tau = 0 for a zero rest.
+__attribute__((always_inline)) static void householder(float alpha, float xnorm, thread float& beta,
+                                                        thread float& tau, thread float& scale) {
+    beta = alpha;
+    tau = 0.0f;
+    scale = 1.0f;
+    if (xnorm != 0.0f) {
+        const float big = max(fabs(alpha), xnorm), rb = div1(1.0f, big), ra = alpha * rb, rx = xnorm * rb;
+        beta = -copysign(big * sqrt1(ra * ra + rx * rx), alpha);
+        tau = div1(beta - alpha, beta);
+        scale = div1(1.0f, alpha - beta);
+    }
+}
+
 struct Reflector { float beta, tau, scale; };
 
 // As LAPACK's slarfg, from td_update's (max, sum of squares / max^2) partials
@@ -87,22 +122,14 @@ static Reflector reflector(device const float* npart, uint ng, float alpha, uint
     float m = 0.0f, ss = 0.0f;
     for (uint u = lane; u < ng; u += 32) {
         const float pm = npart[2 * u], ps = npart[2 * u + 1];
-        if (pm > m) { const float f = m / pm; ss = ss * f * f + ps; m = pm; }
-        else if (pm > 0.0f) { const float f = pm / m; ss += ps * f * f; }
+        if (pm > m) { const float f = div1(m, pm); ss = ss * f * f + ps; m = pm; }
+        else if (pm > 0.0f) { const float f = div1(pm, m); ss += ps * f * f; }
     }
     const float amax = simd_max(m);
-    const float f = amax > 0.0f ? m / amax : 0.0f;
-    const float xnorm = amax * sqrt(simd_sum(ss * f * f));
+    const float f = amax > 0.0f ? div1(m, amax) : 0.0f;
+    const float xnorm = amax * sqrt1(simd_sum(ss * f * f));
     Reflector r;
-    if (xnorm == 0.0f) {
-        r.beta = alpha; r.tau = 0.0f; r.scale = 1.0f;
-    } else {
-        const float big = max(fabs(alpha), xnorm);      // hypot, scaled
-        const float ra = alpha / big, rx = xnorm / big;
-        r.beta  = -copysign(big * sqrt(ra * ra + rx * rx), alpha);
-        r.tau   = (r.beta - alpha) / r.beta;
-        r.scale = 1.0f / (alpha - r.beta);
-    }
+    householder(alpha, xnorm, r.beta, r.tau, r.scale);
     return r;
 }
 
@@ -150,7 +177,7 @@ kernel void td_update(device float* Ak [[buffer(0)]], device float* W [[buffer(1
     threadgroup_barrier(mem_flags::mem_threadgroup);
     float gm = 0.0f;
     for (uint u = 0; u < GROUP / 32; ++u) gm = max(gm, part[u]);
-    const float z = gm > 0.0f ? ax / gm : 0.0f;
+    const float z = gm > 0.0f ? ax * div1(1.0f, gm) : 0.0f;
     const float s = simd_sum(z * z);
     threadgroup_barrier(mem_flags::mem_threadgroup);
     if (lane == 0) part[sg] = s;
@@ -208,7 +235,7 @@ kernel void td_symv(device const float* Ak [[buffer(0)]], device const float* W 
         return;
     }
 
-    uint bi = (uint)((sqrt(8.0f * (float)g + 1.0f) - 1.0f) * 0.5f);
+    uint bi = (uint)((fast::sqrt(8.0f * (float)g + 1.0f) - 1.0f) * 0.5f);   // corrected below
     while (bi * (bi + 1) / 2 > g) --bi;
     while ((bi + 1) * (bi + 2) / 2 <= g) ++bi;
     const uint bj = g - bi * (bi + 1) / 2;
@@ -374,7 +401,7 @@ kernel void sturm_bisect(device const float* d [[buffer(0)]], device const float
             }
             threadgroup_barrier(mem_flags::mem_threadgroup);
             for (uint i = 0; i < m; ++i) {
-                float v = sd[i] - mid - se[i] / q;
+                float v = sd[i] - mid - div1(se[i], q);   // |q| >= pivmin
                 if (fabs(v) < p.pivmin) v = -p.pivmin;
                 q = v;
                 below += v < 0.0f;

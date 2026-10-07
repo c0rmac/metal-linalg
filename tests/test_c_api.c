@@ -132,6 +132,10 @@ int main(void) {
         CHECK(strcmp(metal_linalg_eigvalsh_backend(4096, 1), "band") == 0, "eigvalsh 4096 routes to %s",
               metal_linalg_eigvalsh_backend(4096, 1));
         p.values_band_min_n = 0;
+        p.values_band_width = 32;
+        metal_linalg_eigh_policy_set(&p);
+        CHECK(metal_linalg_eigh_policy_get().values_band_width == 32, "eigh values_band_width not set");
+        p.values_band_width = 0;
         metal_linalg_eigh_policy_set(&p);
         /* Eigenvalues alone: values_gpu_min_batch = 0 follows eigh; set, it decides apart. */
         p.values_gpu_min_batch = 0;
@@ -183,6 +187,19 @@ int main(void) {
         metal_linalg_svd_policy_set(&sp);
         CHECK(metal_linalg_svd_policy_get().values_band_min_k == 2048, "values_band_min_k not set");
         sp.values_band_min_k = 0;
+        sp.values_band_width = 8;
+        metal_linalg_svd_policy_set(&sp);
+        CHECK(metal_linalg_svd_policy_get().values_band_width == 8, "svd values_band_width not set");
+        sp.values_band_width = 0;
+        sp.band_min_k = 1536;
+        sp.bidiag_min_k = 1024;
+        metal_linalg_svd_policy_set(&sp);
+        CHECK(metal_linalg_svd_policy_get().band_min_k == 1536, "band_min_k not set");
+        CHECK(strcmp(metal_linalg_svd_backend(2048, 2048, 1), "band") == 0, "band_min_k: 2048x2048 routes to %s",
+              metal_linalg_svd_backend(2048, 2048, 1));
+        CHECK(strcmp(metal_linalg_svd_backend(1200, 1200, 1), "bidiag") == 0, "below band_min_k: 1200x1200 routes to %s",
+              metal_linalg_svd_backend(1200, 1200, 1));
+        sp.band_min_k = 0;
         metal_linalg_svd_policy_set(&sp);
         CHECK(strcmp(metal_linalg_svd_backend(40, 24, 16), "golub_kahan") == 0, "gk window: 40x24 routes to %s",
               metal_linalg_svd_backend(40, 24, 16));

@@ -1,5 +1,162 @@
 # Changes
 
+## 2.15.0 (2026-10-07)
+
+The proposals left after 2.13.0 ([docs/proposals/](docs/proposals/README.md)),
+and what turned up while doing them; measured in
+[the 2.15.0 study](docs/studies/proposals-2-15-apple-m5-pro.md).
+
+- **A blocked QR** (`qr_blocked`), which the grid-parallel backend
+  (`streaming_reduced`) hands every call it can: the band reduction's panel
+  kernels (TSQR for tall panels) on the row-major matrices in place, panels
+  of 16 columns gathered into aggregates of 128 whose T is merged on the
+  GPU, the updates and Q's formation as rank-128 MPS products; each matrix
+  padded with zero rows and columns to whole panels, so the GPU takes every
+  column; a batch at once (every kernel's grid takes the batch, every product
+  is one batched MPS product); any height up to 2^22 rows (the TSQR's tree
+  of leaves). On an M5 Pro, one matrix against 2.14's GPU path and the CPU:
+  1024 6.5 ms (15, 17), 2048 18 (49, 93), 4096 60 (231, 619), 8192 x 512 8.5 (64, 48), 100000 x 32 4.0 (58, 7.8); batches: 16 x
+  1024^2 24 ms (51, 45), 4 x 2048^2 37 (99, 143), 1024 x 128^2 18 (52, 25).
+  Accuracy LAPACK's or a little better. `QR_BLOCKED=0` keeps the streaming
+  kernels.
+- **QR's routing re-measured with it** (kernel epochs qr 4, then 5): on the
+  M5 Pro the GPU from `sqrt(M k) >= 512` in a batch of up to 64 (was k >=
+  1024, batch <= 4) besides large batches of k = 16-256, the kernel
+  crossover at 128 rows (was 512), batches shared with the CPU from 1024
+  (was 64); 1.013x geometric-mean regret over 207 shapes. The large-matrix
+  clause now compares `sqrt(M k)`, rows and `k` both, rather than `k`
+  (`gpu_large_min_k` keeps its meaning for square matrices): a rule on `k`
+  sent a tall 8192 x 512 to the CPU (48 ms against 8.5); `tune_qr.py`'s grid
+  gains tall matrices up to 16384 x 64 and batches of 16 large ones, and its
+  fit tries the clause and the window in both orders. Wider panels, taller
+  TSQR leaves and a look-ahead on a second queue were tried and gave nothing
+  ([docs/proposals/qr-fixed-costs.md](docs/proposals/qr-fixed-costs.md)).
+- **The SVD with vectors by the two-stage reduction** (`band` with vectors,
+  `svd_band_vectors`, routed from the new `band_min_k`): the band reduction
+  keeps its reflectors (written straight into blocks of 128 as the panels
+  factor), the bulge chase keeps its own, and Q = Q1 Q2 and P = P1 P2 are
+  formed on the GPU while the CPU chases the band and solves the bidiagonal
+  problem; then U = Q U_B and V^T = V_B^T P^T, one product each. The
+  chase's reflectors are applied by a new kernel, `bd_chase_apply`: the
+  blocks of 16 sweeps a step, four groups of sweeps at once a threadgroup,
+  each a simdgroup two tiles behind the last, tiles handed down through
+  threadgroup memory, each block two products (its V and Y = -T^T V^T,
+  built on the CPU): about 49 ms a side at 4096, where the groups one after
+  another took 176. The divide and conquer's top products go to the GPU
+  once Q2 and P2 are done (the CPU is then the bottleneck). The GPU's work runs back to back: Q1 and P1's queued
+  during the band reduction, Q2 and P2's released in two chunks as the chase
+  finishes their sweeps (1.04-1.06x over waiting for the chase). On an M5
+  Pro, one square matrix against `bidiag`: 1.21x at 1024, 1.45x at 2048,
+  2.35x at 4096 (402 ms against 944; 368 in alternating runs), about 2.7x
+  at 8192; 8.7x the CPU path at 4096. Accuracy LAPACK's (reconstruction and
+  orthogonality 6e-6 at 4096); at 8192 the call keeps about 1.2 GB more than
+  `bidiag`. `SVD_DEVICE=band` now means `band` with vectors too (before,
+  `bidiag`); `band_min_k` and `SVD_BAND_MIN_K` in the C API, Python, PyTorch
+  and Swift; a `band` sweep backend and stage 3c of `tuning/tune_svd.py` fit
+  it. Until a Mac's routing is measured with it, `band_min_k` is 0 there
+  (never).
+- **Long Jacobi solves split over dispatches.** The whole-matrix Jacobi
+  kernels (the eigensolver's threadgroup mode, the SVD's Jacobi kernel) give
+  a matrix one threadgroup for its whole solve, which with the display busy
+  macOS ends after about a quarter of a second ("GPU Hang Error"): on an M5
+  Pro from N ~ 400 (eigh) and 512 x 512 (SVD), reached by forced kernels and
+  estimated policies. A solve the cost model puts over 40 ms
+  (`EIGH_DISPATCH_MS`, `SVD_DISPATCH_MS`) now runs a few rounds a dispatch,
+  each matrix resuming where it stopped: the same result bit for bit, in the
+  same time, about 15 ms a dispatch where one threadgroup ran 1.7-2.8 s.
+- **The band chase under the band reduction**, for eigenvalues or singular
+  values alone, one matrix: the chase starts at once on threads of its own
+  and trails the GPU, each block's rows copied as it completes, a thread
+  keeping several sweeps open. Every sweep runs to the band's end, which the
+  GPU finishes last, so only about 6% of the chase can go before it:
+  eigvalsh and svdvals on `band` 1.04-1.05x at 2048-4096, the values bit
+  for bit the same.
+- **The divide and conquer's largest products on the GPU**, for one matrix
+  in `tridiag` and `bidiag` (whose GPU is idle meanwhile): products of a
+  gigaflop or more, from the top merges of n ~ 2048, as MPS products on the
+  merges' page-aligned temporaries in place (`GpuGemm`). eigh with vectors
+  1.075x at 4096, the SVD on `bidiag` 1.046x. `bidiag`'s divide and conquer
+  writes straight into its Metal buffers instead of vectors copied there.
+- **The divide and conquer on every core.** With vectors, `tridiag` and
+  `bidiag` solved the tridiagonal or bidiagonal problem with LAPACK's
+  `sstedc` and `sbdsdc`, on one core. `src/divide_conquer.cpp` walks the same
+  tree with LAPACK's routines, its leaves and small merges one per task and
+  its large merges' loops (the secular equation's roots, the corrected z, the
+  vectors, the products) spread over the cores but two; `slasd2`'s
+  deflation, which moved the right vectors' rows one strided row at a time
+  (130 ms of a 4096 merge's 190), is rewritten to move them a column at a
+  time. On an M5 Pro, a 4096 problem: `sstedc` 176 ms to 50, `sbdsdc` 753 to
+  100. The values are LAPACK's bit for bit, the vectors to the last bits,
+  and neither depends on the number of threads. With the block reflectors'
+  change below, at 4096 eigh with vectors takes 306 ms (438 in 2.14) and the
+  SVD with vectors 943 (1535): 8.2x and 3.7x the CPU path.
+- **The band backends' panels**: the TSQR top factors its stacked R's as a
+  binary tree of triangle pairs, a simdgroup a pair, and the panel kernels
+  no longer run in IEEE mode. `Svd_Bidiag.metal` is built with
+  `-fno-fast-math`, and a kernel with any IEEE division or square root in
+  it, even an untaken one, compiles all of its arithmetic that way; they now
+  use the fast approximations with a Newton step. A 4096 x 16 panel 140 us to
+  76. svdvals on `band` 1.13-1.30x faster at 1024-4096, eigvalsh 1.08-1.18x.
+- **The band reductions' small products** (a b x b product summed over the
+  trailing rows and two b wide) are two kernels a block instead of three MPS
+  products: 2-5% at 1024-2048.
+- **The symmetric band reduction's trailing update on the lower triangle**
+  (`sb_update`), each off-diagonal tile's transpose written over its mirror
+  so that MPS still computes X = A22 V T on the whole: 1.5 n^2 of memory a
+  block instead of 2 n^2, and faster than MPS's update at every size
+  (4096: 462 us against 611). eigvalsh on `band` 1.08x at 4096, 1.17x at
+  8192 (872 ms to 744).
+- **`values_band_width`** in `EighPolicy` and `SvdPolicy` (0: 16), the C
+  API, Python, PyTorch and Swift, and `EIGH_VALUES_BAND_WIDTH` /
+  `SVD_VALUES_BAND_WIDTH`: the band backends' width as part of the per-device
+  policy. The sweeps time the band at widths 8 and 32 too (`band8_vals`,
+  `band32_vals`); stages 3b and 4b choose the width, then fit the threshold.
+  On the M5 Pro 16 is the fastest or within 2% everywhere but eigvalsh at
+  4096 (32, 7% faster).
+- **The band thresholds' fit** compares a threshold with the best on the
+  points where they choose differently (within 3% there), not only over all
+  the band points, where one clear loss was diluted; and the grids gain
+  N = 2560 and 3584 (eigh) and k = 1280 and 1792 (SVD). Re-analysed with it,
+  the M5 Pro's eigvalsh goes to `band` from 3072 instead of 4096.
+- **The back-transformations' block reflectors**: `tridiag` and `bidiag`
+  built each block of 128 reflectors' T with `slarft` on the CPU while the
+  GPU applied the previous block, and at 4096 the CPU's side (2.5 ms a block)
+  was the slower; T now comes from the Gram matrix V^T V (one `ssyrk`) and
+  the copies run on every core. eigh with vectors on `tridiag` 1.1x at 4096.
+- **The one-stage reductions and bisection** off IEEE arithmetic too:
+  eigvalsh on `tridiag` 1.07-1.11x. And the SVD's Jacobi kernel's rotation
+  and output: 1.14-1.17x on batches of 16x16 to 48x48, its `rsqrt` with two
+  Newton steps (with one, V's orthogonality was 10x worse; with two, a little
+  better than with the IEEE sequence).
+- Kernel epochs eigh 6, SVD 8 (whose runs must also time `band` with
+  vectors), QR 5: every other Mac's routing is stale until it is measured
+  again (`tuning/run.py`). The M5 Pro is re-measured (runs
+  [`20261007-246324`](docs/results/apple-m5-pro-20gpu/20261007-246324/summary.md),
+  eigh and SVD, and [`20261007-82345e`](docs/results/apple-m5-pro-20gpu/20261007-82345e/summary.md),
+  QR): the SVD with vectors on `band` from k = 1024 (`band_min_k`), the
+  singular values alone from 768 and the eigenvalues alone from 2048, at
+  width 16; and the estimated policies of the Macs nobody has measured are
+  refitted from it.
+- On an M5 Pro, one matrix against the CPU path: svdvals 9.8x at 4096 and
+  11.7x at 8192, eigh 8.3x and 8.9x, eigvalsh 3.6x and 3.8x, the SVD with
+  vectors 4.2x at 4096 on `bidiag` and 9.8x on `band`, QR 10.0x (2.14: 8.6x,
+  5.6x, 2.9x, 2.3x and 2.7x at 4096); README's tables, and its PyTorch
+  comparison, re-measured side by side after the last change.
+- Fixes: the sweeps' correctness gate failed every backend from N ~ 6500
+  (MLX queued the comparison's GPU work behind the CPU reference, past the
+  GPU's watchdog); `cpu_threads() - 2` wrapped around for a thread cap of 1
+  or 2, and the band chase then ignored the cap; `sb_update` read up to 63
+  rows past its staging buffer (never stored); `tuning/kernels.py` did not
+  watch the band files for epoch changes; the divide and conquer, like
+  LAPACK's `sbdsdc`, could fail to converge (one in about 30 random
+  bidiagonals of 2048 with 900 equal singular values and the rest tiny, a
+  test case's, which failed now and then), and the SVD threw: now it is
+  solved again in double precision (`dbdsdc`, `dstedc`; 0.3 s at 2048), and
+  by QR iteration if that fails too.
+- New proposals: the CPU path's divide and conquer, the divide and
+  conquer's products on the GPU, the band SVD with vectors overlapped
+  further.
+
 ## 2.14.0 (2026-10-05)
 
 - **Estimated policies for the Macs nobody has measured**, in place of the

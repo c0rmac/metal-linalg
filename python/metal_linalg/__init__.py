@@ -188,6 +188,7 @@ def eigvalsh_backend(n, batch=1):
 def svd_backend(m, n, batch=1):
     """Which backend :func:`svd` uses: ``"cpu"``, ``"jacobi"``,
     ``"block_jacobi"``, ``"qr_jacobi"``, ``"qr_block_jacobi"``, ``"bidiag"``,
+    ``"band"`` (the two-stage reduction, from the policy's ``band_min_k``),
     ``"golub_kahan"`` or ``"qr_golub_kahan"``."""
     return _core.svd_backend(m, n, batch)
 

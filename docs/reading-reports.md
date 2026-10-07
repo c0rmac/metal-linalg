@@ -236,9 +236,24 @@ is the GPU's choice, against stage 2's rule applied as is.
 alone: where the rules choose the CPU or `bidiag`, `band` from this k on,
 scored against the CPU, `bidiag` and `band` on the points where `band_vals`
 was timed (k >= 512). The report lists `band` over `bidiag` and over the CPU
-at each of them. **Stage 4b** (eigensolver) does the same for eigenvalues
+at each of them. **Stage 3c** (SVD, since 2.15.0) is the same with singular
+vectors: `band_min_k`, on the points where `band` was timed. **Stage 4b** (eigensolver) does the same for eigenvalues
 alone: `band` from this N where the rules choose the CPU or `tridiag`, scored
 against both on the points where `band_vals` was timed (N >= 512).
+
+Both first choose the band's width (since 2.15.0): at each point the time of
+each width (`band8_vals`, `band_vals`, `band32_vals`) over the best width's,
+their geometric mean over the points, and 16, the default, unless another
+width's is lower by more than 1%. The report gives the three means. The
+threshold is then fitted on that width's times, with one difference from
+the other stages' fits: a threshold is near-optimal only if it is within the
+tolerance of the best's geometric mean over all the points *and* within 3%
+of the best on the points where the two choose differently. Two thresholds
+differ only between them, and there are few band points, so scored over all
+of them a clear loss in between was diluted: on run `20261004-06bc11`, 4096
+lost 7% to 3072 at N = 3072, within 0.5% over all 28 points, and the
+tie-break (lowest worst case, then the highest threshold) took 4096. The
+report lists the thresholds that pass both.
 
 **Stage 2** fits the GPU/CPU boundary given stage 1's choice, scored against
 the best of all backends.

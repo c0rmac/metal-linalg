@@ -1,6 +1,24 @@
 # Parallel divide and conquer for the tridiagonal and bidiagonal solvers
 
-Status: proposal, not started (2026-10-04).
+Status: **done in 2.15.0** (2026-10-07), the CPU version, and faster than
+estimated. `src/divide_conquer.cpp` walks LAPACK's tree with its leaves and
+small merges one per task, and its large merges (from 256 rows) with
+`slaed3`'s and `slasd3`'s loops over the threads. Profiling the first cut
+found that `slasd2`, the bidiagonal merge's deflation, took 130 of a 4096
+merge's 190 ms: it moves VT's rows one strided row at a time. It is
+rewritten to move them a column at a time, and checked against LAPACK's
+`slasd2` bit for bit, every output, on four kinds of matrix. On an M5 Pro, one
+4096 problem: `sstedc` 176 to 50 ms (estimate 40-50), `sbdsdc` 753 to 100 ms
+(estimate 150-200); eigh with vectors on `tridiag` 438 to about 300 ms, the
+SVD with vectors on `bidiag` 1535 to about 920 ms. The values are bit for
+bit LAPACK's; the vectors differ in the last bits; neither depends on the
+number of threads. See [the 2.15.0 study](../studies/proposals-2-15-apple-m5-pro.md),
+section 1. Left: the CPU path for one matrix
+([cpu-path-divide-and-conquer.md](cpu-path-divide-and-conquer.md)) and the
+top merges' products on the GPU
+([divide-and-conquer-gpu-products.md](divide-and-conquer-gpu-products.md)).
+
+What follows is the proposal as written on 2026-10-04.
 
 ## What
 

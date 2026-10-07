@@ -65,14 +65,15 @@ const char* name(ml::SvdBackend b) {
                        X(gpu_max_n) X(gpu_min_batch_times_n) X(gpu_min_batch) X(gpu_cores)      \
                        X(values_gpu_max_n) X(values_gpu_min_batch_times_n) X(values_gpu_min_batch) \
                        X(tridiag_min_n) X(values_tridiag_min_n) X(ql_min_n) X(ql_max_n) X(share_min_batch) \
-                       X(gpu_big_batch_max_n) X(gpu_big_batch_min) X(values_band_min_n) \
+                       X(gpu_big_batch_max_n) X(gpu_big_batch_min) X(values_band_min_n) X(values_band_width) \
                        X(tridiag_max_batch) X(values_tridiag_max_batch)
 #define SVD_FIELDS(X) X(qr_min_rows) X(qr_min_k) X(block_min_k) X(block_min_k_batched)       \
                       X(block_min_batch) X(gpu_max_k) X(gpu_min_batch_times_k) X(gpu_min_batch) \
                       X(gpu_cores) X(bidiag_min_k) X(values_bidiag_min_k)  \
                       X(bidiag_max_batch) X(values_bidiag_max_batch) X(gk_min_k) X(gk_max_k) X(gpu_max_l) \
                       X(values_gpu_max_k) X(values_gpu_min_batch_times_k) X(values_gpu_min_batch) X(values_gpu_max_l) \
-                      X(share_min_batch) X(gpu_big_batch_max_k) X(gpu_big_batch_min) X(values_band_min_k)
+                      X(share_min_batch) X(gpu_big_batch_max_k) X(gpu_big_batch_min) X(values_band_min_k) X(values_band_width) \
+                      X(band_min_k)
 
 #define TO_DICT(f) d[#f] = p.f;
 #define FROM_DICT(f) if (key == #f) { p.f = nb::cast<unsigned>(value); return; }

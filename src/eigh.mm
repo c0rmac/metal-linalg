@@ -45,6 +45,7 @@ struct Params {
     uint  lower;
     uint  matrices_per_tg;
     uint  tg_stride_floats;
+    uint  round_budget;   // threadgroup mode: rounds per dispatch (0: the whole solve)
 };
 
 // Reduction slots at the start of threadgroup memory (kRedFloats in the shader).
@@ -100,6 +101,7 @@ struct Workspace {
     id<MTLBuffer> V;      // eigenvector accumulator (nil when not computing vectors)
     id<MTLBuffer> vals;
     id<MTLBuffer> info;
+    id<MTLBuffer> state;  // a split solve's per-matrix JacobiState
 };
 
 struct Cache {
@@ -129,6 +131,8 @@ struct Cache {
         w.V    = vectors ? [rt.device newBufferWithLength:mat_bytes options:opt] : nil;
         w.vals = [rt.device newBufferWithLength:((size_t)batch * n * sizeof(float)) options:opt];
         w.info = [rt.device newBufferWithLength:((size_t)batch * sizeof(uint)) options:opt];
+        w.state = [rt.device newBufferWithLength:((size_t)batch * metal_linalg::detail::kJacobiStateBytes)
+                                         options:opt];
         return workspaces[key] = w;
     }
 };
@@ -180,6 +184,7 @@ struct TunedEntry {
     unsigned    gpu_big_batch_max_n;
     unsigned    gpu_big_batch_min;
     unsigned    values_band_min_n;   // 0 = never, which rows from before 2.13.0 leave
+    unsigned    values_band_width;   // 0 = 16, which rows from before 2.15.0 leave
     unsigned    calibration;   // kCalibration* (calibration.h); rows without it are current
 };
 
@@ -189,7 +194,7 @@ struct TunedEntry {
 // docs/studies/. The last row keeps the array non-empty and matches nothing.
 constexpr TunedEntry kTuned[] = {
 #include "tuned/eigh.inc"
-    {"", 0,   0, 0, 0, 0,   0, 0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0, 0,   0,   0},
+    {"", 0,   0, 0, 0, 0,   0, 0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0, 0,   0, 0,   0},
 };
 
 // The estimated rows, for every slowdown pair on tuning/estimate.py's ladder
@@ -226,6 +231,7 @@ void apply(const TunedEntry& e, EighPolicy& p) {
     p.gpu_big_batch_max_n          = e.gpu_big_batch_max_n;
     p.gpu_big_batch_min            = e.gpu_big_batch_min;
     p.values_band_min_n            = e.values_band_min_n;
+    p.values_band_width            = e.values_band_width;
 }
 
 struct ResolvedPolicy {
@@ -305,6 +311,7 @@ ResolvedPolicy resolve_policy() {
     over("EIGH_GPU_BIG_BATCH_MAX_N",          r.policy.gpu_big_batch_max_n);
     over("EIGH_GPU_BIG_BATCH_MIN",            r.policy.gpu_big_batch_min);
     over("EIGH_VALUES_BAND_MIN_N",            r.policy.values_band_min_n);
+    over("EIGH_VALUES_BAND_WIDTH",            r.policy.values_band_width);
     if (!env.empty()) r.source = "env:" + env;
     return r;
 }
@@ -414,13 +421,18 @@ void eigh_jacobi(const Matrices& a, bool lower, const EighOptions& opt,
     // threadgroup. That per-matrix time is what bounds the practical N for
     // this design.
     uint chunk = batch;
+    // Fewer threads than the one-item-per-thread count stretch a matrix's
+    // wall time roughly in proportion; assume the worst for the budget.
+    const uint   full_threads  = std::min(max_threads, pad_up(std::max(np * n, 32u), 32));
+    const double thread_factor = simd ? kSimdCostFactor
+                                      : std::max(1.0, (double)full_threads / threads);
+    const double per_matrix_core_ms = kCoreMsPerN3 * (double)n * n * n * thread_factor;
+    // A threadgroup's solve longer than a dispatch should run (the GPU's
+    // watchdog; metal_runtime.h) is split over dispatches of a few rounds.
+    const uint rounds = 2 * np - 1;
+    const uint round_budget =
+        simd ? 0u : metal_linalg::detail::jacobi_round_budget(per_matrix_core_ms, rounds, "EIGH_DISPATCH_MS");
     {
-        // Fewer threads than the one-item-per-thread count stretch a matrix's
-        // wall time roughly in proportion; assume the worst for the budget.
-        const uint   full_threads  = std::min(max_threads, pad_up(std::max(np * n, 32u), 32));
-        const double thread_factor = simd ? kSimdCostFactor
-                                          : std::max(1.0, (double)full_threads / threads);
-        const double per_matrix_core_ms = kCoreMsPerN3 * (double)n * n * n * thread_factor;
         const double budget = (double)env_uint("EIGH_CHUNK_MS", (unsigned)kChunkBudgetMs);
         const double fit = std::floor(budget * cores / per_matrix_core_ms);
         chunk = (uint)std::max((double)cores, std::min((double)batch, fit));
@@ -447,21 +459,38 @@ void eigh_jacobi(const Matrices& a, bool lower, const EighOptions& opt,
         prm.lower            = lower ? 1u : 0u;
         prm.matrices_per_tg  = matrices_per_tg;
         prm.tg_stride_floats = stride_floats;
+        prm.round_budget     = round_budget;
+
+        auto encode = [&](id<MTLComputeCommandEncoder> enc) {
+            [enc setComputePipelineState:pso];
+            [enc setBuffer:buf_src offset:(b0 * mat_bytes) atIndex:0];
+            [enc setBuffer:ws.W    offset:(b0 * mat_bytes) atIndex:1];
+            [enc setBuffer:(compute_vectors ? ws.V : ws.W) offset:(b0 * mat_bytes) atIndex:2];
+            [enc setBuffer:ws.vals offset:((size_t)b0 * n * sizeof(float)) atIndex:3];
+            [enc setBuffer:ws.info offset:((size_t)b0 * sizeof(uint)) atIndex:4];
+            [enc setBytes:&prm length:sizeof(prm) atIndex:5];
+            [enc setBuffer:ws.state offset:((size_t)b0 * metal_linalg::detail::kJacobiStateBytes) atIndex:6];
+            [enc setThreadgroupMemoryLength:tg_bytes atIndex:0];
+            [enc dispatchThreadgroups:MTLSizeMake(n_tg, 1, 1)
+                threadsPerThreadgroup:MTLSizeMake(threads, 1, 1)];
+        };
+        if (round_budget) {
+            // Command buffers of about kChunkBudgetMs, the chunk's matrices in
+            // waves of one per core, until each has finished.
+            const uint waves = (bc + cores - 1) / cores;
+            const uint per_buffer = std::max(1u, (uint)(kChunkBudgetMs / (40.0 * waves)));
+            const uint max_dispatches = (uint)std::min<uint64_t>(
+                0xFFFFFFFFu, (uint64_t)opt.max_sweeps * rounds / round_budget + 3);
+            metal_linalg::detail::run_split_jacobi(cache.rt.queue, ws.state,
+                                                   (size_t)b0 * metal_linalg::detail::kJacobiStateBytes, bc,
+                                                   per_buffer, max_dispatches, encode,
+                                                   "[eigh] N=" + std::to_string(n));
+            continue;
+        }
 
         id<MTLCommandBuffer> cmd = [cache.rt.queue commandBuffer];
         id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
-
-        [enc setComputePipelineState:pso];
-        [enc setBuffer:buf_src offset:(b0 * mat_bytes) atIndex:0];
-        [enc setBuffer:ws.W    offset:(b0 * mat_bytes) atIndex:1];
-        [enc setBuffer:(compute_vectors ? ws.V : ws.W) offset:(b0 * mat_bytes) atIndex:2];
-        [enc setBuffer:ws.vals offset:((size_t)b0 * n * sizeof(float)) atIndex:3];
-        [enc setBuffer:ws.info offset:((size_t)b0 * sizeof(uint)) atIndex:4];
-        [enc setBytes:&prm length:sizeof(prm) atIndex:5];
-        [enc setThreadgroupMemoryLength:tg_bytes atIndex:0];
-        [enc dispatchThreadgroups:MTLSizeMake(n_tg, 1, 1)
-            threadsPerThreadgroup:MTLSizeMake(threads, 1, 1)];
-
+        encode(enc);
         [enc endEncoding];
         [cmd commit];
         [cmd waitUntilCompleted];
@@ -766,7 +795,7 @@ void core::eigh(const Matrices& a, bool lower, float* w, float* v, uint32_t* inf
         return;
     }
     if (backend == EighBackend::band) {   // eigenvalues alone
-        core::detail::eigh_band(a, lower, w, info);
+        core::detail::eigh_band(a, lower, w, info, policy_state().policy.values_band_width);
         return;
     }
     if (backend == EighBackend::ql) {

@@ -31,7 +31,7 @@ marked stale, rather than an estimate. The library reports the state at run time
 and docs/measurements.md shows it for every chip.
 """
 
-KERNEL_EPOCHS = {"qr": 3, "eigh": 5, "svd": 7}
+KERNEL_EPOCHS = {"qr": 5, "eigh": 6, "svd": 8}
 # The versions from which the CPU path spreads a batch over every core (2.9.0).
 MIN_EPOCHS = {"qr": 2, "eigh": 2, "svd": 3}
 
@@ -77,15 +77,34 @@ HISTORY = [
     ("svd", 7, "2.13.0", "2026-10-04",
      "the bidiag backend's singular values alone come from bisection on the GPU from k = 1024, and "
      "below that from sbdsqr (dqds) rather than sbdsdc: 12 ms against 93 at 4096"),
+    ("eigh", 6, "2.15.0", "2026-10-07",
+     "the tridiag backend's eigenvectors come from a divide and conquer on every core (sstedc's 176 ms "
+     "to 50 at 4096); the band backend's panels are faster (the TSQR top a tree, no IEEE division), "
+     "its small products are kernels of their own and its trailing update is on the lower triangle: "
+     "eigh with vectors 1.3-1.5x and eigvalsh 1.1-1.2x at 2048-8192"),
+    ("svd", 8, "2.15.0", "2026-10-07",
+     "the bidiag backend's singular vectors come from a divide and conquer on every core (sbdsdc's "
+     "753 ms to 100 at 4096): the SVD with vectors 1.7-1.9x at 2048-4096; the band backend's panels "
+     "and small products are faster: svdvals 1.1-1.3x; and the band backend takes singular vectors "
+     "too (band_min_k): 2.3x bidiag at 4096"),
+    ("qr", 4, "2.15.0", "2026-10-07",
+     "the reduced backend hands one matrix, or a few large ones, to the blocked QR (the band "
+     "reduction's panels, aggregates of 128 columns, MPS products): 2.1x at 1024, 2.6x at 2048, "
+     "3.7x at 4096, 5x on tall 4096 x 1024 and 8192 x 512"),
+    ("qr", 5, "2.15.0", "2026-10-07",
+     "the blocked QR takes a batch at once and any height (padded to whole panels, batched MPS "
+     "products): every shape the reduced backend's streaming kernels took, 1.8-3.5x faster; batches "
+     "of 512-2048 now beat the CPU (16 x 1024^2: 25 ms against 48); the large clause counts rows "
+     "and k, sqrt(M k), and the grid has tall large shapes"),
 ]
 
 REQUIRED = {
     "qr": {"unblocked", "reduced", "cpu", "share"},
     "eigh": {"cpu", "simd", "tg", "block", "tridiag", "ql", "ql_share",
              "cpu_vals", "simd_vals", "tg_vals", "block_vals", "tridiag_vals", "ql_vals", "ql_share_vals",
-             "band_vals"},
-    "svd": {"cpu", "jacobi", "block", "qr", "qrblock", "bidiag", "gk", "gk_share", "cpu_vals", "bidiag_vals",
-            "gk_vals", "gk_share_vals", "band_vals"},
+             "band_vals", "band8_vals", "band32_vals"},
+    "svd": {"cpu", "jacobi", "block", "qr", "qrblock", "bidiag", "band", "gk", "gk_share", "cpu_vals",
+            "bidiag_vals", "gk_vals", "gk_share_vals", "band_vals", "band8_vals", "band32_vals"},
 }
 
 # Backends added after a decomposition's first measurements, and when: what
@@ -110,10 +129,13 @@ ADDED = {
     "ql_share_vals": "sharing a batch between the GPU and the CPU (2.11.0)",
     "share": "sharing a batch between the GPU and the CPU (2.12.0)",
     "band_vals": "the band backend, the two-stage reduction for eigenvalues or singular values alone (2.13.0)",
+    "band8_vals": "the band backend's width as part of the policy (2.15.0)",
+    "band32_vals": "the band backend's width as part of the policy (2.15.0)",
 }
 # Where a backend name means something else for one decomposition.
 ADDED_FOR = {
-    "svd": {"cpu_vals": "the singular-value-only paths (2.7.0)"},
+    "svd": {"cpu_vals": "the singular-value-only paths (2.7.0)",
+            "band": "the band backend with singular vectors (2.15.0)"},
 }
 
 
@@ -121,15 +143,18 @@ def added(op, backend):
     """What an incomplete `op` run that never timed `backend` is missing, in words."""
     return ADDED_FOR.get(op, {}).get(backend) or ADDED.get(backend, backend)
 
-# The CPU paths' batch loop (lapack_batches) is in the shared runtime.
-_SHARED = ["src/metal_runtime"]
-_QR = ["shaders/QR_", "src/qr"] + _SHARED
+# The CPU paths' batch loop (lapack_batches) is in the shared runtime, and
+# the two-stage and divide-and-conquer pieces serve both eigh and the SVD.
+_SHARED = ["src/metal_runtime", "src/blas_threading"]
+_BAND = ["src/band_", "src/bisect", "src/divide_conquer"]
+# The blocked QR runs on the band reduction's panel kernels.
+_QR = ["shaders/QR_", "src/qr", "src/band_reduce", "shaders/Svd_Bidiag"] + _SHARED
 _JACOBI = ["shaders/eigh_jacobi_common.h", "shaders/block_jacobi_common.h"]
 PATHS = {
     "qr": _QR,
-    "eigh": ["shaders/Eigh_", "src/eigh"] + _JACOBI + _SHARED,
+    "eigh": ["shaders/Eigh_", "src/eigh", "shaders/Svd_Bidiag"] + _JACOBI + _SHARED + _BAND,
     # The QR-preconditioned SVD backends call QR, routed by its table.
-    "svd": ["shaders/Svd_", "src/svd"] + _JACOBI + _QR + ["src/tuned/qr.inc"],
+    "svd": ["shaders/Svd_", "src/svd"] + _JACOBI + _QR + ["src/tuned/qr.inc"] + _BAND,
 }
 # A decomposition's own table is generated from its measurements, not a change to them.
 OWN_TABLE = {"qr": "src/tuned/qr.inc", "eigh": "src/tuned/eigh.inc", "svd": "src/tuned/svd.inc"}

@@ -49,6 +49,7 @@ struct Params {
     uint  max_sweeps;
     float tol;
     float null_tol;
+    uint  round_budget;   // rounds per dispatch (0: the whole solve)
 };
 
 constexpr uint kRedFloats = 32;   // kRedFloats in the shader
@@ -75,7 +76,7 @@ unsigned env_uint(const char* name, unsigned fallback) {
 }
 
 struct Workspace {
-    id<MTLBuffer> G, V, S, U, Vt, info;
+    id<MTLBuffer> G, V, S, U, Vt, info, state;   // state: a split solve's per-matrix JacobiState
 };
 
 struct Cache {
@@ -102,6 +103,7 @@ struct Cache {
         w.G    = buf((size_t)batch * m * n * f);
         w.S    = buf((size_t)batch * n * f);
         w.info = buf((size_t)batch * sizeof(uint));
+        w.state = buf((size_t)batch * metal_linalg::detail::kJacobiStateBytes);
         w.V    = uv ? buf((size_t)batch * n * n * f) : nil;
         w.U    = uv ? buf((size_t)batch * m * n * f) : nil;
         w.Vt   = uv ? buf((size_t)batch * n * n * f) : nil;
@@ -220,6 +222,8 @@ struct TunedEntry {
     unsigned    gpu_big_batch_max_k;
     unsigned    gpu_big_batch_min;
     unsigned    values_band_min_k;     // 0 = never, which rows from before 2.13.0 leave
+    unsigned    values_band_width;     // 0 = 16, which rows from before 2.15.0 leave
+    unsigned    band_min_k;            // 0 = never, which rows from before 2.15.0 leave
     unsigned    calibration;   // kCalibration* (calibration.h); rows without it are current
 };
 
@@ -229,7 +233,7 @@ struct TunedEntry {
 // docs/studies/. The last row keeps the array non-empty and matches nothing.
 constexpr TunedEntry kTuned[] = {
 #include "tuned/svd.inc"
-    {"", 0,   0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0, 0,   0,   0},
+    {"", 0,   0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0, 0,   0, 0,   0,   0},
 };
 
 // A device with no entry gets an estimated row: a measured device's timings
@@ -243,7 +247,7 @@ struct EstimatedEntry {
 };
 constexpr EstimatedEntry kEstimated[] = {
 #include "tuned/svd_estimated.inc"
-    {0, 0, 0, {"", 0,   0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0, 0,   0,   0}},
+    {0, 0, 0, {"", 0,   0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0, 0,   0, 0,   0,   0}},
 };
 
 void apply(const TunedEntry& e, SvdPolicy& p) {
@@ -270,6 +274,8 @@ void apply(const TunedEntry& e, SvdPolicy& p) {
     p.gpu_big_batch_max_k          = e.gpu_big_batch_max_k;
     p.gpu_big_batch_min            = e.gpu_big_batch_min;
     p.values_band_min_k            = e.values_band_min_k;
+    p.values_band_width            = e.values_band_width;
+    p.band_min_k                   = e.band_min_k;
 }
 
 struct ResolvedPolicy {
@@ -348,6 +354,8 @@ ResolvedPolicy resolve_policy() {
     over("SVD_GPU_BIG_BATCH_MAX_K",   r.policy.gpu_big_batch_max_k);
     over("SVD_GPU_BIG_BATCH_MIN",     r.policy.gpu_big_batch_min);
     over("SVD_VALUES_BAND_MIN_K",     r.policy.values_band_min_k);
+    over("SVD_VALUES_BAND_WIDTH",     r.policy.values_band_width);
+    over("SVD_BAND_MIN_K",            r.policy.band_min_k);
     if (!env.empty()) r.source = "env:" + env;
     return r;
 }
@@ -477,8 +485,12 @@ void svd_jacobi(const Matrices& a, const SvdOptions& opt,
     id<MTLBuffer> buf_src = input_buffer(dev, a, wide);
 
     uint chunk = batch;
+    const double per_matrix_core_ms = kCoreMsPerMN2 * (double)m * n * n;
+    // A threadgroup's solve longer than a dispatch should run (the GPU's
+    // watchdog; metal_runtime.h) is split over dispatches of a few rounds.
+    const uint rounds = 2 * np - 1;
+    prm.round_budget = metal_linalg::detail::jacobi_round_budget(per_matrix_core_ms, rounds, "SVD_DISPATCH_MS");
     {
-        const double per_matrix_core_ms = kCoreMsPerMN2 * (double)m * n * n;
         const double budget = (double)env_uint("SVD_CHUNK_MS", (unsigned)kChunkBudgetMs);
         const double fit = std::floor(budget * cores / per_matrix_core_ms);
         chunk = (uint)std::max((double)cores, std::min((double)batch, fit));
@@ -489,20 +501,38 @@ void svd_jacobi(const Matrices& a, const SvdOptions& opt,
     for (uint b0 = 0; b0 < batch; b0 += chunk) {
         const uint bc = std::min(chunk, batch - b0);
 
+        auto encode = [&](id<MTLComputeCommandEncoder> enc) {
+            [enc setComputePipelineState:pso];
+            [enc setBuffer:buf_src offset:((size_t)b0 * m * n * f) atIndex:0];
+            [enc setBuffer:ws.G    offset:((size_t)b0 * m * n * f) atIndex:1];
+            [enc setBuffer:(compute_uv ? ws.V  : ws.G) offset:(compute_uv ? (size_t)b0 * n * n * f : 0) atIndex:2];
+            [enc setBuffer:ws.S    offset:((size_t)b0 * n * f) atIndex:3];
+            [enc setBuffer:(compute_uv ? ws.U  : ws.G) offset:(compute_uv ? (size_t)b0 * m * n * f : 0) atIndex:4];
+            [enc setBuffer:(compute_uv ? ws.Vt : ws.G) offset:(compute_uv ? (size_t)b0 * n * n * f : 0) atIndex:5];
+            [enc setBuffer:ws.info offset:((size_t)b0 * sizeof(uint)) atIndex:6];
+            [enc setBytes:&prm length:sizeof(prm) atIndex:7];
+            [enc setBuffer:ws.state offset:((size_t)b0 * metal_linalg::detail::kJacobiStateBytes) atIndex:8];
+            [enc setThreadgroupMemoryLength:tg_bytes atIndex:0];
+            [enc dispatchThreadgroups:MTLSizeMake(bc, 1, 1)
+                threadsPerThreadgroup:MTLSizeMake(threads, 1, 1)];
+        };
+        if (prm.round_budget) {
+            // Command buffers of about kChunkBudgetMs, the chunk's matrices in
+            // waves of one per core, until each has finished.
+            const uint waves = (bc + cores - 1) / cores;
+            const uint per_buffer = std::max(1u, (uint)(kChunkBudgetMs / (40.0 * waves)));
+            const uint max_dispatches = (uint)std::min<uint64_t>(
+                0xFFFFFFFFu, (uint64_t)opt.max_sweeps * rounds / prm.round_budget + 3);
+            metal_linalg::detail::run_split_jacobi(cache.rt.queue, ws.state,
+                                                   (size_t)b0 * metal_linalg::detail::kJacobiStateBytes, bc,
+                                                   per_buffer, max_dispatches, encode,
+                                                   "[svd] " + std::to_string(m) + "x" + std::to_string(n));
+            continue;
+        }
+
         id<MTLCommandBuffer> cmd = [cache.rt.queue commandBuffer];
         id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
-        [enc setComputePipelineState:pso];
-        [enc setBuffer:buf_src offset:((size_t)b0 * m * n * f) atIndex:0];
-        [enc setBuffer:ws.G    offset:((size_t)b0 * m * n * f) atIndex:1];
-        [enc setBuffer:(compute_uv ? ws.V  : ws.G) offset:(compute_uv ? (size_t)b0 * n * n * f : 0) atIndex:2];
-        [enc setBuffer:ws.S    offset:((size_t)b0 * n * f) atIndex:3];
-        [enc setBuffer:(compute_uv ? ws.U  : ws.G) offset:(compute_uv ? (size_t)b0 * m * n * f : 0) atIndex:4];
-        [enc setBuffer:(compute_uv ? ws.Vt : ws.G) offset:(compute_uv ? (size_t)b0 * n * n * f : 0) atIndex:5];
-        [enc setBuffer:ws.info offset:((size_t)b0 * sizeof(uint)) atIndex:6];
-        [enc setBytes:&prm length:sizeof(prm) atIndex:7];
-        [enc setThreadgroupMemoryLength:tg_bytes atIndex:0];
-        [enc dispatchThreadgroups:MTLSizeMake(bc, 1, 1)
-            threadsPerThreadgroup:MTLSizeMake(threads, 1, 1)];
+        encode(enc);
         [enc endEncoding];
         [cmd commit];
         [cmd waitUntilCompleted];
@@ -770,22 +800,22 @@ bool svdvals_uses_gpu(unsigned m, unsigned n, unsigned batch) {
 
 namespace {
 
-// Where the rules send a call to the CPU: for singular values alone the band
-// backend from its threshold, then the bidiag backend from its own (0 =
-// never), both up to the batch cap (0 = none). SVD_DEVICE=cpu keeps the CPU;
-// SVD_DEVICE=bidiag forces that backend for every call, SVD_DEVICE=band the
-// band backend for singular values alone (bidiag with vectors).
+// Where the rules send a call to the CPU: the band backend from its threshold
+// (band_min_k with vectors, values_band_min_k without), then the bidiag
+// backend from its own (0 = never), both up to the batch cap (0 = none).
+// SVD_DEVICE=cpu keeps the CPU; SVD_DEVICE=bidiag or band forces that backend
+// for every call.
 SvdBackend route(unsigned m, unsigned n, unsigned batch, bool vectors) {
     if (const char* e = std::getenv("SVD_DEVICE"); e && std::string(e) == "bidiag") return SvdBackend::bidiag;
-    if (const char* e = std::getenv("SVD_DEVICE"); e && std::string(e) == "band")
-        return vectors ? SvdBackend::bidiag : SvdBackend::band;
+    if (const char* e = std::getenv("SVD_DEVICE"); e && std::string(e) == "band") return SvdBackend::band;
     if (vectors ? svd_uses_gpu(m, n, batch) : svdvals_uses_gpu(m, n, batch)) return svd_gpu_backend(m, n, batch);
     if (const char* e = std::getenv("SVD_DEVICE"); e && std::string(e) == "cpu") return SvdBackend::cpu;
     const SvdPolicy& p = policy_state().policy;
     const unsigned k = std::min(m, n);
     const unsigned cap = vectors ? p.bidiag_max_batch : p.values_bidiag_max_batch;
     if (cap != 0 && batch > cap) return SvdBackend::cpu;
-    if (!vectors && p.values_band_min_k != 0 && k >= p.values_band_min_k) return SvdBackend::band;
+    const unsigned band = vectors ? p.band_min_k : p.values_band_min_k;
+    if (band != 0 && k >= band) return SvdBackend::band;
     const unsigned from = vectors ? p.bidiag_min_k : p.values_bidiag_min_k;
     return from != 0 && k >= from ? SvdBackend::bidiag : SvdBackend::cpu;
 }
@@ -866,8 +896,9 @@ void core::svd(const Matrices& a, float* u, float* s, float* vt, uint32_t* info)
         case SvdBackend::bidiag:
             core::detail::svd_bidiag(a, u, s, vt, info);
             return;
-        case SvdBackend::band:   // singular values alone
-            core::detail::svd_band(a, s, info);
+        case SvdBackend::band:
+            if (u || vt) core::detail::svd_band_vectors(a, u, s, vt, info);
+            else core::detail::svd_band(a, s, info, policy_state().policy.values_band_width);
             return;
         case SvdBackend::block_jacobi:
             core::detail::svd_block_jacobi(a, opt, u, s, vt, info);

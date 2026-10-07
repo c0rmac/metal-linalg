@@ -69,10 +69,10 @@ HARNESS = {"qr": "tune_qr.py", "eigh": "tune_eigh.py", "svd": "tune_svd.py"}
 # other backend is a batched GPU kernel.
 BACKENDS = {
     "eigh": {"cpu": {"cpu", "cpu_vals"},
-             "large": {"tridiag", "tridiag_vals", "band", "band_vals"},
+             "large": {"tridiag", "tridiag_vals", "band", "band_vals", "band8_vals", "band32_vals"},
              "shared": {"ql_share": ("ql", "cpu"), "ql_share_vals": ("ql_vals", "cpu_vals")}},
     "svd": {"cpu": {"cpu", "cpu_vals"},
-            "large": {"bidiag", "bidiag_vals", "band", "band_vals"},
+            "large": {"bidiag", "bidiag_vals", "band", "band_vals", "band8_vals", "band32_vals"},
             "shared": {"gk_share": ("gk", "cpu"), "gk_share_vals": ("gk_vals", "cpu_vals")}},
     "qr": {"cpu": {"cpu"},
            "large": {"reduced"},
@@ -256,12 +256,13 @@ ROW_FIELDS = {
              "gpu_min_batch_times_n", "gpu_min_batch", "values_gpu_max_n", "values_gpu_min_batch_times_n",
              "values_gpu_min_batch", "tridiag_min_n", "values_tridiag_min_n", "tridiag_max_batch",
              "values_tridiag_max_batch", "ql_min_n", "ql_max_n", "share_min_batch", "gpu_big_batch_max_n",
-             "gpu_big_batch_min", "values_band_min_n"],
+             "gpu_big_batch_min", "values_band_min_n", "values_band_width"],
     "svd": ["qr_min_rows", "qr_min_k", "block_min_k", "block_min_k_batched", "block_min_batch", "gpu_max_k",
             "gpu_min_batch_times_k", "gpu_min_batch", "gpu_max_l", "values_gpu_max_k",
             "values_gpu_min_batch_times_k", "values_gpu_min_batch", "values_gpu_max_l", "bidiag_min_k",
             "values_bidiag_min_k", "bidiag_max_batch", "values_bidiag_max_batch", "gk_min_k", "gk_max_k",
-            "share_min_batch", "gpu_big_batch_max_k", "gpu_big_batch_min", "values_band_min_k"],
+            "share_min_batch", "gpu_big_batch_max_k", "gpu_big_batch_min", "values_band_min_k",
+            "values_band_width", "band_min_k"],
     "qr": ["m_crossover_small_batch", "m_crossover_large_batch", "batch_threshold", "gpu_max_k",
            "gpu_min_batch_times_k", "gpu_min_batch", "gpu_min_k", "gpu_large_min_k", "gpu_large_max_batch",
            "share_min_batch"],
@@ -272,12 +273,14 @@ DEFAULTS = {   # the untuned default (include/metal_linalg/core.h, and qr.mm's c
                  gpu_min_batch_times_n=1024, gpu_min_batch=1, values_gpu_max_n=0,
                  values_gpu_min_batch_times_n=0, values_gpu_min_batch=0, tridiag_min_n=0,
                  values_tridiag_min_n=0, tridiag_max_batch=0, values_tridiag_max_batch=0, values_band_min_n=0,
+                 values_band_width=0,
                  gpu_big_batch_max_n=0, gpu_big_batch_min=0, ql_min_n=0, ql_max_n=0, share_min_batch=0),
     "svd": dict(qr_min_rows=512, qr_min_k=64, block_min_k=192, block_min_k_batched=0, block_min_batch=0,
                 gpu_max_k=64, gpu_min_batch_times_k=1024, gpu_min_batch=1, gpu_max_l=NO_LIMIT,
                 gpu_big_batch_max_k=0, gpu_big_batch_min=0, values_gpu_max_k=0, values_gpu_min_batch_times_k=0,
                 values_gpu_min_batch=0, values_gpu_max_l=NO_LIMIT, bidiag_min_k=0, values_bidiag_min_k=0,
-                bidiag_max_batch=0, values_bidiag_max_batch=0, values_band_min_k=0, gk_min_k=0, gk_max_k=0,
+                bidiag_max_batch=0, values_bidiag_max_batch=0, values_band_min_k=0, values_band_width=0,
+                band_min_k=0, gk_min_k=0, gk_max_k=0,
                 share_min_batch=0),
     "qr": dict(m_crossover_small_batch=384, m_crossover_large_batch=384, batch_threshold=16,
                gpu_max_k=NO_LIMIT, gpu_min_batch_times_k=1024, gpu_min_batch=1, gpu_min_k=0,
@@ -345,6 +348,9 @@ def _inflated(op, times, small, large):
     return out
 
 
+BAND_COLUMN = {8: "band8", 32: "band32"}   # the band backend's raw.csv columns by width (16: "band")
+
+
 def _column(lib, op, values, m, n, batch):
     """The raw.csv backend the policy in effect routes a call to."""
     pol = lib.get_policy(op)
@@ -352,15 +358,18 @@ def _column(lib, op, values, m, n, batch):
         name = lib.text((lib.eigvalsh_backend if values else lib.eigh_backend)(n, batch))
         col = {"cpu": "cpu", "simd": "simd", "threadgroup": "tg", "block": "block", "tridiag": "tridiag",
                "ql": "ql_share" if pol["share_min_batch"] and batch >= pol["share_min_batch"] else "ql",
-               "band": "band"}[name]
+               "band": BAND_COLUMN.get(pol.get("values_band_width", 0), "band")}[name]
         return col + "_vals" if values else col
     if op == "svd":
         name = lib.text((lib.svdvals_backend if values else lib.svd_backend)(m, n, batch))
         share = pol["share_min_batch"] and batch >= pol["share_min_batch"]
         col = {"cpu": "cpu", "jacobi": "jacobi", "block_jacobi": "block", "qr_jacobi": "qr",
-               "qr_block_jacobi": "qrblock", "bidiag": "bidiag", "band": "band",
+               "qr_block_jacobi": "qrblock", "bidiag": "bidiag",
+               # with vectors the band is 16 wide
+               "band": BAND_COLUMN.get(pol.get("values_band_width", 0), "band") if values else "band",
                "golub_kahan": "gk_share" if share else "gk", "qr_golub_kahan": "qr_gk"}[name]
-        return col + "_vals" if values and col in ("cpu", "gk", "gk_share", "bidiag", "band") else col
+        return col + "_vals" if values and col in ("cpu", "gk", "gk_share", "bidiag", "band", "band8", "band32") \
+            else col
     name = lib.text(lib.qr_backend(m, n, batch))
     if name != "cpu" and pol["share_min_batch"] and batch >= pol["share_min_batch"]:
         return "share"

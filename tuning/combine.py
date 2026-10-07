@@ -42,12 +42,12 @@ FIELDS = {
              "values_gpu_max_n", "values_gpu_min_batch_times_n", "values_gpu_min_batch",
              "tridiag_min_n", "values_tridiag_min_n", "tridiag_max_batch", "values_tridiag_max_batch",
              "ql_min_n", "ql_max_n", "share_min_batch", "gpu_big_batch_max_n", "gpu_big_batch_min",
-             "values_band_min_n"],
+             "values_band_min_n", "values_band_width"],
     "svd": ["qr_min_rows", "qr_min_k", "block_min_k", "block_min_k_batched", "block_min_batch",
             "gpu_max_k", "gpu_min_batch_times_k", "gpu_min_batch", "gpu_max_l",
             "values_gpu_max_k", "values_gpu_min_batch_times_k", "values_gpu_min_batch", "values_gpu_max_l", "bidiag_min_k", "values_bidiag_min_k",
             "bidiag_max_batch", "values_bidiag_max_batch", "gk_min_k", "gk_max_k", "share_min_batch",
-            "gpu_big_batch_max_k", "gpu_big_batch_min", "values_band_min_k"],
+            "gpu_big_batch_max_k", "gpu_big_batch_min", "values_band_min_k", "values_band_width", "band_min_k"],
 }
 
 

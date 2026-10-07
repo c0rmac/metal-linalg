@@ -242,7 +242,12 @@ bool qr_uses_gpu(unsigned m, unsigned n, unsigned batch) {
     }
     const QrPolicy& p = state().policy;
     const unsigned k = std::min(m, n);
-    if (p.gpu_large_min_k && k >= p.gpu_large_min_k &&
+    // The large clause on sqrt(M k), rows and k both: k for a square
+    // matrix, more for a tall one (one 8192 x 512 on an M5 Pro: 8.5 ms on the
+    // GPU, 48 on the CPU), k alone for a wide one, which the CPU path factors
+    // by its leading square block
+    const unsigned long long L = p.gpu_large_min_k;
+    if (p.gpu_large_min_k && (unsigned long long)m * k >= L * L &&
         (p.gpu_large_max_batch == 0 || batch <= p.gpu_large_max_batch)) {
         return true;
     }

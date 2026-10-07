@@ -1,6 +1,19 @@
 # A one-triangle trailing update for the symmetric band reduction
 
-Status: proposal, not started (2026-10-04).
+Status: **done in part in 2.15.0** (2026-10-07). Step 1, the update on the
+lower triangle, is `sb_update`: 64 x 64 tiles staged through threadgroup
+memory, simdgroup products, and each off-diagonal tile's transpose written
+over its mirror, so that the upper triangle stays whole and MPS keeps
+computing X = A22 (V T): 1.5 n^2 of memory a block instead of 2 n^2. It beats
+MPS's update at every size (4096: 462 us against 611; 2560: 93 against 183;
+1024: 15 against 19). Step 2, X from the lower triangle (read twice, or once
+with partials), was built in four versions and lost to MPS every time (4096:
+470 us at best against 365; 2048: 150 against 62), so the mirror stays. A
+first `sb_update` loading straight from device memory reached 65 GB/s; the
+staged one 220-420. eigvalsh on `band` 152 to 141 ms at 4096, 872 to 744 at
+8192. See [the study](../studies/proposals-2-15-apple-m5-pro.md), section 4.
+
+What follows is the proposal as written on 2026-10-04.
 
 ## What
 

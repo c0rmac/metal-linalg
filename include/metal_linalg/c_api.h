@@ -124,7 +124,7 @@ typedef struct metal_linalg_qr_policy {
     uint32_t gpu_min_batch;
     uint32_t gpu_cores;
     uint32_t concurrent_matrices;
-    uint32_t gpu_large_min_k;       /* the GPU also from this k (0: never), */
+    uint32_t gpu_large_min_k;       /* the GPU also from this sqrt(M k) (0: never), */
     uint32_t gpu_large_max_batch;   /* for batches up to this (0: any) */
     uint32_t gpu_min_k;             /* the rule above only from this k (0: no lower bound) */
     uint32_t share_min_batch;       /* a GPU batch shared with the CPU from this batch (0: never) */
@@ -152,6 +152,7 @@ typedef struct metal_linalg_eigh_policy {
     uint32_t gpu_big_batch_max_n;    /* the GPU also for N up to this in a batch of at least */
     uint32_t gpu_big_batch_min;      /* gpu_big_batch_min (0: never) */
     uint32_t values_band_min_n;      /* eigenvalues alone: the band backend from this N (0: never) */
+    uint32_t values_band_width;      /* ... its band's width, 8, 16 or 32 (0: 16) */
 } metal_linalg_eigh_policy;
 
 typedef struct metal_linalg_svd_policy {
@@ -179,6 +180,8 @@ typedef struct metal_linalg_svd_policy {
     uint32_t gpu_big_batch_max_k;   /* the GPU also for k up to this in a batch of at least */
     uint32_t gpu_big_batch_min;     /* gpu_big_batch_min (0: never) */
     uint32_t values_band_min_k;     /* singular values alone: the band backend from this k (0: never) */
+    uint32_t values_band_width;     /* ... its band's width, 8, 16 or 32 (0: 16) */
+    uint32_t band_min_k;            /* with vectors: the band backend from this k (0: never) */
 } metal_linalg_svd_policy;
 
 metal_linalg_qr_policy   metal_linalg_qr_policy_get(void);

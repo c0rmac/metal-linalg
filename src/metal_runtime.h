@@ -4,6 +4,7 @@
 #import <Foundation/Foundation.h>
 
 #include <metal_linalg/core.h>
+#include "divide_conquer.h"
 
 #include <dispatch/dispatch.h>
 
@@ -11,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <string>
 #include <vector>
 
 namespace metal_linalg::detail {
@@ -223,20 +225,176 @@ id<MTLComputePipelineState> make_pipeline(id<MTLDevice> device,
                                           NSString* name,
                                           MTLFunctionConstantValues* constants);
 
+// The upper triangular T of the compact WY form H(0) ... H(kb-1) = I - V T V^T
+// of kb Householder reflectors, as LAPACK's slarft("F", "C"): V (m x kb,
+// column-major, ld m) unit lower trapezoidal with its zeros and ones
+// explicit, T column-major (ld ldt). From the Gram matrix V^T V, one ssyrk on
+// the CPU's matrix units, rather than slarft's matrix-vector products: on an
+// M5 Pro 0.1 ms against 1.1 at 4096 x 128, where the back-transformations
+// built a block's V and T on the CPU while the GPU applied the last, and the
+// CPU's side was the slower.
+void compact_wy_t(uint32_t m, uint32_t kb, const float* V, const float* tau, float* T, uint32_t ldt);
+
+// The divide and conquer's large products (divide_conquer.h) as MPS
+// products on `queue`, a command buffer each, waited for: for a solve whose
+// GPU would otherwise be idle, or with `after`, only once that command buffer
+// has completed (before, the CPU's: on the same queue they would wait for
+// it). Operands in the buffers added with add_buffer (the solve's output) or
+// in the page-aligned memory the solve adds; anything else is left to the
+// CPU.
+class MpsGemm final : public GpuGemm {
+public:
+    MpsGemm(id<MTLDevice> device, id<MTLCommandQueue> queue, id<MTLCommandBuffer> after = nil)
+        : device_(device), queue_(queue), after_(after) {}
+    void add_buffer(id<MTLBuffer> buffer);
+    void add(const float* base, size_t floats) override;
+    void remove(const float* base) override;
+    bool gemm(long m, long n, long k, const float* A, long lda, const float* B, long ldb, float* C, long ldc,
+              bool accumulate) override;
+private:
+    struct Region {
+        const char*   base;
+        size_t        bytes;
+        id<MTLBuffer> buffer;   // a host region's wrapped when a product first needs it
+    };
+    // The region holding `rows` x `cols` floats from p (column-major, ld),
+    // and p's offset in it; nil if none does.
+    id<MTLBuffer> find(const float* p, long rows, long cols, long ld, size_t& offset);
+    id<MTLDevice>        device_;
+    id<MTLCommandQueue>  queue_;
+    id<MTLCommandBuffer> after_;
+    std::vector<Region>  regions_;
+};
+
+// The whole-matrix Jacobi kernels (Eigh_Jacobi, Svd_Jacobi) give a matrix one
+// threadgroup for its whole solve. With the display busy, macOS ends a command
+// buffer whose threadgroup runs for more than about a quarter of a second
+// ("GPU Hang Error"), which on an M5 Pro the eigensolver's threadgroup mode
+// reaches from N ~ 400 and the SVD's kernel from 512 x 512. A longer solve is
+// split over dispatches of a few rounds each, every matrix resuming where it
+// stopped (JacobiState in eigh_jacobi_common.h, 24 bytes a matrix).
+constexpr size_t kJacobiStateBytes = 24;
+// Rounds per dispatch for a solve the cost model puts at `solve_core_ms` on
+// one core, of `rounds` per sweep: 0 (the whole solve in one dispatch) when it
+// is under the dispatch target (40 ms, or the environment variable `env`),
+// else enough rounds for about that much.
+uint32_t jacobi_round_budget(double solve_core_ms, uint32_t rounds, const char* env);
+// Runs a split solve: command buffers of `per_buffer` dispatches, each
+// encoded by `encode`, until the `count` matrices' states (in `state`, from
+// `offset` bytes) are all done, or `max_dispatches`. Throws on a GPU error,
+// naming `what`.
+void run_split_jacobi(id<MTLCommandQueue> queue, id<MTLBuffer> state, size_t offset, uint32_t count,
+                      uint32_t per_buffer, uint32_t max_dispatches,
+                      const std::function<void(id<MTLComputeCommandEncoder>)>& encode, const std::string& what);
+
+// Threads for CPU work that runs beside the GPU's (the band chase, the divide
+// and conquer): cpu_threads() less the two cores the GPU's host work keeps
+// (encoding the next matrix's work in a batch, waiting on the GPU), and at
+// least one.
+inline unsigned cpu_threads_beside_gpu() {
+    const unsigned t = metal_linalg::cpu_threads();
+    return t > 2 ? t - 2 : 1u;
+}
+
 // The first stage of the two-stage reductions, on the GPU (band_reduce.mm).
 // A band width the panel kernels have, 8, 16 or 32: `want` rounded up, or
 // with want = 0 the environment variable `env`, else 16.
 uint32_t band_width(uint32_t want, const char* env);
+// The GPU's blocks of b columns in the general reduction of n columns.
+uint32_t band_blocks(uint32_t n, uint32_t b);
 // The widest band of at most b the panel kernels take for a matrix of `rows`
 // rows (rows b <= 128 * 1024), or 0 if none.
 uint32_t band_fit(uint32_t rows, uint32_t b);
+// The general reduction's reflectors, kept for the singular vectors, A =
+// Q1 B P1^T with Q1 = H_0 H_1 ... and P1 = G_0 G_1 ...: GPU block k's column
+// panel H_k = I - V T V^T (V on rows k b .. m - 1) and row panel
+// G_k = I - U S U^T (U on columns (k + 1) b .. n - 1). The caller provides
+// the buffers and the layout, for band_blocks(n, b) blocks: V and U are
+// written row-major at qoff[k] and poff[k] in qv and pv, ld qld[k] and
+// pld[k]; T and S row-major (ld 32) at k 1024 in qt and pt. The columns from
+// `tail` on are LAPACK's (`steps`): a step's column panel's reflectors stay
+// below A's diagonal (sgeqrf's, taus tq); its row panel's, sgelqf's, are
+// copied to lq (bk x nr, ld bk; taus tp) before the band is cleared of them.
+struct BandKeep;
+
+// A band reduction's progress: its GPU blocks' command buffers (`done[k]`
+// for block k, columns k b .. k b + b - 1), and `while_gpu`, if set, run
+// once all blocks are queued, before the wait for the last: per-block work
+// as they complete. General: block k finishes the band's rows k b .. k b +
+// b - 1; symmetric: its lower band's columns k b .. k b + b - 1.
+struct BandWatch {
+    std::vector<id<MTLCommandBuffer>> done;
+    std::function<void(BandWatch&)> while_gpu;
+    virtual ~BandWatch() = default;
+};
+
+struct BandKeep : BandWatch {
+    id<MTLBuffer> qv, pv, qt, pt;
+    std::vector<size_t> qoff, poff;
+    std::vector<uint32_t> qld, pld;
+    uint32_t tail = 0;
+    struct Step {
+        uint32_t k, bk, nr;
+        std::vector<float> tq, tp, lq;
+    };
+    std::vector<Step> steps;
+};
+
 // A (m x n column-major, m >= n, in shared storage) to an upper band of width
-// b, A = Q B P^T: the band in A's upper band, the rest of A scratch. False if
-// m is too tall for the panel kernels (m b > 128 * 1024).
-bool band_reduce_general(id<MTLBuffer> A, uint32_t m, uint32_t n, uint32_t lda, uint32_t b);
+// b, A = Q B P^T: the band in A's upper band, the rest of A scratch (with
+// `keep`, Q's and P's reflectors as above; `watch`, if not keep itself, its
+// progress). False if m is too tall for the panel kernels (m b > 128 * 1024).
+bool band_reduce_general(id<MTLBuffer> A, uint32_t m, uint32_t n, uint32_t lda, uint32_t b,
+                         BandKeep* keep = nullptr, BandWatch* watch = nullptr);
 // A symmetric A (n x n, both triangles, in shared storage) to a band of width
 // b, Q^T A Q: the band in A's lower band. Likewise false if n is too large.
-bool band_reduce_symmetric(id<MTLBuffer> A, uint32_t n, uint32_t lda, uint32_t b);
+bool band_reduce_symmetric(id<MTLBuffer> A, uint32_t n, uint32_t lda, uint32_t b, BandWatch* watch = nullptr);
+// The GPU's blocks in the symmetric reduction of order n.
+uint32_t band_blocks_symmetric(uint32_t n, uint32_t b);
+
+// The blocked QR (qr_blocked.mm) on the band reduction's panel kernels.
+// A (m x n, row-major, ld lda, in place) <- H_j^T A for its column panels'
+// H_j = I - V_j T_j V_j^T, b columns each, while (j + 1) b <= min(m, n) and
+// m - j b >= 2 b: R in A's upper triangle there, the rest of those columns
+// scratch. The panels are applied within aggregates of 128 columns, then
+// each aggregate's I - Y Ta Y^T to the columns right of it. Kept: each
+// block's V (row-major, at k (ldv + 1) in v, k = j b, zeros above it in v),
+// T (ld 32, at j 1024 in t), and each aggregate's Ta (ld 128, 128^2 apart in
+// ta). vt (the panels' V T, m x 32), g (128 x 128), z and z2 (128 x ldw,
+// ldw >= max(n, K)) and sc (the TSQR's) scratch. A batch of `batch`
+// matrices at once, each buffer's matrices its stride (in floats) apart.
+struct QrStore {
+    id<MTLBuffer> v, vt, t, ta, g, z, z2, sc;
+    uint32_t ldv = 0, ldw = 0, batch = 1;
+    size_t sa = 0, sv = 0, svt = 0, st = 0, sta = 0, sg = 0, sz = 0, ssc = 0;
+};
+// The TSQR scratch a panel of m rows needs, in floats.
+size_t qr_scratch_floats(uint32_t m);
+// The panel width for m rows (the TSQR's 128 * 1024 / b rows at most), 0 if
+// none fits.
+uint32_t qr_block_width(uint32_t m);
+uint32_t qr_blocks_count(uint32_t m, uint32_t n, uint32_t b);
+// Encodes the blocks, starting in cb, committing it and the next ones as it
+// goes (into `committed`; cb is left the last, uncommitted); returns the
+// columns done.
+uint32_t qr_blocks(id<MTLCommandBuffer> __strong& cb, id<MTLBuffer> A, uint32_t m, uint32_t n, uint32_t lda,
+                   uint32_t b, const QrStore& st, std::vector<id<MTLCommandBuffer>>& committed);
+// Q (m x K row-major, ld ldq) <- H_0 ... H_{blocks - 1} Q, by aggregates,
+// aggregate a on Q's rows and columns from its first (the rest of those rows
+// zero in a Q formed from the identity). V may have more rows than Q, zero
+// past Q's (a factored matrix padded with zero rows): they are left out.
+void qr_blocks_apply(id<MTLCommandBuffer> cb, id<MTLBuffer> Q, uint32_t m, uint32_t K, uint32_t ldq, uint32_t b,
+                     uint32_t blocks, const QrStore& st);
+// Each R (k x n row-major, k n apart) = up[i] times A's upper triangle (ld
+// lda, sa apart), zeros below.
+void qr_r_out(id<MTLCommandBuffer> cb, id<MTLBuffer> A, id<MTLBuffer> R, uint32_t k, uint32_t n, uint32_t lda,
+              size_t sa, uint32_t batch, id<MTLBuffer> up);
+// Each dst (mp x np, row-major, sd apart) = scale[i] src (m x n, m n
+// apart), zeros around it.
+void qr_scale_copy(id<MTLCommandBuffer> cb, id<MTLBuffer> src, id<MTLBuffer> dst, uint32_t m, uint32_t n,
+                   uint32_t mp, uint32_t np, size_t sd, uint32_t batch, id<MTLBuffer> scale);
+id<MTLCommandQueue> qr_queue();
+id<MTLDevice> qr_device();
 
 // By bisection on the GPU (bisect.mm): the eigenvalues of the symmetric
 // tridiagonal (d, n; e, n - 1) into w, ascending, or the singular values of

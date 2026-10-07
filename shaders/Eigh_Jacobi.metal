@@ -78,6 +78,7 @@ struct EighParams {
     uint  lower;            // 1: symmetrise from the lower triangle, 0: from the upper
     uint  matrices_per_tg;  // simd mode: simdgroups (= matrices) per threadgroup
     uint  tg_stride_floats; // simd mode: per-matrix threadgroup scratch, in floats
+    uint  round_budget;     // threadgroup mode: rounds per dispatch, resumed from `st` (0: the whole solve)
 };
 
 // Info word written per matrix.
@@ -91,6 +92,7 @@ kernel void eigh_jacobi(
     device float*        vals  [[buffer(3)]],  // [batch, n] eigenvalues, ascending
     device uint*         info  [[buffer(4)]],  // [batch] sweeps | kInfoConverged | kInfoNonFinite
     constant EighParams& prm   [[buffer(5)]],
+    device JacobiState*  st    [[buffer(6)]],  // [batch] (round_budget > 0)
     threadgroup float*   tg    [[threadgroup(0)]],
     uint tg_id   [[threadgroup_position_in_grid]],
     uint tid     [[thread_index_in_threadgroup]],
@@ -127,6 +129,20 @@ kernel void eigh_jacobi(
     device float*       w = W    + (ulong)b * nn;
     device float*       v = V    + (ulong)b * nn;
 
+    // Split over dispatches (threadgroup mode): a finished matrix is left
+    // alone, a started one resumes where it stopped.
+    const bool split = !kSimdMode && prm.round_budget != 0;
+    const JacobiState s0 = split ? st[b] : JacobiState{0, 0.0f, 0.0f, 0u, 0u, 0u};
+    if (s0.flags & kJacobiDone) return;
+    const bool resume = (s0.flags & kJacobiStarted) != 0;
+
+    int expo = 0;
+    float fro2 = 0.0f;
+    bool nonfinite = false;
+    if (resume) {
+        expo = s0.expo;
+        fro2 = s0.a;
+    } else {
     // -------------------------------------------------------------------------
     // Load: symmetrise from the requested triangle, V = I, scan for the
     // largest entry and for non-finite ones
@@ -145,7 +161,7 @@ kernel void eigh_jacobi(
     }
     team_barrier(kSimdMode, mem_flags::mem_device);
     amax = team_max(amax, kSimdMode, red, sg_id, lane, n_sg);
-    bool nonfinite = team_sum(bad, kSimdMode, red, sg_id, lane, n_sg) > 0.0f;
+    nonfinite = team_sum(bad, kSimdMode, red, sg_id, lane, n_sg) > 0.0f;
 
     // -------------------------------------------------------------------------
     // Scale so the largest entry is in [0.5, 1)
@@ -156,12 +172,10 @@ kernel void eigh_jacobi(
     // power of two is exact and makes the solver invariant to the input's
     // magnitude, which is what LAPACK's ssyev does too. Eigenvalues are scaled
     // back on output; eigenvectors are unaffected.
-    int expo = 0;
     if (amax > 0.0f) frexp(amax, expo);
 
     // ||A||_F is invariant under the orthogonal similarities that follow, so it
     // is computed once and the stopping test is relative to it.
-    float fro2 = 0.0f;
     if (!nonfinite) {
         float acc = 0.0f;
         for (uint idx = t; idx < nn; idx += T) {
@@ -172,15 +186,18 @@ kernel void eigh_jacobi(
         team_barrier(kSimdMode, mem_flags::mem_device);
         fro2 = team_sum(acc, kSimdMode, red, sg_id, lane, n_sg);
     }
+    }
     const float thr2 = prm.tol * prm.tol * fro2;
 
     // -------------------------------------------------------------------------
-    // Sweeps
+    // Sweeps (split: at most round_budget rounds this dispatch)
     // -------------------------------------------------------------------------
-    uint sweeps = 0;
-    bool converged = false;
+    uint sweeps = s0.sweeps, round = s0.round, budget = split ? prm.round_budget : 0xFFFFFFFFu;
+    const uint last = 2 * np - 1;   // rounds a sweep
+    bool converged = false, paused = false;
 
     while (!nonfinite) {
+        if (round == 0) {
         // Off-diagonal norm. Costs one pass over A per sweep, against the
         // 2(N-1) passes the sweep itself makes.
         float off_acc = 0.0f;
@@ -197,9 +214,20 @@ kernel void eigh_jacobi(
         if (non_finite(off2) || non_finite(fro2)) { nonfinite = true; break; }
         if (off2 <= thr2)                          { converged = true; break; }
         if (sweeps >= prm.max_sweeps)              { break; }
-
-        jacobi_sweep(n, np, t, T, kSimdMode, w, v, kComputeVectors, sc);
-        ++sweeps;
+        }
+        if (budget == 0) { paused = true; break; }
+        const uint r1 = last - round <= budget ? last : round + budget;
+        jacobi_rounds(round, r1, n, np, t, T, kSimdMode, w, v, kComputeVectors, sc);
+        if (split) budget -= r1 - round;
+        round = r1;
+        if (round == last) {
+            ++sweeps;
+            round = 0;
+        }
+    }
+    if (paused) {   // the next dispatch resumes here
+        if (t == 0) st[b] = JacobiState{expo, fro2, 0.0f, sweeps, round, kJacobiStarted};
+        return;
     }
 
     // -------------------------------------------------------------------------
@@ -232,5 +260,6 @@ kernel void eigh_jacobi(
 
     if (t == 0) {
         info[b] = sweeps | (converged ? kInfoConverged : 0u) | (nonfinite ? kInfoNonFinite : 0u);
+        if (split) st[b] = JacobiState{expo, fro2, 0.0f, sweeps, 0u, kJacobiStarted | kJacobiDone};
     }
 }
