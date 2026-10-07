@@ -10,16 +10,20 @@ namespace metal_linalg::detail {
 // The bulge chase's reflectors, kept for the singular vectors (width 16), in
 // the block layout of svd_bidiag.mm's bd_chase_apply: sweep s's step-j
 // reflector from the left (on rows s + 1 + 16 j .. s + 16 (j + 1)) is column
-// c = s % 16 of block (G, p) = (s / 16, s / 16 + j), a 32 x 16 row-major V at
-// L[512 b], b = G (pmax + 1) - G (G - 1) / 2 + j, at row offset c with its
-// 1 and zeros explicit (the column written whole), its tau at Ltau[16 b + c];
-// from the right (on the same columns) likewise in R, Rtau. pmax =
-// (n - 2) / 16. Reflectors of length 1 are not written. With `frontier`, the
+// c = s % 16 of block (G, p) = (s / 16, s / 16 + j)'s V (32 x 16, at row
+// offset c, with its 1 and zeros explicit), its tau at Ltau[16 b + c], b =
+// G (pmax + 1) - G (G - 1) / 2 + j; from the right (on the same columns)
+// likewise in R, Rtau. A block is kChaseBlockFloats at L[kChaseBlockFloats b],
+// V's six tiles of 8 x 8 that are not zero first (row-major; (row, column)
+// tiles (0,0) (1,0) (2,0) (1,1) (2,1) (3,1)), each column's three written
+// whole. pmax = (n - 2) / 16. Reflectors of length 1 are not written. With `frontier`, the
 // number of leading sweeps finished (all of 0 .. frontier - 1), as they
 // finish, so that their reflectors can be used while the chase goes on.
 // With `ready_rows`, the chase starts before the band is complete: rows (or,
 // for a symmetric band, columns) 0 .. ready_rows - 1 are final, raised as
 // the band reduction finishes them; the chase does not look past them.
+constexpr size_t kChaseBlockFloats = 13 * 64;   // V's six tiles, then the kernel's Y's seven
+
 struct ChaseReflectors {
     float* L = nullptr;
     float* Ltau = nullptr;

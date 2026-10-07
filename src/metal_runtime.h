@@ -237,12 +237,15 @@ void compact_wy_t(uint32_t m, uint32_t kb, const float* V, const float* tau, flo
 
 // The divide and conquer's large products (divide_conquer.h) as MPS
 // products on `queue`, a command buffer each, waited for: for a solve whose
-// GPU would otherwise be idle. Operands in the buffers added with
-// add_buffer (the solve's output) or in the page-aligned memory the solve
-// adds; anything else is left to the CPU.
+// GPU would otherwise be idle, or with `after`, only once that command buffer
+// has completed (before, the CPU's: on the same queue they would wait for
+// it). Operands in the buffers added with add_buffer (the solve's output) or
+// in the page-aligned memory the solve adds; anything else is left to the
+// CPU.
 class MpsGemm final : public GpuGemm {
 public:
-    MpsGemm(id<MTLDevice> device, id<MTLCommandQueue> queue) : device_(device), queue_(queue) {}
+    MpsGemm(id<MTLDevice> device, id<MTLCommandQueue> queue, id<MTLCommandBuffer> after = nil)
+        : device_(device), queue_(queue), after_(after) {}
     void add_buffer(id<MTLBuffer> buffer);
     void add(const float* base, size_t floats) override;
     void remove(const float* base) override;
@@ -252,14 +255,15 @@ private:
     struct Region {
         const char*   base;
         size_t        bytes;
-        id<MTLBuffer> buffer;
+        id<MTLBuffer> buffer;   // a host region's wrapped when a product first needs it
     };
     // The region holding `rows` x `cols` floats from p (column-major, ld),
     // and p's offset in it; nil if none does.
-    id<MTLBuffer> find(const float* p, long rows, long cols, long ld, size_t& offset) const;
-    id<MTLDevice>       device_;
-    id<MTLCommandQueue> queue_;
-    std::vector<Region> regions_;
+    id<MTLBuffer> find(const float* p, long rows, long cols, long ld, size_t& offset);
+    id<MTLDevice>        device_;
+    id<MTLCommandQueue>  queue_;
+    id<MTLCommandBuffer> after_;
+    std::vector<Region>  regions_;
 };
 
 // The whole-matrix Jacobi kernels (Eigh_Jacobi, Svd_Jacobi) give a matrix one

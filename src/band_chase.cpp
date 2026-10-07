@@ -134,8 +134,12 @@ struct Sweep {
         if (!rec || !rec->L || len < 2) return;
         const size_t G = (size_t)s / 16, c = (size_t)s % 16, pm = rec->pmax;
         const size_t b = G * (pm + 1) - G * (G - 1) / 2 + (size_t)j;
-        float* col = (left ? rec->L : rec->R) + b * 512 + c;
-        for (size_t r = 0; r < 32; ++r) col[r * 16] = r >= c && r < c + (size_t)len ? x[r - c] : 0.0f;
+        // Column c lies in V's column tile c / 8, in its three row tiles from
+        // c / 8 (tiles 0-2 or 3-5), 24 rows from 8 (c / 8).
+        const size_t ct = c / 8, r0 = 8 * ct;
+        float* blk = (left ? rec->L : rec->R) + b * kChaseBlockFloats + ct * 3 * 64 + c % 8;
+        for (size_t r = r0; r < r0 + 24; ++r)
+            blk[(r - r0) / 8 * 64 + (r % 8) * 8] = r >= c && r < c + (size_t)len ? x[r - c] : 0.0f;
         (left ? rec->Ltau : rec->Rtau)[b * 16 + c] = tau;
     }
 

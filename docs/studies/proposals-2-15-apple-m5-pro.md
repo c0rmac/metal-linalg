@@ -248,6 +248,14 @@ against `bidiag`'s 944 (2.35x; 375 in alternating runs), about 2.7x at 8192,
 1.21x at 1024. Routed from `band_min_k`, which stage 3c of `tune_svd.py`
 fits; 0 until the M5 Pro is re-measured.
 
+Then the kernel's blocks were made to carry Y = -T^T V^T instead of T, built
+on the CPU, so that a block is two dependent products instead of three:
+Q2 and P2 took 98 ms instead of 135 at 4096, and the CPU (the chase and
+the divide and conquer) became the bottleneck; the divide and conquer's top
+products go to the GPU once Q2 and P2 are done. 1.04-1.05x at 2048-4096
+(368 ms at 4096 in alternating runs;
+[band-vectors-gpu-work.md](../proposals/band-vectors-gpu-work.md#done-2026-10-07)).
+
 For eigenvalues or singular values alone, the chase now trails the band
 reduction for one matrix, but each sweep runs to the band's end, which the
 GPU finishes last, so only about 6% of it can go early: 1.04-1.05x

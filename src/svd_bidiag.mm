@@ -380,11 +380,11 @@ constexpr uint32_t kAgg = 8;   // panels per aggregated block reflector
 // blocks' V and U straight into the aggregated layout (qagg, pagg: per
 // aggregate, row-major len x kb, a panel's at its row and column offset, the
 // zeros above it never written); the chase writes its reflectors straight into
-// bd_chase_apply's blocks (lv, rv), their T built in lt, rt.
+// bd_chase_apply's blocks (lv, rv), each block's Y built beside its V.
 struct BandVectors {
     uint32_t m = 0, n = 0, ldq = 0, ldp = 0, blocks = 0, aggs = 0;
     metal_linalg::detail::BandKeep keep;
-    id<MTLBuffer> Q, P, qagg, pagg, qtagg, ptagg, ub, vb, Z, Z2, lv, lt, rv, rt;
+    id<MTLBuffer> Q, P, qagg, pagg, qtagg, ptagg, ub, vb, Z, Z2, lv, rv;
     std::vector<size_t> qaoff, paoff;
     std::vector<float> ltau, rtau;   // the chase's taus, 16 a block
     size_t nblocks = 0;
@@ -469,10 +469,8 @@ BandVectors& band_vectors(Cache& c, uint32_t m, uint32_t n) {
     bv.nblocks = (pmax + 1) * (pmax + 2) / 2;
     bv.ltau.resize(bv.nblocks * 16);
     bv.rtau.resize(bv.nblocks * 16);
-    bv.lv = shared(bv.nblocks * 512);
-    bv.lt = shared(bv.nblocks * 256);
-    bv.rv = shared(bv.nblocks * 512);
-    bv.rt = shared(bv.nblocks * 256);
+    bv.lv = shared(bv.nblocks * metal_linalg::detail::kChaseBlockFloats);
+    bv.rv = shared(bv.nblocks * metal_linalg::detail::kChaseBlockFloats);
     bv.apply_wide = make_pipeline(c.rt.device, c.rt.library, @"bd_chase_apply_4_4", nil);
     bv.apply_narrow = make_pipeline(c.rt.device, c.rt.library, @"bd_chase_apply_2_8", nil);
     return bv;
@@ -559,50 +557,56 @@ id<MTLCommandBuffer> queue_q1_p1(Cache& c, BandVectors& bv, id<MTLSharedEvent> r
 }
 
 // bd_chase_apply's blocks of groups G0 .. G1 - 1, their V written by the
-// chase: per block (G, p), -T (16 x 16, row-major) from V and the taus; a
-// column with no reflector (length 1, or past the last sweep) set to zero
-// with tau 0.
+// chase (V's six tiles that are not zero): per block (G, p), T from V and
+// the taus (slarft's recurrence), and the kernel's Y = -T^T V^T (16 x 32)
+// into the block's seven tiles after V's; a column with no reflector (length
+// 1, or past the last sweep) set to zero with tau 0.
 void chase_blocks(BandVectors& bv, bool left, long G0, long G1) {
+    constexpr size_t kb = metal_linalg::detail::kChaseBlockFloats;
     const long n = bv.n, pmax = (n - 2) / 16;
-    float* Vp = static_cast<float*>((left ? bv.lv : bv.rv).contents);
-    float* Tp = static_cast<float*>((left ? bv.lt : bv.rt).contents);
+    float* Bp = static_cast<float*>((left ? bv.lv : bv.rv).contents);
     float* taus = (left ? bv.ltau : bv.rtau).data();
+    // V's tile (row, column) as a slot of the block; -1 for a zero tile.
+    auto vslot = [](long rt, long ct) -> long { return ct == 0 ? (rt <= 2 ? rt : -1) : (rt >= 1 ? rt + 2 : -1); };
     metal_linalg::detail::parallel_for((size_t)(G1 - G0), [&](size_t Gs) {
         const long G = G0 + (long)Gs;
         for (long p = G; p <= pmax; ++p) {
             const long j = p - G, blk = G * (pmax + 1) - G * (G - 1) / 2 + j;
-            float* V = Vp + blk * 512;
-            float* T = Tp + blk * 256;
+            float* B = Bp + blk * (long)kb;
             float* tau = taus + blk * 16;
             for (long c = 0; c < 16; ++c) {
                 const long s = 16 * G + c, a = s + 1 + 16 * j, e = std::min(s + 16 * (j + 1), n - 1);
                 if (s <= n - 2 && e - a + 1 >= 2) continue;
-                for (long r = 0; r < 32; ++r) V[r * 16 + c] = 0.0f;
+                for (long r = 8 * (c / 8); r < 8 * (c / 8) + 24; ++r) B[vslot(r / 8, c / 8) * 64 + (r % 8) * 8 + c % 8] = 0.0f;
                 tau[c] = 0.0f;
             }
-            float Tt[16][16] = {};
-            for (long c = 0; c < 16; ++c) {   // slarft forward columnwise
-                float z[16] = {};
-                for (long i = 0; i < c; ++i) {
-                    float acc = 0.0f;
-                    for (long r = c; r < 32; ++r) acc += V[r * 16 + i] * V[r * 16 + c];
-                    z[i] = acc;
+            // Y = -T^T V^T, with T slarft's forward T, row by row: Y_i =
+            // -tau_i (V_i + sum_{m < i} (V_m . V_i) Y_m). Reflector c spans
+            // rows c .. c + 15 of the block (Y_i rows up to i + 15).
+            float Vt[16][32] = {}, Y[16][32] = {};   // a reflector a row
+            for (long c = 0; c < 16; ++c)
+                for (long r = c; r < c + 16; ++r) Vt[c][r] = B[vslot(r / 8, c / 8) * 64 + (r % 8) * 8 + c % 8];
+            for (long i = 0; i < 16; ++i) {
+                if (tau[i] == 0.0f) continue;
+                float* y = Y[i];
+                for (long r = i; r < i + 16; ++r) y[r] = Vt[i][r];
+                for (long m = std::max(0L, i - 15); m < i; ++m) {
+                    float z = 0.0f;
+                    for (long r = i; r <= m + 15; ++r) z += Vt[m][r] * Vt[i][r];
+                    for (long r = 0; r <= m + 15; ++r) y[r] += z * Y[m][r];
                 }
-                for (long i = 0; i < c; ++i) {
-                    float acc = 0.0f;
-                    for (long k = i; k < c; ++k) acc += Tt[i][k] * z[k];
-                    Tt[i][c] = -tau[c] * acc;
-                }
-                Tt[c][c] = tau[c];
+                for (long r = 0; r < i + 16; ++r) y[r] *= -tau[i];
             }
-            for (long i = 0; i < 16; ++i)
-                for (long c = 0; c < 16; ++c) T[i * 16 + c] = -Tt[i][c];
+            static constexpr long yt[7][2] = {{0, 0}, {0, 1}, {0, 2}, {1, 0}, {1, 1}, {1, 2}, {1, 3}};
+            for (long t = 0; t < 7; ++t)
+                for (long ii = 0; ii < 8; ++ii)
+                    for (long rr = 0; rr < 8; ++rr) B[(6 + t) * 64 + ii * 8 + rr] = Y[8 * yt[t][0] + ii][8 * yt[t][1] + rr];
         }
     });
 }
 
 // Must match ChaseParams in Svd_Bidiag.metal.
-struct ChaseParams { uint32_t n, rs, cs, pmax, down, pass0, pass1; };
+struct ChaseParams { uint32_t n, rs, cs, pmax, pass0, pass1; };
 
 // Groups (of 16 sweeps) a chunk of step 3's GPU work: a multiple of both
 // kernels' passes (4 and 8 groups), about an eighth of the groups.
@@ -634,12 +638,11 @@ id<MTLCommandBuffer> apply_chase(Cache& c, BandVectors& bv, id<MTLSharedEvent> r
             const bool wide = ld / 32 >= 64;
             id<MTLComputePipelineState> ps = wide ? bv.apply_wide : bv.apply_narrow;
             const uint32_t C = wide ? 32 : 16, K = wide ? 4 : 8;
-            const ChaseParams q{n, ld, 1, (n - 2) / 16, 1, g0 / K, (g1 + K - 1) / K};
+            const ChaseParams q{n, ld, 1, (n - 2) / 16, g0 / K, (g1 + K - 1) / K};
             [enc setComputePipelineState:ps];
             [enc setBuffer:left ? bv.Q : bv.P offset:0 atIndex:0];
             [enc setBuffer:left ? bv.lv : bv.rv offset:0 atIndex:1];
-            [enc setBuffer:left ? bv.lt : bv.rt offset:0 atIndex:2];
-            [enc setBytes:&q length:sizeof q atIndex:3];
+            [enc setBytes:&q length:sizeof q atIndex:2];
             [enc dispatchThreadgroups:MTLSizeMake(ld / C, 1, 1) threadsPerThreadgroup:MTLSizeMake(32 * K, 1, 1)];
         }
         [enc endEncoding];
@@ -878,10 +881,15 @@ void bidiag_impl(const Matrices& a, float* u_out, float* s_out, float* vt_out, u
             }
             chase.join();
             if (failed) std::rethrow_exception(failed);
+            // Its largest products on the GPU once Q2 and P2 are done (the
+            // top merge's, at 4096: 13 ms there against about 40 here)
+            metal_linalg::detail::MpsGemm gpu(cache.rt.device, cache.rt.queue, sl.pending);
+            gpu.add_buffer(bv.ub);
+            gpu.add_buffer(bv.vb);
             info = (L)metal_linalg::detail::bidiagonal_svd(K, sl.d.data(), sl.e.data(),
                                                            static_cast<float*>(bv.ub.contents), K,
                                                            static_cast<float*>(bv.vb.contents), K,
-                                                           metal_linalg::detail::cpu_threads_beside_gpu());
+                                                           metal_linalg::detail::cpu_threads_beside_gpu(), &gpu);
         } else if (vectors) {
             // sbdsdc's divide and conquer on the CPU's cores but the two the
             // GPU's host work keeps (divide_conquer.cpp), into U's first K

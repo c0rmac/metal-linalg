@@ -15,14 +15,16 @@ and what turned up while doing them; measured in
   chase's reflectors are applied by a new kernel, `bd_chase_apply`: the
   blocks of 16 sweeps a step, four groups of sweeps at once a threadgroup,
   each a simdgroup two tiles behind the last, tiles handed down through
-  threadgroup memory (60-64 ms a side at 4096, where the groups one after
-  another took 176). The GPU's work runs back to back: Q1 and P1's queued
+  threadgroup memory, each block two products (its V and Y = -T^T V^T,
+  built on the CPU): about 49 ms a side at 4096, where the groups one after
+  another took 176. The divide and conquer's top products go to the GPU
+  once Q2 and P2 are done (the CPU is then the bottleneck). The GPU's work runs back to back: Q1 and P1's queued
   during the band reduction, Q2 and P2's released in two chunks as the chase
   finishes their sweeps (1.04-1.06x over waiting for the chase). On an M5
   Pro, one square matrix against `bidiag`: 1.21x at 1024, 1.45x at 2048,
-  2.35x at 4096 (402 ms against 944; 375 in alternating runs), about 2.7x
+  2.35x at 4096 (402 ms against 944; 368 in alternating runs), about 2.7x
   at 8192; 8.7x the CPU path at 4096. Accuracy LAPACK's (reconstruction and
-  orthogonality 6e-6 at 4096); at 8192 the call keeps about 1.1 GB more than
+  orthogonality 6e-6 at 4096); at 8192 the call keeps about 1.2 GB more than
   `bidiag`. `SVD_DEVICE=band` now means `band` with vectors too (before,
   `bidiag`); `band_min_k` and `SVD_BAND_MIN_K` in the C API, Python, PyTorch
   and Swift; a `band` sweep backend and stage 3c of `tuning/tune_svd.py` fit

@@ -389,23 +389,25 @@ its two steps, so that most of the GPU's work hides behind the CPU's:
    while the CPU solves $B = U_B \Sigma V_B^T$ by the divide and conquer.
    The chase's reflectors
    of 16 consecutive sweeps at the same step form a block $I - V T V^T$, $V$
-   $32 \times 16$, acting on 32 consecutive rows; a group of sweeps runs its
+   $32 \times 16$, acting on 32 consecutive rows, which the CPU stores as
+   $V$ and $Y = -T^T V^T$ (13 nonzero $8 \times 8$ tiles), so that a block
+   is two products, $Z = Y X$ and $X \leftarrow X + V Z$; a group of sweeps runs its
    blocks in order along the matrix, and the next group may follow two tiles
    (32 rows) behind. A threadgroup owns 32 of $Q$'s rows (as columns of
    $Q^T$) and runs four groups at once, a simdgroup each, the 16-row tiles
    handed from one simdgroup to the next through threadgroup memory: a
    pipeline about $k/16$ blocks long a pass, where one group at a time made
    every column strip a chain of $k^2/512$ dependent blocks. At $k = 4096$,
-   32,896 blocks a side: 60-64 ms a side, against 176 ms for the groups one
-   after another.
+   32,896 blocks a side: about 49 ms a side, against 176 ms for the groups
+   one after another.
 4. **$U = Q U_B$ and $V^T = V_B^T P^T$**, two MPS products, written row-major;
    $U$ is copied out while the GPU forms $V^T$.
 
-On an M5 Pro, one $k \times k$ at 4096, the GPU's command buffers back to
-back: the band reduction 0-155 ms; $Q_1$ and $P_1$ 155-187, under the
-chase's 155-198 on the CPU; $Q_2$ and $P_2$ 187-322, the divide and conquer
-198-304 on the CPU; the products 322-363. The GPU is the bottleneck,
-without a gap; `bidiag`'s one-stage reduction alone takes 700 ms. Square,
+On an M5 Pro, one $k \times k$ at 4096: the band reduction 0-155 ms on the
+GPU; $Q_1$ and $P_1$ there for 32 ms, under the chase's 43 on the CPU;
+$Q_2$ and $P_2$ for 98 ms, under the divide and conquer's 120 (whose top
+products go to the GPU once $Q_2$ and $P_2$ are done); the products 41 ms.
+`bidiag`'s one-stage reduction alone takes 700 ms. Square,
 against the CPU path and `bidiag` (2.15.0, side by side, the median of
 `sweep_svd`; 8192 from separate runs):
 
@@ -420,7 +422,8 @@ against the CPU path and `bidiag` (2.15.0, side by side, the median of
 | 8192 | | 7.89 s | 2.93 s | 2.69x | |
 
 (With the display busy separate runs moved by up to 7%: in alternating
-runs `band` took 375 ms at 4096.)
+runs `band` took 375 ms at 4096, and 368 since its blocks carry $Y$
+instead of $T$.)
 
 Tall, 4096×2048, 1.20x `bidiag` (219 ms against 263); 8192×2048, through
 the QR first, 1.09x (390 against 426). A batch of two is where `bidiag`'s
@@ -433,8 +436,8 @@ Accuracy is LAPACK's: reconstruction and orthogonality about $3 \times
 10^{-6}$ at 1024, $6 \times 10^{-6}$ at 4096 and $8 \times 10^{-6}$ at 8192
 (`bidiag` $2$, $4$ and $6 \times 10^{-6}$: two stages of float32 reflectors
 instead of one), singular values within $3 \times 10^{-7}$ of float64
-LAPACK's relative to $\|A\|_F$. Memory: at 8192 the call keeps about 1.1 GB
-more than `bidiag` (the chase's blocks, $V$ and $T$, 400 MB a side, and the
+LAPACK's relative to $\|A\|_F$. Memory: at 8192 the call keeps about 1.2 GB
+more than `bidiag` (the chase's blocks, $V$ and $Y$, 440 MB a side, and the
 explicit $Q$ and $P$).
 
 ## Routing

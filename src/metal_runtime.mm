@@ -216,9 +216,10 @@ void MpsGemm::add_buffer(id<MTLBuffer> buffer) {
     regions_.push_back({static_cast<const char*>(buffer.contents), (size_t)buffer.length, buffer});
 }
 
+// Wrapping costs tens of microseconds, and most of a solve's temporaries
+// never reach the GPU's products: only when one does.
 void MpsGemm::add(const float* base, size_t floats) {
-    regions_.push_back({reinterpret_cast<const char*>(base), floats * sizeof(float),
-                        wrap_host(device_, const_cast<float*>(base), floats)});
+    regions_.push_back({reinterpret_cast<const char*>(base), floats * sizeof(float), nil});
 }
 
 void MpsGemm::remove(const float* base) {
@@ -227,12 +228,13 @@ void MpsGemm::remove(const float* base) {
                    regions_.end());
 }
 
-id<MTLBuffer> MpsGemm::find(const float* p, long rows, long cols, long ld, size_t& offset) const {
+id<MTLBuffer> MpsGemm::find(const float* p, long rows, long cols, long ld, size_t& offset) {
     const char* a = reinterpret_cast<const char*>(p);
     const size_t span = ((size_t)(cols - 1) * ld + rows) * sizeof(float);
-    for (const Region& r : regions_)
+    for (Region& r : regions_)
         if (a >= r.base && a + span <= r.base + r.bytes) {
             offset = (size_t)(a - r.base);
+            if (!r.buffer) r.buffer = wrap_host(device_, reinterpret_cast<float*>(const_cast<char*>(r.base)), r.bytes / sizeof(float));
             return r.buffer;
         }
     return nil;
@@ -240,6 +242,7 @@ id<MTLBuffer> MpsGemm::find(const float* p, long rows, long cols, long ld, size_
 
 bool MpsGemm::gemm(long m, long n, long k, const float* A, long lda, const float* B, long ldb, float* C, long ldc,
                    bool accumulate) {
+    if (after_ && after_.status < MTLCommandBufferStatusCompleted) return false;   // the GPU still busy
     size_t oa = 0, ob = 0, oc = 0;
     id<MTLBuffer> ba = find(A, m, k, lda, oa), bb = find(B, k, n, ldb, ob), bc = find(C, m, n, ldc, oc);
     if (!ba || !bb || !bc) return false;
