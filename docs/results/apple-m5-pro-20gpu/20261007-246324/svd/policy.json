@@ -1,0 +1,101 @@
+{
+ "policy": {
+  "device": "Apple M5 Pro",
+  "gpu_cores": 20,
+  "source": "tuned-stale:Apple M5 Pro",
+  "qr_min_rows": 512,
+  "qr_min_k": 32,
+  "block_min_k": 192,
+  "block_min_k_batched": 64,
+  "block_min_batch": 64,
+  "gpu_max_k": 56,
+  "gpu_min_batch_times_k": 16384,
+  "gpu_min_batch": 1,
+  "gpu_max_l": 256,
+  "bidiag_min_k": 1024,
+  "values_bidiag_min_k": 1024,
+  "bidiag_max_batch": 2,
+  "values_bidiag_max_batch": 2,
+  "gk_min_k": 8,
+  "gk_max_k": 80,
+  "gk_limit": 83,
+  "values_gpu_max_k": 56,
+  "values_gpu_min_batch_times_k": 16384,
+  "values_gpu_min_batch": 1,
+  "values_gpu_max_l": 256,
+  "share_min_batch": 1024,
+  "gpu_big_batch_max_k": 80,
+  "gpu_big_batch_min": 1024,
+  "values_band_min_k": 1536,
+  "values_band_width": 0,
+  "band_min_k": 0
+ },
+ "calibration": {
+  "probe": {
+   "batch": 64,
+   "M": 128,
+   "N": 32,
+   "ms": {
+    "jacobi": 0.963459,
+    "block": 2.182916,
+    "qr": 1.216125,
+    "qrblock": 2.362958,
+    "cpu": 0.533959,
+    "gk": 0.945875
+   }
+  },
+  "scale": {
+   "jacobi": 0.09294118913602746,
+   "block": 0.23950440977171705,
+   "qr": 0.16457592817778607,
+   "qrblock": 0.22415893843725335,
+   "cpu": 0.07221220550304666,
+   "bidiag": 1.0,
+   "gk": 0.39458282161498315
+  }
+ },
+ "machine": {
+  "start": {
+   "load_1m": 2.24609375,
+   "cpus": 18,
+   "power": "mains",
+   "low_power_mode": 0,
+   "busy_processes": 0
+  },
+  "end": {
+   "load_1m": 7.4814453125,
+   "cpus": 18,
+   "power": "mains",
+   "low_power_mode": 0,
+   "busy_processes": 0
+  }
+ },
+ "drift": {
+  "before_ms": {
+   "jacobi": 0.963459,
+   "block": 2.182916,
+   "qr": 1.216125,
+   "qrblock": 2.362958,
+   "cpu": 0.533959,
+   "gk": 0.945875
+  },
+  "after_ms": {
+   "jacobi": 1.002333,
+   "block": 2.292375,
+   "qr": 1.19675,
+   "qrblock": 2.351334,
+   "cpu": 0.526666,
+   "gk": 0.9485
+  },
+  "ratio": {
+   "jacobi": 1.040348369780136,
+   "block": 1.0501434778067502,
+   "qr": 0.9840682495631617,
+   "qrblock": 0.9950807420191133,
+   "cpu": 0.9863416479542437,
+   "gk": 1.0027752081406105
+  },
+  "worst": 1.0501434778067502,
+  "ok": true
+ }
+}

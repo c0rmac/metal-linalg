@@ -1006,6 +1006,7 @@ int main() {
         p.bidiag_min_k = 0;
         p.values_bidiag_min_k = 0;
         p.values_band_min_k = 0;      // band, tested below
+        p.band_min_k = 0;
         set_svd_policy(p);
         expect("thresholds 0 -> never (4096x4096 -> cpu)",
                svd_backend(4096, 4096, 1) == SvdBackend::cpu && svdvals_backend(4096, 4096, 1) == SvdBackend::cpu);

@@ -183,7 +183,7 @@ the Metal device name and GPU core count:
 | device | QR | eigh | SVD |
 |---|---|---|---|
 | Apple M1, 8 GPU cores | estimated (out of date) | estimated (out of date) | estimated |
-| Apple M5 Pro, 20 GPU cores | measured | measured (stale) | measured (stale) |
+| Apple M5 Pro, 20 GPU cores | measured | measured | measured |
 | anything else | estimated | estimated | estimated |
 
 Every chip, and what is current: [the measurements page](https://c0rmac.github.io/metal-linalg/docs/measurements).

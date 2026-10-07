@@ -13,7 +13,7 @@ metal-linalg routes every call by measurements made on each kind of Mac. This pa
 
 **Have one of these Macs?** One command measures it, in about an hour and a half, and a pull request submits it: [how to contribute](https://github.com/c0rmac/metal-linalg/blob/main/CONTRIBUTING.md). Every run improves the library for everyone with that chip; the library prints a notice on chips that need one.
 
-1 current, 0 incomplete, 2 stale and 111 not measured, over 38 chip configurations and 3 decompositions.
+3 current, 0 incomplete, 0 stale and 111 not measured, over 38 chip configurations and 3 decompositions.
 
 ## By chip
 
@@ -57,7 +57,7 @@ metal-linalg routes every call by measurements made on each kind of Mac. This pa
 <tr><td>Apple M5</td><td>8</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>estimated</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>estimated</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>estimated</td></tr>
 <tr><td>Apple M5</td><td>10</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>estimated</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>estimated</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>estimated</td></tr>
 <tr><td>Apple M5 Pro</td><td>16</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>estimated</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>estimated</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>estimated</td></tr>
-<tr><td>Apple M5 Pro</td><td>20</td><td style="background:#dcfce7;color:#1c1917">🟢 <b>current</b><br>2 runs, latest 2026-10-04<br>measured with 2.11.0, 2.12.0</td><td style="background:#ffedd5;color:#1c1917">🟠 <b>stale</b><br>1 run, latest 2026-10-04<br>measured with 2.13.0<br>kernel version 5, now 6: still used</td><td style="background:#ffedd5;color:#1c1917">🟠 <b>stale</b><br>1 run, latest 2026-10-04<br>measured with 2.13.0<br>kernel version 7, now 8: still used</td></tr>
+<tr><td>Apple M5 Pro</td><td>20</td><td style="background:#dcfce7;color:#1c1917">🟢 <b>current</b><br>1 run, latest 2026-10-07<br>measured with 2.15.0</td><td style="background:#dcfce7;color:#1c1917">🟢 <b>current</b><br>1 run, latest 2026-10-07<br>measured with 2.15.0</td><td style="background:#dcfce7;color:#1c1917">🟢 <b>current</b><br>1 run, latest 2026-10-07<br>measured with 2.15.0</td></tr>
 <tr><td>Apple M5 Max</td><td>32</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>estimated</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>estimated</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>estimated</td></tr>
 <tr><td>Apple M5 Max</td><td>40</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>estimated</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>estimated</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>estimated</td></tr>
 <tr><td>Apple M5 Ultra</td><td>64</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>estimated</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>estimated</td><td style="background:#fee2e2;color:#1c1917">🔴 <b>not measured</b><br>estimated</td></tr>
@@ -71,11 +71,12 @@ Every run under [`docs/results/`](https://github.com/c0rmac/metal-linalg/tree/ma
 | run | chip | GPU cores | date | machine | macOS | library | QR | eigh | SVD |
 |---|---|---|---|---|---|---|---|---|---|
 | legacy | Apple M1 | 8 | not recorded | MacBook Pro (13-inch, M1, 2020) | ? | before 2.6 | measured before 2.9.0, when the CPU path ran on one core: out of date, so this Mac is estimated | measured before 2.9.0, when the CPU path ran on one core: out of date, so this Mac is estimated | — |
+| 20261007-246324 | Apple M5 Pro | 20 | 2026-10-07 | MacBook Pro (16-inch, M5 Pro) | 27.0.1 | 2.15.0 | used | used | used |
 | 20261004-fd9bd8 | Apple M5 Pro | 20 | 2026-10-04 | MacBook Pro (16-inch, M5 Pro) | 27.0.1 | 2.12.0 | — | measured at kernel version 4; superseded | measured at kernel version 6; superseded |
-| 20261004-4d6208 | Apple M5 Pro | 20 | 2026-10-04 | MacBook Pro (16-inch, M5 Pro) | 27.0.1 | 2.12.0 | used | — | — |
-| 20261004-06bc11 | Apple M5 Pro | 20 | 2026-10-04 | MacBook Pro (16-inch, M5 Pro) | 27.0.1 | 2.13.0 | — | used (stale) | used (stale) |
+| 20261004-4d6208 | Apple M5 Pro | 20 | 2026-10-04 | MacBook Pro (16-inch, M5 Pro) | 27.0.1 | 2.12.0 | measured at kernel version 3; superseded | — | — |
+| 20261004-06bc11 | Apple M5 Pro | 20 | 2026-10-04 | MacBook Pro (16-inch, M5 Pro) | 27.0.1 | 2.13.0 | — | measured at kernel version 5; superseded | measured at kernel version 7; superseded |
 | 20261003-d26059 | Apple M5 Pro | 20 | 2026-10-03 | MacBook Pro (16-inch, M5 Pro) | 27.0.1 | before 2.6 | — | measured before 2.9.0, when the CPU path ran on one core: out of date, so this Mac is estimated | — |
-| 20261003-c0878c | Apple M5 Pro | 20 | 2026-10-03 | MacBook Pro (16-inch, M5 Pro) | 27.0.1 | 2.11.0 | used | measured at kernel version 3; superseded | measured at kernel version 5; superseded |
+| 20261003-c0878c | Apple M5 Pro | 20 | 2026-10-03 | MacBook Pro (16-inch, M5 Pro) | 27.0.1 | 2.11.0 | measured at kernel version 3; superseded | measured at kernel version 3; superseded | measured at kernel version 5; superseded |
 | 20261003-af087d | Apple M5 Pro | 20 | 2026-10-03 | MacBook Pro (16-inch, M5 Pro) | 27.0.1 | 2.10.0 | measured at kernel version 2; superseded | — | — |
 | 20261003-847f0e | Apple M5 Pro | 20 | 2026-10-03 | MacBook Pro (16-inch, M5 Pro) | 27.0.1 | 2.9.0 | measured at kernel version 2; superseded | — | — |
 | 20261003-2d2c19 | Apple M5 Pro | 20 | 2026-10-03 | MacBook Pro (16-inch, M5 Pro) | 27.0.1 | 2.9.0 | measured at kernel version 2; superseded | measured at kernel version 2; superseded | measured at kernel version 3; superseded |
@@ -100,7 +101,7 @@ A decomposition's measurements go stale only when something they time changes: i
 | eigh | 2 | 2.9.0 | 2026-10-03 | the CPU path spreads a batch over every core (7.5-15x faster for batches of small matrices on an M5 Pro), so every GPU-or-CPU boundary has moved |
 | SVD | 3 | 2.9.0 | 2026-10-03 | the CPU path spreads a batch over every core (7.5-15x faster for batches of small matrices on an M5 Pro), so every GPU-or-CPU boundary has moved |
 | SVD | 4 | 2.10.0 | 2026-10-03 | QR keeps the smallest matrices on the CPU at any batch (gpu_min_k), which moves the timings of the QR-preconditioned backends |
-| QR | 3 (current) | 2.11.0 | 2026-10-03 | the CPU path factors a wide matrix by its leading square block and one matrix product, 10-40x faster than sgeqrf on the whole matrix |
+| QR | 3 | 2.11.0 | 2026-10-03 | the CPU path factors a wide matrix by its leading square block and one matrix product, 10-40x faster than sgeqrf on the whole matrix |
 | eigh | 3 | 2.11.0 | 2026-10-03 | the tridiag backend pipelines a batch over two slots (CPU solve of one matrix while the GPU reduces the next), 1.4-1.5x per matrix for batches of 2048 x 2048 |
 | SVD | 5 | 2.11.0 | 2026-10-03 | golub_kahan splits its column sums over lanes (1.2-1.4x on tall matrices) and runs the QR iteration as a second dispatch from k = 40 (singular values alone) or 60; the bidiag backend pipelines a batch over two slots (1.5-1.7x per matrix for batches of 2048 x 2048) |
 | eigh | 4 | 2.12.0 | 2026-10-04 | the tridiag backend's reduction takes three dispatches per column instead of seven, and copies the matrix in on every core: 1.3-1.7x for eigenvalues alone, 1.2-1.5x with vectors |
@@ -109,3 +110,4 @@ A decomposition's measurements go stale only when something they time changes: i
 | SVD | 7 | 2.13.0 | 2026-10-04 | the bidiag backend's singular values alone come from bisection on the GPU from k = 1024, and below that from sbdsqr (dqds) rather than sbdsdc: 12 ms against 93 at 4096 |
 | eigh | 6 (current) | 2.15.0 | 2026-10-07 | the tridiag backend's eigenvectors come from a divide and conquer on every core (sstedc's 176 ms to 50 at 4096); the band backend's panels are faster (the TSQR top a tree, no IEEE division), its small products are kernels of their own and its trailing update is on the lower triangle: eigh with vectors 1.3-1.5x and eigvalsh 1.1-1.2x at 2048-8192 |
 | SVD | 8 (current) | 2.15.0 | 2026-10-07 | the bidiag backend's singular vectors come from a divide and conquer on every core (sbdsdc's 753 ms to 100 at 4096): the SVD with vectors 1.7-1.9x at 2048-4096; the band backend's panels and small products are faster: svdvals 1.1-1.3x; and the band backend takes singular vectors too (band_min_k): 2.3x bidiag at 4096 |
+| QR | 4 (current) | 2.15.0 | 2026-10-07 | the reduced backend hands one matrix, or a few large ones, to the blocked QR (the band reduction's panels, aggregates of 128 columns, MPS products): 2.1x at 1024, 2.6x at 2048, 3.7x at 4096, 5x on tall 4096 x 1024 and 8192 x 512 |
