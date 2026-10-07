@@ -1,0 +1,63 @@
+  grid coverage: near-square 29, square 98, tall 56, wide 38
+  221 shapes x 3 backends (and sharing from batch 64) x 2 passes = 1380 timed runs
+    25/1380  elapsed 0.1m  eta 2.8m
+    50/1380  elapsed 0.1m  eta 2.9m
+    75/1380  elapsed 0.2m  eta 3.2m
+    100/1380  elapsed 0.3m  eta 3.7m
+    125/1380  elapsed 0.3m  eta 3.5m
+    150/1380  elapsed 0.4m  eta 3.4m
+    175/1380  elapsed 0.5m  eta 3.5m
+    200/1380  elapsed 0.6m  eta 3.4m
+    225/1380  elapsed 0.7m  eta 3.6m
+    250/1380  elapsed 0.7m  eta 3.4m
+    275/1380  elapsed 0.9m  eta 3.5m
+    300/1380  elapsed 0.9m  eta 3.3m
+    325/1380  elapsed 1.0m  eta 3.2m
+    350/1380  elapsed 1.1m  eta 3.1m
+    375/1380  elapsed 1.2m  eta 3.1m
+    400/1380  elapsed 1.2m  eta 3.0m
+    425/1380  elapsed 1.3m  eta 3.0m
+    450/1380  elapsed 1.4m  eta 2.9m
+    475/1380  elapsed 1.5m  eta 2.9m
+    500/1380  elapsed 1.7m  eta 3.0m
+    525/1380  elapsed 1.7m  eta 2.8m
+    550/1380  elapsed 1.8m  eta 2.7m
+    575/1380  elapsed 1.9m  eta 2.6m
+    600/1380  elapsed 2.0m  eta 2.6m
+    625/1380  elapsed 2.1m  eta 2.5m
+    650/1380  elapsed 2.2m  eta 2.4m
+    675/1380  elapsed 2.2m  eta 2.3m
+    700/1380  elapsed 2.3m  eta 2.3m
+    725/1380  elapsed 2.4m  eta 2.2m
+    750/1380  elapsed 2.4m  eta 2.1m
+    775/1380  elapsed 2.5m  eta 2.0m
+    800/1380  elapsed 2.6m  eta 1.9m
+    825/1380  elapsed 2.6m  eta 1.8m
+    850/1380  elapsed 2.9m  eta 1.8m
+    875/1380  elapsed 2.9m  eta 1.7m
+    900/1380  elapsed 3.0m  eta 1.6m
+    925/1380  elapsed 3.1m  eta 1.5m
+    950/1380  elapsed 3.2m  eta 1.4m
+    975/1380  elapsed 3.3m  eta 1.4m
+    1000/1380  elapsed 3.4m  eta 1.3m
+    1025/1380  elapsed 3.4m  eta 1.2m
+    1050/1380  elapsed 3.5m  eta 1.1m
+    1075/1380  elapsed 3.6m  eta 1.0m
+    1100/1380  elapsed 3.7m  eta 0.9m
+    1125/1380  elapsed 3.8m  eta 0.9m
+    1150/1380  elapsed 3.8m  eta 0.8m
+    1175/1380  elapsed 3.9m  eta 0.7m
+    1200/1380  elapsed 4.0m  eta 0.6m
+    1225/1380  elapsed 4.1m  eta 0.5m
+    1250/1380  elapsed 4.2m  eta 0.4m
+    1275/1380  elapsed 4.3m  eta 0.4m
+    1300/1380  elapsed 4.4m  eta 0.3m
+    1325/1380  elapsed 4.4m  eta 0.2m
+    1350/1380  elapsed 4.5m  eta 0.1m
+    1375/1380  elapsed 4.6m  eta 0.0m
+    1380/1380  elapsed 4.6m  eta 0.0m
+
+  band 64..64   ship M >= 64   (1.1438x geomean regret)
+  CPU routing: GPU iff 0 <= k <= 128, batch*k >= 20480, batch >= 1, or sqrt(M k) >= 512 and batch <= 64   (1.0912x vs 1.8988x always GPU, worst 2.69x)
+  kTuned entry:  {"Apple M5 Pro", 20, 64, 64, 16,   128, 20480, 1, 0,   512, 64,   0},
+  -> /Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261007-8633ac/qr/report.md, /Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261007-8633ac/qr/results.json, /Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261007-8633ac/qr/raw.csv

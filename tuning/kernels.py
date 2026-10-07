@@ -96,10 +96,13 @@ HISTORY = [
      "products): every shape the reduced backend's streaming kernels took, 1.8-3.5x faster; batches "
      "of 512-2048 now beat the CPU (16 x 1024^2: 25 ms against 48); the large clause counts rows "
      "and k, sqrt(M k), and the grid has tall large shapes"),
-    ("qr", 6, "2.16.0", "2026-10-07",
-     "the unblocked backend hands small matrices to new Householder kernels (in a simdgroup's registers "
-     "up to 64 x 64, else in threadgroup memory for narrow ones): 4096 of 32 x 32 in 0.64 ms of GPU "
-     "time against 2.6 for its own kernel; and the grid's kernel crossover goes down to 64 rows"),
+    ("qr", 6, "2.16.0", "2026-10-08",
+     "the unblocked backend is new Householder kernels (in a simdgroup's registers up to 32 x 128, "
+     "else blocked in a threadgroup up to 4096 rows, its updates 8 x 8 simdgroup matrix products; "
+     "its own kernel retired): 1024 of 128 x 128 in 6.4 ms against 17.8 for the blocked QR and 25 "
+     "on the CPU, 4096 of 32 x 32 in 1.4 against 2.9 on the CPU; MLX's own buffers no longer "
+     "wrapped again; the grid's kernel crossover goes down to 64 rows and its mid-size batches up "
+     "to 384"),
 ]
 
 REQUIRED = {
