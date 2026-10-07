@@ -48,6 +48,7 @@
 #include <cstring>
 #include <future>
 #include <map>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -433,10 +434,16 @@ void eigh_tridiag(const Matrices& a, bool lower, float* w_out, float* v_out, uin
                 ssterf_(&N, sl.d.data(), sl.e.data(), &info);
         } else {
             // sstedc's divide and conquer on the CPU's cores but the two the
-            // GPU's host work keeps (divide_conquer.cpp)
+            // GPU's host work keeps (divide_conquer.cpp); for one matrix,
+            // whose GPU is idle meanwhile, its largest products on the GPU
             float* Z = static_cast<float*>(ws.Z[s].contents);
+            std::unique_ptr<metal_linalg::detail::MpsGemm> gpu;
+            if (todo.size() == 1) {
+                gpu = std::make_unique<metal_linalg::detail::MpsGemm>(cache.rt.device, cache.rt.queue);
+                gpu->add_buffer(ws.Z[s]);
+            }
             info = (L)metal_linalg::detail::tridiagonal_eigensystem(
-                n, sl.d.data(), sl.e.data(), Z, n, metal_linalg::detail::cpu_threads_beside_gpu());
+                n, sl.d.data(), sl.e.data(), Z, n, metal_linalg::detail::cpu_threads_beside_gpu(), gpu.get());
         }
         if (info != 0) {
             throw std::runtime_error(std::string("[eigh] tridiag: LAPACK ") + (vectors ? "sstedc" : "ssterf") +

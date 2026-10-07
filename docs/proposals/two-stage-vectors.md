@@ -3,8 +3,9 @@
 Status: **done** in 2.15.0 (2026-10-07): the `band` backend takes singular
 vectors (`svd_band_vectors`, routed by `band_min_k`); see
 [svd.md](../svd.md#with-singular-vectors-since-2150). On an M5 Pro, one
-square matrix: 1.17x `bidiag` at 1024, 1.42x at 2048, 2.33x at 4096 (404 ms
-against 942), 2.59x at 8192; 9.1x the CPU path at 4096. It was first
+square matrix: 1.21x `bidiag` at 1024, 1.45x at 2048, 2.35x at 4096 (402 ms
+against 944), about 2.7x at 8192; 8.7x the CPU path at 4096 (with the
+overlap of [band-vectors-overlap.md](band-vectors-overlap.md#done-2026-10-07)). It was first
 prototyped and parked the same day, with Q2 at 170 ms a side ([Prototype
 ](#prototype-2026-10-07)); what made it pay is below ([Done](#done-2026-10-07)).
 The sources of both prototypes are in [two-stage-vectors/](two-stage-vectors/).

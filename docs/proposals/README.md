@@ -9,15 +9,15 @@ Apple M5 Pro's (20 GPU cores, 18 CPU cores).
 
 | proposal | affects | time at stake | effort | expected gain |
 |---|---|---|---|---|
-| [The band SVD with vectors, overlapped further](band-vectors-overlap.md) | SVD with vectors on `band`, one large matrix | ~20 ms waiting for Q2 and P2, and the divide and conquer's 113, at 4096 | 2-3 days | ~1.05x, ~1.15x with the divide and conquer's products on the GPU |
+| [The bulge chase under the band reduction](chase-under-reduction.md) | eigvalsh and svdvals on `band`, one large matrix | most of the chase's 35 ms at 4096, now after the GPU's 150 | 2-3 days | ~1.15x (svdvals), ~1.2x (eigvalsh) at 4096 (estimate) |
+| [Less GPU work for the band SVD with vectors](band-vectors-gpu-work.md) | SVD with vectors on `band` | the GPU's 363 ms at 4096, the CPU idle through the reduction | 2 days and more | ~1.05x (P1 on the CPU), up to ~1.1x more from the chase kernel |
 | [The CPU path's divide and conquer](cpu-path-divide-and-conquer.md) | eigh and SVD with vectors on the CPU, one matrix | `sstedc` 43 of 239 ms, `sbdsdc` 133 of 439 at 2048 | about 2 days | eigh 1.15-1.25x, SVD ~1.34x at 1024-2048 (estimate) |
-| [The divide and conquer's top products on the GPU](divide-and-conquer-gpu-products.md) | eigh and SVD with vectors, one large matrix | 23 of 50 ms, 48 of 100 at 4096 | about 2 days | ~1.05x (estimate) |
 
-Suggested order: the band SVD's overlap together with the divide and
-conquer's products on the GPU, which it frees the GPU for (the largest gain
-left for one large matrix); the CPU path's divide and conquer matters less on
-the M5 Pro since 2.15.0, where the GPU takes single matrices from about 512,
-but more on Macs whose GPU is weaker against their CPU.
+Suggested order: the chase under the reduction (the values' band paths, the
+largest estimated gain left); then less GPU work for the band SVD with
+vectors. The CPU path's divide and conquer matters less on the M5 Pro since
+2.15.0, where the GPU takes single matrices from about 512, but more on
+Macs whose GPU is weaker against their CPU.
 
 **Not code, but open:**
 
@@ -42,9 +42,11 @@ In 2.15.0 (2026-10-07); see [the study](../studies/proposals-2-15-apple-m5-pro.m
 | [Symmetric trailing update](symmetric-trailing-update.md) | the update on the lower triangle, mirrored: eigvalsh on `band` 1.08x at 4096, 1.17x at 8192; X from the lower triangle lost to MPS |
 | [Band width per device](band-width-per-device.md) | `values_band_width`, measured by stages 3b and 4b |
 | [Band threshold tie-break](band-threshold-tie-break.md) | a finer grid, and thresholds compared on the points where they disagree |
+| [The band SVD with vectors, overlapped further](band-vectors-overlap.md) | the GPU found to be the bottleneck; its two idle gaps closed (Q1 and P1 queued during the reduction, Q2 and P2 released in two chunks as the chase finishes them): 1.04x at 4096, 1.06x at 2048 (alternating runs) |
+| [The divide and conquer's top products on the GPU](divide-and-conquer-gpu-products.md) | for one matrix, products of 1 GFLOP or more as MPS products on the merges' memory in place: eigh with vectors 1.075x at 4096, the SVD on `bidiag` 1.046x |
 | [IEEE arithmetic in the remaining shaders](ieee-mode-audit.md) | the SVD's Jacobi kernel's rotation and output on fast division and square roots (`rsqrt` with two Newton steps, for V's orthogonality): 1.14-1.17x on batches of small matrices; nothing left in the one-stage reductions |
 | [Long single-threadgroup kernels and the watchdog](gpu-watchdog-long-kernels.md) | the whole-matrix Jacobi kernels split a long solve over dispatches of a few rounds (about 15 ms each, from 1.7-2.8 s for one threadgroup), bit for bit the same and in the same time |
-| [Two-stage reduction with vectors](two-stage-vectors.md) | the SVD with vectors on `band`: 1.17x `bidiag` at 1024, 1.42x at 2048, 2.33x at 4096, 2.59x at 8192 (Q2 applied by a pipeline of groups, 60-64 ms a side at 4096; Q = Q1 Q2 and P = P1 P2 formed under the CPU's chase and divide and conquer) |
+| [Two-stage reduction with vectors](two-stage-vectors.md) | the SVD with vectors on `band`: 1.21x `bidiag` at 1024, 1.45x at 2048, 2.35x at 4096, about 2.7x at 8192 with the overlap above (Q2 applied by a pipeline of groups, 60-64 ms a side at 4096; Q = Q1 Q2 and P = P1 P2 formed under the CPU's chase and divide and conquer) |
 
 Found along the way, also in 2.15.0: the tridiag and bidiag backends' block
 reflectors' T from a Gram matrix (eigh with vectors 1.1x at 4096); the

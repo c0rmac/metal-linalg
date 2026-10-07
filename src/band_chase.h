@@ -1,6 +1,7 @@
 #pragma once
 // The second stages of the two-stage reductions, on the CPU (band_chase.cpp).
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
@@ -13,13 +14,16 @@ namespace metal_linalg::detail {
 // L[512 b], b = G (pmax + 1) - G (G - 1) / 2 + j, at row offset c with its
 // 1 and zeros explicit (the column written whole), its tau at Ltau[16 b + c];
 // from the right (on the same columns) likewise in R, Rtau. pmax =
-// (n - 2) / 16. Reflectors of length 1 are not written.
+// (n - 2) / 16. Reflectors of length 1 are not written. With `frontier`, the
+// number of leading sweeps finished (all of 0 .. frontier - 1), as they
+// finish, so that their reflectors can be used while the chase goes on.
 struct ChaseReflectors {
     float* L = nullptr;
     float* Ltau = nullptr;
     float* R = nullptr;
     float* Rtau = nullptr;
     size_t pmax = 0;
+    std::atomic<long>* frontier = nullptr;
 };
 
 // The second stage of the two-stage reductions (band_chase.cpp): an upper

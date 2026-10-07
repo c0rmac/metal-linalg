@@ -42,8 +42,8 @@
 // against bidiag's 757; from about 2048 it is the faster. See
 // docs/studies/two-stage-apple-m5-pro.md. With vectors, both stages'
 // reflectors are kept and applied on the GPU while the CPU chases the band
-// and solves the bidiagonal problem (band_vectors, below): 404 ms against
-// bidiag's 942 at 4096.
+// and solves the bidiagonal problem (band_vectors, below): about 380-400 ms
+// against bidiag's 940 at 4096.
 
 #ifndef ACCELERATE_NEW_LAPACK
 #define ACCELERATE_NEW_LAPACK
@@ -61,13 +61,18 @@
 #import <MetalPerformanceShaders/MetalPerformanceShaders.h>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <future>
 #include <map>
+#include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 using metal_linalg::core::Matrices;
@@ -485,11 +490,10 @@ void build_aggregate(BandVectors& bv, uint32_t a, bool left) {
     merge_t(len, p, b, V, Ts, T);
 }
 
-// Step 2: Q = Q1 (thin) and P = P1 explicit, the tail's reflectors on the
-// CPU, then the GPU's blocks, last first, queued (not waited for).
-id<MTLCommandBuffer> form_q1_p1(Cache& c, BandVectors& bv, const float* A, uint32_t lda) {
-    constexpr uint32_t b = 16;
-    const uint32_t m = bv.m, n = bv.n, ldq = bv.ldq, ldp = bv.ldp;
+// Q = [I; 0] and P = I, where step 2 starts: on the CPU while the GPU
+// reduces the matrix to a band.
+void init_q_p(BandVectors& bv) {
+    const uint32_t n = bv.n, ldq = bv.ldq, ldp = bv.ldp;
     float* Q = static_cast<float*>(bv.Q.contents);
     float* P = static_cast<float*>(bv.P.contents);
     metal_linalg::detail::parallel_for(n, [&](size_t j) {
@@ -498,6 +502,15 @@ id<MTLCommandBuffer> form_q1_p1(Cache& c, BandVectors& bv, const float* A, uint3
         std::fill(P + j * ldp, P + (j + 1) * ldp, 0.0f);
         P[j * ldp + j] = 1.0f;
     });
+}
+
+// Step 2: Q = Q1 (thin) and P = P1 explicit from init_q_p's identities: the
+// tail's reflectors on the CPU (tail_q1_p1), then the GPU's blocks, last
+// first (queue_q1_p1).
+void tail_q1_p1(BandVectors& bv, const float* A, uint32_t lda) {
+    const uint32_t m = bv.m, n = bv.n, ldq = bv.ldq, ldp = bv.ldp;
+    float* Q = static_cast<float*>(bv.Q.contents);
+    float* P = static_cast<float*>(bv.P.contents);
     // The tail, last step first: Q(k:, k:) <- H Q(k:, k:), P(k+bk:, k+bk:) <- G P(k+bk:, k+bk:)
     std::vector<float> work((size_t)std::max(m, n) * 64 + 64);
     L lw = (L)work.size(), info = 0;
@@ -512,9 +525,18 @@ id<MTLCommandBuffer> form_q1_p1(Cache& c, BandVectors& bv, const float* A, uint3
         sormqr_("L", "N", &M, &N, &K, const_cast<float*>(A) + (size_t)st.k * lda + st.k, &LDA, st.tq.data(),
                 Q + (size_t)st.k * ldq + st.k, &LDQ, work.data(), &lw, &info);
     }
-    // The GPU's blocks: Z = X22^T (row-major view), Z <- Z - ((Z V) T^T) V^T
+}
+
+// The GPU's blocks, queued while the GPU still reduces the matrix (encoding
+// them took 4 ms), to start once `ready` reaches 1: once the CPU has built
+// the aggregates' T and applied the tail. Z = X22^T (row-major view),
+// Z <- Z - ((Z V) T^T) V^T.
+id<MTLCommandBuffer> queue_q1_p1(Cache& c, BandVectors& bv, id<MTLSharedEvent> ready) {
+    constexpr uint32_t b = 16;
+    const uint32_t m = bv.m, n = bv.n, ldq = bv.ldq, ldp = bv.ldp;
     id<MTLDevice> dev = c.rt.device;
     id<MTLCommandBuffer> cb = [c.rt.queue commandBuffer];
+    [cb encodeWaitForEvent:ready value:1];
     const uint32_t kmax = kAgg * b;
     for (int a = (int)bv.aggs - 1; a >= 0; --a) {
         const uint32_t kb = std::min(kAgg, bv.blocks - (uint32_t)a * kAgg) * b;
@@ -536,16 +558,17 @@ id<MTLCommandBuffer> form_q1_p1(Cache& c, BandVectors& bv, const float* A, uint3
     return cb;
 }
 
-// bd_chase_apply's blocks, their V written by the chase: per block (G, p),
-// -T (16 x 16, row-major) from V and the taus; a column with no reflector
-// (length 1, or past the last sweep) set to zero with tau 0.
-void chase_blocks(BandVectors& bv, bool left) {
+// bd_chase_apply's blocks of groups G0 .. G1 - 1, their V written by the
+// chase: per block (G, p), -T (16 x 16, row-major) from V and the taus; a
+// column with no reflector (length 1, or past the last sweep) set to zero
+// with tau 0.
+void chase_blocks(BandVectors& bv, bool left, long G0, long G1) {
     const long n = bv.n, pmax = (n - 2) / 16;
     float* Vp = static_cast<float*>((left ? bv.lv : bv.rv).contents);
     float* Tp = static_cast<float*>((left ? bv.lt : bv.rt).contents);
     float* taus = (left ? bv.ltau : bv.rtau).data();
-    metal_linalg::detail::parallel_for((size_t)pmax + 1, [&](size_t Gs) {
-        const long G = (long)Gs;
+    metal_linalg::detail::parallel_for((size_t)(G1 - G0), [&](size_t Gs) {
+        const long G = G0 + (long)Gs;
         for (long p = G; p <= pmax; ++p) {
             const long j = p - G, blk = G * (pmax + 1) - G * (G - 1) / 2 + j;
             float* V = Vp + blk * 512;
@@ -579,35 +602,49 @@ void chase_blocks(BandVectors& bv, bool left) {
 }
 
 // Must match ChaseParams in Svd_Bidiag.metal.
-struct ChaseParams { uint32_t n, rs, cs, pmax, down; };
+struct ChaseParams { uint32_t n, rs, cs, pmax, down, pass0, pass1; };
 
-// Step 3's GPU side: Q <- Q Q2, P <- P P2, queued.
-id<MTLCommandBuffer> apply_chase(Cache& c, BandVectors& bv) {
+// Groups (of 16 sweeps) a chunk of step 3's GPU work: a multiple of both
+// kernels' passes (4 and 8 groups), about an eighth of the groups.
+uint32_t chase_chunk_groups(uint32_t groups) { return std::max(32u, (groups / 2 + 7) / 8 * 8); }
+
+// Step 3's GPU side: Q <- Q Q2, P <- P P2, a command buffer a chunk of
+// groups, each waiting for `ready` to reach its index + 1 (the CPU signals
+// as the chase finishes the chunk's groups and their T is built); queued.
+// Returns the last.
+id<MTLCommandBuffer> apply_chase(Cache& c, BandVectors& bv, id<MTLSharedEvent> ready) {
     const uint32_t n = bv.n;
-    id<MTLCommandBuffer> cb = [c.rt.queue commandBuffer];
     if (n < 3) {
+        id<MTLCommandBuffer> cb = [c.rt.queue commandBuffer];
         [cb commit];
         return cb;
     }
-    // One after the other: run concurrently, the two took 177 ms at 4096
-    // against 132 (their strips competing for the caches).
-    id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
-    for (int side = 0; side < 2; ++side) {
-        const bool left = side == 0;
-        const uint32_t ld = left ? bv.ldq : bv.ldp;   // X = M^T: ncols = ld (padded), rows n
-        const bool wide = ld / 32 >= 64;
-        id<MTLComputePipelineState> ps = wide ? bv.apply_wide : bv.apply_narrow;
-        const uint32_t C = wide ? 32 : 16, K = wide ? 4 : 8;
-        const ChaseParams q{n, ld, 1, (n - 2) / 16, 1};
-        [enc setComputePipelineState:ps];
-        [enc setBuffer:left ? bv.Q : bv.P offset:0 atIndex:0];
-        [enc setBuffer:left ? bv.lv : bv.rv offset:0 atIndex:1];
-        [enc setBuffer:left ? bv.lt : bv.rt offset:0 atIndex:2];
-        [enc setBytes:&q length:sizeof q atIndex:3];
-        [enc dispatchThreadgroups:MTLSizeMake(ld / C, 1, 1) threadsPerThreadgroup:MTLSizeMake(32 * K, 1, 1)];
+    const uint32_t groups = (n - 2) / 16 + 1, chunk = chase_chunk_groups(groups);
+    id<MTLCommandBuffer> cb = nil;
+    for (uint32_t g0 = 0, k = 1; g0 < groups; g0 += chunk, ++k) {
+        const uint32_t g1 = std::min(groups, g0 + chunk);
+        cb = [c.rt.queue commandBuffer];
+        [cb encodeWaitForEvent:ready value:k];
+        // One after the other: run concurrently, the two took 177 ms at
+        // 4096 against 132 (their strips competing for the caches).
+        id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+        for (int side = 0; side < 2; ++side) {
+            const bool left = side == 0;
+            const uint32_t ld = left ? bv.ldq : bv.ldp;   // X = M^T: ncols = ld (padded), rows n
+            const bool wide = ld / 32 >= 64;
+            id<MTLComputePipelineState> ps = wide ? bv.apply_wide : bv.apply_narrow;
+            const uint32_t C = wide ? 32 : 16, K = wide ? 4 : 8;
+            const ChaseParams q{n, ld, 1, (n - 2) / 16, 1, g0 / K, (g1 + K - 1) / K};
+            [enc setComputePipelineState:ps];
+            [enc setBuffer:left ? bv.Q : bv.P offset:0 atIndex:0];
+            [enc setBuffer:left ? bv.lv : bv.rv offset:0 atIndex:1];
+            [enc setBuffer:left ? bv.lt : bv.rt offset:0 atIndex:2];
+            [enc setBytes:&q length:sizeof q atIndex:3];
+            [enc dispatchThreadgroups:MTLSizeMake(ld / C, 1, 1) threadsPerThreadgroup:MTLSizeMake(32 * K, 1, 1)];
+        }
+        [enc endEncoding];
+        [cb commit];
     }
-    [enc endEncoding];
-    [cb commit];
     return cb;
 }
 
@@ -648,7 +685,7 @@ void bidiag_impl(const Matrices& a, float* u_out, float* s_out, float* vt_out, u
 
 
     struct Slot {
-        std::vector<float> t, q, d, e, tq, tp, ub, vb, ab;
+        std::vector<float> t, q, d, e, tq, tp, ab;
         float scale = 1.0f;
         id<MTLCommandBuffer> pending = nil;   // two-stage with vectors: the GPU's Q and P
     };
@@ -660,7 +697,6 @@ void bidiag_impl(const Matrices& a, float* u_out, float* s_out, float* vt_out, u
         if (qr_first) sl.t.resize((size_t)l * K);
         if (qr_first && vectors) sl.q.resize((size_t)l * K);
         sl.d.resize(K); sl.e.resize(K); sl.tq.resize(K); sl.tp.resize(K);
-        if (vectors && !bvp) { sl.ub.resize((size_t)K * K); sl.vb.resize((size_t)K * K); }
     }
 
     // Step 1 for matrix b in slot s: scale, the QR if much taller than wide
@@ -694,8 +730,17 @@ void bidiag_impl(const Matrices& a, float* u_out, float* s_out, float* vt_out, u
             return;
         }
         metal_linalg::detail::BandKeep* keep = bvp ? &bvp->keep : nullptr;
-        if (keep)   // the aggregated blocks' V and T, as the GPU's blocks complete
+        // Q1 and P1's GPU work, queued during the reduction, released once
+        // the CPU's part is done; released whatever happens, since a command
+        // buffer left waiting would hold the queue.
+        struct Release {
+            id<MTLSharedEvent> event;
+            ~Release() { if (event) event.signaledValue = 1; }
+        } q1_ready{bvp ? [cache.rt.device newSharedEvent] : nil};
+        if (keep)   // Q and P's start, their GPU work queued, the aggregates' T as the blocks complete
             keep->while_gpu = [&](metal_linalg::detail::BandKeep& kp) {
+                init_q_p(*bvp);
+                sl.pending = queue_q1_p1(cache, *bvp, q1_ready.event);
                 for (uint32_t ag = 0; ag < bvp->aggs; ++ag) {
                     [kp.done[std::min((ag + 1) * kAgg, bvp->blocks) - 1] waitUntilCompleted];
                     build_aggregate(*bvp, ag, true);
@@ -706,10 +751,6 @@ void bidiag_impl(const Matrices& a, float* u_out, float* s_out, float* vt_out, u
         if (keep) keep->while_gpu = nullptr;   // it refers to this call's locals
         if (!banded) {
             sl.ab.clear();   // too tall for the band reduction's panels: one stage
-            if (vectors && sl.ub.empty()) {   // (svd_band_vectors checks the width fits first)
-                sl.ub.resize((size_t)K * K);
-                sl.vb.resize((size_t)K * K);
-            }
             bidiagonalize(cache, ws, ws.A[s], sl.d.data(), sl.e.data(), sl.tq.data(), sl.tp.data());
             return;
         }
@@ -720,7 +761,10 @@ void bidiag_impl(const Matrices& a, float* u_out, float* s_out, float* vt_out, u
         for (uint32_t j = 0; j < K; ++j)
             for (uint32_t i = j > band ? j - band : 0; i <= j; ++i)
                 sl.ab[(size_t)j * ld + ku + i - j] = A[(size_t)j * ws.lda + i];
-        if (bvp) sl.pending = form_q1_p1(cache, *bvp, A, ws.lda);
+        if (bvp) {
+            tail_q1_p1(*bvp, A, ws.lda);
+            q1_ready.event.signaledValue = 1;
+        }
     };
 
     // Step 2 for matrix b in slot s, on the CPU: the singular values (into
@@ -735,28 +779,77 @@ void bidiag_impl(const Matrices& a, float* u_out, float* s_out, float* vt_out, u
         float qd = 0;
         const char* routine = vectors ? "sbdsdc" : "sbdsqr";
         if (vectors && !sl.ab.empty()) {
-            // Two stages: the chase keeping its reflectors; Q <- Q Q2 and
-            // P <- P P2 queued on the GPU; the divide and conquer meanwhile.
+            // Two stages: the chase on threads of its own, keeping its
+            // reflectors; as it finishes each chunk of groups their T is
+            // built here and that chunk of Q <- Q Q2 and P <- P P2, queued
+            // on the GPU behind Q1 and P1, released; then the divide and
+            // conquer while the GPU finishes.
             BandVectors& bv = *bvp;
+            std::atomic<long> frontier{0};
+            std::atomic<bool> chased{false};
             const metal_linalg::detail::ChaseReflectors rec{
                 static_cast<float*>(bv.lv.contents), bv.ltau.data(), static_cast<float*>(bv.rv.contents),
-                bv.rtau.data(), K >= 2 ? (K - 2) / 16 : 0};
-            metal_linalg::detail::band_to_bidiagonal(K, band, sl.ab.data(), 3 * (size_t)band + 1, 2 * (size_t)band,
-                                                     sl.d.data(), sl.e.data(),
-                                                     metal_linalg::detail::cpu_threads_beside_gpu(), &rec);
-            chase_blocks(bv, true);
-            chase_blocks(bv, false);
-            sl.pending = apply_chase(cache, bv);
+                bv.rtau.data(), K >= 2 ? (K - 2) / 16 : 0, &frontier};
+            id<MTLSharedEvent> ready = [cache.rt.device newSharedEvent];
+            sl.pending = apply_chase(cache, bv, ready);
+            // Released whatever happens: a command buffer left waiting would hold the queue.
+            struct Release {
+                id<MTLSharedEvent> event;
+                ~Release() { event.signaledValue = 1ull << 40; }
+            } release{ready};
+            const long groups = K >= 3 ? (long)(K - 2) / 16 + 1 : 0, chunk = chase_chunk_groups((uint32_t)groups);
+            std::exception_ptr failed;
+            std::thread chase([&] {
+                try {
+                    metal_linalg::detail::band_to_bidiagonal(K, band, sl.ab.data(), 3 * (size_t)band + 1,
+                                                             2 * (size_t)band, sl.d.data(), sl.e.data(),
+                                                             metal_linalg::detail::cpu_threads_beside_gpu(), &rec);
+                } catch (...) {
+                    failed = std::current_exception();
+                }
+                chased.store(true, std::memory_order_release);
+            });
+            long built = 0;          // groups whose T is built
+            uint64_t released = 0;   // chunks released to the GPU
+            for (;;) {
+                const bool over = chased.load(std::memory_order_acquire);
+                // Group G is chased once sweeps 16 G .. min(16 G + 15, K - 2) are.
+                const long f = frontier.load(std::memory_order_acquire);
+                const long g = over || f >= (long)K - 1 ? groups : std::min(groups, f / 16);
+                if (g > built) {
+                    chase_blocks(bv, true, built, g);
+                    chase_blocks(bv, false, built, g);
+                    built = g;
+                    const uint64_t can = built >= groups ? (uint64_t)((groups + chunk - 1) / chunk)
+                                                         : (uint64_t)(built / chunk);
+                    if (can > released) ready.signaledValue = released = can;
+                } else if (over) {
+                    break;
+                } else {
+                    std::this_thread::sleep_for(std::chrono::microseconds(200));
+                }
+            }
+            chase.join();
+            if (failed) std::rethrow_exception(failed);
             info = (L)metal_linalg::detail::bidiagonal_svd(K, sl.d.data(), sl.e.data(),
                                                            static_cast<float*>(bv.ub.contents), K,
                                                            static_cast<float*>(bv.vb.contents), K,
                                                            metal_linalg::detail::cpu_threads_beside_gpu());
         } else if (vectors) {
             // sbdsdc's divide and conquer on the CPU's cores but the two the
-            // GPU's host work keeps (divide_conquer.cpp)
-            info = (L)metal_linalg::detail::bidiagonal_svd(K, sl.d.data(), sl.e.data(), sl.ub.data(), K,
-                                                           sl.vb.data(), K,
-                                                           metal_linalg::detail::cpu_threads_beside_gpu());
+            // GPU's host work keeps (divide_conquer.cpp), into U's first K
+            // rows and VT; for one matrix, whose GPU is idle meanwhile, its
+            // largest products on the GPU
+            std::unique_ptr<metal_linalg::detail::MpsGemm> gpu;
+            if (todo.size() == 1) {
+                gpu = std::make_unique<metal_linalg::detail::MpsGemm>(cache.rt.device, cache.rt.queue);
+                gpu->add_buffer(ws.U[s]);
+                gpu->add_buffer(ws.VT[s]);
+            }
+            info = (L)metal_linalg::detail::bidiagonal_svd(K, sl.d.data(), sl.e.data(),
+                                                           static_cast<float*>(ws.U[s].contents), rows,
+                                                           static_cast<float*>(ws.VT[s].contents), K,
+                                                           metal_linalg::detail::cpu_threads_beside_gpu(), gpu.get());
         } else {
             std::vector<float> work(4 * (size_t)K + 16);
             if (!sl.ab.empty())
@@ -822,11 +915,9 @@ void bidiag_impl(const Matrices& a, float* u_out, float* s_out, float* vt_out, u
                 vtt.resize((size_t)K * K);
                 if (qr_first) urt.resize((size_t)K * K);
             }
-            float* U = static_cast<float*>(ws.U[s].contents);
-            std::fill(U, U + (size_t)rows * K, 0.0f);
-            for (uint32_t j = 0; j < K; ++j)
-                std::copy(sl.ub.begin() + (size_t)j * K, sl.ub.begin() + (size_t)(j + 1) * K, U + (size_t)j * rows);
-            std::copy(sl.vb.begin(), sl.vb.end(), static_cast<float*>(ws.VT[s].contents));
+            float* U = static_cast<float*>(ws.U[s].contents);   // U_B in its first K rows, VT V_B^T
+            if (rows > K)
+                for (uint32_t j = 0; j < K; ++j) std::fill(U + (size_t)j * rows + K, U + (size_t)(j + 1) * rows, 0.0f);
             back_transform(cache, ws, ws.A[s], ws.U[s], ws.VT[s], sl.tq.data(), true);
             back_transform(cache, ws, ws.A[s], ws.U[s], ws.VT[s], sl.tp.data(), false);
             vDSP_mtrans(static_cast<const float*>(ws.VT[s].contents), 1, vtt.data(), 1, K, K);  // row-major K x K

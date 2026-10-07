@@ -4,6 +4,7 @@
 #include <metal_linalg/device.h>
 
 #include <Accelerate/Accelerate.h>
+#import <MetalPerformanceShaders/MetalPerformanceShaders.h>
 // Built with an SDK older than macOS 15's, the library cannot switch
 // Accelerate's threading off and splits a batch only where Accelerate would
 // not thread anyway (see lapack_batches).
@@ -209,6 +210,61 @@ void transpose_scaled(const float* src, size_t ld_src, float* dst, size_t ld_dst
             }
         }
     });
+}
+
+void MpsGemm::add_buffer(id<MTLBuffer> buffer) {
+    regions_.push_back({static_cast<const char*>(buffer.contents), (size_t)buffer.length, buffer});
+}
+
+void MpsGemm::add(const float* base, size_t floats) {
+    regions_.push_back({reinterpret_cast<const char*>(base), floats * sizeof(float),
+                        wrap_host(device_, const_cast<float*>(base), floats)});
+}
+
+void MpsGemm::remove(const float* base) {
+    const char* b = reinterpret_cast<const char*>(base);
+    regions_.erase(std::remove_if(regions_.begin(), regions_.end(), [&](const Region& r) { return r.base == b; }),
+                   regions_.end());
+}
+
+id<MTLBuffer> MpsGemm::find(const float* p, long rows, long cols, long ld, size_t& offset) const {
+    const char* a = reinterpret_cast<const char*>(p);
+    const size_t span = ((size_t)(cols - 1) * ld + rows) * sizeof(float);
+    for (const Region& r : regions_)
+        if (a >= r.base && a + span <= r.base + r.bytes) {
+            offset = (size_t)(a - r.base);
+            return r.buffer;
+        }
+    return nil;
+}
+
+bool MpsGemm::gemm(long m, long n, long k, const float* A, long lda, const float* B, long ldb, float* C, long ldc,
+                   bool accumulate) {
+    size_t oa = 0, ob = 0, oc = 0;
+    id<MTLBuffer> ba = find(A, m, k, lda, oa), bb = find(B, k, n, ldb, ob), bc = find(C, m, n, ldc, oc);
+    if (!ba || !bb || !bc) return false;
+    // On the row-major views of the column-major operands: C^T = B^T A^T.
+    auto view = [](id<MTLBuffer> b, size_t off, long rows, long cols, long ld) {
+        MPSMatrixDescriptor* d = [MPSMatrixDescriptor matrixDescriptorWithRows:(NSUInteger)rows
+                                                                       columns:(NSUInteger)cols
+                                                                      rowBytes:(NSUInteger)ld * sizeof(float)
+                                                                      dataType:MPSDataTypeFloat32];
+        return [[MPSMatrix alloc] initWithBuffer:b offset:off descriptor:d];
+    };
+    @autoreleasepool {
+        id<MTLCommandBuffer> cb = [queue_ commandBuffer];
+        MPSMatrixMultiplication* g = [[MPSMatrixMultiplication alloc] initWithDevice:device_ transposeLeft:NO
+                                     transposeRight:NO resultRows:(NSUInteger)n resultColumns:(NSUInteger)m
+                                     interiorColumns:(NSUInteger)k alpha:1.0 beta:accumulate ? 1.0 : 0.0];
+        [g encodeToCommandBuffer:cb leftMatrix:view(bb, ob, n, k, ldb) rightMatrix:view(ba, oa, k, m, lda)
+                    resultMatrix:view(bc, oc, n, m, ldc)];
+        [cb commit];
+        [cb waitUntilCompleted];
+        if (cb.error)   // C may be partly written: not one for the CPU to redo
+            throw std::runtime_error(std::string("divide and conquer: GPU error in a product: ") +
+                                     cb.error.localizedDescription.UTF8String);
+    }
+    return true;
 }
 
 uint32_t jacobi_round_budget(double solve_core_ms, uint32_t rounds, const char* env) {

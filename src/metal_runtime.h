@@ -4,6 +4,7 @@
 #import <Foundation/Foundation.h>
 
 #include <metal_linalg/core.h>
+#include "divide_conquer.h"
 
 #include <dispatch/dispatch.h>
 
@@ -233,6 +234,33 @@ id<MTLComputePipelineState> make_pipeline(id<MTLDevice> device,
 // built a block's V and T on the CPU while the GPU applied the last, and the
 // CPU's side was the slower.
 void compact_wy_t(uint32_t m, uint32_t kb, const float* V, const float* tau, float* T, uint32_t ldt);
+
+// The divide and conquer's large products (divide_conquer.h) as MPS
+// products on `queue`, a command buffer each, waited for: for a solve whose
+// GPU would otherwise be idle. Operands in the buffers added with
+// add_buffer (the solve's output) or in the page-aligned memory the solve
+// adds; anything else is left to the CPU.
+class MpsGemm final : public GpuGemm {
+public:
+    MpsGemm(id<MTLDevice> device, id<MTLCommandQueue> queue) : device_(device), queue_(queue) {}
+    void add_buffer(id<MTLBuffer> buffer);
+    void add(const float* base, size_t floats) override;
+    void remove(const float* base) override;
+    bool gemm(long m, long n, long k, const float* A, long lda, const float* B, long ldb, float* C, long ldc,
+              bool accumulate) override;
+private:
+    struct Region {
+        const char*   base;
+        size_t        bytes;
+        id<MTLBuffer> buffer;
+    };
+    // The region holding `rows` x `cols` floats from p (column-major, ld),
+    // and p's offset in it; nil if none does.
+    id<MTLBuffer> find(const float* p, long rows, long cols, long ld, size_t& offset) const;
+    id<MTLDevice>       device_;
+    id<MTLCommandQueue> queue_;
+    std::vector<Region> regions_;
+};
 
 // The whole-matrix Jacobi kernels (Eigh_Jacobi, Svd_Jacobi) give a matrix one
 // threadgroup for its whole solve. With the display busy, macOS ends a command

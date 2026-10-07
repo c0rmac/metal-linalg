@@ -130,7 +130,10 @@ GPU, as the eigensolver's `tridiag` backend does for `ssytrd`:
    moves them a strided row at a time, 130 of a 4096 merge's 190 ms). On a
    4096 bidiagonal from `sgebrd`, 100 ms against `sbdsdc`'s 753 on one core;
    the singular values bit for bit LAPACK's, and results independent of the
-   number of threads. For the singular values alone (since 2.13.0;
+   number of threads. For one matrix, whose GPU is idle meanwhile, the top
+   merges' products (from $k \sim 2048$) run on the GPU on the merges' memory
+   in place, and the vectors are written straight into the GPU's buffers:
+   1.046x at 4096. For the singular values alone (since 2.13.0;
    `sbdsdc` before), bisection on the GPU from $k = 1024$ (12 ms at 4096,
    see [`band`](#a-seventh-backend-for-the-singular-values-of-large-matrices-band)),
    below it `sbdsqr`, whose dqds is faster than `sbdsdc` and accurate to every
@@ -369,13 +372,17 @@ its two steps, so that most of the GPU's work hides behind the CPU's:
    the GPU completes each eight, the CPU builds the aggregate's $T$ from the
    blocks' own (the block-reflector merge, from the Gram matrix $V^T V$).
 2. **$Q_1$ and $P_1$ explicit** (the thin $m \times k$ and $k \times k$): the
-   last columns' LAPACK reflectors on the CPU, then the aggregates on the GPU,
-   last first, three MPS products each, on the shrinking trailing block.
-   Meanwhile the CPU chases the band to bidiagonal, writing each reflector it
-   makes into the layout of step 3's kernel.
+   aggregates on the GPU, last first, three MPS products each, on the
+   shrinking trailing block, encoded and queued while the GPU still reduces
+   the matrix and released once the CPU has applied the last columns'
+   LAPACK reflectors. Meanwhile the CPU chases the band to bidiagonal, writing
+   each reflector it makes into the layout of step 3's kernel.
 3. **$Q \leftarrow Q_1 Q_2$ and $P \leftarrow P_1 P_2$** on the GPU
-   (`bd_chase_apply` in `shaders/Svd_Bidiag.metal`), while the CPU solves
-   $B = U_B \Sigma V_B^T$ by the divide and conquer. The chase's reflectors
+   (`bd_chase_apply` in `shaders/Svd_Bidiag.metal`), in two chunks of groups
+   of sweeps, each released as the chase finishes its groups, so the GPU
+   goes on from $Q_1$ and $P_1$ without waiting for the chase's end; then
+   while the CPU solves $B = U_B \Sigma V_B^T$ by the divide and conquer.
+   The chase's reflectors
    of 16 consecutive sweeps at the same step form a block $I - V T V^T$, $V$
    $32 \times 16$, acting on 32 consecutive rows; a group of sweeps runs its
    blocks in order along the matrix, and the next group may follow two tiles
@@ -389,23 +396,26 @@ its two steps, so that most of the GPU's work hides behind the CPU's:
 4. **$U = Q U_B$ and $V^T = V_B^T P^T$**, two MPS products, written row-major;
    $U$ is copied out while the GPU forms $V^T$.
 
-On an M5 Pro, one $k \times k$ at 4096: the band reduction 158 ms; $Q_1$
-and $P_1$ 33 ms on the GPU under the chase's 40 on the CPU; $Q_2$ and $P_2$
-133 ms on the GPU, the divide and conquer 113 on the CPU; the products and
-the output 43 ms: about 400 ms, against `bidiag`'s 940 (whose one-stage
-reduction alone takes 700). Square, against the CPU path and `bidiag`
-(2.15.0, side by side, the median of `sweep_svd`):
+On an M5 Pro, one $k \times k$ at 4096, the GPU's command buffers back to
+back: the band reduction 0-155 ms; $Q_1$ and $P_1$ 155-187, under the
+chase's 155-198 on the CPU; $Q_2$ and $P_2$ 187-322, the divide and conquer
+198-304 on the CPU; the products 322-363. The GPU is the bottleneck,
+without a gap; `bidiag`'s one-stage reduction alone takes 700 ms. Square,
+against the CPU path and `bidiag` (2.15.0, side by side, the median of
+`sweep_svd`; 8192 from separate runs):
 
 | $k$ | CPU | bidiag | band | band / bidiag | band / CPU |
 |---|---|---|---|---|---|
-| 512 | 16.8 ms | 13.3 ms | 12.4 ms | 1.08x | 1.36x |
-| 768 | 33.6 ms | 22.2 ms | 20.0 ms | 1.11x | 1.68x |
-| 1024 | 78.3 ms | 34.5 ms | 29.4 ms | 1.17x | 2.67x |
-| 1536 | 178 ms | 68.1 ms | 51.5 ms | 1.32x | 3.45x |
-| 2048 | 441 ms | 122 ms | 85.5 ms | 1.42x | 5.16x |
-| 3072 | 1.29 s | 0.357 s | 0.200 s | 1.78x | 6.42x |
-| 4096 | 3.68 s | 0.942 s | 0.404 s | 2.33x | 9.10x |
-| 8192 | | 7.89 s | 3.04 s | 2.59x | |
+| 512 | 16.7 ms | 13.2 ms | 11.4 ms | 1.16x | 1.47x |
+| 1024 | 77.8 ms | 34.0 ms | 28.1 ms | 1.21x | 2.76x |
+| 1536 | 178 ms | 67.4 ms | 51.7 ms | 1.30x | 3.44x |
+| 2048 | 444 ms | 120 ms | 82.8 ms | 1.45x | 5.36x |
+| 3072 | 1.33 s | 0.360 s | 0.184 s | 1.95x | 7.21x |
+| 4096 | 3.51 s | 0.944 s | 0.402 s | 2.35x | 8.73x |
+| 8192 | | 7.89 s | 2.93 s | 2.69x | |
+
+(With the display busy separate runs moved by up to 7%: in alternating
+runs `band` took 375 ms at 4096.)
 
 Tall, 4096×2048, 1.20x `bidiag` (219 ms against 263); 8192×2048, through
 the QR first, 1.09x (390 against 426). A batch of two is where `bidiag`'s

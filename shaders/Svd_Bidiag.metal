@@ -1129,6 +1129,7 @@ struct ChaseParams {
     uint rs, cs;  // X(r, c) at X[r rs + c cs]
     uint pmax;    // the last block position, (n - 2) / 16; groups 0 .. pmax
     uint down;
+    uint pass0, pass1;   // this dispatch's passes (of K groups), up from pass0 (down) or from the last
 };
 
 constant constexpr uint CHASE_TP = 4;   // padding of a staged tile's rows
@@ -1270,7 +1271,7 @@ kernel void bd_chase_apply(device float* X [[buffer(0)]], device const float* Vb
     const uint c0 = tg * C, pmax = q.pmax, ng = pmax + 1;
     const int k = (int)sg;
     simdgroup_float8x8 lo[2][CT], hi[2][CT];
-    for (uint pass = 0; pass * K < ng; ++pass) {
+    for (uint pass = q.pass0; pass < q.pass1 && pass * K < ng; ++pass) {
         const uint kpass = min(K, ng - pass * K);
         // up: group G = gtop - k at p = gtop + s - 2k; down: G = g0 + k at p = pmax - s + 2k
         const int gtop = (int)ng - 1 - (int)(pass * K), g0 = (int)(pass * K);

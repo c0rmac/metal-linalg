@@ -9,11 +9,11 @@ the same day.
 
 | | before (2.14.1) | 2.15.0 | |
 |---|---|---|---|
-| eigh with vectors, `tridiag`, 4096 | 438 ms | 306 ms | 1.43x |
+| eigh with vectors, `tridiag`, 4096 | 438 ms | 270 ms | 1.62x |
 | SVD with vectors, `bidiag`, 4096 | 1535 ms | 943 ms | 1.63x |
 | eigvalsh, `band`, 4096 | 161 ms | 140 ms | 1.15x |
 | svdvals, `band`, 4096 | 226 ms | 197 ms | 1.15x |
-| SVD with vectors, `band` (new), 4096 | 1535 ms (`bidiag`) | 404 ms | 3.80x |
+| SVD with vectors, `band` (new), 4096 | 1535 ms (`bidiag`) | 402 ms | 3.82x |
 
 (One matrix; 2.15.0 is the median of `sweep_eigh` and `sweep_svd`, section
 9; before, the routing sweep `20261004-06bc11` and section 1.)
@@ -241,9 +241,17 @@ threadgroup, a simdgroup each, two tiles apart, the tiles handed down
 through threadgroup memory: 60-64 ms a side. And instead of applying Q2 to
 U_B after the divide and conquer, Q1 Q2 and P1 P2 are formed explicitly while
 the CPU runs it (and Q1, P1 while it chases the band), then U and V^T are one
-product each. At 4096: 404 ms against `bidiag`'s 942 (2.33x), 2.59x at 8192,
-1.17x at 1024. Routed from `band_min_k`, which stage 3c of `tune_svd.py`
+product each. The GPU's work then runs back to back (Q1 and P1 queued during
+the reduction, Q2 and P2 released in two chunks as the chase finishes them):
+it is the bottleneck, 363 of the call's 363 ms at 4096. At 4096: 402 ms
+against `bidiag`'s 944 (2.35x; 375 in alternating runs), about 2.7x at 8192,
+1.21x at 1024. Routed from `band_min_k`, which stage 3c of `tune_svd.py`
 fits; 0 until the M5 Pro is re-measured.
+
+And where the GPU is idle during the divide and conquer (`tridiag`,
+`bidiag`, one matrix), its top merges' products now run there: eigh with
+vectors 1.075x at 4096, the SVD on `bidiag` 1.046x
+([divide-and-conquer-gpu-products.md](../proposals/divide-and-conquer-gpu-products.md#done-2026-10-07)).
 
 ## 8. Found along the way
 
@@ -316,25 +324,28 @@ Eigenvalues, in ms:
 
 | N | eigh: CPU | `tridiag` | speedup | eigvalsh: CPU | `tridiag` | band 8 | band 16 | band 32 | best / CPU |
 |---|---|---|---|---|---|---|---|---|---|
-| 1024 | 40.7 | 17.6 | 2.30x | 17.6 | 11.8 | 15.0 | 13.7 | 16.9 | 1.49x |
-| 1536 | 101 | 33.2 | 3.04x | 42.0 | 21.7 | 27.6 | 22.9 | 27.4 | 1.94x |
-| 2048 | 243 | 55.5 | 4.39x | 83.3 | 35.9 | 52.0 | 39.4 | 47.9 | 2.32x |
-| 3072 | 730 | 133 | 5.49x | 209 | 91.2 | 115 | 77.2 | 83.9 | 2.71x |
-| 4096 | 2494 | 306 | 8.15x | 483 | 213 | 222 | 140 | 130 | 3.44x |
-| 8192 | 18293 | 2170 | 8.43x | 2644 | 1656 | 1632 | 726 | 726 | 3.64x |
+| 1024 | 39.9 | 17.6 | 2.27x | 17.6 | 11.8 | 15.0 | 13.7 | 16.9 | 1.49x |
+| 1536 | 99.4 | 32.3 | 3.08x | 42.0 | 21.7 | 27.6 | 22.9 | 27.4 | 1.94x |
+| 2048 | 232 | 51.7 | 4.49x | 83.3 | 35.9 | 52.0 | 39.4 | 47.9 | 2.32x |
+| 3072 | 695 | 122 | 5.71x | 209 | 91.2 | 115 | 77.2 | 83.9 | 2.71x |
+| 4096 | 2382 | 270 | 8.82x | 483 | 213 | 222 | 140 | 130 | 3.44x |
+| 8192 | 18230 | 2083 | 8.75x | 2644 | 1656 | 1632 | 726 | 726 | 3.64x |
 
 Singular values, in ms:
 
 | k | SVD: CPU | `bidiag` | speedup | svdvals: CPU | `bidiag` | band 8 | band 16 | band 32 | best / CPU |
 |---|---|---|---|---|---|---|---|---|---|
-| 512 | 16.7 | 13.2 | 1.27x | 7.6 | 8.9 | | | | 0.86x |
-| 1024 | 78.5 | 34.2 | 2.29x | 36.0 | 21.5 | 20.6 | 20.9 | 29.1 | 1.72x |
-| 1536 | 182 | 69.1 | 2.64x | 86.2 | 47.5 | 38.7 | 33.7 | 46.3 | 2.56x |
-| 2048 | 472 | 125 | 3.79x | 218 | 87.6 | 66.6 | 54.8 | 77.4 | 3.97x |
-| 3072 | 1416 | 386 | 3.67x | 773 | 307 | 153 | 113 | 132 | 6.85x |
-| 4096 | 3527 | 943 | 3.74x | 2070 | 712 | 314 | 197 | 205 | 10.5x |
+| 512 | 16.7 | 13.2 | 1.26x | 7.6 | 8.9 | | | | 0.86x |
+| 1024 | 77.8 | 34.0 | 2.29x | 36.0 | 21.5 | 20.6 | 20.9 | 29.1 | 1.72x |
+| 1536 | 178 | 67.4 | 2.64x | 86.2 | 47.5 | 38.7 | 33.7 | 46.3 | 2.56x |
+| 2048 | 444 | 120 | 3.70x | 218 | 87.6 | 66.6 | 54.8 | 77.4 | 3.97x |
+| 3072 | 1329 | 360 | 3.69x | 773 | 307 | 153 | 113 | 132 | 6.85x |
+| 4096 | 3512 | 944 | 3.72x | 2070 | 712 | 314 | 197 | 205 | 10.5x |
 | 8192 | | | | 12643 | 6028 | 2306 | 1095 | 1094 | 11.5x |
 
+The columns with vectors were measured again after the divide and
+conquer's products moved to the GPU (`tridiag` 4096: 306 ms before); the
+SVD with vectors on `band` is in [svd.md](../svd.md#with-singular-vectors-since-2150).
 The CPU path is 2.14's; its svdvals measured 6-8% slower from 2048 than in
 run `20261004-06bc11` (2070 ms at 4096 against 1949; PyTorch's `sgesdd` took
 2.01 s, as on 2026-10-05), which flatters those svdvals ratios by as much.

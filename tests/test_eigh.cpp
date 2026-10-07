@@ -532,7 +532,9 @@ int main() {
             eval({r.eigenvalues, r.eigenvectors, r.info});
             return r;
         };
-        for (int n : {1, 2, 3, 31, 33, 34, 35, 64, 65, 66, 97, 129, 130, 257, 300, 513, 1024, 1100}) {
+        // From 2048 the divide and conquer's top merges run their products
+        // on the GPU (one matrix: divide_conquer.h's GpuGemm).
+        for (int n : {1, 2, 3, 31, 33, 34, 35, 64, 65, 66, 97, 129, 130, 257, 300, 513, 1024, 1100, 2048}) {
             array A = random_symmetric(1, n, 1000 + n);
             check("tridiag " + std::to_string(n) + "x" + std::to_string(n), A, tri(A, true, true));
         }

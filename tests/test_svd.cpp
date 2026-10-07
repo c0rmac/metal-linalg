@@ -502,7 +502,10 @@ int main() {
     for (auto [M, N] : std::vector<std::pair<int, int>>{{1, 1}, {3, 3}, {33, 33}, {34, 34}, {35, 35},
                                                          {65, 64}, {64, 65}, {100, 97}, {129, 130},
                                                          {300, 300}, {513, 500}, {300, 20}, {20, 300},
-                                                         {600, 100}, {100, 600}, {1024, 1024}, {1100, 1060}})
+                                                         {600, 100}, {100, 600}, {1024, 1024}, {1100, 1060},
+                                                         // the divide and conquer's top products on the GPU,
+                                                         // and U's first K rows of a taller matrix
+                                                         {2048, 2048}, {3000, 2048}})
         run_bidiag("bidiag " + dims(1, M, N), random_matrix(1, M, N, 1000 + M * 3 + N));
     run_bidiag("bidiag " + dims(3, 150, 120), random_matrix(3, 150, 120, 1100));
     // Batches are pipelined over two workspace slots: odd and even counts,
@@ -544,6 +547,9 @@ int main() {
         run_bidiag("bidiag repeated and tiny values 450x400", with_singular_values(450, 400, spec));
         for (int i = 0; i < 350; ++i) close[i] = 1.0f + 1e-6f * (float)i;
         run_bidiag("bidiag clustered values 350x350", with_singular_values(350, 350, close));
+        std::vector<float> big(2048);   // deflation in the merges whose products run on the GPU
+        for (int i = 0; i < 2048; ++i) big[i] = i < 900 ? 3.0f : 1e-3f * (float)(2048 - i);
+        run_bidiag("bidiag repeated and tiny values 2100x2048", with_singular_values(2100, 2048, big));
     }
     {   // singular values alone == with vectors
         array A = random_matrix(1, 300, 260, 1400);

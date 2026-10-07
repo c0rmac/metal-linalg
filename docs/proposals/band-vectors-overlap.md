@@ -1,6 +1,8 @@
 # The band SVD with vectors, overlapped further
 
-Status: proposal, not started (2026-10-07).
+Status: **done** in 2.15.0 (2026-10-07), as far as it goes: the GPU turned
+out to be the bottleneck, so the gain was its idle time, about 6%; see
+[Done](#done-2026-10-07).
 
 ## What
 
@@ -70,3 +72,50 @@ where the steps are closer to balanced.
 `apply_chase` and `bidiag_impl`'s `solve` in `src/svd_bidiag.mm`;
 `pipeline()` in `src/band_chase.cpp`; `bd_chase_apply`'s pass loop in
 `shaders/Svd_Bidiag.metal`.
+
+## Done (2026-10-07)
+
+**The timeline first.** At 4096, before (ms from the call's start, from
+the command buffers' GPU times):
+
+| ms | GPU | CPU |
+|---|---|---|
+| 0-156 | the band reduction | the aggregates' T |
+| 156-162 | idle | Q and P's identities, the tail, encoding Q1 and P1 |
+| 162-194 | Q1, P1 | the chase (162-204) |
+| 194-209 | idle | the chase's end; its blocks' T (204-209) |
+| 209-344 | Q Q2, P P2 | the divide and conquer (209-317), then waiting |
+| 344-385 | U, V^T | the copies |
+
+The GPU's own work is 363 of the 385 ms: it is the bottleneck, not the
+CPU. So step 4 of the plan (the divide and conquer's products on the GPU)
+would only lengthen this path, and what overlap could gain is the GPU's
+idle time, about 21 ms.
+
+**Both gaps closed.**
+
+1. Q and P's identities are written, and Q1 and P1's products encoded and
+   queued, while the GPU still reduces the matrix (in the band reduction's
+   `while_gpu`); the queued command buffer waits on a shared event that the
+   CPU signals once the tail's reflectors are applied (encoding 192 MPS
+   products had taken 4 ms).
+2. The chase runs on threads of its own and publishes how many leading
+   sweeps are finished (`ChaseReflectors::frontier`); meanwhile the calling
+   thread builds the finished groups' T and releases Q2 and P2's GPU work in
+   two chunks of groups (`bd_chase_apply`'s new pass range), each a command
+   buffer waiting on an event. Eight chunks cost 20 ms more GPU time than
+   one dispatch (each strip reloaded a chunk at a time); two cost 0-7.
+
+After: the GPU busy from 0.8 to 363 ms without a gap (the band reduction,
+Q1 and P1 at 155, Q2 and P2 from 187, the products from 322), the call 363
+against 385 ms in the timeline's run. Alternating the two builds
+(`sweep_svd`, with the display busy, which moved separate runs by 7%): 375
+against 391 ms at 4096 (1.04x), 81.9 against 86.7 at 2048 (1.06x).
+
+**What is left** is GPU work: `bd_chase_apply` (133 ms for both sides at
+4096, of which about 43 a side is its steps' latency rather than products),
+Q1 and P1 (32 ms, near MPS's peak), the products (40 ms, at peak), the
+band reduction (154 ms). The CPU is idle through the band reduction; it
+could take part of the GPU's work there (P1 formed on the CPU as the
+aggregates complete, about 137 GFLOP), not measured.
+

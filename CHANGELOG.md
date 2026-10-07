@@ -16,9 +16,12 @@ and what turned up while doing them; measured in
   blocks of 16 sweeps a step, four groups of sweeps at once a threadgroup,
   each a simdgroup two tiles behind the last, tiles handed down through
   threadgroup memory (60-64 ms a side at 4096, where the groups one after
-  another took 176). On an M5 Pro, one square matrix against `bidiag`: 1.17x
-  at 1024, 1.42x at 2048, 2.33x at 4096 (404 ms against 942), 2.59x at 8192;
-  9.1x the CPU path at 4096. Accuracy LAPACK's (reconstruction and
+  another took 176). The GPU's work runs back to back: Q1 and P1's queued
+  during the band reduction, Q2 and P2's released in two chunks as the chase
+  finishes their sweeps (1.04-1.06x over waiting for the chase). On an M5
+  Pro, one square matrix against `bidiag`: 1.21x at 1024, 1.45x at 2048,
+  2.35x at 4096 (402 ms against 944; 375 in alternating runs), about 2.7x
+  at 8192; 8.7x the CPU path at 4096. Accuracy LAPACK's (reconstruction and
   orthogonality 6e-6 at 4096); at 8192 the call keeps about 1.1 GB more than
   `bidiag`. `SVD_DEVICE=band` now means `band` with vectors too (before,
   `bidiag`); `band_min_k` and `SVD_BAND_MIN_K` in the C API, Python, PyTorch
@@ -34,6 +37,12 @@ and what turned up while doing them; measured in
   (`EIGH_DISPATCH_MS`, `SVD_DISPATCH_MS`) now runs a few rounds a dispatch,
   each matrix resuming where it stopped: the same result bit for bit, in the
   same time, about 15 ms a dispatch where one threadgroup ran 1.7-2.8 s.
+- **The divide and conquer's largest products on the GPU**, for one matrix
+  in `tridiag` and `bidiag` (whose GPU is idle meanwhile): products of a
+  gigaflop or more, from the top merges of n ~ 2048, as MPS products on the
+  merges' page-aligned temporaries in place (`GpuGemm`). eigh with vectors
+  1.075x at 4096, the SVD on `bidiag` 1.046x. `bidiag`'s divide and conquer
+  writes straight into its Metal buffers instead of vectors copied there.
 - **The divide and conquer on every core.** With vectors, `tridiag` and
   `bidiag` solved the tridiagonal or bidiagonal problem with LAPACK's
   `sstedc` and `sbdsdc`, on one core. `src/divide_conquer.cpp` walks the same
@@ -93,8 +102,8 @@ and what turned up while doing them; measured in
   2.14's until the M5 Pro is re-measured (they are refitted only from a
   Mac measured at the current kernels).
 - On an M5 Pro, one matrix against the CPU path: svdvals 10.5x at 4096 and
-  11.5x at 8192, eigh 8.2x and 8.4x, eigvalsh 3.4x and 3.6x, the SVD with
-  vectors 3.7x at 4096 on `bidiag` and 9.1x on `band` (2.14: 8.6x, 5.6x,
+  11.5x at 8192, eigh 8.8x and 8.8x, eigvalsh 3.4x and 3.6x, the SVD with
+  vectors 3.7x at 4096 on `bidiag` and 8.7x on `band` (2.14: 8.6x, 5.6x,
   2.9x and 2.3x at 4096); README and the per-solver docs' tables re-measured
   side by side.
 - Fixes: the sweeps' correctness gate failed every backend from N ~ 6500

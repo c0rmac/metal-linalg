@@ -49,10 +49,14 @@
 
 #include <dispatch/dispatch.h>
 
+#include <unistd.h>
+
 #include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
+#include <new>
 #include <numeric>
 #include <vector>
 
@@ -103,13 +107,48 @@ void run(unsigned workers, size_t tasks, const F& f) {
 
 size_t blocks(L n, L per) { return n <= 0 ? 0 : (size_t)((n + per - 1) / per); }
 
-// C (m x n) = A (m x k) B (k x n), column-major, by blocks of C's columns.
+// The GPU's products for this thread's solve, if the caller gave them
+// (GpuGemm): the large merges run on the thread that called the solve,
+// the small ones, which stay on the CPU, on the workers.
+thread_local GpuGemm* tl_gpu = nullptr;
+constexpr double kGpuMinFlops = 1e9;   // a product's 2 m n k, at least, for the GPU
+
+// Page-aligned, zeroed floats, which tl_gpu's products can use in place.
+class Pages {
+public:
+    explicit Pages(size_t floats) {
+        const size_t page = (size_t)getpagesize(), bytes = std::max(page, (floats * 4 + page - 1) / page * page);
+        void* p = nullptr;
+        if (posix_memalign(&p, page, bytes) != 0) throw std::bad_alloc();
+        p_ = static_cast<float*>(p);
+        std::memset(p_, 0, bytes);
+        if ((gpu_ = tl_gpu)) gpu_->add(p_, bytes / 4);
+    }
+    ~Pages() {
+        if (gpu_) gpu_->remove(p_);
+        std::free(p_);
+    }
+    Pages(const Pages&) = delete;
+    Pages& operator=(const Pages&) = delete;
+    float* data() { return p_; }
+private:
+    float* p_ = nullptr;
+    GpuGemm* gpu_ = nullptr;
+};
+
+bool on_gpu(L m, L n, L k, const float* A, L lda, const float* B, L ldb, float* C, L ldc, bool accumulate) {
+    return tl_gpu && 2.0 * m * n * k >= kGpuMinFlops && tl_gpu->gemm(m, n, k, A, lda, B, ldb, C, ldc, accumulate);
+}
+
+// C (m x n) = A (m x k) B (k x n), column-major, by blocks of C's columns
+// (or on the GPU).
 void gemm(unsigned workers, L m, L n, L k, const float* A, L lda, const float* B, L ldb, float* C, L ldc) {
     if (m <= 0 || n <= 0) return;
     if (k <= 0) {
         for (L j = 0; j < n; ++j) std::fill(C + (size_t)j * ldc, C + (size_t)j * ldc + m, 0.0f);
         return;
     }
+    if (on_gpu(m, n, k, A, lda, B, ldb, C, ldc, false)) return;
     run(workers, blocks(n, kGemmCols), [&](size_t t) {
         const L j0 = (L)t * kGemmCols, nj = std::min(kGemmCols, n - j0);
         cblas_sgemm(CblasColMajor, CblasNoTrans, CblasNoTrans, (int)m, (int)nj, (int)k, 1.0f, A, (int)lda,
@@ -212,7 +251,8 @@ L secular_symmetric(unsigned workers, L k, L n, L n1, float* d, float* q, L ldq,
 // slaed1 with slaed3's work over the threads: merges the eigensystems of the
 // two halves, order n1 and n - n1, in d and Q, into that of the whole.
 L merge_symmetric(unsigned workers, L n, float* d, float* q, L ldq, L* indxq, float rho, L n1) {
-    std::vector<float> z(n), dlamda(n), w(n), q2((size_t)n * n);   // slaed2 puts the deflated vectors there too
+    std::vector<float> z(n), dlamda(n), w(n);
+    Pages q2((size_t)n * n);   // slaed2 puts the deflated vectors there too
     std::vector<L> indx(n), indxc(n), indxp(n), coltyp(n);
     for (L j = 0; j < n1; ++j) z[j] = q[(size_t)j * ldq + n1 - 1];   // Q1's last row
     for (L j = n1; j < n; ++j) z[j] = q[(size_t)j * ldq + n1];       // Q2's first
@@ -225,7 +265,7 @@ L merge_symmetric(unsigned workers, L n, float* d, float* q, L ldq, L* indxq, fl
         return 0;
     }
     const L* ctot = coltyp.data();   // slaed2 leaves the column counts by type there
-    std::vector<float> s((size_t)std::max<L>(1, std::max(ctot[0] + ctot[1], ctot[1] + ctot[2])) * k);
+    Pages s((size_t)std::max<L>(1, std::max(ctot[0] + ctot[1], ctot[1] + ctot[2])) * k);
     info = secular_symmetric(workers, k, n, n1, d, q, ldq, rho, dlamda.data(), q2.data(), indxc.data(), ctot,
                              w.data(), s.data());
     if (info) return info;
@@ -424,6 +464,7 @@ L secular_bidiagonal(unsigned workers, L nl, L nr, L sqre, L k, float* d, float*
             return;
         }
         if (rows <= 0 || cols <= 0 || inner <= 0) return;
+        if (on_gpu(rows, cols, inner, A, lda, B, ldb, C, ldc, true)) return;
         run(workers, blocks(cols, kGemmCols), [&](size_t t) {
             const L j0 = (L)t * kGemmCols, nj = std::min(kGemmCols, cols - j0);
             cblas_sgemm(CblasColMajor, CblasNoTrans, CblasNoTrans, (int)rows, (int)nj, (int)inner, 1.0f, A, (int)lda,
@@ -692,7 +733,8 @@ L deflate_bidiagonal(unsigned workers, L nl, L nr, L sqre, L& k, float* d_, floa
 L merge_bidiagonal(unsigned workers, L nl, L nr, L sqre, float* d, float alpha, float beta, float* u, L ldu,
                    float* vt, L ldvt, L* idxq) {
     const L n = nl + nr + 1, m = n + sqre, ldu2 = n, ldvt2 = m;
-    std::vector<float> z(m), dsigma(n), u2((size_t)ldu2 * n), vt2((size_t)ldvt2 * m);
+    std::vector<float> z(m), dsigma(n);
+    Pages u2((size_t)ldu2 * n), vt2((size_t)ldvt2 * m);
     std::vector<L> idx(n), idxc(n), coltyp(n), idxp(n);
     float orgnrm = std::max(std::fabs(alpha), std::fabs(beta));
     d[nl] = 0.0f;
@@ -705,7 +747,7 @@ L merge_bidiagonal(unsigned workers, L nl, L nr, L sqre, float* d, float alpha, 
     L k = 0;
     deflate_bidiagonal(workers, nl, nr, sqre, k, d, z.data(), alpha, beta, u, ldu, vt, ldvt, dsigma.data(), u2.data(),
                        ldu2, vt2.data(), ldvt2, idxp.data(), idx.data(), idxc.data(), idxq, coltyp.data());
-    std::vector<float> q((size_t)k * k);
+    Pages q((size_t)k * k);
     info = secular_bidiagonal(workers, nl, nr, sqre, k, d, q.data(), k, dsigma.data(), u, ldu, u2.data(), ldu2, vt,
                               ldvt, vt2.data(), ldvt2, idxc.data(), coltyp.data(), z.data());
     if (info) return info;
@@ -780,7 +822,16 @@ L dc_bidiagonal(unsigned workers, L n, L sqre, float* d, float* e, float* u, L l
 
 } // namespace
 
-long tridiagonal_eigensystem(uint32_t n, float* d, float* e, float* z, size_t ldz, unsigned threads) {
+// Sets tl_gpu for one solve.
+struct WithGpu {
+    explicit WithGpu(GpuGemm* g) : was(tl_gpu) { tl_gpu = g; }
+    ~WithGpu() { tl_gpu = was; }
+    GpuGemm* was;
+};
+
+long tridiagonal_eigensystem(uint32_t n, float* d, float* e, float* z, size_t ldz, unsigned threads,
+                             GpuGemm* gpu) {
+    const WithGpu with(gpu);
     L N = n, LDZ = (L)ldz, info = 0;
     if (n == 0) return 0;
     if (n <= kSerialMaxN || threads <= 1) {
@@ -828,7 +879,9 @@ long tridiagonal_eigensystem(uint32_t n, float* d, float* e, float* z, size_t ld
     return 0;
 }
 
-long bidiagonal_svd(uint32_t n, float* d, float* e, float* u, size_t ldu, float* vt, size_t ldvt, unsigned threads) {
+long bidiagonal_svd(uint32_t n, float* d, float* e, float* u, size_t ldu, float* vt, size_t ldvt, unsigned threads,
+                    GpuGemm* gpu) {
+    const WithGpu with(gpu);
     L N = n, LDU = (L)ldu, LDVT = (L)ldvt, info = 0;
     if (n == 0) return 0;
     if (n <= kSerialMaxN || threads <= 1) {

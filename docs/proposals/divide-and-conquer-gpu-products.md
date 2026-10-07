@@ -1,6 +1,6 @@
 # The divide and conquer's top products on the GPU
 
-Status: proposal, not started (2026-10-07).
+Status: **done** in 2.15.0 (2026-10-07); see [Done](#done-2026-10-07).
 
 ## What
 
@@ -55,3 +55,26 @@ divide and conquer becomes a larger share.
 `gemm` and `secular_symmetric` / `secular_bidiagonal` in
 `src/divide_conquer.cpp`; the workspaces in `src/eigh_tridiag.mm` and
 `src/svd_bidiag.mm`.
+
+## Done (2026-10-07)
+
+`divide_conquer.h`'s `GpuGemm`: a solve hands any product of 1 GFLOP or
+more (the top merges', from n ~ 2048) to it, which runs it as an MPS product
+and waits; the merges' temporaries (Q2 and S, U2, VT2 and Q) are page-aligned
+allocations (`Pages`) it wraps in place as they are made, and the caller adds
+its output buffers (`MpsGemm` in `metal_runtime.mm`). The hook is per call
+and per thread (the large merges run on the calling thread, the small ones,
+which stay on the CPU, on the workers). The `bidiag` backend's divide and
+conquer now writes straight into its Metal buffers U and VT (U's first K
+rows) instead of vectors copied there after.
+
+Only for one matrix: in a batch the GPU reduces the next matrix meanwhile.
+And not on the `band` backend with vectors, whose GPU is the bottleneck
+([band-vectors-overlap.md](band-vectors-overlap.md#done-2026-10-07)).
+
+M5 Pro, one matrix, against the build before, alternating runs: eigh with
+vectors (`tridiag`) 1.075x at 4096 (278 ms to 259), 1.02x at 2048; the SVD
+with vectors (`bidiag`) 1.046x at 4096 (871 to 832), 1.02x at 2048. Tests at
+2048 (and 3000 x 2048, and deflation-heavy 2100 x 2048) check the GPU's
+path: residual and orthogonality about 3e-6, as before.
+

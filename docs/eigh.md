@@ -225,7 +225,10 @@ next to the rest for eigenvectors, to LAPACK on the CPU:
    secular equation's roots and the vectors, its leaves, merges and the
    large merges' loops spread over threads. On a 4096 tridiagonal from
    `ssytrd` 50 ms against `sstedc`'s 176 on one core, the eigenvalues bit for
-   bit LAPACK's; results do not depend on the number of threads. Eigenvalues
+   bit LAPACK's; results do not depend on the number of threads. For one
+   matrix, whose GPU is idle meanwhile, the top merges' products (from
+   N ~ 2048) run on the GPU as MPS products on the merges' memory in place:
+   eigh 1.075x at 4096. Eigenvalues
    alone by bisection on the GPU from $N = 512$ (since 2.13.0; see
    [backend 5](#backend-5-eigenvalues-alone-in-two-stages-band)), else
    `ssterf`.
@@ -257,11 +260,11 @@ the CPU path, the median of `sweep_eigh`):
 
 | $N$ | eigh: CPU | tridiag | speedup | eigvalsh: CPU | tridiag | speedup |
 |---|---|---|---|---|---|---|
-| 1024 | 0.041 s | 0.018 s | 2.30x | 0.018 s | 0.012 s | 1.49x |
-| 2048 | 0.243 s | 0.055 s | 4.39x | 0.083 s | 0.036 s | 2.32x |
-| 3072 | 0.730 s | 0.133 s | 5.49x | 0.209 s | 0.091 s | 2.30x |
-| 4096 | 2.494 s | 0.306 s | 8.15x | 0.483 s | 0.213 s | 2.27x |
-| 8192 | 18.29 s | 2.170 s | 8.43x | 2.644 s | 1.656 s | 1.60x |
+| 1024 | 0.040 s | 0.018 s | 2.27x | 0.018 s | 0.012 s | 1.49x |
+| 2048 | 0.232 s | 0.052 s | 4.49x | 0.083 s | 0.036 s | 2.32x |
+| 3072 | 0.695 s | 0.122 s | 5.71x | 0.209 s | 0.091 s | 2.30x |
+| 4096 | 2.382 s | 0.270 s | 8.82x | 0.483 s | 0.213 s | 2.27x |
+| 8192 | 18.23 s | 2.083 s | 8.75x | 2.644 s | 1.656 s | 1.60x |
 
 With eigenvectors the gain grows with $N$, because the CPU's reduction
 falls further behind memory bandwidth; for eigenvalues alone the CPU already
@@ -543,8 +546,8 @@ sharing the batch with the CPU path, see [Dispatch](#dispatch)):
 Against a CPU that uses its cores the GPU's region is small: large batches
 of matrices up to N = 64, where `ql`, shared with the CPU from about 1024
 matrices, is up to 2.2x faster than the CPU alone, and
-one large matrix, which the `tridiag` backend takes (backend 3; 3.04x at
-N = 1536, 4.39x at 2048, 8.15x at 4096), and for its eigenvalues alone
+one large matrix, which the `tridiag` backend takes (backend 3; 3.08x at
+N = 1536, 4.49x at 2048, 8.82x at 4096), and for its eigenvalues alone
 `tridiag` or, from 4096, `band` (backend 5; 3.44x at 4096). Without `ql` the
 GPU would win almost nowhere: at 4096 matrices of 32×32 the whole-matrix
 Jacobi kernel takes 16.4 ms and the CPU 9.4 ms. `ql`, alone and sharing the batch with the CPU,

@@ -305,6 +305,11 @@ void pipeline(long n, long nb, long P, const M& A, const ChaseReflectors* rec = 
                 done[s].store(sweep.task, std::memory_order_release);
             }
             done[s].store(LONG_MAX, std::memory_order_release);
+            if (rec && rec->frontier) {   // the leading sweeps finished
+                long f = rec->frontier->load(std::memory_order_acquire);
+                while (f < n - 1 && done[f].load(std::memory_order_acquire) == LONG_MAX)
+                    if (rec->frontier->compare_exchange_weak(f, f + 1, std::memory_order_acq_rel)) ++f;
+            }
         }
     };
     if (P == 1) {
