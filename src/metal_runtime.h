@@ -352,6 +352,41 @@ bool band_reduce_symmetric(id<MTLBuffer> A, uint32_t n, uint32_t lda, uint32_t b
 // The GPU's blocks in the symmetric reduction of order n.
 uint32_t band_blocks_symmetric(uint32_t n, uint32_t b);
 
+// The blocked QR (qr_blocked.mm) on the band reduction's panel kernels.
+// A (m x n, row-major, ld lda, in place) <- H_j^T A for its column panels'
+// H_j = I - V_j T_j V_j^T, b columns each, while (j + 1) b <= min(m, n) and
+// m - j b >= 2 b: R in A's upper triangle there, the rest of those columns
+// scratch. The panels are applied within aggregates of 128 columns, then
+// each aggregate's I - Y Ta Y^T to the columns right of it. Kept: each
+// block's V (row-major, at k (ldv + 1) in v, k = j b, zeros above it in v),
+// T (ld 32, at j 1024 in t), and each aggregate's Ta (ld 128, 128^2 apart in
+// ta). g (128 x 128), z and z2 (128 x ldw, ldw >= max(n, K)) scratch.
+struct QrStore {
+    id<MTLBuffer> v, t, ta, g, z, z2;
+    uint32_t ldv, ldw;
+};
+// The panel width for m rows (the TSQR's 128 * 1024 / b rows at most), 0 if
+// none fits.
+uint32_t qr_block_width(uint32_t m);
+uint32_t qr_blocks_count(uint32_t m, uint32_t n, uint32_t b);
+// Encodes the blocks, starting in cb, committing it and the next ones as it
+// goes (into `committed`; cb is left the last, uncommitted); returns the
+// columns done.
+uint32_t qr_blocks(id<MTLCommandBuffer> __strong& cb, id<MTLBuffer> A, uint32_t m, uint32_t n, uint32_t lda,
+                   uint32_t b, const QrStore& st, std::vector<id<MTLCommandBuffer>>& committed);
+// Q (m x K row-major, ld ldq) <- H_0 ... H_{blocks - 1} Q, by aggregates,
+// aggregate a on Q's rows and columns from its first (the rest of those rows
+// zero in a Q formed from the identity).
+void qr_blocks_apply(id<MTLCommandBuffer> cb, id<MTLBuffer> Q, uint32_t m, uint32_t K, uint32_t ldq, uint32_t b,
+                     uint32_t blocks, const QrStore& st);
+// R (k x n row-major) = up times A's upper triangle (ld lda), zeros below.
+void qr_r_out(id<MTLCommandBuffer> cb, id<MTLBuffer> A, id<MTLBuffer> R, uint32_t k, uint32_t n, uint32_t lda,
+              float up);
+// dst = scale src, n floats.
+void qr_scale_copy(id<MTLCommandBuffer> cb, id<MTLBuffer> src, id<MTLBuffer> dst, size_t n, float scale);
+id<MTLCommandQueue> qr_queue();
+id<MTLDevice> qr_device();
+
 // By bisection on the GPU (bisect.mm): the eigenvalues of the symmetric
 // tridiagonal (d, n; e, n - 1) into w, ascending, or the singular values of
 // the upper bidiagonal (d, e) into s, descending. False, and nothing done,

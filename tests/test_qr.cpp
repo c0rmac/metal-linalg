@@ -156,6 +156,54 @@ int main() {
     run("batch 2 x 512x256", detail::qr_streaming_amx_reduced, random_matrix(2, 512, 256, 16));
     run("600x600 (unaligned)", detail::qr_streaming_amx_reduced, random_matrix(1, 600, 600, 17));
 
+    std::printf("\n[ backend: qr_streaming_amx_reduced, its own kernels for one matrix ]\n");
+    setenv("QR_BLOCKED", "0", 1);
+    run("512x512 (streaming)",            detail::qr_streaming_amx_reduced, random_matrix(1, 512, 512, 18));
+    run("600x600 (streaming, unaligned)", detail::qr_streaming_amx_reduced, random_matrix(1, 600, 600, 19));
+    unsetenv("QR_BLOCKED");
+
+    // The blocked QR: panels of 16 columns up to 8192 rows, 8 above; the
+    // panels' TSQR from 129 rows; aggregates of 128 columns, a short last
+    // one; the last columns (fewer than 16, or rows fewer than 32) by
+    // LAPACK, wide ones too.
+    std::printf("\n[ backend: qr_blocked ]\n");
+    run("32x32 (LAPACK only)",      detail::qr_blocked, random_matrix(1, 32, 32, 40));
+    run("40x40",                    detail::qr_blocked, random_matrix(1, 40, 40, 41));
+    run("128x128",                  detail::qr_blocked, random_matrix(1, 128, 128, 42));
+    run("300x300",                  detail::qr_blocked, random_matrix(1, 300, 300, 43));
+    run("1000x300 (tall)",          detail::qr_blocked, random_matrix(1, 1000, 300, 44));
+    run("300x1000 (wide)",          detail::qr_blocked, random_matrix(1, 300, 1000, 45));
+    run("1023x517",                 detail::qr_blocked, random_matrix(1, 1023, 517, 46));
+    run("1024x1024",                detail::qr_blocked, random_matrix(1, 1024, 1024, 47));
+    run("2100x2048",                detail::qr_blocked, random_matrix(1, 2100, 2048, 48));
+    run("8192x48 (tall, 16-wide)",  detail::qr_blocked, random_matrix(1, 8192, 48, 49));
+    run("9000x40 (8-wide panels)",  detail::qr_blocked, random_matrix(1, 9000, 40, 50));
+    run("batch 3 x 200x150",        detail::qr_blocked, random_matrix(3, 200, 150, 51));
+    run("batch slice (unaligned) 300x200", detail::qr_blocked,
+        reshape(slice(random_matrix(3, 300, 200, 52), {1, 0, 0}, {2, 300, 200}), {300, 200}));
+    run("transposed view 600x64",   detail::qr_blocked, transpose(random_matrix(1, 64, 600, 53)));
+    {
+        std::vector<float> eye(256 * 256, 0.0f);
+        for (int i = 0; i < 256; ++i) eye[i * 256 + i] = 1.0f;
+        run("identity 256x256",     detail::qr_blocked, from_values(eye, {256, 256}));
+        run("zeros 256x256",        detail::qr_blocked, from_values(std::vector<float>(256 * 256, 0.0f), {256, 256}));
+        run("constant 300x200",     detail::qr_blocked, from_values(std::vector<float>(300 * 200, 0.5f), {300, 200}));
+    }
+    ++g_checks;
+    {
+        std::vector<float> v(300 * 300, 1.0f);
+        v[7] = NAN;
+        auto [Q, R] = detail::qr_blocked(from_values(v, {300, 300}));
+        eval({Q, R});
+        if (!all(isnan(Q)).item<bool>() || !all(isnan(R)).item<bool>()) fail("blocked NaN input", "not NaN");
+        else std::printf("  ok    %-46s\n", "NaN input gives NaN");
+    }
+    ++g_checks;
+    if (core::detail::qr_blocked_fits(16385, 64) || !core::detail::qr_blocked_fits(16384, 64) ||
+        core::detail::qr_blocked_fits(31, 31))
+        fail("qr_blocked_fits", "wrong");
+    else std::printf("  ok    %-46s\n", "qr_blocked_fits: 32 .. 16384 rows");
+
     std::printf("\n[ backend: qr_cpu (LAPACK) ]\n");
     run("1x1",             detail::qr_cpu, random_matrix(1, 1, 1, 90));
     run("8x8",             detail::qr_cpu, random_matrix(1, 8, 8, 91));
@@ -283,7 +331,8 @@ int main() {
             char tag[32];
             std::snprintf(tag, sizeof tag, "x %.0e", sc);
             scaled(std::string("unblocked 64x64 ") + tag,  detail::qr_unblocked, 1, 64, 64, sc, 50);
-            scaled(std::string("reduced 512x64 ") + tag,   detail::qr_streaming_amx_reduced, 1, 512, 64, sc, 51);
+            scaled(std::string("reduced 512x64 ") + tag,   detail::qr_streaming_amx_reduced, 2, 512, 64, sc, 51);
+            scaled(std::string("blocked 512x200 ") + tag,  detail::qr_blocked, 1, 512, 200, sc, 56);
             scaled(std::string("complete 8x8 ") + tag,     detail::qr_streaming_amx_complete, 1, 8, 8, sc, 52);
             scaled(std::string("cpu 64x64 ") + tag,        detail::qr_cpu, 1, 64, 64, sc, 55);
         }
@@ -336,6 +385,10 @@ int main() {
         tight("rank 5 + 1e-5 noise, 600x16 (reduced)",   detail::qr_streaming_amx_reduced, low_rank(600, 16, 5, 1e-5f, 86));
         tight("rank 5 + 1e-4 noise, 64x16 (unblocked)",  detail::qr_unblocked, low_rank(64, 16, 5, 1e-4f, 89));
         tight("rank 5 of 600x16 (cpu)",                  detail::qr_cpu, low_rank(600, 16, 5, 0.0f, 92));
+        for (int k = 0; k < 3; ++k)
+            tight("rank 20 of 600x300, instance " + std::to_string(k) + " (blocked)", detail::qr_blocked,
+                  low_rank(600, 300, 20, 0.0f, 95 + 3 * k));
+        tight("rank 20 + 1e-5 noise, 600x300 (blocked)", detail::qr_blocked, low_rank(600, 300, 20, 1e-5f, 104));
     }
 
     // -------------------------------------------------------------------------

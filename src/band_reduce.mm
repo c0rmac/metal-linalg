@@ -38,6 +38,7 @@
 #include <map>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -57,6 +58,7 @@ constexpr uint32_t kApplyPer    = 64;    // rows or columns a threadgroup of bd_
 constexpr uint32_t kBandMax  = 32;          // the panel kernels' widest instance
 constexpr uint32_t kLeafRows = 128;         // must match 32 * PANEL_R: a short panel's or a TSQR leaf's rows, at most
 constexpr uint32_t kLw       = 3 * kBandMax;   // the [V W/Y ...] buffer's ld
+constexpr uint32_t kQrAgg    = 128;         // the blocked QR's aggregate of panels, columns
 
 struct Panels { id<MTLComputePipelineState> panel, leaf, top, rebuild; };
 struct Small { id<MTLComputePipelineState> partial, sy, ge, sbupdate; };
@@ -75,6 +77,7 @@ struct State {
     Panels panels[3];
     Small  small;
     bool   have = false;
+    id<MTLComputePipelineState> scale_copy, merge_t, r_out;
     Buffers buf;
 
     const Panels& kernels(uint32_t b) {
@@ -133,11 +136,23 @@ MPSMatrix* mps(id<MTLBuffer> b, size_t off, uint32_t rows, uint32_t cols, uint32
     return [[MPSMatrix alloc] initWithBuffer:b offset:off * 4 descriptor:d];
 }
 
+// The products' kernels by shape, reused: making one costs more than
+// encoding it, and a reduction encodes hundreds to thousands, of shapes that
+// recur from call to call. A thread's own (MPS kernels are not thread-safe),
+// cleared when it grows large.
 void gemm(id<MTLDevice> dev, id<MTLCommandBuffer> cb, MPSMatrix* A, bool ta, MPSMatrix* B, bool tb, MPSMatrix* C,
           uint32_t m, uint32_t n, uint32_t k, double alpha, double beta) {
-    MPSMatrixMultiplication* g = [[MPSMatrixMultiplication alloc] initWithDevice:dev transposeLeft:ta
-        transposeRight:tb resultRows:m resultColumns:n interiorColumns:k alpha:alpha beta:beta];
-    [g encodeToCommandBuffer:cb leftMatrix:A rightMatrix:B resultMatrix:C];
+    using Key = std::tuple<uint32_t, uint32_t, uint32_t, int, double, double>;
+    thread_local std::map<Key, MPSMatrixMultiplication*> kernels;
+    const Key key{m, n, k, (ta ? 1 : 0) | (tb ? 2 : 0), alpha, beta};
+    auto it = kernels.find(key);
+    if (it == kernels.end()) {
+        if (kernels.size() >= 8192) kernels.clear();
+        MPSMatrixMultiplication* g = [[MPSMatrixMultiplication alloc] initWithDevice:dev transposeLeft:ta
+            transposeRight:tb resultRows:m resultColumns:n interiorColumns:k alpha:alpha beta:beta];
+        it = kernels.insert_or_assign(key, g).first;
+    }
+    [it->second encodeToCommandBuffer:cb leftMatrix:A rightMatrix:B resultMatrix:C];
 }
 
 // The small products' first kernel: partials of A^T B over the n rows of
@@ -162,19 +177,20 @@ void small_partials(const Small& sk, const Buffers& w, id<MTLComputeCommandEncod
 // a row).
 void panel(const Panels& pk, const Buffers& w, id<MTLCommandBuffer> cb, id<MTLBuffer> A, size_t off, PanelParams pp,
            id<MTLBuffer> vout, size_t voff, id<MTLBuffer> tout, size_t toff = 0, id<MTLBuffer> vk = nil,
-           size_t vkoff = 0, uint32_t ldk = 0) {
+           size_t vkoff = 0, uint32_t ldk = 0, id<MTLBuffer> vt = nil, size_t vtoff = 0) {
     const uint32_t leaves = (pp.rows + kLeafRows - 1) / kLeafRows;
     pp.leaf = (pp.rows + leaves - 1) / leaves;
     pp.ldw = kLw;
     pp.ldk = ldk;
     if (vk) pp.flags |= 16u;
     else vk = w.bv;   // bound, unused
+    if (!vt) vt = w.bvt;   // V T's, ld 32
     id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
     if (leaves == 1) {
         [enc setComputePipelineState:pk.panel];
         [enc setBuffer:A offset:off * 4 atIndex:0];
         [enc setBuffer:vout offset:voff * 4 atIndex:1];
-        [enc setBuffer:w.bvt offset:0 atIndex:2];
+        [enc setBuffer:vt offset:vtoff * 4 atIndex:2];
         [enc setBuffer:w.br offset:0 atIndex:3];
         [enc setBuffer:tout offset:toff * 4 atIndex:4];
         [enc setBytes:&pp length:sizeof pp atIndex:5];
@@ -203,7 +219,7 @@ void panel(const Panels& pk, const Buffers& w, id<MTLCommandBuffer> cb, id<MTLBu
         [enc setComputePipelineState:pk.rebuild];
         [enc setBuffer:w.bsc offset:0 atIndex:0];
         [enc setBuffer:vout offset:voff * 4 atIndex:1];
-        [enc setBuffer:w.bvt offset:0 atIndex:2];
+        [enc setBuffer:vt offset:vtoff * 4 atIndex:2];
         [enc setBuffer:w.br offset:0 atIndex:3];
         [enc setBuffer:tout offset:toff * 4 atIndex:4];
         [enc setBytes:&pp length:sizeof pp atIndex:5];
@@ -261,6 +277,135 @@ void general_tail(float* A, uint32_t m, uint32_t n, uint32_t lda, uint32_t b, ui
 }
 
 } // namespace
+
+uint32_t qr_block_width(uint32_t m) {
+    for (uint32_t b : {16u, 8u})   // 32 took 1.15x 16's time at 1024-4096 (its panels)
+        if ((size_t)m * b <= (size_t)kLeafRows * 1024) return b;
+    return 0;
+}
+
+uint32_t qr_blocks_count(uint32_t m, uint32_t n, uint32_t b) {
+    const uint32_t K = std::min(m, n);
+    uint32_t j = 0;
+    while ((j + 1) * b <= K && m - j * b >= 2 * b) ++j;
+    return j;
+}
+
+// An aggregate's T from its panels' (bd_merge_t), into st.ta's slot a.
+void merge_t(State& s, id<MTLCommandBuffer> cb, const QrStore& st, uint32_t j0, uint32_t np, uint32_t b,
+             uint32_t a) {
+    if (!s.merge_t) s.merge_t = make_pipeline(s.rt.device, s.rt.library, @"bd_merge_t", nil);
+    const uint32_t p[2] = {np, b};
+    id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+    [enc setComputePipelineState:s.merge_t];
+    [enc setBuffer:st.g offset:0 atIndex:0];
+    [enc setBuffer:st.t offset:(size_t)j0 * 1024 * 4 atIndex:1];
+    [enc setBuffer:st.ta offset:(size_t)a * kQrAgg * kQrAgg * 4 atIndex:2];
+    [enc setBytes:p length:sizeof p atIndex:3];
+    [enc dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(1024, 1, 1)];
+    [enc endEncoding];
+}
+
+uint32_t qr_blocks(id<MTLCommandBuffer> __strong& cb, id<MTLBuffer> A, uint32_t m, uint32_t n, uint32_t lda,
+                   uint32_t b, const QrStore& st, std::vector<id<MTLCommandBuffer>>& committed) {
+    State& s = State::shared();
+    const Panels& pk = s.kernels(b);
+    Buffers& w = s.buffers(m, n);
+    id<MTLDevice> dev = s.rt.device;
+    const uint32_t blocks = qr_blocks_count(m, n, b), per = kQrAgg / b;
+    // Y = [V_j0 ...] an aggregate's: V's zeros above each panel's rows
+    id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
+    [blit fillBuffer:st.v range:NSMakeRange(0, st.v.length) value:0];
+    [blit endEncoding];
+    for (uint32_t j0 = 0, a = 0; j0 < blocks; j0 += per, ++a) {
+        // A command buffer for every aggregate or two, so that the GPU starts
+        // on the first while the CPU encodes the rest (at 4096, 1500 kernels
+        // and products: several ms)
+        if (a == 1 || (a > 1 && a % 2 == 0)) {
+            [cb commit];
+            committed.push_back(cb);
+            cb = [s.rt.queue commandBuffer];
+        }
+        const uint32_t j1 = std::min(blocks, j0 + per), k0 = j0 * b, wa = (j1 - j0) * b, ma = m - k0;
+        for (uint32_t j = j0; j < j1; ++j) {
+            const uint32_t k = j * b, m1 = m - k, nr = k0 + wa - k - b;
+            const size_t akk = (size_t)k * lda + k;
+            // R in place, rows read contiguously (rs = lda); V and T kept, V T
+            // for the aggregate's columns right of the panel: C <- H^T C as
+            // W = (V T)^T C, C -= V W
+            panel(pk, w, cb, A, akk, PanelParams{m1, b, lda, 1, st.ldv, 1u, 0, 0, 0, 0, 0}, st.v,
+                  (size_t)k * st.ldv + k, st.t, (size_t)j * 1024);
+            if (nr > 0) {
+                gemm(dev, cb, mps(w.bvt, 0, m1, b, 32), true, mps(A, akk + b, m1, nr, lda), false,
+                     mps(st.z, 0, b, nr, st.ldw), b, nr, m1, 1, 0);
+                gemm(dev, cb, mps(st.v, (size_t)k * st.ldv + k, m1, b, st.ldv), false, mps(st.z, 0, b, nr, st.ldw),
+                     false, mps(A, akk + b, m1, nr, lda), m1, nr, b, -1, 1);
+            }
+        }
+        // The aggregate's T, from G = Y^T Y
+        MPSMatrix* Y = mps(st.v, (size_t)k0 * st.ldv + k0, ma, wa, st.ldv);
+        gemm(dev, cb, Y, true, Y, false, mps(st.g, 0, wa, wa, kQrAgg), wa, wa, ma, 1, 0);
+        merge_t(s, cb, st, j0, j1 - j0, b, a);
+        // The columns right of the aggregate: Z = Y^T C, W = Ta^T Z, C -= Y W
+        const uint32_t n1 = n - k0 - wa;
+        if (n1 > 0) {
+            const size_t ac = (size_t)k0 * lda + k0 + wa;
+            gemm(dev, cb, Y, true, mps(A, ac, ma, n1, lda), false, mps(st.z, 0, wa, n1, st.ldw), wa, n1, ma, 1, 0);
+            gemm(dev, cb, mps(st.ta, (size_t)a * kQrAgg * kQrAgg, wa, wa, kQrAgg), true, mps(st.z, 0, wa, n1, st.ldw),
+                 false, mps(st.z2, 0, wa, n1, st.ldw), wa, n1, wa, 1, 0);
+            gemm(dev, cb, Y, false, mps(st.z2, 0, wa, n1, st.ldw), false, mps(A, ac, ma, n1, lda), ma, n1, wa, -1, 1);
+        }
+    }
+    return blocks * b;
+}
+
+void qr_blocks_apply(id<MTLCommandBuffer> cb, id<MTLBuffer> Q, uint32_t m, uint32_t K, uint32_t ldq, uint32_t b,
+                     uint32_t blocks, const QrStore& st) {
+    id<MTLDevice> dev = State::shared().rt.device;
+    const uint32_t per = kQrAgg / b, aggs = (blocks + per - 1) / per;
+    for (uint32_t a = aggs; a-- > 0;) {
+        // Q(k0:, k0:) <- (I - Y Ta Y^T) Q(k0:, k0:): X = Y^T Q, X <- Ta X, Q -= Y X
+        const uint32_t j0 = a * per, j1 = std::min(blocks, j0 + per), k0 = j0 * b, wa = (j1 - j0) * b,
+                       ma = m - k0, nc = K - k0;
+        const size_t qkk = (size_t)k0 * ldq + k0;
+        MPSMatrix* Y = mps(st.v, (size_t)k0 * st.ldv + k0, ma, wa, st.ldv);
+        gemm(dev, cb, Y, true, mps(Q, qkk, ma, nc, ldq), false, mps(st.z, 0, wa, nc, st.ldw), wa, nc, ma, 1, 0);
+        gemm(dev, cb, mps(st.ta, (size_t)a * kQrAgg * kQrAgg, wa, wa, kQrAgg), false, mps(st.z, 0, wa, nc, st.ldw),
+             false, mps(st.z2, 0, wa, nc, st.ldw), wa, nc, wa, 1, 0);
+        gemm(dev, cb, Y, false, mps(st.z2, 0, wa, nc, st.ldw), false, mps(Q, qkk, ma, nc, ldq), ma, nc, wa, -1, 1);
+    }
+}
+
+void qr_scale_copy(id<MTLCommandBuffer> cb, id<MTLBuffer> src, id<MTLBuffer> dst, size_t n, float scale) {
+    State& s = State::shared();
+    if (!s.scale_copy) s.scale_copy = make_pipeline(s.rt.device, s.rt.library, @"bd_scale_copy", nil);
+    const uint32_t count = (uint32_t)n;
+    id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+    [enc setComputePipelineState:s.scale_copy];
+    [enc setBuffer:src offset:0 atIndex:0];
+    [enc setBuffer:dst offset:0 atIndex:1];
+    [enc setBytes:&scale length:sizeof scale atIndex:2];
+    [enc setBytes:&count length:sizeof count atIndex:3];
+    [enc dispatchThreads:MTLSizeMake(n, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+    [enc endEncoding];
+}
+
+void qr_r_out(id<MTLCommandBuffer> cb, id<MTLBuffer> A, id<MTLBuffer> R, uint32_t k, uint32_t n, uint32_t lda,
+              float up) {
+    State& s = State::shared();
+    if (!s.r_out) s.r_out = make_pipeline(s.rt.device, s.rt.library, @"bd_qr_r", nil);
+    struct { uint32_t k, n, lda; float up; } p{k, n, lda, up};
+    id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+    [enc setComputePipelineState:s.r_out];
+    [enc setBuffer:A offset:0 atIndex:0];
+    [enc setBuffer:R offset:0 atIndex:1];
+    [enc setBytes:&p length:sizeof p atIndex:2];
+    [enc dispatchThreads:MTLSizeMake(n, k, 1) threadsPerThreadgroup:MTLSizeMake(32, 8, 1)];
+    [enc endEncoding];
+}
+
+id<MTLCommandQueue> qr_queue() { return State::shared().rt.queue; }
+id<MTLDevice> qr_device() { return State::shared().rt.device; }
 
 uint32_t band_blocks(uint32_t n, uint32_t b) { return n >= 2 * b ? (n - 2 * b) / b + 1 : 0; }
 

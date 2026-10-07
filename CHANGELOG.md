@@ -6,6 +6,16 @@ The proposals left after 2.13.0 ([docs/proposals/](docs/proposals/README.md)),
 and what turned up while doing them; measured in
 [the 2.15.0 study](docs/studies/proposals-2-15-apple-m5-pro.md).
 
+- **A blocked QR for large matrices** (`qr_blocked`): the band reduction's
+  panel kernels (TSQR for tall panels) on the row-major matrix in place,
+  panels of 16 columns gathered into aggregates of 128 whose T is merged on
+  the GPU, the updates and Q's formation as rank-128 MPS products, the last
+  columns by LAPACK. The reduced backend hands it one matrix, or a few large
+  ones (`qr_blocked_preferred`, `QR_BLOCKED=0` to turn it off). On an M5 Pro,
+  one matrix: 2.1x the streaming kernels at 1024, 2.6x at 2048, 3.7x at 4096
+  (62 ms against 231, and 634 on the CPU), 5x on tall 4096 x 1024 and 8192 x
+  512 (12 and 10 ms against 63-67 and 49-64). Accuracy LAPACK's or a little
+  better. Kernel epoch qr 4: the routing is re-measured with it.
 - **The SVD with vectors by the two-stage reduction** (`band` with vectors,
   `svd_band_vectors`, routed from the new `band_min_k`): the band reduction
   keeps its reflectors (written straight into blocks of 128 as the panels
@@ -127,8 +137,9 @@ and what turned up while doing them; measured in
   solved again in double precision (`dbdsdc`, `dstedc`; 0.3 s at 2048), and
   by QR iteration if that fails too.
 - New proposals: the CPU path's divide and conquer, the divide and
-  conquer's products on the GPU, and the band SVD with vectors overlapped
-  further.
+  conquer's products on the GPU, the band SVD with vectors overlapped
+  further, the blocked QR for a batch at once, and its panels under its
+  trailing update.
 
 ## 2.14.0 (2026-10-05)
 

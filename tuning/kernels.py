@@ -31,7 +31,7 @@ marked stale, rather than an estimate. The library reports the state at run time
 and docs/measurements.md shows it for every chip.
 """
 
-KERNEL_EPOCHS = {"qr": 3, "eigh": 6, "svd": 8}
+KERNEL_EPOCHS = {"qr": 4, "eigh": 6, "svd": 8}
 # The versions from which the CPU path spreads a batch over every core (2.9.0).
 MIN_EPOCHS = {"qr": 2, "eigh": 2, "svd": 3}
 
@@ -87,6 +87,10 @@ HISTORY = [
      "753 ms to 100 at 4096): the SVD with vectors 1.7-1.9x at 2048-4096; the band backend's panels "
      "and small products are faster: svdvals 1.1-1.3x; and the band backend takes singular vectors "
      "too (band_min_k): 2.3x bidiag at 4096"),
+    ("qr", 4, "2.15.0", "2026-10-07",
+     "the reduced backend hands one matrix, or a few large ones, to the blocked QR (the band "
+     "reduction's panels, aggregates of 128 columns, MPS products): 2.1x at 1024, 2.6x at 2048, "
+     "3.7x at 4096, 5x on tall 4096 x 1024 and 8192 x 512"),
 ]
 
 REQUIRED = {
@@ -138,7 +142,8 @@ def added(op, backend):
 # the two-stage and divide-and-conquer pieces serve both eigh and the SVD.
 _SHARED = ["src/metal_runtime", "src/blas_threading"]
 _BAND = ["src/band_", "src/bisect", "src/divide_conquer"]
-_QR = ["shaders/QR_", "src/qr"] + _SHARED
+# The blocked QR runs on the band reduction's panel kernels.
+_QR = ["shaders/QR_", "src/qr", "src/band_reduce", "shaders/Svd_Bidiag"] + _SHARED
 _JACOBI = ["shaders/eigh_jacobi_common.h", "shaders/block_jacobi_common.h"]
 PATHS = {
     "qr": _QR,

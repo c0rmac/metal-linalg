@@ -1093,6 +1093,57 @@ kernel void bd_restore(device float* Ak [[buffer(0)]], device const float* d [[b
     Ak[j + (j + 1) * q.lda] = e[q.k + j];
 }
 
+// The blocked QR's aggregates (qr_blocked.mm): the T of np consecutive
+// panels' reflectors, I - Y Ta Y^T = H_0 ... H_{np-1} with Y = [V_0 ...],
+// from the panels' T's (Tb, ld 32, 1024 apart) and G = Y^T Y (ld 128): block
+// column q of Ta is -Ta(0:c0, 0:c0) G(0:c0, q) T_q, c0 = q b. Ta ld 128.
+kernel void bd_merge_t(device const float* G [[buffer(0)]], device const float* Tb [[buffer(1)]],
+                       device float* Ta [[buffer(2)]], constant uint2& p [[buffer(3)]],
+                       uint t [[thread_position_in_threadgroup]], uint nt [[threads_per_threadgroup]]) {
+    threadgroup float X[128 * 32];
+    const uint np = p.x, b = p.y, w = np * b;
+    for (uint e = t; e < w * w; e += nt) {
+        const uint i = e / w, c = e % w;
+        Ta[i * 128 + c] = i / b == c / b ? Tb[(i / b) * 1024 + (i % b) * 32 + c % b] : 0.0f;
+    }
+    threadgroup_barrier(mem_flags::mem_device);
+    for (uint q = 1; q < np; ++q) {
+        const uint c0 = q * b;
+        device const float* Tq = Tb + q * 1024;
+        for (uint e = t; e < c0 * b; e += nt) {   // X = G(0:c0, c0:c0 + b) T_q
+            const uint i = e / b, c = e % b;
+            float s = 0.0f;
+            for (uint k = 0; k <= c; ++k) s = fma(G[i * 128 + c0 + k], Tq[k * 32 + c], s);
+            X[i * 32 + c] = s;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        for (uint e = t; e < c0 * b; e += nt) {   // Ta(0:c0, c0:c0 + b) = -Ta(0:c0, 0:c0) X
+            const uint i = e / b, c = e % b;
+            float s = 0.0f;
+            for (uint k = i; k < c0; ++k) s = fma(Ta[i * 128 + k], X[k * 32 + c], s);
+            Ta[i * 128 + c0 + c] = -s;
+        }
+        threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
+    }
+}
+
+// The blocked QR's output R (k x n, row-major) from A's upper triangle (ld
+// lda), scaled back by `up`.
+struct QrROut { uint k, n, lda; float up; };
+kernel void bd_qr_r(device const float* A [[buffer(0)]], device float* R [[buffer(1)]],
+                    constant QrROut& p [[buffer(2)]], uint2 g [[thread_position_in_grid]]) {
+    if (g.y >= p.k || g.x >= p.n) return;
+    R[(ulong)g.y * p.n + g.x] = g.x >= g.y ? p.up * A[(ulong)g.y * p.lda + g.x] : 0.0f;
+}
+
+// The blocked QR's input (qr_blocked.mm): dst = s src, n floats, s the power
+// of two that scales the matrix into [0.5, 1) for the panel kernels.
+kernel void bd_scale_copy(device const float* src [[buffer(0)]], device float* dst [[buffer(1)]],
+                          constant float& s [[buffer(2)]], constant uint& n [[buffer(3)]],
+                          uint i [[thread_position_in_grid]]) {
+    if (i < n) dst[i] = s * src[i];
+}
+
 // =============================================================================
 // The two-stage SVD with vectors: the bulge chase's reflectors applied on the
 // GPU (svd_bidiag.mm), X <- Q^T X with X = M^T for M column-major: M <- M Q,

@@ -121,6 +121,13 @@ void qr_streaming_amx_reduced(const Matrices& a, float* q, float* r) {
     const uint original_K = std::min(original_M, original_N);
     const uint batch      = a.batch;
     if (original_K == 0 || batch == 0) return;
+    // One matrix, or a few large ones: the blocked QR (qr_blocked.mm), whose
+    // updates are MPS products where these kernels stream each panel's
+    // update through a threadgroup a 32-column tile.
+    if (qr_blocked_preferred(original_M, original_N, batch)) {
+        qr_blocked(a, q, r);
+        return;
+    }
     AutoreleasePool pool;
 
     const uint M_pad = pad_up(original_M, 32);

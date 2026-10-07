@@ -9,6 +9,8 @@ Apple M5 Pro's (20 GPU cores, 18 CPU cores).
 
 | proposal | affects | time at stake | effort | expected gain |
 |---|---|---|---|---|
+| [The blocked QR's panels under its trailing update](qr-look-ahead.md) | QR, one large matrix | the forward pass's panels (25 ms of 62 at 4096) and trailing updates (14) one after the other | about a day | up to ~1.2x at 4096 |
+| [The blocked QR for a batch at once](qr-blocked-batched.md) | QR, batches of 4-16 matrices of 512-2048 | the blocked QR's cost the batch times one matrix's; the CPU wins these | 2-3 days | 2-3x the CPU path |
 | [The CPU path's divide and conquer](cpu-path-divide-and-conquer.md) | eigh and SVD with vectors on the CPU, one matrix | `sstedc` 43 of 239 ms, `sbdsdc` 133 of 439 at 2048 | about 2 days | eigh 1.15-1.25x, SVD ~1.34x at 1024-2048 (estimate) |
 
 The CPU path's divide and conquer matters less on the M5 Pro since 2.15.0,
@@ -43,6 +45,7 @@ In 2.15.0 (2026-10-07); see [the study](../studies/proposals-2-15-apple-m5-pro.m
 | [The divide and conquer's top products on the GPU](divide-and-conquer-gpu-products.md) | for one matrix, products of 1 GFLOP or more as MPS products on the merges' memory in place: eigh with vectors 1.075x at 4096, the SVD on `bidiag` 1.046x |
 | [IEEE arithmetic in the remaining shaders](ieee-mode-audit.md) | the SVD's Jacobi kernel's rotation and output on fast division and square roots (`rsqrt` with two Newton steps, for V's orthogonality): 1.14-1.17x on batches of small matrices; nothing left in the one-stage reductions |
 | [Long single-threadgroup kernels and the watchdog](gpu-watchdog-long-kernels.md) | the whole-matrix Jacobi kernels split a long solve over dispatches of a few rounds (about 15 ms each, from 1.7-2.8 s for one threadgroup), bit for bit the same and in the same time |
+| [Blocked QR on the band reduction's panels](qr-blocked.md) | one large matrix 2.1x the streaming kernels at 1024, 2.6x at 2048, 3.7x at 4096 (62 ms against 231; the CPU 634), 5x on tall 4096 x 1024 and 8192 x 512 |
 | [Less GPU work for the band SVD with vectors](band-vectors-gpu-work.md) | `bd_chase_apply`'s blocks carry Y = -T^T V^T instead of T (two products a step, not three): Q2 and P2 98 ms instead of 135 at 4096; the CPU then the bottleneck, the divide and conquer's top products on the GPU once Q2 and P2 are done: 1.04-1.05x at 2048-4096 |
 | [Two-stage reduction with vectors](two-stage-vectors.md) | the SVD with vectors on `band`: 1.21x `bidiag` at 1024, 1.45x at 2048, 2.35x at 4096, about 2.7x at 8192 with the overlap above (Q2 applied by a pipeline of groups, 60-64 ms a side at 4096; Q = Q1 Q2 and P = P1 P2 formed under the CPU's chase and divide and conquer) |
 

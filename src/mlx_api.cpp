@@ -183,6 +183,10 @@ std::pair<mx::array, mx::array> qr_streaming_amx_complete(const mx::array& a) {
     return run_qr(a, "qr_streaming_amx_complete", core::detail::qr_streaming_amx_complete);
 }
 
+std::pair<mx::array, mx::array> qr_blocked(const mx::array& a) {
+    return run_qr(a, "qr_blocked", core::detail::qr_blocked);
+}
+
 std::pair<mx::array, mx::array> qr_cpu(const mx::array& a) {
     return run_qr(a, "qr_cpu", core::detail::qr_cpu);
 }
