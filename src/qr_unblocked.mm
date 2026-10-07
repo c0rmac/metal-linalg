@@ -3,6 +3,7 @@
 #include "shaders.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -105,6 +106,11 @@ void qr_unblocked(const Matrices& a, float* q, float* r) {
     const uint K = std::min(M, N);
     const uint batch = a.batch;
     if (K == 0 || batch == 0) return;
+    // What the Householder kernels take (qr_householder.mm).
+    if (qr_householder_preferred(M, N)) {
+        qr_householder(a, q, r);
+        return;
+    }
     AutoreleasePool pool;
 
     const uint M_pad = pad_up(M, 32);

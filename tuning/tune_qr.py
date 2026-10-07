@@ -107,7 +107,7 @@ MID_BATCHES = (256, 1024, 4096)
 
 # Candidate thresholds. A threshold only changes behaviour when it crosses a
 # measured M, so values between two measured M's are equivalent by construction.
-THRESHOLDS = [128, 192, 256, 288, 320, 352, 384, 416, 448, 480, 512, 576, 640, 768, 1024]
+THRESHOLDS = [64, 80, 96, 128, 192, 256, 288, 320, 352, 384, 416, 448, 480, 512, 576, 640, 768, 1024]
 
 # The decision-surface panels are a dense cross product, measured explicitly so
 # the heatmap has no holes. This is the picture that shows *why* the crossover
@@ -135,7 +135,7 @@ def region(M, N):
 
 
 def shape_grid(full=False):
-    square_dims = [64, 128, 192, 256, 320, 384, 448, 512, 640, 768]
+    square_dims = [64, 80, 96, 128, 192, 256, 320, 384, 448, 512, 640, 768]
     tall = [(256, 16), (256, 64), (384, 32), (384, 64), (512, 32),
             (512, 128), (640, 64), (1024, 64), (1024, 256), (2048, 64)]
     near = [(384, 256), (448, 256), (512, 384), (256, 384), (320, 448)]

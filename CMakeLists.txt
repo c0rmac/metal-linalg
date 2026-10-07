@@ -156,6 +156,7 @@ endfunction()
 metal_linalg_add_shader(QR_Unblocked)
 metal_linalg_add_shader(QR_Streaming_AMX_Reduced)
 metal_linalg_add_shader(QR_Streaming_AMX_Complete)
+metal_linalg_add_shader(QR_Householder)   # fast math: see QR_Householder.metal
 
 # The Jacobi rotations need c^2 + s^2 == 1 to roundoff and the non-finite
 # check needs IEEE semantics, neither of which fast-math guarantees. The
@@ -205,6 +206,7 @@ add_library(metal_linalg ${_ml_kind}
     src/qr_unblocked.mm
     src/qr_streaming_amx_reduced.mm
     src/qr_blocked.mm
+    src/qr_householder.mm
     src/qr_streaming_amx_complete.mm
     src/qr_cpu.mm
     src/eigh.mm

@@ -22,6 +22,7 @@ let coreSources = [
     "src/qr_unblocked.mm",
     "src/qr_streaming_amx_reduced.mm",
     "src/qr_blocked.mm",
+    "src/qr_householder.mm",
     "src/qr_streaming_amx_complete.mm",
     "src/qr_cpu.mm",
     "src/eigh.mm",

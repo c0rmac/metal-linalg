@@ -183,6 +183,10 @@ std::pair<mx::array, mx::array> qr_streaming_amx_complete(const mx::array& a) {
     return run_qr(a, "qr_streaming_amx_complete", core::detail::qr_streaming_amx_complete);
 }
 
+std::pair<mx::array, mx::array> qr_householder(const mx::array& a) {
+    return run_qr(a, "qr_householder", core::detail::qr_householder);
+}
+
 std::pair<mx::array, mx::array> qr_blocked(const mx::array& a) {
     return run_qr(a, "qr_blocked", core::detail::qr_blocked);
 }

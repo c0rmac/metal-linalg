@@ -620,7 +620,21 @@ namespace metal_linalg {
             // Standard Householder QR in a single kernel dispatch, one
             // threadgroup per matrix. Preferred for small matrices, where
             // multi-pass streaming does not pay for its launch overhead.
+            // What qr_householder_preferred says goes to qr_householder
+            // instead (QR_HOUSEHOLDER=0 keeps it here).
             void qr_unblocked(const Matrices& a, float* q, float* r);
+
+            // LAPACK's method (sgeqr2, sorg2r) for small matrices: in one
+            // simdgroup's registers for n <= 64 with m <= 64 and n <= 32
+            // with m <= 128, else one threadgroup a matrix with the whole
+            // matrix in threadgroup memory, as the SVD's golub_kahan (up to
+            // about 90 x 90, longer when narrow; qr_householder_fits,
+            // throws otherwise).
+            void qr_householder(const Matrices& a, float* q, float* r);
+            bool qr_householder_fits(uint32_t m, uint32_t n);
+            // Where qr_unblocked hands a call to it: in registers, or in
+            // threadgroup memory for n <= 32.
+            bool qr_householder_preferred(uint32_t m, uint32_t n);
 
             // Multi-pass streaming panel factorisation that accumulates Q
             // directly at its economic K-column width via a backward pass. The

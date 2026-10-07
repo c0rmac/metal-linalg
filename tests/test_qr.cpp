@@ -142,6 +142,73 @@ int main() {
     run("batch 32 x 8x8",  detail::qr_unblocked, random_matrix(32, 8, 8, 6));
     run("batch 16 x 64x64",detail::qr_unblocked, random_matrix(16, 64, 64, 7));
 
+    std::printf("\n[ backend: qr_unblocked, its own kernel ]\n");
+    setenv("QR_HOUSEHOLDER", "0", 1);
+    run("8x8 (own kernel)",           detail::qr_unblocked, random_matrix(1, 8, 8, 9));
+    run("64x32 (own kernel)",         detail::qr_unblocked, random_matrix(1, 64, 32, 10));
+    run("batch 16 x 64x64 (own kernel)", detail::qr_unblocked, random_matrix(16, 64, 64, 11));
+    unsetenv("QR_HOUSEHOLDER");
+
+    // The Householder kernels: in registers, B columns (8, 16, 32, 64) by R
+    // rows a lane (1, 2, 4), every instance and the edges of each; in
+    // threadgroup memory, beyond them and when forced.
+    std::printf("\n[ backend: qr_householder ]\n");
+    {
+        const std::vector<std::pair<int, int>> shapes = {
+            {1, 1}, {2, 1}, {1, 2}, {5, 3}, {3, 5}, {8, 8}, {33, 8}, {64, 8}, {65, 8}, {128, 8},
+            {9, 9}, {16, 16}, {17, 16}, {40, 16}, {100, 16}, {128, 16}, {17, 17}, {31, 31}, {32, 32},
+            {32, 20}, {60, 32}, {128, 32}, {33, 33}, {48, 40}, {64, 64}, {40, 64}, {20, 64}, {8, 30},
+            {129, 8}, {200, 30}, {80, 80}, {20, 90}};
+        int seed = 600;
+        for (auto [M, N] : shapes) {
+            if (!core::detail::qr_householder_fits(M, N)) { std::printf("  skip  %dx%d (does not fit)\n", M, N); continue; }
+            run(std::to_string(M) + "x" + std::to_string(N), detail::qr_householder, random_matrix(1, M, N, seed++));
+        }
+        run("batch 37 x 16x16 (4 a threadgroup)", detail::qr_householder, random_matrix(37, 16, 16, 650));
+        run("batch 5 x 64x64",                   detail::qr_householder, random_matrix(5, 64, 64, 651));
+        run("batch 3 x 200x30",                  detail::qr_householder, random_matrix(3, 200, 30, 652));
+        run("batch slice (unaligned) 30x20",     detail::qr_householder,
+            reshape(slice(random_matrix(3, 30, 20, 653), {1, 0, 0}, {2, 30, 20}), {30, 20}));
+        run("transposed view 40x24",             detail::qr_householder, transpose(random_matrix(1, 24, 40, 654)));
+        setenv("QR_HOUSEHOLDER_SIMD", "0", 1);
+        run("32x32 (threadgroup memory)",        detail::qr_householder, random_matrix(1, 32, 32, 655));
+        run("batch 7 x 48x40 (threadgroup memory)", detail::qr_householder, random_matrix(7, 48, 40, 656));
+        run("20x64 (threadgroup memory)",        detail::qr_householder, random_matrix(1, 20, 64, 657));
+        unsetenv("QR_HOUSEHOLDER_SIMD");
+        {
+            std::vector<float> eye(48 * 48, 0.0f);
+            for (int i = 0; i < 48; ++i) eye[i * 48 + i] = 1.0f;
+            run("identity 48x48",   detail::qr_householder, from_values(eye, {48, 48}));
+            run("zeros 32x32",      detail::qr_householder, from_values(std::vector<float>(32 * 32, 0.0f), {32, 32}));
+            run("constant 50x10",   detail::qr_householder, from_values(std::vector<float>(50 * 10, 0.5f), {50, 10}));
+        }
+        for (bool simd : {true, false}) {   // NaN in one matrix of a batch: that matrix NaN, the others not
+            if (!simd) setenv("QR_HOUSEHOLDER_SIMD", "0", 1);
+            ++g_checks;
+            const int B = 6, M = 24, N = 20, K = 20;
+            array A = random_matrix(B, M, N, 660);
+            eval({A});
+            std::vector<float> v(A.data<float>(), A.data<float>() + B * M * N);
+            v[3 * M * N + 17] = INFINITY;
+            auto [Q, R] = detail::qr_householder(from_values(v, {B, M, N}));
+            eval({Q, R});
+            const float* q = Q.data<float>();
+            bool ok = true;
+            for (int b = 0; b < B; ++b)
+                for (int i = 0; i < M * K; ++i) ok &= (b == 3) == std::isnan(q[b * M * K + i]);
+            const std::string label = std::string("non-finite in one matrix of 6 (") + (simd ? "registers" : "threadgroup memory") + ")";
+            if (!ok) fail(label, "not isolated");
+            else std::printf("  ok    %-46s\n", label.c_str());
+            unsetenv("QR_HOUSEHOLDER_SIMD");
+        }
+        ++g_checks;
+        if (!core::detail::qr_householder_preferred(64, 64) || !core::detail::qr_householder_preferred(128, 32) ||
+            !core::detail::qr_householder_preferred(200, 30) || core::detail::qr_householder_preferred(80, 80) ||
+            core::detail::qr_householder_preferred(129, 33))
+            fail("qr_householder_preferred", "wrong");
+        else std::printf("  ok    %-46s\n", "qr_householder_preferred: registers, or narrow");
+    }
+
     std::printf("\n[ backend: qr_streaming_amx_complete ]\n");
     run("4x4",             detail::qr_streaming_amx_complete, random_matrix(1, 4, 4, 8));
     run("8x8",             detail::qr_streaming_amx_complete, random_matrix(1, 8, 8, 9));
@@ -338,6 +405,8 @@ int main() {
             scaled(std::string("unblocked 64x64 ") + tag,  detail::qr_unblocked, 1, 64, 64, sc, 50);
             scaled(std::string("reduced 512x64 ") + tag,   detail::qr_streaming_amx_reduced, 2, 512, 64, sc, 51);
             scaled(std::string("blocked 512x200 ") + tag,  detail::qr_blocked, 1, 512, 200, sc, 56);
+            scaled(std::string("householder 48x40 ") + tag, detail::qr_householder, 3, 48, 40, sc, 57);
+            scaled(std::string("householder 200x30 ") + tag, detail::qr_householder, 2, 200, 30, sc, 58);
             scaled(std::string("complete 8x8 ") + tag,     detail::qr_streaming_amx_complete, 1, 8, 8, sc, 52);
             scaled(std::string("cpu 64x64 ") + tag,        detail::qr_cpu, 1, 64, 64, sc, 55);
         }
@@ -394,6 +463,11 @@ int main() {
             tight("rank 20 of 600x300, instance " + std::to_string(k) + " (blocked)", detail::qr_blocked,
                   low_rank(600, 300, 20, 0.0f, 95 + 3 * k));
         tight("rank 20 + 1e-5 noise, 600x300 (blocked)", detail::qr_blocked, low_rank(600, 300, 20, 1e-5f, 104));
+        for (int k = 0; k < 3; ++k)
+            tight("rank 5 of 64x40, instance " + std::to_string(k) + " (householder)", detail::qr_householder,
+                  low_rank(64, 40, 5, 0.0f, 110 + 3 * k));
+        tight("rank 5 + 1e-5 noise, 120x16 (householder)", detail::qr_householder, low_rank(120, 16, 5, 1e-5f, 120));
+        tight("rank 3 of 200x24 (householder)", detail::qr_householder, low_rank(200, 24, 3, 0.0f, 123));
     }
 
     // -------------------------------------------------------------------------

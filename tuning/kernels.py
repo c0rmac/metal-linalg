@@ -31,7 +31,7 @@ marked stale, rather than an estimate. The library reports the state at run time
 and docs/measurements.md shows it for every chip.
 """
 
-KERNEL_EPOCHS = {"qr": 5, "eigh": 6, "svd": 8}
+KERNEL_EPOCHS = {"qr": 6, "eigh": 6, "svd": 8}
 # The versions from which the CPU path spreads a batch over every core (2.9.0).
 MIN_EPOCHS = {"qr": 2, "eigh": 2, "svd": 3}
 
@@ -96,6 +96,10 @@ HISTORY = [
      "products): every shape the reduced backend's streaming kernels took, 1.8-3.5x faster; batches "
      "of 512-2048 now beat the CPU (16 x 1024^2: 25 ms against 48); the large clause counts rows "
      "and k, sqrt(M k), and the grid has tall large shapes"),
+    ("qr", 6, "2.16.0", "2026-10-07",
+     "the unblocked backend hands small matrices to new Householder kernels (in a simdgroup's registers "
+     "up to 64 x 64, else in threadgroup memory for narrow ones): 4096 of 32 x 32 in 0.64 ms of GPU "
+     "time against 2.6 for its own kernel; and the grid's kernel crossover goes down to 64 rows"),
 ]
 
 REQUIRED = {

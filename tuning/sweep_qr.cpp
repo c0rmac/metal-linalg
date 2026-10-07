@@ -145,6 +145,7 @@ int main(int argc, char** argv) {
     else if (which == "reduced")   qr = detail::qr_streaming_amx_reduced;
     else if (which == "complete")  qr = detail::qr_streaming_amx_complete;
     else if (which == "blocked")   qr = detail::qr_blocked;
+    else if (which == "householder") qr = detail::qr_householder;
     else if (which == "cpu")       qr = detail::qr_cpu;          // LAPACK, the CPU route
     else if (which == "share")     qr = detail::qr_shared;       // the GPU kernel and the CPU on one batch
     else { std::fprintf(stderr, "unknown backend: %s\n", argv[4]); return 2; }
