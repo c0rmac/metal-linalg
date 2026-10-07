@@ -584,6 +584,36 @@ int main() {
             array R = with_spectrum(spec);
             check("tridiag repeated eigenvalues 150x150", R, tri(R, true, true));
         }
+        // From N = 129 the eigenvectors come from the parallel divide and
+        // conquer (divide_conquer.cpp): its deflations (a zero z entry, close
+        // values rotated together, a split tridiagonal) on matrices large
+        // enough to be divided several times.
+        check("tridiag zero matrix 300x300", zeros({300, 300}), tri(zeros({300, 300}), true, true));
+        check("tridiag identity 300x300", eye(300), tri(eye(300), true, true));
+        {
+            std::vector<float> dvals(400);
+            for (int i = 0; i < 400; ++i) dvals[i] = (float)(i % 7) - 3.0f;
+            array D = diag(from_values(dvals, {400}));
+            check("tridiag diagonal 400x400", D, tri(D, true, true));
+            std::vector<float> spec(500), close(450);
+            for (int i = 0; i < 500; ++i) spec[i] = i < 300 ? 1.0f : 2.0f + (float)(i % 5);
+            array R = with_spectrum(spec);
+            check("tridiag repeated eigenvalues 500x500", R, tri(R, true, true));
+            for (int i = 0; i < 450; ++i) close[i] = 1.0f + 1e-6f * (float)i;
+            array C = with_spectrum(close);
+            check("tridiag clustered eigenvalues 450x450", C, tri(C, true, true));
+            // Blocks coupled by nothing: the tridiagonal splits into
+            // independent ones
+            std::vector<float> blk((size_t)600 * 600, 0.0f);
+            array S = random_symmetric(1, 150, 1450);
+            eval({S});
+            for (int b = 0; b < 4; ++b)
+                for (int i = 0; i < 150; ++i)
+                    for (int j = 0; j < 150; ++j)
+                        blk[(size_t)(b * 150 + i) * 600 + b * 150 + j] = S.data<float>()[i * 150 + j] * (float)(b + 1);
+            array B = from_values(blk, {600, 600});
+            check("tridiag block diagonal 4 x 150 in 600x600", B, tri(B, true, true));
+        }
         // A NaN in one matrix of a batch: that matrix NaN and flagged, the rest intact.
         {
             const int n = 70;

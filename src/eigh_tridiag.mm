@@ -7,7 +7,9 @@
 //      buffers are queued back to back and the host waits once per matrix, so
 //      no GPU round trip is paid per column. The last few columns, fewer than a
 //      panel, are reduced by LAPACK on the CPU.
-//   2. T = Z diag(w) Z^T on the CPU: sstedc (eigenvectors) or ssterf (eigenvalues).
+//   2. T = Z diag(w) Z^T on the CPU: sstedc's divide and conquer on every core
+//      but two (divide_conquer.cpp) for eigenvectors; for eigenvalues alone,
+//      bisection on the GPU (bisect.mm) or ssterf.
 //   3. V = Q Z on the GPU: ssytrd's reflectors applied kBackBlock at a time as
 //      blocked Householder transformations, three MPS GEMMs each.
 //
@@ -34,6 +36,7 @@
 #include <Accelerate/Accelerate.h>
 
 #include <metal_linalg/core.h>
+#include "divide_conquer.h"
 #include "metal_runtime.h"
 #include "shaders.h"
 
@@ -425,16 +428,11 @@ void eigh_tridiag(const Matrices& a, bool lower, float* w_out, float* v_out, uin
             else
                 ssterf_(&N, sl.d.data(), sl.e.data(), &info);
         } else {
+            // sstedc's divide and conquer on the CPU's cores but the two the
+            // GPU's host work keeps (divide_conquer.cpp)
             float* Z = static_cast<float*>(ws.Z[s].contents);
-            char compz = 'I';
-            L lw = -1, liw = -1, iq = 0;
-            float q = 0.0f;
-            sstedc_(&compz, &N, sl.d.data(), sl.e.data(), Z, &N, &q, &lw, &iq, &liw, &info);
-            std::vector<float> work(std::max<L>(1, (L)q));
-            std::vector<L> iwork(std::max<L>(1, iq));
-            lw = (L)work.size();
-            liw = (L)iwork.size();
-            sstedc_(&compz, &N, sl.d.data(), sl.e.data(), Z, &N, work.data(), &lw, iwork.data(), &liw, &info);
+            info = (L)metal_linalg::detail::tridiagonal_eigensystem(
+                n, sl.d.data(), sl.e.data(), Z, n, metal_linalg::detail::cpu_threads_beside_gpu());
         }
         if (info != 0) {
             throw std::runtime_error(std::string("[eigh] tridiag: LAPACK ") + (vectors ? "sstedc" : "ssterf") +

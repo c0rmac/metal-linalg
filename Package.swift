@@ -15,6 +15,7 @@ let coreSources = [
     "src/estimate.cpp",
     "src/metal_runtime.mm",
     "src/band_chase.cpp",
+    "src/divide_conquer.cpp",
     "src/band_reduce.mm",
     "src/bisect.mm",
     "src/qr.mm",

@@ -526,6 +526,19 @@ int main() {
         for (int i = 0; i < 90; ++i) spec[i] = i < 40 ? 3.0f : 1e-3f * (90 - i);
         run_bidiag("bidiag repeated and tiny values 150x90", with_singular_values(150, 90, spec));
     }
+    // From k = 129 the singular vectors come from the parallel divide and
+    // conquer (divide_conquer.cpp): its deflations on matrices large enough
+    // to be divided several times.
+    run_bidiag("bidiag rank one 500x400", matmul(random_matrix(1, 500, 1, 1310), random_matrix(1, 1, 400, 1311)));
+    run_bidiag("bidiag zero 320x300", zeros({320, 300}));
+    run_bidiag("bidiag identity 300x300", eye(300));
+    {
+        std::vector<float> spec(400), close(350);
+        for (int i = 0; i < 400; ++i) spec[i] = i < 200 ? 3.0f : 1e-3f * (float)(400 - i);
+        run_bidiag("bidiag repeated and tiny values 450x400", with_singular_values(450, 400, spec));
+        for (int i = 0; i < 350; ++i) close[i] = 1.0f + 1e-6f * (float)i;
+        run_bidiag("bidiag clustered values 350x350", with_singular_values(350, 350, close));
+    }
     {   // singular values alone == with vectors
         array A = random_matrix(1, 300, 260, 1400);
         SvdResult rv = detail::svd_bidiag(A, false), rw = detail::svd_bidiag(A, true);

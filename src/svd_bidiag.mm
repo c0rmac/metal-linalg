@@ -7,8 +7,9 @@
 //      kernels, per panel the trailing update as two MPS GEMMs; the panels'
 //      command buffers are queued and the host waits once per matrix. The last
 //      few columns, fewer than a panel, are reduced by LAPACK.
-//   2. B = U_B diag(S) V_B^T on the CPU: LAPACK sbdsdc; the singular values
-//      alone by sbdsqr (dqds), faster and accurate to the smallest.
+//   2. B = U_B diag(S) V_B^T on the CPU: sbdsdc's divide and conquer on
+//      every core but two (divide_conquer.cpp); the singular values alone by
+//      bisection on the GPU (bisect.mm) or sbdsqr (dqds).
 //   3. U = Q U_B and V^T = V_B^T P^T on the GPU, 128 reflectors at a time as
 //      three MPS GEMMs each.
 //
@@ -49,6 +50,7 @@
 #include <metal_linalg/core.h>
 #include <metal_linalg/device.h>
 #include "band_chase.h"
+#include "divide_conquer.h"
 #include "metal_runtime.h"
 #include "shaders.h"
 
@@ -446,21 +448,21 @@ void bidiag_impl(const Matrices& a, float* u_out, float* s_out, float* vt_out, u
     // and accurate to the bidiagonal's every singular value, however small.
     auto solve = [&](uint32_t b, int s) {
         Slot& sl = slots[s];
-        L n = K, ld = K, info = 0, iq = 0, zero = 0, one = 1;
+        L n = K, info = 0, zero = 0, one = 1;
         float qd = 0;
         const char* routine = vectors ? "sbdsdc" : "sbdsqr";
         if (vectors) {
-            char uplo = 'U', compq = 'I';
-            std::vector<float> work(3 * (size_t)K * K + 4 * (size_t)K + 8 * (size_t)K + 16);
-            std::vector<L> iwork(8 * (size_t)K + 8);
-            sbdsdc_(&uplo, &compq, &n, sl.d.data(), sl.e.data(), sl.ub.data(), &ld, sl.vb.data(), &ld, &qd, &iq,
-                    work.data(), iwork.data(), &info);
+            // sbdsdc's divide and conquer on the CPU's cores but the two the
+            // GPU's host work keeps (divide_conquer.cpp)
+            info = (L)metal_linalg::detail::bidiagonal_svd(K, sl.d.data(), sl.e.data(), sl.ub.data(), K,
+                                                           sl.vb.data(), K,
+                                                           metal_linalg::detail::cpu_threads_beside_gpu());
         } else {
             std::vector<float> work(4 * (size_t)K + 16);
             if (!sl.ab.empty())
                 metal_linalg::detail::band_to_bidiagonal(K, band, sl.ab.data(), 3 * (size_t)band + 1,
                                                          2 * (size_t)band, sl.d.data(), sl.e.data(),
-                                                         std::max(1u, cpu_threads() - 2));
+                                                         metal_linalg::detail::cpu_threads_beside_gpu());
             // By bisection on the GPU where it is the faster, else sbdsqr.
             std::vector<float> sv(K);
             if (metal_linalg::detail::bidiagonal_singular_values(K, sl.d.data(), sl.e.data(), sv.data()))

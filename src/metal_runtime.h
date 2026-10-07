@@ -223,6 +223,15 @@ id<MTLComputePipelineState> make_pipeline(id<MTLDevice> device,
                                           NSString* name,
                                           MTLFunctionConstantValues* constants);
 
+// Threads for CPU work that runs beside the GPU's (the band chase, the divide
+// and conquer): cpu_threads() less the two cores the GPU's host work keeps
+// (encoding the next matrix's work in a batch, waiting on the GPU), and at
+// least one.
+inline unsigned cpu_threads_beside_gpu() {
+    const unsigned t = metal_linalg::cpu_threads();
+    return t > 2 ? t - 2 : 1u;
+}
+
 // The first stage of the two-stage reductions, on the GPU (band_reduce.mm).
 // A band width the panel kernels have, 8, 16 or 32: `want` rounded up, or
 // with want = 0 the environment variable `env`, else 16.

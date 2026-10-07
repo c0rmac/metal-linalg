@@ -4,15 +4,10 @@
 #include <metal_linalg/device.h>
 
 #include <Accelerate/Accelerate.h>
-// BLASSetThreading, from the macOS 15 SDK on. Built with an older SDK, the
-// library cannot switch Accelerate's threading off and splits a batch only
-// where Accelerate would not thread anyway (see lapack_batches).
-#if __has_include(<vecLib/thread_api.h>)
-#include <vecLib/thread_api.h>
-#define METAL_LINALG_HAVE_BLAS_THREADING 1
-#else
-#define METAL_LINALG_HAVE_BLAS_THREADING 0
-#endif
+// Built with an SDK older than macOS 15's, the library cannot switch
+// Accelerate's threading off and splits a batch only where Accelerate would
+// not thread anyway (see lapack_batches).
+#include "blas_threading.h"
 
 #include <atomic>
 #include <chrono>
@@ -226,38 +221,6 @@ constexpr uint32_t kChunksPerThread = 4;
 // matrix lapack_batches splits a batch of: well under the sizes Accelerate
 // threads one call across cores.
 constexpr size_t kUnthreadedMaxFloats = 256 * 256;
-
-// Accelerate's BLAS and LAPACK single-threaded on this thread while in scope,
-// where macOS supports choosing (15 and later, and an SDK that declares it).
-class SingleThreadedBlas {
-public:
-    SingleThreadedBlas() {
-#if METAL_LINALG_HAVE_BLAS_THREADING
-        if (@available(macOS 15.0, *)) {
-            old_ = (int)BLASGetThreading();
-            BLASSetThreading(BLAS_THREADING_SINGLE_THREADED);
-        }
-#endif
-    }
-    ~SingleThreadedBlas() {
-#if METAL_LINALG_HAVE_BLAS_THREADING
-        if (@available(macOS 15.0, *)) {
-            if (old_ >= 0) BLASSetThreading((BLAS_THREADING)old_);
-        }
-#endif
-    }
-    SingleThreadedBlas(const SingleThreadedBlas&) = delete;
-    SingleThreadedBlas& operator=(const SingleThreadedBlas&) = delete;
-private:
-    int old_ = -1;
-};
-
-bool can_single_thread_blas() {
-#if METAL_LINALG_HAVE_BLAS_THREADING
-    if (@available(macOS 15.0, *)) return true;
-#endif
-    return false;
-}
 
 // Set on share_batch's CPU workers, each of which is already one of the
 // cores' worth: lapack_batches then solves its matrices on the calling thread.

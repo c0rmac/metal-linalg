@@ -148,7 +148,7 @@ void eigh_band(const Matrices& a, bool lower, float* w_out, uint32_t* info_out, 
     auto solve = [&](uint32_t m, int s) {
         Work& wk = work[s];
         metal_linalg::detail::band_to_tridiagonal(n, b, wk.band.data(), ld, wk.d.data(), wk.e.data(),
-                                                  std::max(1u, cpu_threads() - 2));
+                                                  metal_linalg::detail::cpu_threads_beside_gpu());
         L N = n, info = 0;
         // By bisection on the GPU where it is the faster, else ssterf.
         std::vector<float> wb(n);
