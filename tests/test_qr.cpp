@@ -162,10 +162,10 @@ int main() {
     run("600x600 (streaming, unaligned)", detail::qr_streaming_amx_reduced, random_matrix(1, 600, 600, 19));
     unsetenv("QR_BLOCKED");
 
-    // The blocked QR: panels of 16 columns up to 8192 rows, 8 above; the
-    // panels' TSQR from 129 rows; aggregates of 128 columns, a short last
-    // one; the matrix padded with zero rows and columns to whole panels of
-    // twice their width in rows.
+    // The blocked QR: panels of 16 columns, by TSQR from 129 rows (a tree of
+    // leaves up to 2^15); aggregates of 128 columns, a short last one; the
+    // matrix padded with zero rows and columns to whole panels of twice
+    // their width in rows.
     std::printf("\n[ backend: qr_blocked ]\n");
     run("1x1",                      detail::qr_blocked, from_values({3.0f}, {1, 1}));
     run("5x3",                      detail::qr_blocked, random_matrix(1, 5, 3, 39));
@@ -180,7 +180,9 @@ int main() {
     run("1024x1024",                detail::qr_blocked, random_matrix(1, 1024, 1024, 47));
     run("2100x2048",                detail::qr_blocked, random_matrix(1, 2100, 2048, 48));
     run("8192x48 (tall, 16-wide)",  detail::qr_blocked, random_matrix(1, 8192, 48, 49));
-    run("9000x40 (8-wide panels)",  detail::qr_blocked, random_matrix(1, 9000, 40, 50));
+    run("9000x40",                  detail::qr_blocked, random_matrix(1, 9000, 40, 50));
+    run("20000x40 (129 leaves, 8 tree levels)", detail::qr_blocked, random_matrix(1, 20000, 40, 54));
+    run("batch 2 x 17000x24",       detail::qr_blocked, random_matrix(2, 17000, 24, 55));
     run("batch 3 x 200x150",        detail::qr_blocked, random_matrix(3, 200, 150, 51));
     run("batch slice (unaligned) 300x200", detail::qr_blocked,
         reshape(slice(random_matrix(3, 300, 200, 52), {1, 0, 0}, {2, 300, 200}), {300, 200}));
@@ -202,10 +204,10 @@ int main() {
         else std::printf("  ok    %-46s\n", "NaN input gives NaN");
     }
     ++g_checks;
-    if (core::detail::qr_blocked_fits(16385, 64) || !core::detail::qr_blocked_fits(16384, 64) ||
+    if (core::detail::qr_blocked_fits(4194305, 1) || !core::detail::qr_blocked_fits(4194304, 1) ||
         !core::detail::qr_blocked_fits(1, 1))
         fail("qr_blocked_fits", "wrong");
-    else std::printf("  ok    %-46s\n", "qr_blocked_fits: up to 16384 rows");
+    else std::printf("  ok    %-46s\n", "qr_blocked_fits: up to 2^22 rows");
 
     std::printf("\n[ backend: qr_cpu (LAPACK) ]\n");
     run("1x1",             detail::qr_cpu, random_matrix(1, 1, 1, 90));

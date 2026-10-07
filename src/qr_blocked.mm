@@ -57,15 +57,12 @@ struct Shape {
 
 Shape shape(uint32_t m, uint32_t n) {
     const uint32_t K = std::min(m, n);
-    for (uint32_t b : {16u, 8u}) {
-        Shape s;
-        s.b = b;
-        s.Kp = (K + b - 1) / b * b;
-        s.mp = std::max(m, s.Kp + b);
-        s.np = std::max(n, s.Kp);
-        if (metal_linalg::detail::qr_block_width(s.mp) >= b) return s;
-    }
-    return Shape{};
+    Shape s;
+    s.b = 16;
+    s.Kp = (K + s.b - 1) / s.b * s.b;
+    s.mp = std::max(m, s.Kp + s.b);
+    s.np = std::max(n, s.Kp);
+    return metal_linalg::detail::qr_block_width(s.mp) ? s : Shape{};
 }
 
 // The latest shape's buffers, for up to `capacity` matrices, a row of slack

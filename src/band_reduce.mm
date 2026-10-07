@@ -298,10 +298,10 @@ void general_tail(float* A, uint32_t m, uint32_t n, uint32_t lda, uint32_t b, ui
 
 } // namespace
 
+// 16: 32 took 1.4-1.5x its time at 512-2048 (its panels), the same at 4096.
+// The TSQR's top is a tree of up to 2^15 leaves of kLeafRows rows.
 uint32_t qr_block_width(uint32_t m) {
-    for (uint32_t b : {16u, 8u})   // 32 took 1.15x 16's time at 1024-4096 (its panels)
-        if ((size_t)m * b <= (size_t)kLeafRows * 1024) return b;
-    return 0;
+    return m <= ((size_t)kLeafRows << 15) ? 16u : 0u;
 }
 
 size_t qr_scratch_floats(uint32_t m) {

@@ -682,7 +682,7 @@ kernel void bd_tsqr_top(device float* P0 [[buffer(0)]], device float* S0 [[buffe
     const TsqrLayout L = tsqr_layout(p);
     const uint b = B, nl = (p.rows + p.leaf - 1) / p.leaf;
     // Up the tree
-    uint counts[8], offs[8], levels = 0;
+    uint counts[16], offs[16], levels = 0;   // up to 2^15 leaves
     float a[B], bt[B], tau = 0.0f;
     UNROLL(B, k, { a[k] = 0.0f; bt[k] = 0.0f; });
     for (uint count = nl, off = 0; count > 1; count = (count + 1) / 2) {
