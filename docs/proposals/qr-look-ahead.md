@@ -1,6 +1,7 @@
 # The blocked QR's panels under its trailing update
 
-Status: proposal (2026-10-07).
+Status: **tried and rejected** (2026-10-07): the two queues overlap, but the
+panels run about half as fast beside the products; see [Tried](#tried-2026-10-07).
 
 ## What
 
@@ -50,3 +51,13 @@ larger share.
 ## Where to start
 
 `qr_blocks` in `src/band_reduce.mm`.
+
+## Tried (2026-10-07)
+
+Built as planned (A, V and Ta as two MTLBuffers over host memory, a second
+queue, two events an aggregate). The command buffers' GPU times show the
+overlap: each trailing update runs beside the next aggregate's panels. But
+an aggregate's panels then took 1.7-2.0 ms instead of about 1.3, the
+products taking the GPU's cores from them: 4096 x 4096 in 62.2 ms against
+61.2 without, 1024 in 7.0 against 6.8. As in the band reduction (2.13.0),
+the panels gain nothing from sharing the GPU with MPS's products. Reverted.

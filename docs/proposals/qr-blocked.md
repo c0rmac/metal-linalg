@@ -103,5 +103,6 @@ The routing is re-measured at the new kernels (epoch qr 4): until then the
 M5 Pro's row is 2.14's, which sends one matrix to the GPU only from k =
 1024, so a 512 x 512 or a tall 8192 x 512 still goes to the CPU.
 
-**Left**, as proposals: a batch at once ([qr-blocked-batched.md](qr-blocked-batched.md)),
-and the panels under the trailing update ([qr-look-ahead.md](qr-look-ahead.md)).
+**Left**: a batch at once, as a proposal ([qr-blocked-batched.md](qr-blocked-batched.md)).
+The panels under the trailing update on a second queue were tried and gave
+nothing ([qr-look-ahead.md](qr-look-ahead.md#tried-2026-10-07)).

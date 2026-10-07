@@ -9,7 +9,6 @@ Apple M5 Pro's (20 GPU cores, 18 CPU cores).
 
 | proposal | affects | time at stake | effort | expected gain |
 |---|---|---|---|---|
-| [The blocked QR's panels under its trailing update](qr-look-ahead.md) | QR, one large matrix | the forward pass's panels (25 ms of 62 at 4096) and trailing updates (14) one after the other | about a day | up to ~1.2x at 4096 |
 | [The blocked QR for a batch at once](qr-blocked-batched.md) | QR, batches of 4-16 matrices of 512-2048 | the blocked QR's cost the batch times one matrix's; the CPU wins these | 2-3 days | 2-3x the CPU path |
 | [The CPU path's divide and conquer](cpu-path-divide-and-conquer.md) | eigh and SVD with vectors on the CPU, one matrix | `sstedc` 43 of 239 ms, `sbdsdc` 133 of 439 at 2048 | about 2 days | eigh 1.15-1.25x, SVD ~1.34x at 1024-2048 (estimate) |
 
@@ -63,6 +62,9 @@ So that they are not retried without a new idea:
   rest of the trailing matrix is updated: no overlap within one command
   buffer, and 14-54% slower with the panel on a second queue. See
   [the two-stage study](../studies/two-stage-apple-m5-pro.md), section 9.
+- The blocked QR's panels on a second queue beside its trailing update
+  (2.15.0): the queues overlap, but the panels ran half as fast beside MPS's
+  products; no gain ([qr-look-ahead.md](qr-look-ahead.md#tried-2026-10-07)).
 - LAPACK's `sbdsvdx` (bisection by index range) in place of `sbdsqr`: 30x
   slower on one core, and wrong when the bidiagonal splits.
 - X = A22 V T from the lower triangle only (2.15.0), in four versions: each

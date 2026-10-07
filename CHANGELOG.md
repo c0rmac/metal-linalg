@@ -138,8 +138,8 @@ and what turned up while doing them; measured in
   by QR iteration if that fails too.
 - New proposals: the CPU path's divide and conquer, the divide and
   conquer's products on the GPU, the band SVD with vectors overlapped
-  further, the blocked QR for a batch at once, and its panels under its
-  trailing update.
+  further, and the blocked QR for a batch at once (its panels under its
+  trailing update were tried: no gain).
 
 ## 2.14.0 (2026-10-05)
 
