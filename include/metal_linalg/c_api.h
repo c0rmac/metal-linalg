@@ -124,7 +124,7 @@ typedef struct metal_linalg_qr_policy {
     uint32_t gpu_min_batch;
     uint32_t gpu_cores;
     uint32_t concurrent_matrices;
-    uint32_t gpu_large_min_k;       /* the GPU also from this k (0: never), */
+    uint32_t gpu_large_min_k;       /* the GPU also from this cbrt(max(M, N) k^2) (0: never), */
     uint32_t gpu_large_max_batch;   /* for batches up to this (0: any) */
     uint32_t gpu_min_k;             /* the rule above only from this k (0: no lower bound) */
     uint32_t share_min_batch;       /* a GPU batch shared with the CPU from this batch (0: never) */

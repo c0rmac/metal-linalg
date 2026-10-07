@@ -24,8 +24,9 @@ namespace metal_linalg {
     // matrices and a grid-parallel one for long. With k = min(M, N):
     //
     //   GPU or CPU   GPU iff gpu_min_k <= k <= gpu_max_k, batch * k >=
-    //                gpu_min_batch_times_k and batch >= gpu_min_batch, or k >=
-    //                gpu_large_min_k in a batch of at most gpu_large_max_batch
+    //                gpu_min_batch_times_k and batch >= gpu_min_batch, or
+    //                cbrt(max(M, N) k^2) >= gpu_large_min_k in a batch of at
+    //                most gpu_large_max_batch
     //   kernel       grid-parallel iff M >= m_crossover_*, else single-threadgroup
     //
     // The sign of R's diagonal is the one each backend produces: LAPACK's
@@ -71,9 +72,11 @@ namespace metal_linalg {
         // on the GPU, and 1024 of 128x128 21 ms on the GPU and 24 on the CPU.
         unsigned gpu_min_k             = 0;
 
-        // Large matrices: the GPU also for k >= gpu_large_min_k in a batch of
-        // at most gpu_large_max_batch (0: any batch), whatever the rule above
-        // says. Since the CPU path spreads a batch over every core, it beats
+        // Large matrices: the GPU also from gpu_large_min_k in a batch of at
+        // most gpu_large_max_batch (0: any batch), whatever the rule above
+        // says; the size is the work's, the side of the square matrix as much
+        // work, cbrt(max(M, N) k^2) (k for a square matrix), so that a tall
+        // one counts by its rows too. Since the CPU path spreads a batch over every core, it beats
         // the GPU kernels for batches of small and mid-size matrices, while
         // one large matrix, which Accelerate threads only weakly, is still
         // faster on the GPU (on an M5 Pro 2x at 2048 x 2048); one product

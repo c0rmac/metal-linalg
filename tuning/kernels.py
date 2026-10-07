@@ -31,7 +31,7 @@ marked stale, rather than an estimate. The library reports the state at run time
 and docs/measurements.md shows it for every chip.
 """
 
-KERNEL_EPOCHS = {"qr": 4, "eigh": 6, "svd": 8}
+KERNEL_EPOCHS = {"qr": 5, "eigh": 6, "svd": 8}
 # The versions from which the CPU path spreads a batch over every core (2.9.0).
 MIN_EPOCHS = {"qr": 2, "eigh": 2, "svd": 3}
 
@@ -91,6 +91,11 @@ HISTORY = [
      "the reduced backend hands one matrix, or a few large ones, to the blocked QR (the band "
      "reduction's panels, aggregates of 128 columns, MPS products): 2.1x at 1024, 2.6x at 2048, "
      "3.7x at 4096, 5x on tall 4096 x 1024 and 8192 x 512"),
+    ("qr", 5, "2.15.0", "2026-10-07",
+     "the blocked QR takes a batch at once and any height (padded to whole panels, batched MPS "
+     "products): every shape the reduced backend's streaming kernels took, 1.8-3.5x faster; batches "
+     "of 512-2048 now beat the CPU (16 x 1024^2: 25 ms against 48); the large clause counts a "
+     "matrix's work, cbrt(max(M, N) k^2), and the grid has tall large shapes"),
 ]
 
 REQUIRED = {

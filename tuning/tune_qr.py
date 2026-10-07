@@ -86,7 +86,16 @@ SMALL_BATCHES = (1, 4, 16, 64, 256, 1024, 4096, 16384)
 # fitted rule cannot tell, and sends every lone large matrix to the CPU. Also
 # left out of the kernel crossover, for the same reason as the small ones.
 LARGE_DIMS = (1024, 1536, 2048, 3072)
-LARGE_BATCHES = (1, 2, 4)
+LARGE_BATCHES = (1, 2, 4, 16)
+
+# Tall matrices large by their rows (2.15.0): the blocked QR takes one 8192 x
+# 512 in 9 ms on an M5 Pro, the CPU 48, which a rule on k = min(M, N) cannot
+# see; the large clause counts a matrix's work, cbrt(max(M, N) k^2). Their
+# wide transposes too. Only the reduced kernel and the CPU for the tall ones
+# (the other kernel's workspace is M x M, and its crossover sends them to
+# the reduced one anyway); left out of the kernel crossover.
+TALL_LARGE = ((2048, 512), (4096, 256), (4096, 1024), (8192, 128), (8192, 512), (16384, 64))
+TALL_LARGE_BATCHES = (1, 4)
 
 # Mid-size matrices in large batches. Once the CPU path spread a batch over
 # every core (2.9.0), the GPU-or-CPU boundary runs through them: on an M5 Pro
@@ -150,12 +159,14 @@ def shape_grid(full=False):
         pts += [(b, N, M) for b in batches_rect]      # the wide transpose
     for (M, N) in near:
         pts += [(b, M, N) for b in batches_rect]
+    tall_large = {(b, M, N) for (M, N) in TALL_LARGE for b in TALL_LARGE_BATCHES}
+    pts += list(tall_large) + [(b, N, M) for (M, N) in TALL_LARGE for b in TALL_LARGE_BATCHES]
 
     out = []
     for (b, M, N) in sorted(set(pts)):
         if b * M * N > MEM_CAP_ELEMS:
             continue
-        if b * max(M, N) ** 2 > MEM_CAP_SQUARE:
+        if b * max(M, N) ** 2 > MEM_CAP_SQUARE and (b, M, N) not in tall_large:
             continue
         if not sub.fits_memory(b * (M * N + min(M, N) ** 2)):   # see submissions.MEMORY_FRACTION
             continue
@@ -183,8 +194,14 @@ def run_one(binary, job, limit, attempts=3):
     return f"{b},{M},{N},{backend},0,0,0,0,0"
 
 
+def tall_large(key):
+    b, M, N = key
+    return (M, N) in TALL_LARGE
+
+
 def sweep(binary, pts, passes, limit, out_csv):
-    jobs = [(b, M, N, k) for (b, M, N) in pts for k in BACKENDS]
+    jobs = [(b, M, N, k) for (b, M, N) in pts for k in BACKENDS
+            if not (tall_large((b, M, N)) and k == "unblocked")]
     jobs += [(b, M, N, "share") for (b, M, N) in pts if b >= SHARE_MIN_GRID_BATCH]
     total = len(jobs) * passes
     print(f"  {len(pts)} shapes x {len(BACKENDS)} backends (and sharing from batch {SHARE_MIN_GRID_BATCH}) "
@@ -314,14 +331,29 @@ def for_crossover(key):
     b, M, N = key
     if M == N and b in MID_BATCHES and M in MID_DIMS:
         return False
+    if tall_large(key):
+        return False
     return not (M == N and (M in SMALL_DIMS or M in LARGE_DIMS))
+
+
+def work_side(M, N):
+    """The side of the square matrix as much QR work, cbrt(max(M, N) k^2)."""
+    k = min(M, N)
+    return round((max(M, N) * k * k) ** (1 / 3))
+
+
+def large_enough(M, N, lk):
+    """cbrt(max(M, N) k^2) >= lk, exactly, as qr.mm compares it."""
+    k = min(M, N)
+    return max(M, N) * k * k >= lk ** 3
 
 
 def routed(params, chosen, large=(0, 0)):
     """The full rule: GPU or CPU by (gpu_max_k, gpu_min_batch_times_k,
-    gpu_min_batch[, gpu_min_k]), or the GPU anyway for k >= gpu_large_min_k in
-    a batch of at most gpu_large_max_batch (`large`; 0 = never / any batch),
-    then the kernel crossover, as qr_backend does."""
+    gpu_min_batch[, gpu_min_k]), or the GPU anyway from a work's size
+    cbrt(max(M, N) k^2) of gpu_large_min_k in a batch of at most
+    gpu_large_max_batch (`large`; 0 = never / any batch), then the kernel
+    crossover, as qr_backend does."""
     gm, mb, mbatch = params[:3]
     mk = params[3] if len(params) > 3 else 0
     lk, lcap = large
@@ -332,7 +364,7 @@ def routed(params, chosen, large=(0, 0)):
 
     def rule(b, M, N):
         k = min(M, N)
-        if lk and k >= lk and (not lcap or b <= lcap):
+        if lk and large_enough(M, N, lk) and (not lcap or b <= lcap):
             return kernel(b, M, N)
         if k < mk or k > gm or b * k < mb or b < mbatch:
             return "cpu"
@@ -389,7 +421,8 @@ def fit_cpu_routing(best, chosen, tol=0.005):
     # The large-matrix clause: since the CPU path spreads a batch over every
     # core, a product rule can no longer send both large lone matrices (GPU)
     # and batches of mid-size ones (CPU) the right way.
-    large_cands = [(0, 0)] + [(lk, cap) for lk in ks for cap in [0] + batches]
+    sides = sorted({work_side(M, N) for (_, M, N) in pts})
+    large_cands = [(0, 0)] + [(lk, cap) for lk in sides for cap in [0] + batches]
 
     def fit_rule(points, large):
         scored = {c: evaluate(routed(c, chosen, large), points) for c in candidates}
@@ -786,8 +819,9 @@ def write_report(res, path):
     else:
         gm = "no limit" if rt["gpu_max_k"] >= NO_LIMIT else rt["gpu_max_k"]
         lk = rt.get("gpu_large_min_k", 0)
-        large = (f"\nor k >= {lk}" + (f" and batch <= {rt['gpu_large_max_batch']}" if rt.get("gpu_large_max_batch") else "")
-                 + "   (large matrices)") if lk else ""
+        large = (f"\nor cbrt(max(M, N) k^2) >= {lk}" +
+                 (f" and batch <= {rt['gpu_large_max_batch']}" if rt.get("gpu_large_max_batch") else "")
+                 + "   (large matrices, by their work)") if lk else ""
         mk = rt.get("gpu_min_k", 0)
         A(f"```\nGPU iff {str(mk) + ' <= ' if mk else ''}k <= {gm}, batch * k >= {rt['gpu_min_batch_times_k']} "
           f"and batch >= {rt['gpu_min_batch']}   (k = min(M, N)){large}\notherwise LAPACK on the CPU\n```")
@@ -1022,7 +1056,7 @@ def main():
         lk = rt.get("gpu_large_min_k", 0)
         print(f"  CPU routing: GPU iff {rt.get('gpu_min_k', 0)} <= k <= {gm}, batch*k >= {rt['gpu_min_batch_times_k']}, "
               f"batch >= {rt['gpu_min_batch']}" +
-              (f", or k >= {lk} and batch <= {rt['gpu_large_max_batch'] or 'any'}" if lk else "") +
+              (f", or cbrt(max(M, N) k^2) >= {lk} and batch <= {rt['gpu_large_max_batch'] or 'any'}" if lk else "") +
               (f"; shared with the CPU from batch {rt['share_min_batch']}" if rt.get("share_min_batch") else "") +
               f"   ({rt['chosen']['geomean']:.4f}x vs "
               f"{rt['gpu_always']['geomean']:.4f}x always GPU, worst {rt['chosen']['worst']:.2f}x)")
