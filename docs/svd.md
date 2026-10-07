@@ -40,6 +40,17 @@ are uniform across them, and the same lanes apply the rotation. A round needs
 **one** threadgroup barrier, between rounds, where the two-sided method needs
 three.
 
+**Fast division and square roots** (since 2.15.0). The shader is built with
+`-fno-fast-math`, for its non-finite checks, which makes `/`, `sqrt()` and
+`rsqrt()` the IEEE sequences, and a kernel with any of them in it compiles
+all of its arithmetic in IEEE mode. The rotation and the output use the fast
+approximations with Newton steps instead (`j_div`, `j_sqrt`, `j_rsqrt` in
+`eigh_jacobi_common.h`): 1.14-1.17x on batches of 16×16 to 48×48 on an M5
+Pro, 1.03-1.06x from 128×128. `rsqrt` takes two steps: with one, $c$ came out
+a little low every time, $c^2 + s^2 < 1$, and $V$'s orthogonality was 10x
+worse at 512×512; with two it is a little better than with the IEEE
+sequence.
+
 **Null columns.** In a rank-deficient matrix some columns cancel to rounding
 noise. Rotating two of them against each other is where one-sided Jacobi
 fails to terminate: the rotation amplifies their relative error, which puts
@@ -531,11 +542,11 @@ From `tests/test_svd.cpp`, relative to $\|A\|_F$, Gaussian input:
 
 | shape | $\|A - U\Sigma V^T\|_F$ | $\|U^TU - I\|_F/\sqrt{K}$ | $\|V^TV - I\|_F/\sqrt{K}$ | $\max \lvert \sigma - \sigma_\text{LAPACK} \rvert$ | sweeps |
 |---|---|---|---|---|---|
-| 8×8 | 3.3e-07 | 1.5e-07 | 3.9e-07 | 1.2e-07 | 5 |
-| 64×64 | 1.3e-06 | 1.8e-06 | 1.4e-06 | 1.9e-07 | 9 |
-| 256×256 | 3.7e-06 | 8.4e-06 | 4.0e-06 | 3.7e-07 | 12 |
-| 512×512 | 6.9e-06 | 1.8e-05 | 7.1e-06 | 3.8e-07 | 13 |
-| 2048×64 | 1.3e-06 | 1.2e-05 | 1.3e-06 | 1.7e-07 | 8 |
+| 8×8 | 2.9e-07 | 3.9e-07 | 3.5e-07 | 7.7e-08 | 5 |
+| 64×64 | 1.2e-06 | 1.7e-06 | 1.2e-06 | 2.0e-07 | 9 |
+| 256×256 | 2.8e-06 | 8.5e-06 | 2.8e-06 | 2.1e-07 | 12 |
+| 512×512 | 4.6e-06 | 1.9e-05 | 4.5e-06 | 3.4e-07 | 13 |
+| 2048×64 | 1.1e-06 | 1.2e-05 | 1.1e-06 | 1.0e-07 | 7 |
 
 Rank-deficient input reconstructs as well as full-rank input: over 204 random
 instances from rank 1 of 24×24 to rank 50 of 600×130, through all four GPU

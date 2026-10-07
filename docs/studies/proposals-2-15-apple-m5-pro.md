@@ -274,8 +274,12 @@ fast math throughout, against the normal build:
 
 With `div1` and `sqrt1` in those kernels: eigvalsh on `tridiag` 36.0 and 204
 ms at 2048 and 4096, most of fast math's gain; svdvals on `bidiag` 91.8 at
-2048, about 7% short of it. The rest is in
-[ieee-mode-audit.md](../proposals/ieee-mode-audit.md).
+2048, about 7% short of it, at the time. Later the same day, the whole of
+`Svd_Bidiag.metal` or of `Eigh_Tridiag.metal` built with fast math made no
+difference against the build (svdvals on `bidiag` 85.4 ms at 2048 either
+way): nothing was left. The SVD's Jacobi kernel then got the same treatment
+(1.14-1.17x on batches of small matrices, its `rsqrt` needing two Newton
+steps); see [ieee-mode-audit.md](../proposals/ieee-mode-audit.md#done-2026-10-07).
 
 **The sweeps' gate from N ~ 6500.** The correctness gate compared each
 backend with MLX's `eigvalsh` or `svd` on the CPU, combined with the result

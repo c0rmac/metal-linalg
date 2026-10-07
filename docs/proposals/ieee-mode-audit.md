@@ -1,6 +1,6 @@
 # IEEE arithmetic in the remaining shaders
 
-Status: proposal, not started (2026-10-07).
+Status: **done** in 2.15.0 (2026-10-07); see [Done](#done-2026-10-07).
 
 ## What
 
@@ -67,3 +67,38 @@ on other Macs use it more.
 `div1` and `sqrt1` in `shaders/Svd_Bidiag.metal` (and their copy in
 `shaders/Eigh_Tridiag.metal`); the rotation in `shaders/Svd_Jacobi.metal` and
 `shaders/eigh_jacobi_common.h`.
+
+## Done (2026-10-07)
+
+**The SVD's Jacobi kernel.** Its rotation (a square root, three divisions
+and an `rsqrt` a pair) and its output (a square root a column, a division an
+entry of U) now use the fast approximations with Newton steps, `j_div`,
+`j_sqrt` and `j_rsqrt` in `eigh_jacobi_common.h`. With one Newton step for
+`rsqrt`, c came out a little low every time (c^2 + s^2 < 1) and V's
+orthogonality was 10x worse (8.9e-5 at 512 x 512, against 7.1e-6): four
+cases of the suite failed. With two steps it is better than the IEEE
+sequence's (4.5e-6 at 512, 2.3e-6 at 200 against 3.2e-6), and the suite
+passes. Against the build before, alternating runs, M5 Pro:
+
+| point | before | after | |
+|---|---|---|---|
+| 1024 x 32x32 | 7.58 ms | 6.46 | 1.17x |
+| 4096 x 16x16 | 5.87 | 5.09 | 1.15x |
+| 256 x 48x48 | 5.52 | 4.86 | 1.14x |
+| 64 x 128x128 | 33.7 | 32.5 | 1.03x |
+| 16 x 256x256 | 66.1 | 66.2 | 1.00x |
+| 1 x 512x512 | 262 | 249 | 1.06x |
+
+(Fast math for the whole library had given 1.21x at 1024 x 32x32.)
+
+**The one-stage reductions' 7%: gone already.** `Svd_Bidiag.metal` built
+entirely with fast math, against the current build: svdvals on `bidiag`
+85.4 ms at 2048 either way (the 91.8 above was measured before the one-stage
+reflectors' `div1`), and no difference beyond 2% for `bidiag` with vectors,
+`band` with or without; `Eigh_Tridiag.metal` likewise (eigvalsh on
+`tridiag` 35.1 ms at 2048 against 35.4, eigh 54.3 against 53.3). Nothing
+left there to find.
+
+**The eigensolver's Jacobi kernels**: skipped, as planned (within 1-2% with
+fast math).
+

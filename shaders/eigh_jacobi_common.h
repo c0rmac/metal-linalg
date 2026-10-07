@@ -30,6 +30,27 @@ inline bool non_finite(float x) {
 // position per round, and position i pairs with position n_even-1-i. Over
 // n_even-1 rounds every pair meets exactly once and the pairs within a round
 // are disjoint, which is what lets them be rotated simultaneously.
+// x / y, sqrt(x) and 1 / sqrt(x) to about an ulp: the fast approximations
+// and a Newton step (as Svd_Bidiag.metal's and Eigh_Tridiag.metal's div1 and
+// sqrt1). The files including this are built with -fno-fast-math, which makes
+// `/`, sqrt() and rsqrt() the IEEE sequences, and a kernel with any of them
+// in it compiles all of its arithmetic in IEEE mode. j_div's y is never zero;
+// j_sqrt returns x for x <= 0 (and NaN); j_rsqrt's x is positive.
+inline float j_div(float x, float y) {
+    const float r = fast::divide(1.0f, y), q = x * r;
+    return fma(fma(-y, q, x), r, q);
+}
+inline float j_sqrt(float x) {
+    if (!(x > 0.0f)) return x;
+    const float s = fast::sqrt(x);
+    return fma(fma(-s, s, x), fast::divide(0.5f, s), s);
+}
+inline float j_rsqrt(float x) {
+    float r = fast::rsqrt(x);
+    r = fma(fma(-0.5f * x * r, r, 0.5f), r, r);
+    return fma(fma(-0.5f * x * r, r, 0.5f), r, r);
+}
+
 inline void tournament_pair(uint round, uint j, uint n_even,
                             thread uint& p, thread uint& q) {
     const uint m = n_even - 1;

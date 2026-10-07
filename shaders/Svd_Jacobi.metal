@@ -242,16 +242,16 @@ kernel void svd_jacobi(
                 // Relative test, so a column of any magnitude is judged on
                 // its angle to the other; a zero column gives 0 > 0.
                 const float ab = alpha * beta;
-                if (fabs(gamma) > prm.tol * sqrt(ab)) {
-                    const float zeta = (beta - alpha) / (2.0f * gamma);
+                if (fabs(gamma) > prm.tol * j_sqrt(ab)) {
+                    const float zeta = j_div(beta - alpha, 2.0f * gamma);
                     float t;
                     if (fabs(zeta) > kZetaAsymptotic) {
-                        t = 0.5f / zeta;
+                        t = j_div(0.5f, zeta);
                     } else {
-                        t = 1.0f / (fabs(zeta) + sqrt(1.0f + zeta * zeta));
+                        t = j_div(1.0f, fabs(zeta) + j_sqrt(1.0f + zeta * zeta));
                         if (zeta < 0.0f) t = -t;
                     }
-                    const float c = rsqrt(1.0f + t * t);
+                    const float c = j_rsqrt(1.0f + t * t);
                     const float s = c * t;
 
                     for (uint i = lane; i < m; i += 32) {
@@ -314,7 +314,7 @@ kernel void svd_jacobi(
             acc += x * x;
         }
         const float s2 = simd_sum(acc);
-        if (lane == 0) sig[c] = sqrt(s2);
+        if (lane == 0) sig[c] = j_sqrt(s2);
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
@@ -356,7 +356,7 @@ kernel void svd_jacobi(
                 const uint c = idx / m;
                 const uint i = idx - c * m;
                 const float sc = sig[c];
-                out_u[(ulong)i * n + rank[c]] = (sc > thr) ? g[idx] / sc : 0.0f;
+                out_u[(ulong)i * n + rank[c]] = (sc > thr) ? j_div(g[idx], sc) : 0.0f;
             }
             for (uint idx = tid; idx < nn; idx += T) {
                 const uint c = idx / n;

@@ -81,7 +81,10 @@ and what turned up while doing them; measured in
   was the slower; T now comes from the Gram matrix V^T V (one `ssyrk`) and
   the copies run on every core. eigh with vectors on `tridiag` 1.1x at 4096.
 - **The one-stage reductions and bisection** off IEEE arithmetic too:
-  eigvalsh on `tridiag` 1.07-1.11x.
+  eigvalsh on `tridiag` 1.07-1.11x. And the SVD's Jacobi kernel's rotation
+  and output: 1.14-1.17x on batches of 16x16 to 48x48, its `rsqrt` with two
+  Newton steps (with one, V's orthogonality was 10x worse; with two, a little
+  better than with the IEEE sequence).
 - Kernel epochs eigh 6, SVD 8 (whose runs must also time `band` with
   vectors): every Mac's eigh and SVD routing, the M5 Pro's included, is
   marked stale and applies as it is, at width 16 and without `band` for the
@@ -100,9 +103,9 @@ and what turned up while doing them; measured in
   or 2, and the band chase then ignored the cap; `sb_update` read up to 63
   rows past its staging buffer (never stored); `tuning/kernels.py` did not
   watch the band files for epoch changes.
-- New proposals: the CPU path's divide and conquer, IEEE arithmetic in the
-  remaining shaders, the divide and conquer's products on the GPU, and the
-  band SVD with vectors overlapped further.
+- New proposals: the CPU path's divide and conquer, the divide and
+  conquer's products on the GPU, and the band SVD with vectors overlapped
+  further.
 
 ## 2.14.0 (2026-10-05)
 
