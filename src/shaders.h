@@ -10,7 +10,6 @@
     extern "C" const unsigned char metal_linalg_##sym##_metallib[]; \
     extern "C" const size_t        metal_linalg_##sym##_metallib_len;
 
-METAL_LINALG_DECLARE_SHADER(QR_Unblocked)
 METAL_LINALG_DECLARE_SHADER(QR_Streaming_AMX_Reduced)
 METAL_LINALG_DECLARE_SHADER(QR_Streaming_AMX_Complete)
 METAL_LINALG_DECLARE_SHADER(QR_Householder)

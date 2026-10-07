@@ -27,7 +27,8 @@ namespace metal_linalg {
     //                gpu_min_batch_times_k and batch >= gpu_min_batch, or
     //                sqrt(M k) >= gpu_large_min_k in a batch of at most
     //                gpu_large_max_batch
-    //   kernel       grid-parallel iff M >= m_crossover_*, else single-threadgroup
+    //   kernel       grid-parallel iff k >= m_crossover_*, else the unblocked
+    //                backend (a matrix to a simdgroup or a threadgroup)
     //
     // The sign of R's diagonal is the one each backend produces: the
     // Householder reflections' (about half negative, as LAPACK's) for the
@@ -43,9 +44,11 @@ namespace metal_linalg {
 
     struct QrPolicy {
         // --- which GPU kernel ---
-        // Matrices with at least this many ROWS use the grid-parallel backend.
-        // Rows, not max(M, N): qr_unblocked sweeps M serially inside a single
-        // threadgroup, while N parallelises across that threadgroup's threads.
+        // Matrices with k = min(M, N) at least this use the grid-parallel
+        // backend (the blocked QR). k since 2.16.0, rows before (the field
+        // keeps its name): the unblocked backend gives a matrix one simdgroup
+        // or threadgroup, whose panels walk its k columns serially while its
+        // rows run in parallel.
         //
         // A batch-dependent split is supported but not used on any measured
         // device: set the two thresholds equal to disable it. On an M1 the split
@@ -98,7 +101,7 @@ namespace metal_linalg {
         // Device properties this was resolved against. Informational: they are
         // detected, not assumed, and are what a retune should be keyed on.
         unsigned gpu_cores = 0;           // 0 if it could not be detected
-        unsigned concurrent_matrices = 0; // qr_unblocked threadgroups resident at once
+        unsigned concurrent_matrices = 0; // threadgroups of 5 KB of threadgroup memory resident at once
     };
 
     // The policy in effect, resolved once on first use; where it came from
@@ -617,23 +620,20 @@ namespace metal_linalg {
         // Each backend on its own, whatever the policy says; same contracts
         // as above. For tests and tuning.
         namespace detail {
-            // Standard Householder QR in a single kernel dispatch, one
-            // threadgroup per matrix. Preferred for small matrices, where
-            // multi-pass streaming does not pay for its launch overhead.
-            // What qr_householder_preferred says goes to qr_householder
-            // instead (QR_HOUSEHOLDER=0 keeps it here).
+            // The backend for small and mid-size matrices, a matrix to a
+            // simdgroup or a threadgroup: qr_householder wherever it takes
+            // the matrix (up to 4096 rows), qr_blocked beyond.
             void qr_unblocked(const Matrices& a, float* q, float* r);
 
-            // LAPACK's method (sgeqr2, sorg2r) for small matrices: in one
-            // simdgroup's registers for n <= 64 with m <= 64 and n <= 32
-            // with m <= 128, else one threadgroup a matrix with the whole
-            // matrix in threadgroup memory, as the SVD's golub_kahan (up to
-            // about 90 x 90, longer when narrow; qr_householder_fits,
-            // throws otherwise).
+            // LAPACK's methods, a matrix to a simdgroup or a threadgroup:
+            // up to 32 columns and 128 rows in one simdgroup's registers
+            // (sgeqr2, sorg2r), else up to 4096 rows blocked in one
+            // threadgroup (sgeqrf, sorgqr: panels of 16 columns in
+            // registers, the updates as 8 x 8 simdgroup matrix products).
+            // qr_householder_fits says which it takes; throws otherwise.
             void qr_householder(const Matrices& a, float* q, float* r);
             bool qr_householder_fits(uint32_t m, uint32_t n);
-            // Where qr_unblocked hands a call to it: in registers, or in
-            // threadgroup memory for n <= 32.
+            // Where qr_unblocked hands a call to it: wherever it fits.
             bool qr_householder_preferred(uint32_t m, uint32_t n);
 
             // Multi-pass streaming panel factorisation that accumulates Q

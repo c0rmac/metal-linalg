@@ -153,7 +153,6 @@ function(metal_linalg_add_shader name)
     set_property(GLOBAL APPEND PROPERTY METAL_LINALG_METALLIBS "${_lib}")
 endfunction()
 
-metal_linalg_add_shader(QR_Unblocked)
 metal_linalg_add_shader(QR_Streaming_AMX_Reduced)
 metal_linalg_add_shader(QR_Streaming_AMX_Complete)
 metal_linalg_add_shader(QR_Householder)   # fast math: see QR_Householder.metal
@@ -203,7 +202,6 @@ add_library(metal_linalg ${_ml_kind}
     src/band_reduce.mm
     src/bisect.mm
     src/qr.mm
-    src/qr_unblocked.mm
     src/qr_streaming_amx_reduced.mm
     src/qr_blocked.mm
     src/qr_householder.mm

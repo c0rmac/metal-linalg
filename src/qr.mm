@@ -13,9 +13,10 @@
 namespace metal_linalg {
 namespace {
 
-// qr_unblocked asks for this much threadgroup memory (see qr_unblocked.mm).
-// Together with the device's per-threadgroup limit it sets how many matrices
-// the backend can keep resident at once.
+// The threadgroup memory the unblocked backend's first kernel asked for (5
+// KB). Together with the device's per-threadgroup limit it sets the policy's
+// informational concurrent_matrices, kept as it was for comparison with
+// earlier runs.
 constexpr unsigned kUnblockedThreadgroupBytes = 5120;
 
 // -----------------------------------------------------------------------------
@@ -118,8 +119,8 @@ ResolvedPolicy resolve() {
 
         r.policy.gpu_cores = gpu_core_count();
 
-        // Resident qr_unblocked threadgroups, i.e. matrices in flight. This one
-        // *is* derived from the device rather than assumed.
+        // Resident threadgroups of 5 KB, i.e. that kernel's matrices in
+        // flight. This one *is* derived from the device rather than assumed.
         if (dev && r.policy.gpu_cores) {
             const unsigned per_core =
                 (unsigned)(dev.maxThreadgroupMemoryLength / kUnblockedThreadgroupBytes);
@@ -206,16 +207,19 @@ void set_qr_policy(const QrPolicy& p) {
     state().source = "user";
 }
 
-// The crossover is on M alone, and rows are not interchangeable with
-// columns. qr_unblocked gives each matrix a single threadgroup, which must
-// sweep M rows for every Householder reflection: M is its serial depth,
-// while N parallelises across the threadgroup's threads.
-// qr_streaming_amx_reduced spreads each matrix over a grid instead, paying
-// roughly three kernel launches per 32-column panel.
-//
-// So a 2048x64 and a 64x2048 want opposite backends despite sharing both
-// max(M, N) and K = min(M, N) -- 9.9x for reduced on the former, 1.5x for
-// unblocked on the latter. A rule keyed on max(M, N) cannot express that.
+// The crossover is on k = min(M, N) (since 2.16.0; on M before). The
+// unblocked backend's kernels give each matrix a simdgroup or a threadgroup
+// whose threads hold its rows: its serial depth is its k columns, a panel
+// step and its barriers a column, while its rows run in parallel. The blocked
+// QR (qr_streaming_amx_reduced) spreads a matrix over a grid, paying several
+// dispatches a panel, which only a large matrix, or a small batch of wide
+// ones, repays. On the shapes the GPU takes in the M5 Pro's run of
+// 2026-10-08, k fitted at 1.040x geometric-mean regret, M at 1.129x (a tall
+// narrow batch, 16 of 2048 x 64, is the unblocked backend's at 0.43 of the
+// blocked QR's time, whatever its height). The first unblocked kernel, a
+// threadgroup a matrix sweeping its rows a column at a time, had M as its
+// depth, and rows for its feature: 2048 x 64 then went to the grid-parallel
+// backend by 9.9x on an M1.
 //
 // Batch does not enter on any measured device. It appeared to help by 0.7%
 // on a square-heavy grid; sampling tall shapes properly reversed that, and a
@@ -224,11 +228,10 @@ void set_qr_policy(const QrPolicy& p) {
 // split may be justified on other hardware -- see tuning/tune_qr.py, which
 // only emits it when it clears the noise floor.
 QrBackend qr_gpu_backend(unsigned m, unsigned n, unsigned batch) {
-    (void)n;
     const QrPolicy& p = state().policy;
     const unsigned crossover = batch < p.batch_threshold ? p.m_crossover_small_batch
                                                          : p.m_crossover_large_batch;
-    return m >= crossover ? QrBackend::streaming_reduced : QrBackend::unblocked;
+    return std::min(m, n) >= crossover ? QrBackend::streaming_reduced : QrBackend::unblocked;
 }
 
 // GPU or CPU, as for eigh and the SVD: the GPU needs enough work to pay for a
