@@ -96,8 +96,10 @@ struct State {
         w.bt  = priv(kBandMax * kBandMax);
         w.bs  = priv(kBandMax * kBandMax);
         // bd_tsqr_*'s layout: V (m x 32), then per leaf (at least 32 rows each)
-        // T, R and E (32 x 32 each), then L1 and U^{-1}.
-        w.bsc = priv((size_t)m * 32 + 3 * ((size_t)m / 32 + 2) * 32 * 32 + 2 * 32 * 32);
+        // T, R and E (32 x 32 each), then L1 and U^{-1}, then the top's tree
+        // nodes (33 x 32 each, fewer than the leaves).
+        w.bsc = priv((size_t)m * 32 + 3 * ((size_t)m / 32 + 2) * 32 * 32 + 2 * 32 * 32 +
+                     ((size_t)m / 32 + 2) * 33 * 32);
         return buf = w;
     }
 
@@ -124,7 +126,8 @@ void gemm(id<MTLDevice> dev, id<MTLCommandBuffer> cb, MPSMatrix* A, bool ta, MPS
 // into vout (at voff), T into tout, and V T, V^T, a second V as pp.flags ask.
 // In one simdgroup if it has at most kLeafRows rows, else by TSQR: leaves of
 // at most kLeafRows rows (a simdgroup each), their stacked R's in one
-// threadgroup (a thread a row), then V rebuilt (a thread a row).
+// threadgroup (a tree of pairs, a simdgroup a pair), then V rebuilt (a thread
+// a row).
 void panel(const Panels& pk, const Buffers& w, id<MTLCommandBuffer> cb, id<MTLBuffer> A, size_t off, PanelParams pp,
            id<MTLBuffer> vout, size_t voff, id<MTLBuffer> tout) {
     const uint32_t leaves = (pp.rows + kLeafRows - 1) / kLeafRows;
@@ -150,13 +153,16 @@ void panel(const Panels& pk, const Buffers& w, id<MTLCommandBuffer> cb, id<MTLBu
         [enc setBuffer:w.bl offset:0 atIndex:3];
         [enc setBuffer:w.bv offset:0 atIndex:4];
         [enc dispatchThreadgroups:MTLSizeMake(leaves, 1, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
+        // The top: a simdgroup for each pair of leaves' R's, as many as the
+        // pipeline takes
+        const uint32_t sgs = std::min<uint32_t>(std::max(1u, leaves / 2),
+                                                (uint32_t)pk.top.maxTotalThreadsPerThreadgroup / 32);
         [enc setComputePipelineState:pk.top];
         [enc setBuffer:A offset:off * 4 atIndex:0];
         [enc setBuffer:w.bsc offset:0 atIndex:1];
         [enc setBuffer:tout offset:0 atIndex:2];
         [enc setBytes:&pp length:sizeof pp atIndex:3];
-        [enc dispatchThreadgroups:MTLSizeMake(1, 1, 1)
-            threadsPerThreadgroup:MTLSizeMake((leaves * pp.cols + 31) / 32 * 32, 1, 1)];
+        [enc dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(32 * sgs, 1, 1)];
         [enc setComputePipelineState:pk.rebuild];
         [enc setBuffer:w.bsc offset:0 atIndex:0];
         [enc setBuffer:vout offset:voff * 4 atIndex:1];

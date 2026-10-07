@@ -359,11 +359,43 @@ struct PanelParams {
     uint dup;          // flag 8: V again at Vout + dup
 };
 
-// Merges (max, sum of squares / max^2) pairs.
-__attribute__((always_inline)) static float2 merge_ss(float2 a, float2 b) {
-    if (b.x > a.x) { const float f = a.x / b.x; return float2(b.x, a.y * f * f + b.y); }
-    if (b.x > 0.0f) { const float f = b.x / a.x; return float2(a.x, a.y + b.y * f * f); }
-    return a;
+// x / y and sqrt(x) to about an ulp: the fast approximations and a Newton
+// step. This file is built with -fno-fast-math, which makes `/` and sqrt()
+// the IEEE sequences, and a kernel with any of them in it compiles all of
+// its arithmetic in IEEE mode (an untaken sqrt() was enough); in the panel
+// kernels, whose columns are chains of dependent scalar steps, that cost a
+// third of the time or more (on an M5 Pro the TSQR top's tree 104 us against
+// 24, a leaf 33 against 22). So the panel kernels use these and nothing
+// IEEE. div1's y is never zero; sqrt1 returns x for x <= 0 (and NaN).
+__attribute__((always_inline)) static float div1(float x, float y) {
+    const float r = fast::divide(1.0f, y), q = x * r;
+    return fma(fma(-y, q, x), r, q);
+}
+__attribute__((always_inline)) static float sqrt1(float x) {
+    if (!(x > 0.0f)) return x;
+    const float s = fast::sqrt(x);
+    return fma(fma(-s, s, x), fast::divide(0.5f, s), s);
+}
+
+// A Householder reflector from alpha and the norm of the rest, as LAPACK's
+// slarfg: beta (alpha's replacement), tau, and the rest's scale
+// 1 / (alpha - beta); tau = 0 for a zero rest. The panel kernels take the
+// norms as plain sums of squares, not slarfg's scaled ones: the matrix is
+// scaled into [0.5, 1) before the reduction, so nothing in a panel comes
+// near overflowing, and a rest that underflows (entries below 1e-19, far
+// under the reduction's rounding) is left in place by a skipped reflector.
+// The scaled sums' divisions were a fifth of a leaf's time.
+__attribute__((always_inline)) static void householder(float alpha, float xnorm, thread float& beta,
+                                                        thread float& tau, thread float& scale) {
+    beta = alpha;
+    tau = 0.0f;
+    scale = 1.0f;
+    if (xnorm != 0.0f) {
+        const float big = max(fabs(alpha), xnorm), rb = div1(1.0f, big), ra = alpha * rb, rx = xnorm * rb;
+        beta = -copysign(big * sqrt1(ra * ra + rx * rx), alpha);
+        tau = div1(beta - alpha, beta);
+        scale = div1(1.0f, alpha - beta);
+    }
 }
 
 // The panel kernels are templates on B = cols, the width of each thread's row
@@ -377,6 +409,7 @@ __attribute__((always_inline)) static float2 merge_ss(float2 a, float2 b) {
 #define UNROLL_c(...) { { constexpr uint c = 0; __VA_ARGS__ } { constexpr uint c = 1; __VA_ARGS__ } { constexpr uint c = 2; __VA_ARGS__ } { constexpr uint c = 3; __VA_ARGS__ } { constexpr uint c = 4; __VA_ARGS__ } { constexpr uint c = 5; __VA_ARGS__ } { constexpr uint c = 6; __VA_ARGS__ } { constexpr uint c = 7; __VA_ARGS__ } { constexpr uint c = 8; __VA_ARGS__ } { constexpr uint c = 9; __VA_ARGS__ } { constexpr uint c = 10; __VA_ARGS__ } { constexpr uint c = 11; __VA_ARGS__ } { constexpr uint c = 12; __VA_ARGS__ } { constexpr uint c = 13; __VA_ARGS__ } { constexpr uint c = 14; __VA_ARGS__ } { constexpr uint c = 15; __VA_ARGS__ } { constexpr uint c = 16; __VA_ARGS__ } { constexpr uint c = 17; __VA_ARGS__ } { constexpr uint c = 18; __VA_ARGS__ } { constexpr uint c = 19; __VA_ARGS__ } { constexpr uint c = 20; __VA_ARGS__ } { constexpr uint c = 21; __VA_ARGS__ } { constexpr uint c = 22; __VA_ARGS__ } { constexpr uint c = 23; __VA_ARGS__ } { constexpr uint c = 24; __VA_ARGS__ } { constexpr uint c = 25; __VA_ARGS__ } { constexpr uint c = 26; __VA_ARGS__ } { constexpr uint c = 27; __VA_ARGS__ } { constexpr uint c = 28; __VA_ARGS__ } { constexpr uint c = 29; __VA_ARGS__ } { constexpr uint c = 30; __VA_ARGS__ } { constexpr uint c = 31; __VA_ARGS__ } }
 #define UNROLL_j(...) { { constexpr uint j = 0; __VA_ARGS__ } { constexpr uint j = 1; __VA_ARGS__ } { constexpr uint j = 2; __VA_ARGS__ } { constexpr uint j = 3; __VA_ARGS__ } { constexpr uint j = 4; __VA_ARGS__ } { constexpr uint j = 5; __VA_ARGS__ } { constexpr uint j = 6; __VA_ARGS__ } { constexpr uint j = 7; __VA_ARGS__ } { constexpr uint j = 8; __VA_ARGS__ } { constexpr uint j = 9; __VA_ARGS__ } { constexpr uint j = 10; __VA_ARGS__ } { constexpr uint j = 11; __VA_ARGS__ } { constexpr uint j = 12; __VA_ARGS__ } { constexpr uint j = 13; __VA_ARGS__ } { constexpr uint j = 14; __VA_ARGS__ } { constexpr uint j = 15; __VA_ARGS__ } { constexpr uint j = 16; __VA_ARGS__ } { constexpr uint j = 17; __VA_ARGS__ } { constexpr uint j = 18; __VA_ARGS__ } { constexpr uint j = 19; __VA_ARGS__ } { constexpr uint j = 20; __VA_ARGS__ } { constexpr uint j = 21; __VA_ARGS__ } { constexpr uint j = 22; __VA_ARGS__ } { constexpr uint j = 23; __VA_ARGS__ } { constexpr uint j = 24; __VA_ARGS__ } { constexpr uint j = 25; __VA_ARGS__ } { constexpr uint j = 26; __VA_ARGS__ } { constexpr uint j = 27; __VA_ARGS__ } { constexpr uint j = 28; __VA_ARGS__ } { constexpr uint j = 29; __VA_ARGS__ } { constexpr uint j = 30; __VA_ARGS__ } { constexpr uint j = 31; __VA_ARGS__ } }
 #define UNROLL_k(...) { { constexpr uint k = 0; __VA_ARGS__ } { constexpr uint k = 1; __VA_ARGS__ } { constexpr uint k = 2; __VA_ARGS__ } { constexpr uint k = 3; __VA_ARGS__ } { constexpr uint k = 4; __VA_ARGS__ } { constexpr uint k = 5; __VA_ARGS__ } { constexpr uint k = 6; __VA_ARGS__ } { constexpr uint k = 7; __VA_ARGS__ } { constexpr uint k = 8; __VA_ARGS__ } { constexpr uint k = 9; __VA_ARGS__ } { constexpr uint k = 10; __VA_ARGS__ } { constexpr uint k = 11; __VA_ARGS__ } { constexpr uint k = 12; __VA_ARGS__ } { constexpr uint k = 13; __VA_ARGS__ } { constexpr uint k = 14; __VA_ARGS__ } { constexpr uint k = 15; __VA_ARGS__ } { constexpr uint k = 16; __VA_ARGS__ } { constexpr uint k = 17; __VA_ARGS__ } { constexpr uint k = 18; __VA_ARGS__ } { constexpr uint k = 19; __VA_ARGS__ } { constexpr uint k = 20; __VA_ARGS__ } { constexpr uint k = 21; __VA_ARGS__ } { constexpr uint k = 22; __VA_ARGS__ } { constexpr uint k = 23; __VA_ARGS__ } { constexpr uint k = 24; __VA_ARGS__ } { constexpr uint k = 25; __VA_ARGS__ } { constexpr uint k = 26; __VA_ARGS__ } { constexpr uint k = 27; __VA_ARGS__ } { constexpr uint k = 28; __VA_ARGS__ } { constexpr uint k = 29; __VA_ARGS__ } { constexpr uint k = 30; __VA_ARGS__ } { constexpr uint k = 31; __VA_ARGS__ } }
+#define UNROLL_i(...) { { constexpr uint i = 0; __VA_ARGS__ } { constexpr uint i = 1; __VA_ARGS__ } { constexpr uint i = 2; __VA_ARGS__ } { constexpr uint i = 3; __VA_ARGS__ } { constexpr uint i = 4; __VA_ARGS__ } { constexpr uint i = 5; __VA_ARGS__ } { constexpr uint i = 6; __VA_ARGS__ } { constexpr uint i = 7; __VA_ARGS__ } { constexpr uint i = 8; __VA_ARGS__ } { constexpr uint i = 9; __VA_ARGS__ } { constexpr uint i = 10; __VA_ARGS__ } { constexpr uint i = 11; __VA_ARGS__ } { constexpr uint i = 12; __VA_ARGS__ } { constexpr uint i = 13; __VA_ARGS__ } { constexpr uint i = 14; __VA_ARGS__ } { constexpr uint i = 15; __VA_ARGS__ } { constexpr uint i = 16; __VA_ARGS__ } { constexpr uint i = 17; __VA_ARGS__ } { constexpr uint i = 18; __VA_ARGS__ } { constexpr uint i = 19; __VA_ARGS__ } { constexpr uint i = 20; __VA_ARGS__ } { constexpr uint i = 21; __VA_ARGS__ } { constexpr uint i = 22; __VA_ARGS__ } { constexpr uint i = 23; __VA_ARGS__ } { constexpr uint i = 24; __VA_ARGS__ } { constexpr uint i = 25; __VA_ARGS__ } { constexpr uint i = 26; __VA_ARGS__ } { constexpr uint i = 27; __VA_ARGS__ } { constexpr uint i = 28; __VA_ARGS__ } { constexpr uint i = 29; __VA_ARGS__ } { constexpr uint i = 30; __VA_ARGS__ } { constexpr uint i = 31; __VA_ARGS__ } }
 #define UNROLL_l(...) { { constexpr uint l = 0; __VA_ARGS__ } { constexpr uint l = 1; __VA_ARGS__ } { constexpr uint l = 2; __VA_ARGS__ } { constexpr uint l = 3; __VA_ARGS__ } { constexpr uint l = 4; __VA_ARGS__ } { constexpr uint l = 5; __VA_ARGS__ } { constexpr uint l = 6; __VA_ARGS__ } { constexpr uint l = 7; __VA_ARGS__ } { constexpr uint l = 8; __VA_ARGS__ } { constexpr uint l = 9; __VA_ARGS__ } { constexpr uint l = 10; __VA_ARGS__ } { constexpr uint l = 11; __VA_ARGS__ } { constexpr uint l = 12; __VA_ARGS__ } { constexpr uint l = 13; __VA_ARGS__ } { constexpr uint l = 14; __VA_ARGS__ } { constexpr uint l = 15; __VA_ARGS__ } { constexpr uint l = 16; __VA_ARGS__ } { constexpr uint l = 17; __VA_ARGS__ } { constexpr uint l = 18; __VA_ARGS__ } { constexpr uint l = 19; __VA_ARGS__ } { constexpr uint l = 20; __VA_ARGS__ } { constexpr uint l = 21; __VA_ARGS__ } { constexpr uint l = 22; __VA_ARGS__ } { constexpr uint l = 23; __VA_ARGS__ } { constexpr uint l = 24; __VA_ARGS__ } { constexpr uint l = 25; __VA_ARGS__ } { constexpr uint l = 26; __VA_ARGS__ } { constexpr uint l = 27; __VA_ARGS__ } { constexpr uint l = 28; __VA_ARGS__ } { constexpr uint l = 29; __VA_ARGS__ } { constexpr uint l = 30; __VA_ARGS__ } { constexpr uint l = 31; __VA_ARGS__ } }
 #define UNROLL_s(...) { { constexpr uint s = 0; __VA_ARGS__ } { constexpr uint s = 1; __VA_ARGS__ } { constexpr uint s = 2; __VA_ARGS__ } { constexpr uint s = 3; __VA_ARGS__ } { constexpr uint s = 4; __VA_ARGS__ } { constexpr uint s = 5; __VA_ARGS__ } { constexpr uint s = 6; __VA_ARGS__ } { constexpr uint s = 7; __VA_ARGS__ } }
 #define UNROLL(N, v, ...) UNROLL_##v(if (v < N) __VA_ARGS__)
@@ -399,78 +432,6 @@ __attribute__((always_inline)) static void form_t(threadgroup float (*Tm)[32], t
     }
 }
 
-// Householder QR of `rows` rows (rows <= threads), one row per thread in x,
-// for the TSQR's top (a few hundred rows): on return, as LAPACK leaves it,
-// thread `row` holds R(row, c) for c >= row (row < B) and the reflectors'
-// V(row, c) for c < row; T (upper triangular) in Tm. The column loop is not
-// unrolled (B copies of its body would be more than the compiler takes in
-// reasonable time); instead each thread's row turns one place left a column,
-// so that column j is always x[0] and column (j + k) mod B is x[k], and only
-// the loops over k are unrolled; after B turns the row is back in place. Two
-// barriers a column: the simdgroups' partials of the norm, then of the dot
-// products, each read once a simdgroup (a lane a partial) and passed round
-// by shuffles. They have a buffer each: a column's writes to one come after
-// the barrier that follows the last reads of the other column's.
-template <uint B>
-__attribute__((always_inline)) static void qr_rows(thread float (&x)[B], uint row, uint rows,
-                                                    threadgroup float (*Tm)[32], threadgroup float (*red)[32][33],
-                                                    threadgroup float (*D)[32], threadgroup float* bcast,
-                                                    threadgroup float* taus, uint t, uint nt, uint sg, uint lane) {
-    const uint nsg = (nt + 31) / 32;
-    threadgroup float (*part)[33] = red[0];
-    threadgroup float (*dp)[33] = red[1];
-    for (uint j = 0; j < B; ++j) {
-        // ||x(j+1:)||, scaled by its largest entry; alpha = x(j)
-        const float ax = row > j && row < rows ? fabs(x[0]) : 0.0f;
-        float2 ms = float2(ax, ax > 0.0f ? 1.0f : 0.0f);
-        for (uint o = 16; o > 0; o >>= 1)
-            ms = merge_ss(ms, float2(simd_shuffle_xor(ms.x, o), simd_shuffle_xor(ms.y, o)));
-        if (lane == 0) { part[sg][0] = ms.x; part[sg][1] = ms.y; }
-        if (row == j) bcast[0] = x[0];
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-        float2 all = lane < nsg ? float2(part[lane][0], part[lane][1]) : float2(0.0f, 0.0f);
-        for (uint o = 16; o > 0; o >>= 1)
-            all = merge_ss(all, float2(simd_shuffle_xor(all.x, o), simd_shuffle_xor(all.y, o)));
-        const float alpha = bcast[0], xnorm = all.x * sqrt(all.y);
-        float beta = alpha, tau = 0.0f, scale = 1.0f;
-        if (xnorm != 0.0f) {
-            const float big = max(fabs(alpha), xnorm), ra = alpha / big, rx = xnorm / big;
-            beta = -copysign(big * sqrt(ra * ra + rx * rx), alpha);
-            tau = (beta - alpha) / beta;
-            scale = 1.0f / (alpha - beta);
-        }
-        float v = 0.0f;
-        if (row == j) { x[0] = beta; v = 1.0f; }
-        else if (row > j && row < rows) { x[0] *= scale; v = x[0]; }
-        // v . x(:, c) for the other columns: the update of the columns right
-        // of j, and V(:, c)^T v for T (c < j)
-        UNROLL(B, k, {
-            if (k > 0) {
-                const float s = simd_sum(v * x[k]);
-                if (lane == 0) dp[sg][k] = s;
-            }
-        });
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-        if (t == 0) taus[j] = tau;
-        float mine = 0.0f;   // lane k: the column at k's dot product
-        if (lane < B)
-            for (uint q = 0; q < nsg; ++q) mine += dp[q][lane];
-        UNROLL(B, k, {
-            if (k > 0) {
-                const float d = simd_shuffle(mine, (ushort)k);
-                if (j + k < B) x[k] -= tau * d * v;
-                else if (t == 0) D[j][j + k - B] = d;
-            }
-        });
-        const float x0 = x[0];
-        UNROLL(B, k, { if (k + 1 < B) x[k] = x[k + 1]; });
-        x[B - 1] = x0;
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    form_t<B>(Tm, D, taus, t);
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-}
-
 // The same QR in one simdgroup, R rows a lane (row s * 32 + lane in x[s]), so
 // with no threadgroup barrier at all: a TSQR leaf's, or a short panel's.
 template <uint B, uint R>
@@ -478,22 +439,15 @@ __attribute__((always_inline)) static void qr_simd(thread float (&x)[R][B], uint
                                                     threadgroup float (*Tm)[32], threadgroup float (*D)[32],
                                                     threadgroup float* taus) {
     for (uint j = 0; j < B; ++j) {
-        float2 ms = float2(0.0f, 0.0f);
+        float ss = 0.0f;
         UNROLL(R, s, {
             const uint row = s * 32 + lane;
-            const float ax = row > j && row < rows ? fabs(x[s][0]) : 0.0f;
-            ms = merge_ss(ms, float2(ax, ax > 0.0f ? 1.0f : 0.0f));
+            const float y = row > j && row < rows ? x[s][0] : 0.0f;
+            ss = fma(y, y, ss);
         });
-        for (uint o = 16; o > 0; o >>= 1)
-            ms = merge_ss(ms, float2(simd_shuffle_xor(ms.x, o), simd_shuffle_xor(ms.y, o)));
-        const float alpha = simd_shuffle(x[0][0], (ushort)j), xnorm = ms.x * sqrt(ms.y);
-        float beta = alpha, tau = 0.0f, scale = 1.0f;
-        if (xnorm != 0.0f) {
-            const float big = max(fabs(alpha), xnorm), ra = alpha / big, rx = xnorm / big;
-            beta = -copysign(big * sqrt(ra * ra + rx * rx), alpha);
-            tau = (beta - alpha) / beta;
-            scale = 1.0f / (alpha - beta);
-        }
+        const float alpha = simd_shuffle(x[0][0], (ushort)j), xnorm = sqrt1(simd_sum(ss));
+        float beta, tau, scale;
+        householder(alpha, xnorm, beta, tau, scale);
         float v[R];
         UNROLL(R, s, {
             const uint row = s * 32 + lane;
@@ -595,8 +549,8 @@ kernel void bd_panel_qr(device float* P [[buffer(0)]], device float* Vout [[buff
 // Nguyen), so that the update is the same I - V T V^T as for a short panel.
 // Leaves of p.leaf rows (at least B each), one per threadgroup. Scratch S:
 // the leaves' V (the panel's rows, ld 32), then per leaf T_l, R_l and E_l
-// (32 x 32 each), then L1 and U^{-1}.
-struct TsqrLayout { uint sT, sR, sE, sL1, sUi; };
+// (32 x 32 each), then L1 and U^{-1}, then the top's tree nodes.
+struct TsqrLayout { uint sT, sR, sE, sL1, sUi, sW; };
 static TsqrLayout tsqr_layout(constant PanelParams& p) {
     const uint nl = (p.rows + p.leaf - 1) / p.leaf;
     TsqrLayout L;
@@ -605,6 +559,7 @@ static TsqrLayout tsqr_layout(constant PanelParams& p) {
     L.sE = L.sR + nl * 32 * 32;
     L.sL1 = L.sE + nl * 32 * 32;
     L.sUi = L.sL1 + 32 * 32;
+    L.sW = L.sUi + 32 * 32;   // the top's tree nodes, 33 x 32 each (fewer than nl)
     return L;
 }
 
@@ -636,119 +591,194 @@ kernel void bd_tsqr_leaf(device const float* P [[buffer(0)]], device float* S [[
     for (uint q = lane; q < 32 * 32; q += 32) S[L.sT + l * 32 * 32 + q] = q / 32 < B && q % 32 < B ? Tm[q / 32][q % 32] : 0.0f;
 }
 
-// One threadgroup: the QR of the stacked R_l; the panel's R; E, the stacked
+// The QR of two stacked b x b upper triangles [A; Bt] in one simdgroup, lane
+// c holding column c of each (a[k] = A(k, c), bt[k] = Bt(k, c)): LAPACK's
+// stpqrt2 with Bt triangular. Reflector j is H_j = I - tau_j v_j v_j^T, v_j =
+// [e_j; w_j], w_j nonzero in Bt's rows 0..j only. On return a holds R, bt the
+// w's (column j is w_j), lane j's tau tau_j. A lane a column and the steps
+// unrolled: b^2 / 2 shuffles in all, no reduction and no barrier.
+template <uint B>
+__attribute__((always_inline)) static void pair_qr(thread float (&a)[B], thread float (&bt)[B], thread float& tau,
+                                                    uint lane) {
+    UNROLL(B, j, {
+        float t = 0.0f;
+        if (lane == j) {   // the reflector for A(j, j) over Bt(0..j, j)
+            float ss = 0.0f;
+            UNROLL(B, k, { if (k <= j) ss = fma(bt[k], bt[k], ss); });
+            float beta, scale;
+            householder(a[j], sqrt1(ss), beta, t, scale);
+            a[j] = beta;
+            UNROLL(B, k, { if (k <= j) bt[k] *= scale; });
+            tau = t;
+        }
+        t = simd_shuffle(t, (ushort)j);
+        float w[B];
+        UNROLL(B, k, { if (k <= j) w[k] = simd_shuffle(bt[k], (ushort)j); });
+        if (lane > j && lane < B) {   // the columns right of j
+            float dot = a[j];
+            UNROLL(B, k, { if (k <= j) dot = fma(w[k], bt[k], dot); });
+            dot *= t;
+            a[j] -= dot;
+            UNROLL(B, k, { if (k <= j) bt[k] = fma(-dot, w[k], bt[k]); });
+        }
+    });
+}
+
+// [xt; xb] = Q [xt; 0], Q = H_0 ... H_{b-1} of pair_qr, lane c holding column
+// c; the w's in W (row-major, ld 32), the taus in its row 32. Lane c loads
+// w_c, and each w is passed round by shuffles when its reflector comes.
+template <uint B>
+__attribute__((always_inline)) static void pair_apply(thread float (&xt)[B], thread float (&xb)[B],
+                                                       device const float* W, uint lane) {
+    float wc[B];
+    UNROLL(B, k, { wc[k] = lane < B ? W[k * 32 + lane] : 0.0f; xb[k] = 0.0f; });
+    const float tc = lane < B ? W[32 * 32 + lane] : 0.0f;
+    UNROLL(B, j, {
+        constexpr uint jj = j < B ? B - 1 - j : 0;   // H_{b-1} first
+        const float t = simd_shuffle(tc, (ushort)jj);
+        float w[B];
+        UNROLL(B, k, { if (k <= jj) w[k] = simd_shuffle(wc[k], (ushort)jj); });
+        float dot = xt[jj];
+        UNROLL(B, k, { if (k <= jj) dot = fma(w[k], xb[k], dot); });
+        dot *= t;
+        xt[jj] -= dot;
+        UNROLL(B, k, { if (k <= jj) xb[k] = fma(-dot, w[k], xb[k]); });
+    });
+}
+
+// One threadgroup: the QR of the stacked R_l, the panel's R; E, the stacked
 // blocks of the first B columns of that QR's Q; the top B rows of the
 // panel's Q, Q1, and their LU with the signs that keep it stable,
 // Q1 - S = L1 U; then T = -U S L1^{-T} and R_H = S R (into the panel), L1 and
 // U^{-1} for bd_tsqr_rebuild.
+//
+// The stacked R's are triangles, so their QR is a binary tree of pair_qr's:
+// up the tree the pairs at each level side by side, a simdgroup a pair, node
+// q of level k's R in the slot of its leftmost leaf, q << k, and its
+// reflectors in a block of its own; then E down it, from E = I at the root,
+// each node's Q applied to [E; 0], the halves to its children's slots. The
+// rest is b x b work in simdgroup 0, rows or columns in registers and
+// shuffles. Factoring the 512 stacked rows of a 4096 x 16 panel as one
+// matrix, a thread a row, took 57 of the kernel's 91 us on an M5 Pro: two
+// threadgroup barriers and a reduction a column, over 16 simdgroups.
 template <uint B>
 kernel void bd_tsqr_top(device float* P [[buffer(0)]], device float* S [[buffer(1)]],
                         device float* Tout [[buffer(2)]], constant PanelParams& p [[buffer(3)]],
-                        uint t [[thread_position_in_threadgroup]], uint nt [[threads_per_threadgroup]],
-                        uint sg [[simdgroup_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]]) {
-    threadgroup float red[2][32][33];
-    threadgroup float Tm[32][32], D[32][32], taus[32];
-    threadgroup float bcast[1];
-    threadgroup float A[32][33], Bm[32][33], C[32][33], sgn[32];
+                        uint nsg [[simdgroups_per_threadgroup]], uint sg [[simdgroup_index_in_threadgroup]],
+                        uint lane [[thread_index_in_simdgroup]]) {
+    threadgroup float C[32][33];
     const TsqrLayout L = tsqr_layout(p);
-    const uint b = B, nl = (p.rows + p.leaf - 1) / p.leaf, rows = nl * b;
-    float x[B];
-    UNROLL(B, c, { x[c] = 0.0f; });
-    if (t < rows) {
-        const uint l = t / b, r = t % b;
-        UNROLL(B, c, { x[c] = S[L.sR + (l * 32 + r) * 32 + c]; });
+    const uint b = B, nl = (p.rows + p.leaf - 1) / p.leaf;
+    // Up the tree
+    uint counts[8], offs[8], levels = 0;
+    float a[B], bt[B], tau = 0.0f;
+    UNROLL(B, k, { a[k] = 0.0f; bt[k] = 0.0f; });
+    for (uint count = nl, off = 0; count > 1; count = (count + 1) / 2) {
+        const uint k = ++levels, pairs = count / 2;
+        counts[k] = count;
+        offs[k] = off;
+        for (uint q = sg; q < pairs; q += nsg) {
+            device float* Rl = S + L.sR + (q << k) * 1024;
+            device const float* Rr = S + L.sR + ((2 * q + 1) << (k - 1)) * 1024;
+            UNROLL(B, i, {
+                a[i] = lane < B ? Rl[i * 32 + lane] : 0.0f;
+                bt[i] = lane < B ? Rr[i * 32 + lane] : 0.0f;
+            });
+            pair_qr<B>(a, bt, tau, lane);
+            device float* W = S + L.sW + (off + q) * (33 * 32);
+            if (lane < B) {
+                UNROLL(B, i, { Rl[i * 32 + lane] = a[i]; W[i * 32 + lane] = bt[i]; });
+                W[32 * 32 + lane] = tau;
+            }
+        }
+        off += pairs;
+        threadgroup_barrier(mem_flags::mem_device);
     }
-    qr_rows<B>(x, t, rows, Tm, red, D, bcast, taus, t, nt, sg, lane);
-    // M = T V(0:b, :)^T, with V(0:b, :) (unit lower) in A
-    if (t < b) UNROLL(B, c, { A[t][c] = t > c ? x[c] : (t == c ? 1.0f : 0.0f); });
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    for (uint q = t; q < b * b; q += nt) {
-        const uint r = q / b, c = q % b;
+    // Down it: E's blocks
+    if (sg == 0 && lane < B) UNROLL(B, i, { S[L.sE + i * 32 + lane] = i == lane ? 1.0f : 0.0f; });
+    threadgroup_barrier(mem_flags::mem_device);
+    for (uint k = levels; k >= 1; --k) {
+        for (uint q = sg; q < counts[k] / 2; q += nsg) {
+            device float* El = S + L.sE + (q << k) * b * 32;
+            device float* Er = S + L.sE + ((2 * q + 1) << (k - 1)) * b * 32;
+            float xt[B], xb[B];
+            UNROLL(B, i, { xt[i] = lane < B ? El[i * 32 + lane] : 0.0f; });
+            pair_apply<B>(xt, xb, S + L.sW + (offs[k] + q) * (33 * 32), lane);
+            if (lane < B) UNROLL(B, i, { El[i * 32 + lane] = xt[i]; Er[i * 32 + lane] = xb[i]; });
+        }
+        threadgroup_barrier(mem_flags::mem_device);
+    }
+    if (sg != 0) return;   // simdgroup 0 holds the root's R, a column a lane
+    // Q1 = E_0 - V_0(0:b, :) T_0 (V_0(0:b, :)^T E_0), a column a lane: g =
+    // V_0^T e (V_0 unit lower), h = T_0 g, e - V_0 h
+    float e[B], g[B], h[B];
+    UNROLL(B, i, { e[i] = lane < B ? S[L.sE + i * 32 + lane] : 0.0f; });
+    UNROLL(B, k, {
+        float s = e[k];
+        UNROLL(B, i, { if (i > k) s = fma(S[i * 32 + k], e[i], s); });
+        g[k] = s;
+    });
+    UNROLL(B, k, {
         float s = 0.0f;
-        for (uint k = r; k < b; ++k) s = fma(Tm[r][k], A[c][k], s);
-        Bm[r][c] = s;
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    // E(t, :) = I(t, :) - V(t, :) M
-    if (t < rows)
-        UNROLL(B, c, {
-            float s = 0.0f;
-            UNROLL(B, k, { s = fma(t > k ? x[k] : (t == k ? 1.0f : 0.0f), Bm[k][c], s); });
-            const float e = (t == c ? 1.0f : 0.0f) - s;
-            S[L.sE + t * 32 + c] = e;
-            if (t < b) C[t][c] = e;   // E_0
-        });
-    threadgroup_barrier(mem_flags::mem_threadgroup | mem_flags::mem_device);
-    // Q1 = E_0 - V_0(0:b, :) T_0 (V_0(0:b, :)^T E_0), with A = V_0's top, Tm = T_0
-    for (uint q = t; q < b * b; q += nt) {
-        const uint r = q / b, c = q % b;
-        A[r][c] = S[(ulong)r * 32 + c];
-        Tm[r][c] = S[L.sT + r * 32 + c];
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    for (uint q = t; q < b * b; q += nt) {   // Bm = V_0^T E_0
-        const uint r = q / b, c = q % b;
-        float s = 0.0f;
-        for (uint k = 0; k < b; ++k) s = fma(A[k][r], C[k][c], s);
-        Bm[r][c] = s;
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    for (uint q = t; q < b * b; q += nt) {   // Q1, in place in C
-        const uint r = q / b, c = q % b;
-        float s = 0.0f;
-        for (uint k = 0; k < b; ++k) {
-            float tb = 0.0f;
-            for (uint u = k; u < b; ++u) tb = fma(Tm[k][u], Bm[u][c], tb);
-            s = fma(A[r][k], tb, s);
-        }
-        C[r][c] -= s;
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    // The rest is b x b work, done by simdgroup 0 alone, a lane a row or a
-    // column, so that its steps need no threadgroup barrier. LU of Q1 - S
-    // without pivoting, in C: s_j = -sign(the pivot), so that every pivot is
-    // at least 1 in magnitude.
-    if (sg != 0) return;
-    for (uint j = 0; j < b; ++j) {
-        if (lane == 0) {
-            const float d = C[j][j], s = d >= 0.0f ? -1.0f : 1.0f;
-            sgn[j] = s;
-            C[j][j] = d - s;
-        }
-        simdgroup_barrier(mem_flags::mem_threadgroup);
-        if (lane > j && lane < b) {
-            const float l = C[lane][j] / C[j][j];
-            C[lane][j] = l;
-            for (uint c = j + 1; c < b; ++c) C[lane][c] -= l * C[j][c];
-        }
-        simdgroup_barrier(mem_flags::mem_threadgroup);
-    }
-    // L1 (unit lower, below C's diagonal), U (C's upper triangle): L1^{-1}
-    // into A, U^{-1} into Bm, a column a lane
-    if (lane < b) {
-        for (uint r = 0; r < b; ++r) {
-            float s = r == lane ? 1.0f : 0.0f;
-            for (uint k = lane; k < r; ++k) s -= C[r][k] * A[k][lane];
-            A[r][lane] = r < lane ? 0.0f : s;
-        }
-        for (int r = (int)b - 1; r >= 0; --r) {
-            float s = (uint)r == lane ? 1.0f : 0.0f;
-            for (uint k = r + 1; k < b; ++k) s -= C[r][k] * Bm[k][lane];
-            Bm[r][lane] = (uint)r > lane ? 0.0f : s / C[r][r];
-        }
-    }
+        UNROLL(B, l, { if (l >= k) s = fma(S[L.sT + k * 32 + l], g[l], s); });
+        h[k] = s;
+    });
+    UNROLL(B, i, {
+        float s = h[i];
+        UNROLL(B, k, { if (k < i) s = fma(S[i * 32 + k], h[k], s); });
+        e[i] -= s;
+    });
+    // To rows: lane r holds row r of Q1
+    if (lane < B) UNROLL(B, i, { C[i][lane] = e[i]; });
     simdgroup_barrier(mem_flags::mem_threadgroup);
-    // T_H = -U S L1^{-T}: T(r, c) = -sum_{r <= k <= c} U(r, k) s_k L1^{-1}(c, k)
-    for (uint q = lane; q < b * b; q += 32) {
-        const uint r = q / b, c = q % b;
-        float s = 0.0f;
-        for (uint k = r; k <= c; ++k) s = fma(C[r][k] * sgn[k], A[c][k], s);
-        Tout[r * 32 + c] = r <= c ? -s : 0.0f;
-        S[L.sL1 + r * 32 + c] = r > c ? C[r][c] : (r == c ? 1.0f : 0.0f);
-        S[L.sUi + r * 32 + c] = Bm[r][c];
-    }
-    if (t < b)   // R_H = S R
-        UNROLL(B, c, { if (c >= t) P[t * p.rs + c * p.cs] = sgn[t] * x[c]; });
+    float x[B];
+    UNROLL(B, k, { x[k] = lane < B ? C[lane][k] : 0.0f; });
+    // LU of Q1 - S without pivoting: s_j = -sign(the pivot), so that every
+    // pivot is at least 1 in magnitude. Then x[k] = L1(r, k) for k < r,
+    // U(r, k) for k >= r.
+    float my_s = 1.0f;
+    UNROLL(B, j, {
+        const float d = simd_shuffle(x[j], (ushort)j);
+        const float sj = d >= 0.0f ? -1.0f : 1.0f, piv = d - sj;
+        if (lane == j) {
+            my_s = sj;
+            x[j] = piv;
+        }
+        const bool below = lane > j && lane < B;
+        const float l = div1(x[j], piv);
+        if (below) x[j] = l;
+        UNROLL(B, k, {
+            if (k > j) {
+                const float u = simd_shuffle(x[k], (ushort)j);
+                if (below) x[k] = fma(-l, u, x[k]);
+            }
+        });
+    });
+    // Row r of U^{-1}: y U = e_r, forward; row r of T_H: y L1^T = -U(r, :) S,
+    // forward. U(k, c) and L1(c, k) are lane k's and lane c's.
+    float ui[B], th[B];
+    UNROLL(B, c, {
+        float s = lane == c ? 1.0f : 0.0f;
+        UNROLL(B, k, { if (k < c) s = fma(-ui[k], simd_shuffle(x[c], (ushort)k), s); });
+        ui[c] = div1(s, simd_shuffle(x[c], (ushort)c));
+    });
+    UNROLL(B, c, {
+        const float sc = simd_shuffle(my_s, (ushort)c);
+        float s = c >= lane ? -x[c] * sc : 0.0f;
+        UNROLL(B, k, { if (k < c) s = fma(-th[k], simd_shuffle(x[k], (ushort)c), s); });
+        th[c] = s;
+    });
+    if (lane < B)
+        UNROLL(B, c, {
+            Tout[lane * 32 + c] = c >= lane ? th[c] : 0.0f;
+            S[L.sL1 + lane * 32 + c] = c < lane ? x[c] : (c == lane ? 1.0f : 0.0f);
+            S[L.sUi + lane * 32 + c] = c >= lane ? ui[c] : 0.0f;
+        });
+    // R_H = S R, R's column c in lane c
+    UNROLL(B, i, {
+        const float si = simd_shuffle(my_s, (ushort)i);
+        if (lane < B && i <= lane) P[i * p.rs + lane * p.cs] = si * a[i];
+    });
 }
 
 // The panel's V, rebuilt: row i in leaf l, with E_l its block of E and
@@ -772,15 +802,18 @@ kernel void bd_tsqr_rebuild(device const float* S [[buffer(0)]], device float* V
     }
     for (uint q = t; q < 32 * 32; q += nt) Tm[q / 32][q % 32] = S[L.sT + l * 32 * 32 + q];
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    for (uint q = t; q < b * b; q += nt) {   // M = T_l (V_l(0:b, :)^T E_l)
+    for (uint q = t; q < b * b; q += nt) {   // G = V_l(0:b, :)^T E_l, into M
+        const uint r = q / b, c = q % b;
+        float g = 0.0f;
+        for (uint u = 0; u < b; ++u) g = fma(A[u][r], E[u][c], g);
+        M[r][c] = g;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint q = t; q < b * b; q += nt) {   // T_l G, into A (V_l's rows are done with)
         const uint r = q / b, c = q % b;
         float s = 0.0f;
-        for (uint k = r; k < b; ++k) {
-            float g = 0.0f;
-            for (uint u = 0; u < b; ++u) g = fma(A[u][k], E[u][c], g);
-            s = fma(Tm[r][k], g, s);
-        }
-        M[r][c] = s;
+        for (uint k = r; k < b; ++k) s = fma(Tm[r][k], M[k][c], s);
+        A[r][c] = s;
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
     for (uint q = t; q < 32 * 32; q += nt) Tm[q / 32][q % 32] = Tin[q];   // T_H, for V T
@@ -795,7 +828,7 @@ kernel void bd_tsqr_rebuild(device const float* S [[buffer(0)]], device float* V
         UNROLL(B, c, { vl[c] = S[(ulong)i * 32 + c]; });
         UNROLL(B, c, {
             float s = t < b ? E[t][c] : 0.0f;
-            UNROLL(B, k, { s -= vl[k] * M[k][c]; });
+            UNROLL(B, k, { s -= vl[k] * A[k][c]; });
             q[c] = s;
         });
         UNROLL(B, c, {
@@ -815,7 +848,7 @@ kernel void bd_tsqr_rebuild(device const float* S [[buffer(0)]], device float* V
         device const float*, device float*, constant PanelParams&, device const float*, device const float*,   \
         uint, uint);                                                                                            \
     template [[host_name("bd_tsqr_top_" #B)]] kernel void bd_tsqr_top<B>(                                       \
-        device float*, device float*, device float*, constant PanelParams&, uint, uint, uint, uint);           \
+        device float*, device float*, device float*, constant PanelParams&, uint, uint, uint);                 \
     template [[host_name("bd_tsqr_rebuild_" #B)]] kernel void bd_tsqr_rebuild<B>(                               \
         device const float*, device float*, device float*, device float*, device const float*,                 \
         constant PanelParams&, uint, uint, uint);
