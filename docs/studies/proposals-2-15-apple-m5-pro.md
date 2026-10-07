@@ -391,7 +391,9 @@ The CPU path is 2.14's; its svdvals measured 6-8% slower from 2048 than in
 run `20261004-06bc11` (2070 ms at 4096 against 1949; PyTorch's `sgesdd` took
 2.01 s, as on 2026-10-05), which flatters those svdvals ratios by as much.
 
-The routing has not been re-measured: the epochs (eigh 6, SVD 8) mark every
-Mac's eigh and SVD rows stale, the M5 Pro's included, and they apply as
-they are, at width 16, until `tuning/run.py` is run on an idle Mac. That run
-fills sections 5 and 6's choices.
+The routing was re-measured that evening (runs `20261007-246324`, eigh and
+SVD, and `20261007-82345e`, QR): the M5 Pro takes the SVD with vectors on
+`band` from k = 1024, svdvals on `band` from 768 and eigvalsh from 2048, at
+width 16. README's tables were measured again after the last change, side
+by side (QR 10.0x at 4096, the SVD with vectors 9.77x, svdvals 9.76x, eigh
+8.32x, eigvalsh 3.61x).

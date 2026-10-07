@@ -137,11 +137,11 @@ and what turned up while doing them; measured in
   singular values alone from 768 and the eigenvalues alone from 2048, at
   width 16; and the estimated policies of the Macs nobody has measured are
   refitted from it.
-- On an M5 Pro, one matrix against the CPU path: svdvals 10.5x at 4096 and
-  11.5x at 8192, eigh 8.8x and 8.8x, eigvalsh 3.4x and 3.6x, the SVD with
-  vectors 3.7x at 4096 on `bidiag` and 8.7x on `band` (2.14: 8.6x, 5.6x,
-  2.9x and 2.3x at 4096); README and the per-solver docs' tables re-measured
-  side by side.
+- On an M5 Pro, one matrix against the CPU path: svdvals 9.8x at 4096 and
+  11.7x at 8192, eigh 8.3x and 8.9x, eigvalsh 3.6x and 3.8x, the SVD with
+  vectors 4.2x at 4096 on `bidiag` and 9.8x on `band`, QR 10.0x (2.14: 8.6x,
+  5.6x, 2.9x, 2.3x and 2.7x at 4096); README's tables, and its PyTorch
+  comparison, re-measured side by side after the last change.
 - Fixes: the sweeps' correctness gate failed every backend from N ~ 6500
   (MLX queued the comparison's GPU work behind the CPU reference, past the
   GPU's watchdog); `cpu_threads() - 2` wrapped around for a thread cap of 1
