@@ -1,6 +1,21 @@
 # A faster TSQR top kernel
 
-Status: proposal, not started (2026-10-04).
+Status: **done in 2.15.0** (2026-10-07). Step 1, timing the phases, found
+the top's QR of the stacked R's at 57 of 91 us and its last b x b step at 24
+(not nothing, as guessed). The stacked R's are now factored as a binary tree
+of triangle pairs (LAPACK's `stpqrt2`), a simdgroup a pair and a lane a
+column, E carried down the tree, and the LU and inverses in registers and
+shuffles. Doing that uncovered the larger cause: the file is built with
+`-fno-fast-math`, and a kernel with any IEEE division or square root in it
+(an untaken one was enough) compiles all its arithmetic in IEEE mode. The
+panel kernels now divide and take square roots with the fast approximations
+and a Newton step. A 4096 x 16 panel: top 91.6 to 42.9 us, leaf 32.6 to 20.8,
+rebuild 15.6 to 12.0. svdvals on `band` 1.30x at 1024, 1.24x at 2048, 1.13x
+at 4096; eigvalsh 1.18x, 1.15x, 1.08x. The dispatch merge (step 3) was not
+tried. See [the study](../studies/proposals-2-15-apple-m5-pro.md), section 2;
+the same IEEE finding is followed up in [ieee-mode-audit.md](ieee-mode-audit.md).
+
+What follows is the proposal as written on 2026-10-04.
 
 ## What
 

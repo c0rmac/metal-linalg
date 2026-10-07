@@ -1,7 +1,15 @@
 # The two-stage reduction with singular vectors
 
-Status: proposal, not started (2026-10-04). Larger than the others; do the
-[parallel divide and conquer](parallel-divide-and-conquer.md) first.
+Status: **prototyped, parked** (2026-10-07). Step 3, the part the case rests
+on, was prototyped first, as planned: on an M5 Pro it applies Q2 at 4096 in
+170 ms a side, about twice what would pay. With the parallel divide and
+conquer done, `bidiag` with vectors takes about 920 ms at 4096, and two
+stages would take about 160 (GPU) + 40 (chase) + 100 (divide and conquer) +
+2 x 170 (Q2, P2) + about 100 (Q1, P1), so 740: 1.2x at 4096 and slower than
+`bidiag` at 2048. It needs Q2 at 80 ms a side or less. The prototype and
+what it measured are below ([Prototype](#prototype-2026-10-07)); its sources
+are in [two-stage-vectors/](two-stage-vectors/).
+
 
 ## What
 
@@ -103,3 +111,55 @@ application adds 35-70 ms: nothing to gain.
 
 - A. Haidar, J. Kurzak and P. Luszczek, ["An improved parallel singular value algorithm and its implementation for multicore hardware"](https://doi.org/10.1145/2503210.2503292), SC '13, 2013 — the two-stage SVD with vectors on multicore CPUs; read first for how it back-transforms through the chase.
 - A. Haidar, H. Ltaief and J. Dongarra, ["Parallel reduction to condensed forms for symmetric eigenvalue problems using aggregated fine-grained and memory-aware kernels"](https://doi.org/10.1145/2063384.2063394), SC '11, 2011 — the symmetric counterpart.
+
+## Prototype (2026-10-07)
+
+What was built, in [two-stage-vectors/](two-stage-vectors/) (`build.sh`):
+
+- **The chase's reflectors, recorded** (`chase_record.cpp`, `band_chase.cpp`
+  storing each sweep's left and right reflectors, n^2 floats a side). Their
+  product reproduces the chase: Q2^T A P2 equals the bidiagonal to 4e-6
+  (`check_q2`). Recording costs nothing measurable (36.7 ms against 35 for
+  the chase at 4096).
+- **An order that blocks them.** Sweep s's j-th left reflector acts on rows
+  s + 1 + j nb ... s + (j + 1) nb. Reflectors of one sweep are disjoint;
+  sweep s' > s's reflector must come first (in reverse order, as U = Q2 U_B
+  is applied) where they overlap, which is for j' = j when s' - s < nb and
+  j' = j - 1 when s' - s < 2 nb. So with groups of ib consecutive sweeps:
+  groups from the last to the first, in a group the steps j in increasing
+  order, each step's ib reflectors a block I - V T V^T, V (nb + ib - 1) x ib.
+  `check_q2` confirms it gives the same Q2 as one reflector at a time, bit
+  for bit, for ib = 8, 16 and 32. The blocks do 4.5 n^3 flops a side at nb
+  = ib = 16 (the zeros in V's staircase cost half again over the 2 n^3
+  minimum).
+- **The GPU kernel** (`q2.metal`): a threadgroup a strip of 32 columns of
+  U_B, the 32,896 blocks (n = 4096) one after another, each V T V^T applied
+  with simdgroup products. Correct to a few 1e-6 of |U_B| against one
+  reflector at a time on the CPU.
+
+Measured, n = 4096, a side:
+
+| version | time |
+|---|---|
+| a threadgroup a 32-column strip, the blocks in sequence | 170 ms |
+| the same, one threadgroup only | 83 ms (2.5 us a block) |
+| a sliding window: the 15 rows a block shares with the next kept in threadgroup memory | 190 ms |
+| 64-column strips (256, 512 or 1024 threads) | 188-212 ms |
+| 32-column strips with 64 or 128 threads | 217-341 ms |
+| a simdgroup a group, groups staggered a block apart, U_B in registers | 788 ms (spilled) |
+
+and at 2048, 35 ms; 1024, 14 ms. The single threadgroup's 83 ms is the
+chain of 32,896 dependent blocks at 2.5 us each (five barriers and their
+loads); beyond about 40 threadgroups they run in waves, and 128 strips need
+3-4 of them.
+
+**What would make it pay**: several blocks in flight per threadgroup. The
+dependencies allow it: block (G - 1, j) needs only (G, j) and (G, j - 1), so
+consecutive groups can trail each other by one block, a wavefront. The
+staggered version did that with a simdgroup a group but spilled registers;
+the same schedule with the window in threadgroup memory and the simdgroups
+of a step sharing the products (as the 170 ms kernel does), or larger groups
+(ib = 32 halves the chain and adds a third of the flops), are the next
+things to try. Q1 and P1 (step 4) and the reflector storage in the GPU stage
+(step 1) were not started.
+

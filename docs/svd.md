@@ -108,17 +108,26 @@ GPU, as the eigensolver's `tridiag` backend does for `ssytrd`:
    a stride), and the small kernels together 52 µs, against 160 µs for the
    two products. With the matrix also copied in on every core rather than
    one, singular values alone are 1.2-1.8x faster at $k = 1024$-4096, and
-   with vectors 1.1-1.3x.
-2. **Bidiagonal SVD**: on the CPU, LAPACK `sbdsdc` (divide and conquer) with
-   the singular vectors of $B$. For the singular values alone (since 2.13.0;
+   with vectors 1.1-1.3x. Each threadgroup's reflectors divide and take
+   square roots with the fast approximations and a Newton step (since
+   2.15.0), not the IEEE sequences the shader file is otherwise built for.
+2. **Bidiagonal SVD**: on the CPU, `sbdsdc`'s divide and conquer with the
+   singular vectors of $B$, on every core but two (`src/divide_conquer.cpp`,
+   since 2.15.0): LAPACK's tree and routines, its leaves, merges and the
+   large merges' loops spread over threads, and `slasd2`'s deflation
+   rewritten to move the right vectors' rows a column at a time (LAPACK
+   moves them a strided row at a time, 130 of a 4096 merge's 190 ms). On a
+   4096 bidiagonal from `sgebrd`, 100 ms against `sbdsdc`'s 753 on one core;
+   the singular values bit for bit LAPACK's, and results independent of the
+   number of threads. For the singular values alone (since 2.13.0;
    `sbdsdc` before), bisection on the GPU from $k = 1024$ (12 ms at 4096,
    see [`band`](#a-seventh-backend-for-the-singular-values-of-large-matrices-band)),
    below it `sbdsqr`, whose dqds is faster than `sbdsdc` and accurate to every
    singular value of $B$, however small.
 3. **Back-transformation**: the reflectors of $Q$ and of $P$ applied to the
-   singular vectors of $B$ 128 at a time, each block as $I - V T V^T$
-   (`slarft`), as MPS GEMMs; the next block is built on the CPU while the GPU
-   applies this one.
+   singular vectors of $B$ 128 at a time, each block as $I - V T V^T$, as MPS
+   GEMMs; the next block is built on the CPU while the GPU applies this one
+   ($T$ from the Gram matrix $V^T V$ since 2.15.0).
 
 A matrix at least twice as tall as wide (and $k \ge 64$) is first reduced by
 this library's QR, the $k \times k$ factor is decomposed as above, and
@@ -133,30 +142,30 @@ the CPU path up to batches of 4 at that size. The backend is still for large
 matrices, not batches of small ones.
 `svdvals` (singular values alone) skips step 3 and the vectors of step 2.
 
-On an M5 Pro, one $k \times k$ matrix, against the CPU path (`sgesdd`), from
-the routing sweep in [`results/apple-m5-pro-20gpu/20261004-06bc11/svd/`](results/apple-m5-pro-20gpu/20261004-06bc11/svd/report.md)
-(min of two randomised passes):
+On an M5 Pro, one $k \times k$ matrix, against the CPU path (`sgesdd`), 2.15.0
+measured side by side (the median of `sweep_svd`):
 
 | $k$ | svd: CPU | bidiag | speedup | svdvals: CPU | bidiag | speedup |
 |---|---|---|---|---|---|---|
-| 512 | 16.8 ms | 16.6 ms | 1.01x | 7.8 ms | 9.3 ms | 0.84x |
-| 1024 | 78.4 ms | 55.3 ms | 1.42x | 35.6 ms | 23.0 ms | 1.55x |
-| 1536 | 179 ms | 120 ms | 1.49x | 85.6 ms | 50.2 ms | 1.71x |
-| 2048 | 450 ms | 248 ms | 1.81x | 201 ms | 93.3 ms | 2.15x |
-| 3072 | 1.30 s | 0.61 s | 2.15x | 0.72 s | 0.28 s | 2.57x |
-| 4096 | 3.57 s | 1.54 s | 2.32x | 1.95 s | 0.73 s | 2.66x |
+| 512 | 16.7 ms | 13.2 ms | 1.27x | 7.6 ms | 8.9 ms | 0.86x |
+| 1024 | 78.5 ms | 34.2 ms | 2.29x | 36.0 ms | 21.5 ms | 1.67x |
+| 1536 | 182 ms | 69.1 ms | 2.64x | 86.2 ms | 47.5 ms | 1.81x |
+| 2048 | 472 ms | 125 ms | 3.79x | 218 ms | 87.6 ms | 2.49x |
+| 3072 | 1.42 s | 0.39 s | 3.67x | 0.77 s | 0.31 s | 2.52x |
+| 4096 | 3.53 s | 0.94 s | 3.74x | 2.07 s | 0.71 s | 2.91x |
 
 For singular values alone, from $k = 1536$ the `band` backend (below) is
-faster still: 8.6x the CPU at 4096.
+faster still: 10.5x the CPU at 4096.
 
 The gain grows with $k$, as the CPU's reduction falls further behind memory
 bandwidth. The M5 Pro uses the backend from $k = 1024$, with vectors or
 without, for up to two matrices: it decomposes a batch one matrix after
 another (pipelined), and the CPU path spreads one over every core
-(`bidiag_max_batch`). Since the reduction's dispatches were merged (2.12.0)
-it wins by 1.4-1.8x from 1024 to 2048 with vectors, where before it was
-1.0-1.4x, and for singular values alone, with bisection on the GPU since
-2.13.0, by 1.55-2.15x, where before 2.12.0 it lost below 2048. Accuracy
+(`bidiag_max_batch`). With 2.15.0's parallel divide and conquer it wins by
+2.3-3.8x from 1024 to 2048 with vectors (1.4-1.8x in 2.14, after 2.12.0
+merged the reduction's dispatches; 1.0-1.4x before), and for singular values
+alone, with bisection on the GPU since 2.13.0, by 1.7-2.5x, where before
+2.12.0 it lost below 2048. Accuracy
 matches LAPACK's: at 2048 and 4096, square, tall and wide, reconstruction
 and orthogonality about $4 \times 10^{-6}$, singular values within
 $1.3 \times 10^{-6}$ of float64 LAPACK's relative to $\sigma_\text{max}$
@@ -274,18 +283,20 @@ about 290 GB/s. The `band` backend (`svd_band` in `src/svd_bidiag.mm`, new in
 eigenvalues ([Haidar, Ltaief and Dongarra](https://doi.org/10.1145/2063384.2063394)),
 and as the eigensolver's own `band` backend does ([eigh.md](eigh.md)):
 
-1. **To a band** of width $b$ on the GPU (16 by default;
-   `band_reduce_general` in `src/band_reduce.mm`), $b$ columns a
+1. **To a band** of width $b$ on the GPU (the policy's `values_band_width`,
+   16 by default; `band_reduce_general` in `src/band_reduce.mm`), $b$ columns a
    block: the QR of the block's column panel, $H = I - V T V^T$; the QR of
    its row panel (transposed: an LQ), $G = I - U S U^T$; and the rest of the
    matrix updated by both, folded so that it is read three times and written
    once a block, as $C \mathrel{-}= V W + (X - V W U) S U^T$ in one product,
-   where the one-stage reduction reads it twice a column. The products are
-   MPS GEMMs. A panel of up to 128 rows is factored in one simdgroup, four
-   rows a lane in registers, with no threadgroup barrier at all; a taller one
-   by TSQR ([Demmel, Grigori, Hoemmen and Langou](https://doi.org/10.1137/080731992)),
+   where the one-stage reduction reads it twice a column. The large products
+   are MPS GEMMs, the small ones ($b \times b$ and $b$ wide) two kernels of
+   the library's (since 2.15.0). A panel of up to 128 rows is factored in one
+   simdgroup, four rows a lane in registers, with no threadgroup barrier at
+   all; a taller one by TSQR ([Demmel, Grigori, Hoemmen and Langou](https://doi.org/10.1137/080731992)),
    leaves of up to 128 rows in parallel and their stacked $R$'s in one
-   threadgroup, then the Householder vectors rebuilt from TSQR's $Q$ by an LU
+   threadgroup as a binary tree of triangle pairs (since 2.15.0), a
+   simdgroup a pair, then the Householder vectors rebuilt from TSQR's $Q$ by an LU
    with chosen signs ([Ballard, Demmel, Grigori, Jacquelin, Knight and
    Nguyen](https://doi.org/10.1016/j.jpdc.2015.06.003)), so that the update is the
    same compact $I - V T V^T$. The last columns, fewer than $2b$, are LAPACK's.
@@ -312,17 +323,16 @@ On an M5 Pro, one square matrix, singular values alone:
 
 | $k$ | CPU | bidiag | band | band / bidiag |
 |---|---|---|---|---|
-| 1024 | 0.036 s | 0.023 s | 0.028 s | 0.83x |
-| 1536 | 0.086 s | 0.050 s | 0.044 s | 1.13x |
-| 2048 | 0.201 s | 0.093 s | 0.070 s | 1.33x |
-| 3072 | 0.721 s | 0.281 s | 0.127 s | 2.21x |
-| 4096 | 1.949 s | 0.733 s | 0.226 s | 3.24x |
-| 8192 | 11.95 s | 6.16 s | 1.15 s | 5.35x |
+| 1024 | 0.036 s | 0.022 s | 0.021 s | 1.03x |
+| 1536 | 0.086 s | 0.048 s | 0.034 s | 1.41x |
+| 2048 | 0.218 s | 0.088 s | 0.055 s | 1.60x |
+| 3072 | 0.773 s | 0.307 s | 0.113 s | 2.72x |
+| 4096 | 2.070 s | 0.712 s | 0.197 s | 3.61x |
+| 8192 | 12.64 s | 6.03 s | 1.10 s | 5.50x |
 
-Against the CPU path that is 1.9x at $k = 1536$, 2.9x at 2048, 5.7x at 3072,
-8.6x at 4096 and 10.4x at 8192 (to 4096 from the routing sweep in
-[`20261004-06bc11`](results/apple-m5-pro-20gpu/20261004-06bc11/svd/report.md),
-8192 measured alone). At $k = 4096$ the chase takes 35 ms, bisection 12, and
+Against the CPU path that is 2.6x at $k = 1536$, 4.0x at 2048, 6.8x at 3072,
+10.5x at 4096 and 11.5x at 8192 (2.15.0, measured side by side, the median
+of `sweep_svd`). At $k = 4096$ the chase takes 35 ms, bisection 12, and
 the GPU's stage, with the matrix's copy in, the rest. Below 1536 the panels'
 latency, a chain of dependent steps per block that does not shrink with $k$,
 costs more than the products save; the M5 Pro uses the backend from there
@@ -409,8 +419,9 @@ entry, remain only for a Mac with nothing to estimate from
 `SVD_GK_MAX_K`, `SVD_SHARE_MIN_BATCH`, `SVD_GPU_BIG_BATCH_MAX_K`,
 `SVD_GPU_BIG_BATCH_MIN`, `SVD_VALUES_BAND_MIN_K` and
 `SVD_DEVICE=gpu|cpu|bidiag|band` override it (`band` for singular values
-alone; with vectors it means `bidiag`). `SVD_BAND_WIDTH=8|16|32` sets the
-`band` backend's band width.
+alone; with vectors it means `bidiag`). `SVD_VALUES_BAND_WIDTH` sets the
+`band` backend's band width as a policy field (`values_band_width`, 8, 16 or
+32; 0 is 16), and `SVD_BAND_WIDTH=8|16|32` where the policy leaves it 0.
 `svd_backend(m, n, batch)` and `svdvals_backend(m, n, batch)` say which of the
 nine backends a problem gets, with vectors and for singular values alone.
 

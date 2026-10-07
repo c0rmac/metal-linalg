@@ -1,5 +1,81 @@
 # Changes
 
+## 2.15.0 (2026-10-07)
+
+The proposals left after 2.13.0 ([docs/proposals/](docs/proposals/README.md)),
+and what turned up while doing them; measured in
+[the 2.15.0 study](docs/studies/proposals-2-15-apple-m5-pro.md).
+
+- **The divide and conquer on every core.** With vectors, `tridiag` and
+  `bidiag` solved the tridiagonal or bidiagonal problem with LAPACK's
+  `sstedc` and `sbdsdc`, on one core. `src/divide_conquer.cpp` walks the same
+  tree with LAPACK's routines, its leaves and small merges one per task and
+  its large merges' loops (the secular equation's roots, the corrected z, the
+  vectors, the products) spread over the cores but two; `slasd2`'s
+  deflation, which moved the right vectors' rows one strided row at a time
+  (130 ms of a 4096 merge's 190), is rewritten to move them a column at a
+  time. On an M5 Pro, a 4096 problem: `sstedc` 176 ms to 50, `sbdsdc` 753 to
+  100. The values are LAPACK's bit for bit, the vectors to the last bits,
+  and neither depends on the number of threads. With the block reflectors'
+  change below, at 4096 eigh with vectors takes 306 ms (438 in 2.14) and the
+  SVD with vectors 943 (1535): 8.2x and 3.7x the CPU path.
+- **The band backends' panels**: the TSQR top factors its stacked R's as a
+  binary tree of triangle pairs, a simdgroup a pair, and the panel kernels
+  no longer run in IEEE mode. `Svd_Bidiag.metal` is built with
+  `-fno-fast-math`, and a kernel with any IEEE division or square root in
+  it, even an untaken one, compiles all of its arithmetic that way; they now
+  use the fast approximations with a Newton step. A 4096 x 16 panel 140 us to
+  76. svdvals on `band` 1.13-1.30x faster at 1024-4096, eigvalsh 1.08-1.18x.
+- **The band reductions' small products** (a b x b product summed over the
+  trailing rows and two b wide) are two kernels a block instead of three MPS
+  products: 2-5% at 1024-2048.
+- **The symmetric band reduction's trailing update on the lower triangle**
+  (`sb_update`), each off-diagonal tile's transpose written over its mirror
+  so that MPS still computes X = A22 V T on the whole: 1.5 n^2 of memory a
+  block instead of 2 n^2, and faster than MPS's update at every size
+  (4096: 462 us against 611). eigvalsh on `band` 1.08x at 4096, 1.17x at
+  8192 (872 ms to 744).
+- **`values_band_width`** in `EighPolicy` and `SvdPolicy` (0: 16), the C
+  API, Python, PyTorch and Swift, and `EIGH_VALUES_BAND_WIDTH` /
+  `SVD_VALUES_BAND_WIDTH`: the band backends' width as part of the per-device
+  policy. The sweeps time the band at widths 8 and 32 too (`band8_vals`,
+  `band32_vals`); stages 3b and 4b choose the width, then fit the threshold.
+  On the M5 Pro 16 is the fastest or within 2% everywhere but eigvalsh at
+  4096 (32, 7% faster).
+- **The band thresholds' fit** compares a threshold with the best on the
+  points where they choose differently (within 3% there), not only over all
+  the band points, where one clear loss was diluted; and the grids gain
+  N = 2560 and 3584 (eigh) and k = 1280 and 1792 (SVD). Re-analysed with it,
+  the M5 Pro's eigvalsh goes to `band` from 3072 instead of 4096.
+- **The back-transformations' block reflectors**: `tridiag` and `bidiag`
+  built each block of 128 reflectors' T with `slarft` on the CPU while the
+  GPU applied the previous block, and at 4096 the CPU's side (2.5 ms a block)
+  was the slower; T now comes from the Gram matrix V^T V (one `ssyrk`) and
+  the copies run on every core. eigh with vectors on `tridiag` 1.1x at 4096.
+- **The one-stage reductions and bisection** off IEEE arithmetic too:
+  eigvalsh on `tridiag` 1.07-1.11x.
+- Kernel epochs eigh 6, SVD 8: every Mac's eigh and SVD routing, the M5
+  Pro's included, is marked stale and applies as it is, at width 16, until
+  that Mac is measured again (`tuning/run.py`); no run yet has the band's
+  widths.
+- On an M5 Pro, one matrix against the CPU path: svdvals 10.5x at 4096 and
+  11.5x at 8192, eigh 8.2x and 8.4x, eigvalsh 3.4x and 3.6x, the SVD with
+  vectors 3.7x at 4096 (2.14: 8.6x, 5.6x, 2.9x and 2.3x at 4096); README and
+  the per-solver docs' tables re-measured side by side.
+- Fixes: the sweeps' correctness gate failed every backend from N ~ 6500
+  (MLX queued the comparison's GPU work behind the CPU reference, past the
+  GPU's watchdog); `cpu_threads() - 2` wrapped around for a thread cap of 1
+  or 2, and the band chase then ignored the cap; `sb_update` read up to 63
+  rows past its staging buffer (never stored); `tuning/kernels.py` did not
+  watch the band files for epoch changes.
+- The two-stage SVD with vectors was prototyped and parked: the chase's
+  reflectors applied by blocks on the GPU take 170 ms a side at 4096, about
+  twice what would beat `bidiag` now that its divide and conquer is fast
+  ([the proposal](docs/proposals/two-stage-vectors.md), with the prototype).
+  New proposals: the CPU path's divide and conquer, IEEE arithmetic in the
+  remaining shaders, the divide and conquer's products on the GPU, and long
+  single-threadgroup kernels against the GPU's watchdog.
+
 ## 2.14.0 (2026-10-05)
 
 - **Estimated policies for the Macs nobody has measured**, in place of the

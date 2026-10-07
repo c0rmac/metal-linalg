@@ -1,6 +1,15 @@
 # The band thresholds' tie-break
 
-Status: proposal, not started (2026-10-04).
+Status: **done in 2.15.0** (2026-10-07), both options. The eigh grid gains N
+= 2560 and 3584, the SVD's k = 1280 and 1792; and in stages 3b and 4b a
+threshold counts as near-optimal only if, on the points where it chooses
+differently from the best, it is within 3% of the best there
+(`near_on_disagreement` in `tuning/tune_eigh.py`). Re-analysed, run
+`20261004-06bc11` now chooses 3072 for eigvalsh, as it should have. See
+[the study](../studies/proposals-2-15-apple-m5-pro.md), section 6, and
+[reading-reports.md](../reading-reports.md).
+
+What follows is the proposal as written on 2026-10-04.
 
 ## What
 

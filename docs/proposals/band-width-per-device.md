@@ -1,7 +1,16 @@
 # The band width as part of the per-device policy
 
-Status: proposal, not started (2026-10-04). Only matters once other Macs are
-measured.
+Status: **done in 2.15.0** (2026-10-07), as planned: `values_band_width`
+in both policies (0: 16), through the C API, Python, PyTorch and Swift, with
+`EIGH_VALUES_BAND_WIDTH` and `SVD_VALUES_BAND_WIDTH`; the sweeps time
+`band8_vals` and `band32_vals` at the band points; stages 3b and 4b choose the
+width with the lowest geometric mean over the best width's time at each
+point, 16 unless another wins by more than 1%, then fit the threshold on its
+times. On the M5 Pro the re-measure chose 16 for both (section 5 of [the
+study](../studies/proposals-2-15-apple-m5-pro.md)); other Macs choose their
+own when measured, and are incomplete until then.
+
+What follows is the proposal as written on 2026-10-04.
 
 ## What
 
