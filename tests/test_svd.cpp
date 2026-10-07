@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <random>
 #include <string>
 #include <tuple>
@@ -605,6 +606,22 @@ int main() {
                                                                  {1100, 1060}})
                 run_band("band b=" + std::to_string(w) + " " + dims(1, M, N), random_matrix(1, M, N, 2000 + M + N), w);
         run_band("band " + dims(3, 150, 120), random_matrix(3, 150, 120, 2100), 8);
+        // One matrix alone has its chase run under its reduction, trailing
+        // the GPU; in a batch, after it: the same values bit for bit.
+        for (auto [M, N] : std::vector<std::pair<int, int>>{{49, 49}, {700, 650}, {2048, 2048}, {3000, 1500}}) {
+            array A = random_matrix(1, M, N, 2150 + M + N);
+            eval({A});
+            std::vector<float> two(A.data<float>(), A.data<float>() + (size_t)M * N);
+            two.insert(two.end(), two.begin(), two.end());
+            const int K = std::min(M, N);
+            SvdResult one = detail::svd_band(A, 16), pair = detail::svd_band(from_values(two, {2, M, N}), 16);
+            array s1 = reshape(one.S, {K}), s2 = reshape(slice(pair.S, {0, 0}, {1, K}), {K});
+            eval({s1, s2});
+            ++g_checks;
+            const std::string label = "band chase under the reduction " + dims(1, M, N) + ": bit for bit";
+            if (std::memcmp(s1.data<float>(), s2.data<float>(), (size_t)K * 4) != 0) fail(label, "differ");
+            else std::printf("  ok    %-44s\n", label.c_str());
+        }
         run_band("band zero 120x100", zeros({120, 100}), 8);
         run_band("band identity 100x100", eye(100), 16);
         run_band("band rank one 200x150",

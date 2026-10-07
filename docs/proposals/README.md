@@ -9,15 +9,13 @@ Apple M5 Pro's (20 GPU cores, 18 CPU cores).
 
 | proposal | affects | time at stake | effort | expected gain |
 |---|---|---|---|---|
-| [The bulge chase under the band reduction](chase-under-reduction.md) | eigvalsh and svdvals on `band`, one large matrix | most of the chase's 35 ms at 4096, now after the GPU's 150 | 2-3 days | ~1.15x (svdvals), ~1.2x (eigvalsh) at 4096 (estimate) |
 | [Less GPU work for the band SVD with vectors](band-vectors-gpu-work.md) | SVD with vectors on `band` | the GPU's 363 ms at 4096, the CPU idle through the reduction | 2 days and more | ~1.05x (P1 on the CPU), up to ~1.1x more from the chase kernel |
 | [The CPU path's divide and conquer](cpu-path-divide-and-conquer.md) | eigh and SVD with vectors on the CPU, one matrix | `sstedc` 43 of 239 ms, `sbdsdc` 133 of 439 at 2048 | about 2 days | eigh 1.15-1.25x, SVD ~1.34x at 1024-2048 (estimate) |
 
-Suggested order: the chase under the reduction (the values' band paths, the
-largest estimated gain left); then less GPU work for the band SVD with
-vectors. The CPU path's divide and conquer matters less on the M5 Pro since
-2.15.0, where the GPU takes single matrices from about 512, but more on
-Macs whose GPU is weaker against their CPU.
+Suggested order: less GPU work for the band SVD with vectors; the CPU
+path's divide and conquer matters less on the M5 Pro since 2.15.0, where the
+GPU takes single matrices from about 512, but more on Macs whose GPU is
+weaker against their CPU.
 
 **Not code, but open:**
 
@@ -42,6 +40,7 @@ In 2.15.0 (2026-10-07); see [the study](../studies/proposals-2-15-apple-m5-pro.m
 | [Symmetric trailing update](symmetric-trailing-update.md) | the update on the lower triangle, mirrored: eigvalsh on `band` 1.08x at 4096, 1.17x at 8192; X from the lower triangle lost to MPS |
 | [Band width per device](band-width-per-device.md) | `values_band_width`, measured by stages 3b and 4b |
 | [Band threshold tie-break](band-threshold-tie-break.md) | a finer grid, and thresholds compared on the points where they disagree |
+| [The bulge chase under the band reduction](chase-under-reduction.md) | eigvalsh and svdvals on `band`, one matrix: 1.04-1.05x, not the 1.15-1.2x estimated (each sweep runs to the band's end, which the GPU finishes last, so only about 6% of the chase can go before it) |
 | [The band SVD with vectors, overlapped further](band-vectors-overlap.md) | the GPU found to be the bottleneck; its two idle gaps closed (Q1 and P1 queued during the reduction, Q2 and P2 released in two chunks as the chase finishes them): 1.04x at 4096, 1.06x at 2048 (alternating runs) |
 | [The divide and conquer's top products on the GPU](divide-and-conquer-gpu-products.md) | for one matrix, products of 1 GFLOP or more as MPS products on the merges' memory in place: eigh with vectors 1.075x at 4096, the SVD on `bidiag` 1.046x |
 | [IEEE arithmetic in the remaining shaders](ieee-mode-audit.md) | the SVD's Jacobi kernel's rotation and output on fast division and square roots (`rsqrt` with two Newton steps, for V's orthogonality): 1.14-1.17x on batches of small matrices; nothing left in the one-stage reductions |

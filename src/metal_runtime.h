@@ -311,31 +311,42 @@ uint32_t band_fit(uint32_t rows, uint32_t b);
 // `tail` on are LAPACK's (`steps`): a step's column panel's reflectors stay
 // below A's diagonal (sgeqrf's, taus tq); its row panel's, sgelqf's, are
 // copied to lq (bk x nr, ld bk; taus tp) before the band is cleared of them.
-// `while_gpu`, if set, runs once all blocks are queued, before the wait for
-// the last: per-block work as `done[k]` completes.
-struct BandKeep {
+struct BandKeep;
+
+// A band reduction's progress: its GPU blocks' command buffers (`done[k]`
+// for block k, columns k b .. k b + b - 1), and `while_gpu`, if set, run
+// once all blocks are queued, before the wait for the last: per-block work
+// as they complete. General: block k finishes the band's rows k b .. k b +
+// b - 1; symmetric: its lower band's columns k b .. k b + b - 1.
+struct BandWatch {
+    std::vector<id<MTLCommandBuffer>> done;
+    std::function<void(BandWatch&)> while_gpu;
+    virtual ~BandWatch() = default;
+};
+
+struct BandKeep : BandWatch {
     id<MTLBuffer> qv, pv, qt, pt;
     std::vector<size_t> qoff, poff;
     std::vector<uint32_t> qld, pld;
     uint32_t tail = 0;
-    std::vector<id<MTLCommandBuffer>> done;
     struct Step {
         uint32_t k, bk, nr;
         std::vector<float> tq, tp, lq;
     };
     std::vector<Step> steps;
-    std::function<void(BandKeep&)> while_gpu;
 };
 
 // A (m x n column-major, m >= n, in shared storage) to an upper band of width
 // b, A = Q B P^T: the band in A's upper band, the rest of A scratch (with
-// `keep`, Q's and P's reflectors as above). False if m is too tall for the
-// panel kernels (m b > 128 * 1024).
+// `keep`, Q's and P's reflectors as above; `watch`, if not keep itself, its
+// progress). False if m is too tall for the panel kernels (m b > 128 * 1024).
 bool band_reduce_general(id<MTLBuffer> A, uint32_t m, uint32_t n, uint32_t lda, uint32_t b,
-                         BandKeep* keep = nullptr);
+                         BandKeep* keep = nullptr, BandWatch* watch = nullptr);
 // A symmetric A (n x n, both triangles, in shared storage) to a band of width
 // b, Q^T A Q: the band in A's lower band. Likewise false if n is too large.
-bool band_reduce_symmetric(id<MTLBuffer> A, uint32_t n, uint32_t lda, uint32_t b);
+bool band_reduce_symmetric(id<MTLBuffer> A, uint32_t n, uint32_t lda, uint32_t b, BandWatch* watch = nullptr);
+// The GPU's blocks in the symmetric reduction of order n.
+uint32_t band_blocks_symmetric(uint32_t n, uint32_t b);
 
 // By bisection on the GPU (bisect.mm): the eigenvalues of the symmetric
 // tridiagonal (d, n; e, n - 1) into w, ascending, or the singular values of

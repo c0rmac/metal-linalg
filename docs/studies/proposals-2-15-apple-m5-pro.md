@@ -248,6 +248,11 @@ against `bidiag`'s 944 (2.35x; 375 in alternating runs), about 2.7x at 8192,
 1.21x at 1024. Routed from `band_min_k`, which stage 3c of `tune_svd.py`
 fits; 0 until the M5 Pro is re-measured.
 
+For eigenvalues or singular values alone, the chase now trails the band
+reduction for one matrix, but each sweep runs to the band's end, which the
+GPU finishes last, so only about 6% of it can go early: 1.04-1.05x
+([chase-under-reduction.md](../proposals/chase-under-reduction.md#done-2026-10-07)).
+
 And where the GPU is idle during the divide and conquer (`tridiag`,
 `bidiag`, one matrix), its top merges' products now run there: eigh with
 vectors 1.075x at 4096, the SVD on `bidiag` 1.046x

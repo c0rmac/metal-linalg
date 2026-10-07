@@ -688,7 +688,9 @@ void bidiag_impl(const Matrices& a, float* u_out, float* s_out, float* vt_out, u
         std::vector<float> t, q, d, e, tq, tp, ab;
         float scale = 1.0f;
         id<MTLCommandBuffer> pending = nil;   // two-stage with vectors: the GPU's Q and P
+        bool chased = false;                  // singular values alone: the chase done under the reduction
     };
+    bool chase_first = todo.size() == 1;   // see reduce
     // Two-stage with vectors: one matrix at a time, in one slot.
     BandVectors* bvp = band && vectors ? &band_vectors(cache, rows, K) : nullptr;
 
@@ -738,7 +740,7 @@ void bidiag_impl(const Matrices& a, float* u_out, float* s_out, float* vt_out, u
             ~Release() { if (event) event.signaledValue = 1; }
         } q1_ready{bvp ? [cache.rt.device newSharedEvent] : nil};
         if (keep)   // Q and P's start, their GPU work queued, the aggregates' T as the blocks complete
-            keep->while_gpu = [&](metal_linalg::detail::BandKeep& kp) {
+            keep->while_gpu = [&](metal_linalg::detail::BandWatch& kp) {
                 init_q_p(*bvp);
                 sl.pending = queue_q1_p1(cache, *bvp, q1_ready.event);
                 for (uint32_t ag = 0; ag < bvp->aggs; ++ag) {
@@ -747,20 +749,65 @@ void bidiag_impl(const Matrices& a, float* u_out, float* s_out, float* vt_out, u
                     build_aggregate(*bvp, ag, false);
                 }
             };
-        const bool banded = metal_linalg::detail::band_reduce_general(ws.A[s], ws.m, ws.n, ws.lda, band, keep);
+        // The band, with room for the bulges of band_to_bidiagonal: B(i, j) at
+        // ab[j * ld + ku + i - j], ku = 2 band above the diagonal, band below.
+        const size_t ld = 3 * (size_t)band + 1, ku = 2 * (size_t)band;
+        auto rows = [&](uint32_t r0, uint32_t r1) {   // the band's rows r0 .. r1 - 1
+            for (uint32_t i = r0; i < std::min(r1, K); ++i)
+                for (uint32_t j = i; j < K && j <= i + band; ++j)
+                    sl.ab[(size_t)j * ld + ku + i - j] = A[(size_t)j * ws.lda + i];
+        };
+        // Singular values alone, the call's first matrix (whose CPU is idle
+        // meanwhile): the chase on threads of its own, trailing the GPU down
+        // the band as it finishes each block's rows.
+        sl.chased = chase_first && !vectors && metal_linalg::detail::band_fit(ws.m, band) == band;
+        chase_first = false;
+        sl.ab.assign(ld * K, 0.0f);
+        std::atomic<long> ready{0};
+        metal_linalg::detail::ChaseReflectors trail;
+        trail.ready_rows = &ready;
+        std::exception_ptr failed;
+        std::thread chaser;
+        if (sl.chased)
+            chaser = std::thread([&] {
+                try {
+                    metal_linalg::detail::band_to_bidiagonal(K, band, sl.ab.data(), ld, ku, sl.d.data(), sl.e.data(),
+                                                             metal_linalg::detail::cpu_threads_beside_gpu(), &trail);
+                } catch (...) {
+                    failed = std::current_exception();
+                }
+            });
+        // Released and joined whatever happens (on garbage, if the GPU failed).
+        struct Join {
+            std::thread& thread;
+            std::atomic<long>& ready;
+            long n;
+            ~Join() {
+                ready.store(n, std::memory_order_release);
+                if (thread.joinable()) thread.join();
+            }
+        } join{chaser, ready, (long)K};
+        metal_linalg::detail::BandWatch watch;
+        if (sl.chased)
+            watch.while_gpu = [&](metal_linalg::detail::BandWatch& w) {
+                for (size_t k = 0; k < w.done.size(); ++k) {
+                    [w.done[k] waitUntilCompleted];
+                    rows((uint32_t)k * band, (uint32_t)(k + 1) * band);
+                    ready.store((long)(k + 1) * band, std::memory_order_release);
+                }
+            };
+        const bool banded = metal_linalg::detail::band_reduce_general(ws.A[s], ws.m, ws.n, ws.lda, band, keep,
+                                                                      sl.chased ? &watch : nullptr);
         if (keep) keep->while_gpu = nullptr;   // it refers to this call's locals
         if (!banded) {
             sl.ab.clear();   // too tall for the band reduction's panels: one stage
             bidiagonalize(cache, ws, ws.A[s], sl.d.data(), sl.e.data(), sl.tq.data(), sl.tp.data());
             return;
         }
-        // The band, with room for the bulges of band_to_bidiagonal: B(i, j) at
-        // ab[j * ld + ku + i - j], ku = 2 band above the diagonal, band below.
-        const size_t ld = 3 * (size_t)band + 1, ku = 2 * (size_t)band;
-        sl.ab.assign(ld * K, 0.0f);
-        for (uint32_t j = 0; j < K; ++j)
-            for (uint32_t i = j > band ? j - band : 0; i <= j; ++i)
-                sl.ab[(size_t)j * ld + ku + i - j] = A[(size_t)j * ws.lda + i];
+        rows(sl.chased ? (uint32_t)watch.done.size() * band : 0, K);   // (the last rows, LAPACK's)
+        ready.store(K, std::memory_order_release);
+        if (chaser.joinable()) chaser.join();
+        if (failed) std::rethrow_exception(failed);
         if (bvp) {
             tail_q1_p1(*bvp, A, ws.lda);
             q1_ready.event.signaledValue = 1;
@@ -852,7 +899,7 @@ void bidiag_impl(const Matrices& a, float* u_out, float* s_out, float* vt_out, u
                                                            metal_linalg::detail::cpu_threads_beside_gpu(), gpu.get());
         } else {
             std::vector<float> work(4 * (size_t)K + 16);
-            if (!sl.ab.empty())
+            if (!sl.ab.empty() && !sl.chased)
                 metal_linalg::detail::band_to_bidiagonal(K, band, sl.ab.data(), 3 * (size_t)band + 1,
                                                          2 * (size_t)band, sl.d.data(), sl.e.data(),
                                                          metal_linalg::detail::cpu_threads_beside_gpu());

@@ -37,6 +37,13 @@ and what turned up while doing them; measured in
   (`EIGH_DISPATCH_MS`, `SVD_DISPATCH_MS`) now runs a few rounds a dispatch,
   each matrix resuming where it stopped: the same result bit for bit, in the
   same time, about 15 ms a dispatch where one threadgroup ran 1.7-2.8 s.
+- **The band chase under the band reduction**, for eigenvalues or singular
+  values alone, one matrix: the chase starts at once on threads of its own
+  and trails the GPU, each block's rows copied as it completes, a thread
+  keeping several sweeps open. Every sweep runs to the band's end, which the
+  GPU finishes last, so only about 6% of the chase can go before it:
+  eigvalsh and svdvals on `band` 1.04-1.05x at 2048-4096, the values bit
+  for bit the same.
 - **The divide and conquer's largest products on the GPU**, for one matrix
   in `tridiag` and `bidiag` (whose GPU is idle meanwhile): products of a
   gigaflop or more, from the top merges of n ~ 2048, as MPS products on the

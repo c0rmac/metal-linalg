@@ -389,6 +389,12 @@ bisection) and the CPU path (2.15.0, measured side by side, the median of
 | 4096 | 0.483 s | 0.213 s | 0.140 s | 3.44x |
 | 8192 | 2.644 s | 1.656 s | 0.726 s | 3.64x |
 
+For one matrix the chase starts with the reduction and trails it down the
+band, as each block's columns are finished (since 2.15.0): since every
+sweep runs to the band's end, which the GPU finishes last, only about 6% of
+the chase can go before it, 1.05x at 4096; the eigenvalues are the same bit
+for bit.
+
 From about 3072 the band reduction's matrix products beat the one-stage
 reduction's bandwidth limit; at 8192 the backend is 2.3x `tridiag`, and the
 CPU's own two-stage driver takes 3.6x as long. Below that, a block's panel

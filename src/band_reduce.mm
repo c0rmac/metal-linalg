@@ -277,7 +277,8 @@ uint32_t band_width(uint32_t want, const char* env) {
     return want <= 8 ? 8u : want <= 16 ? 16u : kBandMax;
 }
 
-bool band_reduce_general(id<MTLBuffer> Abuf, uint32_t m, uint32_t n, uint32_t lda, uint32_t b, BandKeep* keep) {
+bool band_reduce_general(id<MTLBuffer> Abuf, uint32_t m, uint32_t n, uint32_t lda, uint32_t b, BandKeep* keep,
+                         BandWatch* watch) {
     // A TSQR's stacked R's are one thread a row in one threadgroup: at most
     // 1024 / b leaves.
     if ((size_t)m * b > (size_t)kLeafRows * 1024) return false;
@@ -289,8 +290,9 @@ bool band_reduce_general(id<MTLBuffer> Abuf, uint32_t m, uint32_t n, uint32_t ld
     if (keep) {
         if (keep->qoff.size() < band_blocks(n, b) || keep->poff.size() < band_blocks(n, b))
             throw std::logic_error("[band] BandKeep's layout is short of blocks");
-        keep->done.assign(band_blocks(n, b), nil);
+        watch = keep;
     }
+    if (watch) watch->done.assign(band_blocks(n, b), nil);
     // Per block, with C the columns right of the column panel and C_low its
     // rows below the row panel: the column panel's QR (H = I - V T V^T),
     // W = T^T V^T C, the row panel C(0:b, :) - V(0:b, :) W, its LQ
@@ -343,12 +345,12 @@ bool band_reduce_general(id<MTLBuffer> Abuf, uint32_t m, uint32_t n, uint32_t ld
         gemm(dev, cb, mps(w.bl, 0, n1, 2 * b, kLw), false, mps(w.br, 0, 2 * b, m2, ldr), false,
              mps(Abuf, akb + b, n1, m2, lda), n1, m2, 2 * b, -1, 1);
         [cb commit];
-        if (keep) keep->done[bi] = cb;
+        if (watch) watch->done[bi] = cb;
         last = cb;
     }
-    if (keep && keep->while_gpu) {
+    if (watch && watch->while_gpu) {
         try {
-            keep->while_gpu(*keep);
+            watch->while_gpu(*watch);
         } catch (...) {
             if (last) [last waitUntilCompleted];
             throw;
@@ -359,8 +361,11 @@ bool band_reduce_general(id<MTLBuffer> Abuf, uint32_t m, uint32_t n, uint32_t ld
     return true;
 }
 
-bool band_reduce_symmetric(id<MTLBuffer> Abuf, uint32_t n, uint32_t lda, uint32_t b) {
+uint32_t band_blocks_symmetric(uint32_t n, uint32_t b) { return n >= 3 * b ? (n - 3 * b) / b + 1 : 0; }
+
+bool band_reduce_symmetric(id<MTLBuffer> Abuf, uint32_t n, uint32_t lda, uint32_t b, BandWatch* watch) {
     if ((size_t)n * b > (size_t)kLeafRows * 1024) return false;
+    if (watch) watch->done.assign(band_blocks_symmetric(n, b), nil);
     State& st = State::shared();
     const Panels& pk = st.kernels(b);
     Buffers& w = st.buffers(n, n);
@@ -404,7 +409,16 @@ bool band_reduce_symmetric(id<MTLBuffer> Abuf, uint32_t n, uint32_t lda, uint32_
             threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
         [enc endEncoding];
         [cb commit];
+        if (watch) watch->done[k / b] = cb;
         last = cb;
+    }
+    if (watch && watch->while_gpu) {
+        try {
+            watch->while_gpu(*watch);
+        } catch (...) {
+            if (last) [last waitUntilCompleted];
+            throw;
+        }
     }
     finish(last);
     // The trailing block A(k:, k:), fewer than 3b columns: LAPACK's

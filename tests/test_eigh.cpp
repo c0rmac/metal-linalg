@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <random>
 #include <string>
 #include <vector>
@@ -670,6 +671,21 @@ int main() {
             band("band upper, junk below 300x300", add(triu(S), tril(junk, -1)), false, 16);
         }
         band("band batch 3 x 150x150", random_symmetric(3, 150, 3200), true, 16);
+        // One matrix alone has its chase run under its reduction, trailing
+        // the GPU; in a batch, after it: the same eigenvalues bit for bit.
+        for (int n : {49, 700, 2048}) {
+            array A = random_symmetric(1, n, 3150 + n);
+            eval({A});
+            std::vector<float> two(A.data<float>(), A.data<float>() + (size_t)n * n);
+            two.insert(two.end(), two.begin(), two.end());
+            EighResult one = detail::eigh_band(A, true, 16), pair = detail::eigh_band(from_values(two, {2, n, n}), true, 16);
+            array w1 = reshape(one.eigenvalues, {n}), w2 = reshape(slice(pair.eigenvalues, {0, 0}, {1, n}), {n});
+            eval({w1, w2});
+            ++g_checks;
+            const std::string label = "band chase under the reduction " + std::to_string(n) + ": bit for bit";
+            if (std::memcmp(w1.data<float>(), w2.data<float>(), (size_t)n * 4) != 0) fail(label, "differ");
+            else std::printf("  ok    %-44s\n", label.c_str());
+        }
         band("band zero 100x100", zeros({100, 100}), true, 16);
         band("band identity 600x600", eye(600), true, 16);
         {

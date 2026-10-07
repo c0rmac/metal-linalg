@@ -344,6 +344,11 @@ On an M5 Pro, one square matrix, singular values alone:
 | 4096 | 2.070 s | 0.712 s | 0.197 s | 3.61x |
 | 8192 | 12.64 s | 6.03 s | 1.10 s | 5.50x |
 
+For one matrix the chase starts with the reduction and trails it down the
+band, as each block's rows are finished (since 2.15.0): only about 6% of
+the chase can go before the GPU is done, since every sweep runs to the
+band's end, 1.05x at 2048-4096, the singular values the same bit for bit.
+
 Against the CPU path that is 2.6x at $k = 1536$, 4.0x at 2048, 6.8x at 3072,
 10.5x at 4096 and 11.5x at 8192 (2.15.0, measured side by side, the median
 of `sweep_svd`). At $k = 4096$ the chase takes 35 ms, bisection 12, and

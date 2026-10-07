@@ -1,6 +1,8 @@
 # The bulge chase under the band reduction
 
-Status: proposal, not started (2026-10-07).
+Status: **done** in 2.15.0 (2026-10-07), for 1.04-1.05x rather than the
+1.15-1.2x estimated below: the chase's sweeps cannot get far ahead of the
+GPU; see [Done](#done-2026-10-07).
 
 ## What
 
@@ -54,3 +56,36 @@ SVD with vectors on `band` gains nothing: its GPU is the bottleneck
 
 `bidiag_impl`'s `reduce` and `solve` (`src/svd_bidiag.mm`), the eigensolver's
 in `src/eigh_band.mm`; `pipeline()` in `src/band_chase.cpp`.
+
+## Done (2026-10-07)
+
+**Built as planned.** Both band reductions report their blocks' command
+buffers (`BandWatch`); the caller starts the chase on its own threads,
+copies each block's finished rows (general) or columns (symmetric) into the
+chase's band as the block completes, and raises `ChaseReflectors::ready_rows`;
+sweep 0 waits for the rows its task reaches, the others already wait on the
+sweep before. Only for one matrix: in a batch the chase of one matrix
+already runs under the next one's reduction, and moving the first one's
+chase made a batch of two 0.87x.
+
+**Why the estimate was wrong.** The first version gained nothing: the GPU's
+reduction ended at 96 ms (eigvalsh, 4096) and the chase threads at 132, as
+before. Each thread ran one sweep at a time, and the first sixteen sweeps,
+waiting at the GPU's frontier for rows they would need only further down,
+held all the threads. Letting a thread keep several sweeps open and run
+whichever may go on (the trailing mode of `pipeline` in `band_chase.cpp`)
+fixed that, but not the rest: every sweep runs to the band's end, which the
+reduction finishes last, and each sweep trails the one before by about a
+block (its task t needs the previous sweep's task t + 2). With rows 0 .. F
+final, at most about F / 16 sweeps can have started, each stopped near F,
+which at F = n is about 6% of the chase's work (at 4096, some 256 sweeps of
+4095, each partway). The estimate counted the work on the upper rows as free
+to go early; it is not, because a sweep's work on them waits for the sweep
+before it, and so on back to sweep 0 at the frontier.
+
+**Measured** (M5 Pro, one matrix, alternating builds): eigvalsh on `band`
+1.04x at 2048, 1.05x at 4096 (136 to 129 ms); svdvals 1.05x at both (204
+to 195 ms at 4096); a batch of two unchanged. The gain is that 6% and the
+band's copy moving off the critical path. The values are the same bit for
+bit as with the chase after the reduction (tests in both suites).
+
