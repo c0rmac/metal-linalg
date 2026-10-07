@@ -35,7 +35,7 @@ OPS = {"qr": (["pass", "batch", "M", "N", "backend", "ok", "ms", "p25", "p75", "
                  "cpu_vals", "simd_vals", "tg_vals", "block_vals", "tridiag_vals", "ql_vals", "ql_share_vals",
                  "band_vals", "band8_vals", "band32_vals"}),
        "svd": (["pass", "batch", "M", "N", "backend", "ok", "ms", "p25", "p75", "reps"],
-               {"cpu", "jacobi", "block", "qr", "qrblock", "bidiag", "gk", "cpu_vals", "bidiag_vals",
+               {"cpu", "jacobi", "block", "qr", "qrblock", "bidiag", "band", "gk", "cpu_vals", "bidiag_vals",
                 "gk_vals", "gk_share", "gk_share_vals", "band_vals", "band8_vals", "band32_vals"})}
 TOP_FILES = {"submission.json", "summary.md", "qr.log", "eigh.log", "svd.log"}
 OP_FILES = {"raw.csv", "results.json", "report.md", "policy.json"}

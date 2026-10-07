@@ -261,6 +261,10 @@ SvdResult svd_band(const mx::array& a, uint32_t width) {
     });
 }
 
+SvdResult svd_band_vectors(const mx::array& a) {
+    return run_svd(a, true, "svd", core::detail::svd_band_vectors);
+}
+
 SvdResult svd_golub_kahan(const mx::array& a, bool compute_uv) {
     return run_svd(a, compute_uv, "svd", core::detail::svd_golub_kahan);
 }

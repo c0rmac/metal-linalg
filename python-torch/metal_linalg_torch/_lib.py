@@ -81,7 +81,7 @@ SVD_FIELDS = ("qr_min_rows", "qr_min_k", "block_min_k", "block_min_k_batched", "
               "gk_min_k", "gk_max_k", "gpu_max_l",
               "values_gpu_max_k", "values_gpu_min_batch_times_k", "values_gpu_min_batch", "values_gpu_max_l",
               "share_min_batch", "gpu_big_batch_max_k", "gpu_big_batch_min", "values_band_min_k",
-              "values_band_width")
+              "values_band_width", "band_min_k")
 # Read back but ignored when set.
 INFORMATIONAL = {"gpu_cores", "concurrent_matrices"}
 

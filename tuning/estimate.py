@@ -262,7 +262,7 @@ ROW_FIELDS = {
             "values_gpu_min_batch_times_k", "values_gpu_min_batch", "values_gpu_max_l", "bidiag_min_k",
             "values_bidiag_min_k", "bidiag_max_batch", "values_bidiag_max_batch", "gk_min_k", "gk_max_k",
             "share_min_batch", "gpu_big_batch_max_k", "gpu_big_batch_min", "values_band_min_k",
-            "values_band_width"],
+            "values_band_width", "band_min_k"],
     "qr": ["m_crossover_small_batch", "m_crossover_large_batch", "batch_threshold", "gpu_max_k",
            "gpu_min_batch_times_k", "gpu_min_batch", "gpu_min_k", "gpu_large_min_k", "gpu_large_max_batch",
            "share_min_batch"],
@@ -280,7 +280,7 @@ DEFAULTS = {   # the untuned default (include/metal_linalg/core.h, and qr.mm's c
                 gpu_big_batch_max_k=0, gpu_big_batch_min=0, values_gpu_max_k=0, values_gpu_min_batch_times_k=0,
                 values_gpu_min_batch=0, values_gpu_max_l=NO_LIMIT, bidiag_min_k=0, values_bidiag_min_k=0,
                 bidiag_max_batch=0, values_bidiag_max_batch=0, values_band_min_k=0, values_band_width=0,
-                gk_min_k=0, gk_max_k=0,
+                band_min_k=0, gk_min_k=0, gk_max_k=0,
                 share_min_batch=0),
     "qr": dict(m_crossover_small_batch=384, m_crossover_large_batch=384, batch_threshold=16,
                gpu_max_k=NO_LIMIT, gpu_min_batch_times_k=1024, gpu_min_batch=1, gpu_min_k=0,
@@ -365,7 +365,8 @@ def _column(lib, op, values, m, n, batch):
         share = pol["share_min_batch"] and batch >= pol["share_min_batch"]
         col = {"cpu": "cpu", "jacobi": "jacobi", "block_jacobi": "block", "qr_jacobi": "qr",
                "qr_block_jacobi": "qrblock", "bidiag": "bidiag",
-               "band": BAND_COLUMN.get(pol.get("values_band_width", 0), "band"),
+               # with vectors the band is 16 wide
+               "band": BAND_COLUMN.get(pol.get("values_band_width", 0), "band") if values else "band",
                "golub_kahan": "gk_share" if share else "gk", "qr_golub_kahan": "qr_gk"}[name]
         return col + "_vals" if values and col in ("cpu", "gk", "gk_share", "bidiag", "band", "band8", "band32") \
             else col

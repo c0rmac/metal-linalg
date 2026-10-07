@@ -167,6 +167,9 @@ class Routing(unittest.TestCase):
                 ml.set_svd_policy(values_band_min_k=256)
                 self.assertEqual(ml.svdvals_backend(400, 300), "band")
                 self.assertEqual(ml.svd_backend(400, 300), "bidiag")
+                ml.set_svd_policy(band_min_k=256)   # and with vectors
+                self.assertEqual(ml.svd_backend(400, 300), "band")
+                ml.set_svd_policy(band_min_k=0)
                 a = mx.random.normal((400, 300))
                 s_band = ml.svdvals(a)
                 ml.set_svd_policy(values_band_min_k=0)

@@ -221,6 +221,7 @@ struct TunedEntry {
     unsigned    gpu_big_batch_min;
     unsigned    values_band_min_k;     // 0 = never, which rows from before 2.13.0 leave
     unsigned    values_band_width;     // 0 = 16, which rows from before 2.15.0 leave
+    unsigned    band_min_k;            // 0 = never, which rows from before 2.15.0 leave
     unsigned    calibration;   // kCalibration* (calibration.h); rows without it are current
 };
 
@@ -230,7 +231,7 @@ struct TunedEntry {
 // docs/studies/. The last row keeps the array non-empty and matches nothing.
 constexpr TunedEntry kTuned[] = {
 #include "tuned/svd.inc"
-    {"", 0,   0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0, 0,   0, 0,   0},
+    {"", 0,   0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0, 0,   0, 0,   0,   0},
 };
 
 // A device with no entry gets an estimated row: a measured device's timings
@@ -244,7 +245,7 @@ struct EstimatedEntry {
 };
 constexpr EstimatedEntry kEstimated[] = {
 #include "tuned/svd_estimated.inc"
-    {0, 0, 0, {"", 0,   0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0, 0,   0,   0}},
+    {0, 0, 0, {"", 0,   0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0, 0,   0, 0,   0,   0}},
 };
 
 void apply(const TunedEntry& e, SvdPolicy& p) {
@@ -272,6 +273,7 @@ void apply(const TunedEntry& e, SvdPolicy& p) {
     p.gpu_big_batch_min            = e.gpu_big_batch_min;
     p.values_band_min_k            = e.values_band_min_k;
     p.values_band_width            = e.values_band_width;
+    p.band_min_k                   = e.band_min_k;
 }
 
 struct ResolvedPolicy {
@@ -351,6 +353,7 @@ ResolvedPolicy resolve_policy() {
     over("SVD_GPU_BIG_BATCH_MIN",     r.policy.gpu_big_batch_min);
     over("SVD_VALUES_BAND_MIN_K",     r.policy.values_band_min_k);
     over("SVD_VALUES_BAND_WIDTH",     r.policy.values_band_width);
+    over("SVD_BAND_MIN_K",            r.policy.band_min_k);
     if (!env.empty()) r.source = "env:" + env;
     return r;
 }
@@ -773,22 +776,22 @@ bool svdvals_uses_gpu(unsigned m, unsigned n, unsigned batch) {
 
 namespace {
 
-// Where the rules send a call to the CPU: for singular values alone the band
-// backend from its threshold, then the bidiag backend from its own (0 =
-// never), both up to the batch cap (0 = none). SVD_DEVICE=cpu keeps the CPU;
-// SVD_DEVICE=bidiag forces that backend for every call, SVD_DEVICE=band the
-// band backend for singular values alone (bidiag with vectors).
+// Where the rules send a call to the CPU: the band backend from its threshold
+// (band_min_k with vectors, values_band_min_k without), then the bidiag
+// backend from its own (0 = never), both up to the batch cap (0 = none).
+// SVD_DEVICE=cpu keeps the CPU; SVD_DEVICE=bidiag or band forces that backend
+// for every call.
 SvdBackend route(unsigned m, unsigned n, unsigned batch, bool vectors) {
     if (const char* e = std::getenv("SVD_DEVICE"); e && std::string(e) == "bidiag") return SvdBackend::bidiag;
-    if (const char* e = std::getenv("SVD_DEVICE"); e && std::string(e) == "band")
-        return vectors ? SvdBackend::bidiag : SvdBackend::band;
+    if (const char* e = std::getenv("SVD_DEVICE"); e && std::string(e) == "band") return SvdBackend::band;
     if (vectors ? svd_uses_gpu(m, n, batch) : svdvals_uses_gpu(m, n, batch)) return svd_gpu_backend(m, n, batch);
     if (const char* e = std::getenv("SVD_DEVICE"); e && std::string(e) == "cpu") return SvdBackend::cpu;
     const SvdPolicy& p = policy_state().policy;
     const unsigned k = std::min(m, n);
     const unsigned cap = vectors ? p.bidiag_max_batch : p.values_bidiag_max_batch;
     if (cap != 0 && batch > cap) return SvdBackend::cpu;
-    if (!vectors && p.values_band_min_k != 0 && k >= p.values_band_min_k) return SvdBackend::band;
+    const unsigned band = vectors ? p.band_min_k : p.values_band_min_k;
+    if (band != 0 && k >= band) return SvdBackend::band;
     const unsigned from = vectors ? p.bidiag_min_k : p.values_bidiag_min_k;
     return from != 0 && k >= from ? SvdBackend::bidiag : SvdBackend::cpu;
 }
@@ -869,8 +872,9 @@ void core::svd(const Matrices& a, float* u, float* s, float* vt, uint32_t* info)
         case SvdBackend::bidiag:
             core::detail::svd_bidiag(a, u, s, vt, info);
             return;
-        case SvdBackend::band:   // singular values alone
-            core::detail::svd_band(a, s, info, policy_state().policy.values_band_width);
+        case SvdBackend::band:
+            if (u || vt) core::detail::svd_band_vectors(a, u, s, vt, info);
+            else core::detail::svd_band(a, s, info, policy_state().policy.values_band_width);
             return;
         case SvdBackend::block_jacobi:
             core::detail::svd_block_jacobi(a, opt, u, s, vt, info);

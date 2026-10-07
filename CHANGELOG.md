@@ -6,6 +6,25 @@ The proposals left after 2.13.0 ([docs/proposals/](docs/proposals/README.md)),
 and what turned up while doing them; measured in
 [the 2.15.0 study](docs/studies/proposals-2-15-apple-m5-pro.md).
 
+- **The SVD with vectors by the two-stage reduction** (`band` with vectors,
+  `svd_band_vectors`, routed from the new `band_min_k`): the band reduction
+  keeps its reflectors (written straight into blocks of 128 as the panels
+  factor), the bulge chase keeps its own, and Q = Q1 Q2 and P = P1 P2 are
+  formed on the GPU while the CPU chases the band and solves the bidiagonal
+  problem; then U = Q U_B and V^T = V_B^T P^T, one product each. The
+  chase's reflectors are applied by a new kernel, `bd_chase_apply`: the
+  blocks of 16 sweeps a step, four groups of sweeps at once a threadgroup,
+  each a simdgroup two tiles behind the last, tiles handed down through
+  threadgroup memory (60-64 ms a side at 4096, where the groups one after
+  another took 176). On an M5 Pro, one square matrix against `bidiag`: 1.17x
+  at 1024, 1.42x at 2048, 2.33x at 4096 (404 ms against 942), 2.59x at 8192;
+  9.1x the CPU path at 4096. Accuracy LAPACK's (reconstruction and
+  orthogonality 6e-6 at 4096); at 8192 the call keeps about 1.1 GB more than
+  `bidiag`. `SVD_DEVICE=band` now means `band` with vectors too (before,
+  `bidiag`); `band_min_k` and `SVD_BAND_MIN_K` in the C API, Python, PyTorch
+  and Swift; a `band` sweep backend and stage 3c of `tuning/tune_svd.py` fit
+  it. Until a Mac's routing is measured with it, `band_min_k` is 0 there
+  (never).
 - **The divide and conquer on every core.** With vectors, `tridiag` and
   `bidiag` solved the tridiagonal or bidiagonal problem with LAPACK's
   `sstedc` and `sbdsdc`, on one core. `src/divide_conquer.cpp` walks the same
@@ -54,27 +73,28 @@ and what turned up while doing them; measured in
   the copies run on every core. eigh with vectors on `tridiag` 1.1x at 4096.
 - **The one-stage reductions and bisection** off IEEE arithmetic too:
   eigvalsh on `tridiag` 1.07-1.11x.
-- Kernel epochs eigh 6, SVD 8: every Mac's eigh and SVD routing, the M5
-  Pro's included, is marked stale and applies as it is, at width 16, until
-  that Mac is measured again (`tuning/run.py`); no run yet has the band's
-  widths.
+- Kernel epochs eigh 6, SVD 8 (whose runs must also time `band` with
+  vectors): every Mac's eigh and SVD routing, the M5 Pro's included, is
+  marked stale and applies as it is, at width 16 and without `band` for the
+  SVD with vectors, until that Mac is measured again (`tuning/run.py`); no
+  run yet has the band's widths. The estimated policies of other Macs are
+  2.14's until the M5 Pro is re-measured (they are refitted only from a
+  Mac measured at the current kernels).
 - On an M5 Pro, one matrix against the CPU path: svdvals 10.5x at 4096 and
   11.5x at 8192, eigh 8.2x and 8.4x, eigvalsh 3.4x and 3.6x, the SVD with
-  vectors 3.7x at 4096 (2.14: 8.6x, 5.6x, 2.9x and 2.3x at 4096); README and
-  the per-solver docs' tables re-measured side by side.
+  vectors 3.7x at 4096 on `bidiag` and 9.1x on `band` (2.14: 8.6x, 5.6x,
+  2.9x and 2.3x at 4096); README and the per-solver docs' tables re-measured
+  side by side.
 - Fixes: the sweeps' correctness gate failed every backend from N ~ 6500
   (MLX queued the comparison's GPU work behind the CPU reference, past the
   GPU's watchdog); `cpu_threads() - 2` wrapped around for a thread cap of 1
   or 2, and the band chase then ignored the cap; `sb_update` read up to 63
   rows past its staging buffer (never stored); `tuning/kernels.py` did not
   watch the band files for epoch changes.
-- The two-stage SVD with vectors was prototyped and parked: the chase's
-  reflectors applied by blocks on the GPU take 170 ms a side at 4096, about
-  twice what would beat `bidiag` now that its divide and conquer is fast
-  ([the proposal](docs/proposals/two-stage-vectors.md), with the prototype).
-  New proposals: the CPU path's divide and conquer, IEEE arithmetic in the
-  remaining shaders, the divide and conquer's products on the GPU, and long
-  single-threadgroup kernels against the GPU's watchdog.
+- New proposals: the CPU path's divide and conquer, IEEE arithmetic in the
+  remaining shaders, the divide and conquer's products on the GPU, the band
+  SVD with vectors overlapped further, and long single-threadgroup kernels
+  against the GPU's watchdog.
 
 ## 2.14.0 (2026-10-05)
 

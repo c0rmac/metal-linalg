@@ -246,13 +246,43 @@ inline unsigned cpu_threads_beside_gpu() {
 // A band width the panel kernels have, 8, 16 or 32: `want` rounded up, or
 // with want = 0 the environment variable `env`, else 16.
 uint32_t band_width(uint32_t want, const char* env);
+// The GPU's blocks of b columns in the general reduction of n columns.
+uint32_t band_blocks(uint32_t n, uint32_t b);
 // The widest band of at most b the panel kernels take for a matrix of `rows`
 // rows (rows b <= 128 * 1024), or 0 if none.
 uint32_t band_fit(uint32_t rows, uint32_t b);
+// The general reduction's reflectors, kept for the singular vectors, A =
+// Q1 B P1^T with Q1 = H_0 H_1 ... and P1 = G_0 G_1 ...: GPU block k's column
+// panel H_k = I - V T V^T (V on rows k b .. m - 1) and row panel
+// G_k = I - U S U^T (U on columns (k + 1) b .. n - 1). The caller provides
+// the buffers and the layout, for band_blocks(n, b) blocks: V and U are
+// written row-major at qoff[k] and poff[k] in qv and pv, ld qld[k] and
+// pld[k]; T and S row-major (ld 32) at k 1024 in qt and pt. The columns from
+// `tail` on are LAPACK's (`steps`): a step's column panel's reflectors stay
+// below A's diagonal (sgeqrf's, taus tq); its row panel's, sgelqf's, are
+// copied to lq (bk x nr, ld bk; taus tp) before the band is cleared of them.
+// `while_gpu`, if set, runs once all blocks are queued, before the wait for
+// the last: per-block work as `done[k]` completes.
+struct BandKeep {
+    id<MTLBuffer> qv, pv, qt, pt;
+    std::vector<size_t> qoff, poff;
+    std::vector<uint32_t> qld, pld;
+    uint32_t tail = 0;
+    std::vector<id<MTLCommandBuffer>> done;
+    struct Step {
+        uint32_t k, bk, nr;
+        std::vector<float> tq, tp, lq;
+    };
+    std::vector<Step> steps;
+    std::function<void(BandKeep&)> while_gpu;
+};
+
 // A (m x n column-major, m >= n, in shared storage) to an upper band of width
-// b, A = Q B P^T: the band in A's upper band, the rest of A scratch. False if
-// m is too tall for the panel kernels (m b > 128 * 1024).
-bool band_reduce_general(id<MTLBuffer> A, uint32_t m, uint32_t n, uint32_t lda, uint32_t b);
+// b, A = Q B P^T: the band in A's upper band, the rest of A scratch (with
+// `keep`, Q's and P's reflectors as above). False if m is too tall for the
+// panel kernels (m b > 128 * 1024).
+bool band_reduce_general(id<MTLBuffer> A, uint32_t m, uint32_t n, uint32_t lda, uint32_t b,
+                         BandKeep* keep = nullptr);
 // A symmetric A (n x n, both triangles, in shared storage) to a band of width
 // b, Q^T A Q: the band in A's lower band. Likewise false if n is too large.
 bool band_reduce_symmetric(id<MTLBuffer> A, uint32_t n, uint32_t lda, uint32_t b);

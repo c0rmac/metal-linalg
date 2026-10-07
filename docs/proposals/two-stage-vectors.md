@@ -1,15 +1,13 @@
 # The two-stage reduction with singular vectors
 
-Status: **prototyped, parked** (2026-10-07). Step 3, the part the case rests
-on, was prototyped first, as planned: on an M5 Pro it applies Q2 at 4096 in
-170 ms a side, about twice what would pay. With the parallel divide and
-conquer done, `bidiag` with vectors takes about 920 ms at 4096, and two
-stages would take about 160 (GPU) + 40 (chase) + 100 (divide and conquer) +
-2 x 170 (Q2, P2) + about 100 (Q1, P1), so 740: 1.2x at 4096 and slower than
-`bidiag` at 2048. It needs Q2 at 80 ms a side or less. The prototype and
-what it measured are below ([Prototype](#prototype-2026-10-07)); its sources
-are in [two-stage-vectors/](two-stage-vectors/).
-
+Status: **done** in 2.15.0 (2026-10-07): the `band` backend takes singular
+vectors (`svd_band_vectors`, routed by `band_min_k`); see
+[svd.md](../svd.md#with-singular-vectors-since-2150). On an M5 Pro, one
+square matrix: 1.17x `bidiag` at 1024, 1.42x at 2048, 2.33x at 4096 (404 ms
+against 942), 2.59x at 8192; 9.1x the CPU path at 4096. It was first
+prototyped and parked the same day, with Q2 at 170 ms a side ([Prototype
+](#prototype-2026-10-07)); what made it pay is below ([Done](#done-2026-10-07)).
+The sources of both prototypes are in [two-stage-vectors/](two-stage-vectors/).
 
 ## What
 
@@ -162,4 +160,53 @@ of a step sharing the products (as the 170 ms kernel does), or larger groups
 (ib = 32 halves the chain and adds a third of the flops), are the next
 things to try. Q1 and P1 (step 4) and the reflector storage in the GPU stage
 (step 1) were not started.
+
+## Done (2026-10-07)
+
+Two changes to the plan made it pay.
+
+**Q2 applied as a pipeline of groups.** The prototype's kernel gave each
+32-column strip of U_B the 32,896 blocks one after another; one strip alone
+took 83 ms (2.5 us a block), and the 128 strips ran in waves. But block
+(G - 1, p) needs only (G, p) and (G, p + 1): the next group can follow two
+tiles behind. In `bd_chase_apply` (shaders/Svd_Bidiag.metal; prototyped as
+`q2w.metal`) a threadgroup runs four groups at once, a simdgroup each, each
+keeping its block's two 16-row tiles in registers and handing its lower one
+to the next simdgroup through threadgroup memory; the first loads from and the
+last stores to device memory. A pass is about k / 16 + 2K steps of K
+blocks. At 4096: 60-64 ms a side (2048: 8.4 ms; 1024: 3.5), from 176.
+Tried after and not kept: the next tile prefetched into registers (61 to
+60 ms), device-memory fences only at the steps that need them (no change),
+less threadgroup memory a threadgroup for more of them at once (55-62 ms
+across the variants), and the two sides' kernels run concurrently (177 ms
+against 132: their strips competing for the caches). With the arithmetic
+removed the kernel still takes 43 ms: what is left is the steps' latency,
+not the products.
+
+**Q = Q1 Q2 and P = P1 P2 formed explicitly, under the CPU's work.** Q2 and
+P2 are applied from the right to the explicit Q1 and P1 (the kernel's `down`
+direction on Q^T), while the CPU runs the divide and conquer; Q1 and P1 are
+formed from the band reduction's aggregated reflectors while the CPU chases
+the band. Then U = Q U_B and V^T = V_B^T P^T are one product each. At 4096:
+
+| step | GPU | CPU |
+|---|---|---|
+| the band reduction, keeping its reflectors | 158 ms | the aggregates' T |
+| Q1, P1 explicit / the chase | 33 | 40 |
+| Q Q2, P P2 / the divide and conquer | 133 | 113 |
+| U, V^T, and the output | 43 | |
+
+about 400 ms against the estimate's ~600 for this order and 740 for the
+plan's (Q2 applied to U_B after the divide and conquer). The memory the plan
+worried about: the chase writes its reflectors straight into the kernel's
+blocks (no second copy), and the panels theirs into the aggregates; at 8192
+the call keeps about 1.1 GB more than `bidiag`.
+
+**What is left.** The divide and conquer is now on the critical path with
+the chase and the band reduction; the GPU waits about 20 ms for Q2 and P2 at
+4096. Applying Q2's blocks as the chase completes each group (a shared event
+a few groups at a time) would hide them under the chase as well, and leave
+the GPU free for the divide and conquer's top products
+([its proposal](divide-and-conquer-gpu-products.md)). A batch of two at 1024
+is still `bidiag`'s (its two-slot pipeline); the routing measures where.
 

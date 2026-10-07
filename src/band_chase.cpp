@@ -31,6 +31,9 @@
 // being one row and column apart. With 16 threads, 35 ms at width 16 and 39
 // at 32 (the symmetric one 35 and 34).
 //
+// For the SVD with vectors the chase keeps its reflectors (ChaseReflectors),
+// straight into the blocks svd_bidiag.mm's bd_chase_apply applies.
+//
 // Each sweep runs on one thread (sweep s on thread s mod P) and publishes how
 // many tasks it has done; a thread waits for the previous sweep by spinning
 // on that count. The threads are std::threads, all running at once, because a
@@ -120,8 +123,19 @@ struct Sweep {
     bool  done;
     float tq = 0.0f, tp = 0.0f;
     std::vector<float> v, u, w;
+    const ChaseReflectors* rec;
 
-    Sweep(long nb) : v(nb + 1), u(nb + 1), w(nb + 1) {}
+    Sweep(long nb, const ChaseReflectors* r) : v(nb + 1), u(nb + 1), w(nb + 1), rec(r) {}
+
+    // Keeps reflector (s, j): left (rows) or right (columns).
+    void keep(bool left, long j, const float* x, long len, float tau, long) const {
+        if (!rec || len < 2) return;
+        const size_t G = (size_t)s / 16, c = (size_t)s % 16, pm = rec->pmax;
+        const size_t b = G * (pm + 1) - G * (G - 1) / 2 + (size_t)j;
+        float* col = (left ? rec->L : rec->R) + b * 512 + c;
+        for (size_t r = 0; r < 32; ++r) col[r * 16] = r >= c && r < c + (size_t)len ? x[r - c] : 0.0f;
+        (left ? rec->Ltau : rec->Rtau)[b * 16 + c] = tau;
+    }
 
     void start(long sweep, long n, long nb) {
         s = sweep;
@@ -137,8 +151,10 @@ struct Sweep {
         if (task == 0) {
             const long len = ed - st + 1;
             tq = reflector(len, A.at(s, st), A.ld - 1, v.data());
+            keep(false, 0, v.data(), len, tq, nb);
             apply_right(A, st, ed, st, ed, v.data(), tq, w.data());
             tp = reflector(len, A.at(st, st), 1, u.data());
+            keep(true, 0, u.data(), len, tp, nb);
             apply_left(A, st, ed, st + 1, ed, u.data(), tp);
         } else if (task % 2 == 1) {
             const long j1 = ed + 1, j2 = std::min(ed + nb, n - 1);
@@ -153,12 +169,14 @@ struct Sweep {
                 return true;
             }
             tq = reflector(j2 - j1 + 1, A.at(st, j1), A.ld - 1, v.data());
+            keep(false, (task + 1) / 2, v.data(), j2 - j1 + 1, tq, nb);
             apply_right(A, st + 1, ed, j1, j2, v.data(), tq, w.data());
             st = j1;
             ed = j2;
         } else {
             apply_right(A, st, ed, st, ed, v.data(), tq, w.data());
             tp = reflector(ed - st + 1, A.at(st, st), 1, u.data());
+            keep(true, task / 2, u.data(), ed - st + 1, tp, nb);
             apply_left(A, st, ed, st + 1, ed, u.data(), tp);
         }
         ++task;
@@ -212,7 +230,7 @@ struct SymSweep {
     float tau = 0.0f;
     std::vector<float> u, w;
 
-    SymSweep(long kd) : u(kd + 1), w(kd + 1) {}
+    SymSweep(long kd, const ChaseReflectors*) : u(kd + 1), w(kd + 1) {}
 
     void start(long sweep, long n, long kd) {
         s = sweep;
@@ -267,11 +285,11 @@ struct SymSweep {
 
 // Sweeps 0 .. n - 2 pipelined over P threads, as described above.
 template <class S, class M>
-void pipeline(long n, long nb, long P, const M& A) {
+void pipeline(long n, long nb, long P, const M& A, const ChaseReflectors* rec = nullptr) {
     std::vector<std::atomic<long>> done(n);   // per sweep: tasks done, LONG_MAX when over
     for (auto& x : done) x.store(0, std::memory_order_relaxed);
     auto worker = [&](long p) {
-        S sweep(nb);
+        S sweep(nb, rec);
         for (long s = p; s < n - 1; s += P) {
             sweep.start(s, n, nb);
             for (;;) {
@@ -307,10 +325,10 @@ long pipeline_threads(long n, long nb, unsigned threads) {
 } // namespace
 
 void band_to_bidiagonal(uint32_t n, uint32_t nb, float* W, size_t ld, size_t ku, float* d, float* e,
-                        unsigned threads) {
+                        unsigned threads, const ChaseReflectors* rec) {
     const Band A{W, (long)ld, (long)ku};
     const long N = n, NB = std::max<uint32_t>(nb, 1);
-    if (N > 1 && NB > 1) pipeline<Sweep>(N, NB, pipeline_threads(N, NB, threads), A);
+    if (N > 1 && NB > 1) pipeline<Sweep>(N, NB, pipeline_threads(N, NB, threads), A, rec);
     for (long i = 0; i < N; ++i) {
         d[i] = *A.at(i, i);
         if (i + 1 < N) e[i] = *A.at(i, i + 1);

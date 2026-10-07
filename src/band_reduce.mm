@@ -13,6 +13,11 @@
 // views of the column-major matrices. The GPU takes blocks while enough
 // columns remain; LAPACK the last few.
 //
+// For the SVD with vectors (BandKeep) the general reduction also keeps its
+// blocks' reflectors: the panels write V and U a second time into the
+// caller's layout (flag 16), T and S into its buffers, and the LAPACK tail's
+// reflectors are kept before the band is cleared of them.
+//
 // Why: the one-stage reductions (tridiag, bidiag) read the trailing matrix
 // once or twice a column, and on an M5 Pro they were at about 290 GB/s; these
 // read it three (symmetric) or four (general) times a block of b columns.
@@ -42,7 +47,7 @@ namespace {
 using L = __LAPACK_int;
 
 // Must match PanelParams and SmallParams in Svd_Bidiag.metal.
-struct PanelParams { uint32_t rows, cols, rs, cs, ldv, flags, shift, ldt, leaf, ldw, dup; };
+struct PanelParams { uint32_t rows, cols, rs, cs, ldv, flags, shift, ldt, leaf, ldw, dup, ldk; };
 struct SmallParams { uint32_t n, b, ldw, a0, b0, rb, ldc, m, per; };
 struct SyParams    { uint32_t n, lda, ldw, b; };
 
@@ -149,16 +154,21 @@ void small_partials(const Small& sk, const Buffers& w, id<MTLComputeCommandEncod
 }
 
 // The QR of panel P (at A's offset `off`): R in place; H = I - V T V^T as V
-// into vout (at voff), T into tout, and V T, V^T, a second V as pp.flags ask.
+// into vout (at voff), T into tout (at toff), and V T, V^T, a second V as
+// pp.flags ask; with vk, V into it too (at vkoff, ld ldk).
 // In one simdgroup if it has at most kLeafRows rows, else by TSQR: leaves of
 // at most kLeafRows rows (a simdgroup each), their stacked R's in one
 // threadgroup (a tree of pairs, a simdgroup a pair), then V rebuilt (a thread
 // a row).
 void panel(const Panels& pk, const Buffers& w, id<MTLCommandBuffer> cb, id<MTLBuffer> A, size_t off, PanelParams pp,
-           id<MTLBuffer> vout, size_t voff, id<MTLBuffer> tout) {
+           id<MTLBuffer> vout, size_t voff, id<MTLBuffer> tout, size_t toff = 0, id<MTLBuffer> vk = nil,
+           size_t vkoff = 0, uint32_t ldk = 0) {
     const uint32_t leaves = (pp.rows + kLeafRows - 1) / kLeafRows;
     pp.leaf = (pp.rows + leaves - 1) / leaves;
     pp.ldw = kLw;
+    pp.ldk = ldk;
+    if (vk) pp.flags |= 16u;
+    else vk = w.bv;   // bound, unused
     id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
     if (leaves == 1) {
         [enc setComputePipelineState:pk.panel];
@@ -166,10 +176,11 @@ void panel(const Panels& pk, const Buffers& w, id<MTLCommandBuffer> cb, id<MTLBu
         [enc setBuffer:vout offset:voff * 4 atIndex:1];
         [enc setBuffer:w.bvt offset:0 atIndex:2];
         [enc setBuffer:w.br offset:0 atIndex:3];
-        [enc setBuffer:tout offset:0 atIndex:4];
+        [enc setBuffer:tout offset:toff * 4 atIndex:4];
         [enc setBytes:&pp length:sizeof pp atIndex:5];
         [enc setBuffer:w.bl offset:0 atIndex:6];
         [enc setBuffer:w.bv offset:0 atIndex:7];
+        [enc setBuffer:vk offset:vkoff * 4 atIndex:8];
         [enc dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
     } else {
         [enc setComputePipelineState:pk.leaf];
@@ -186,7 +197,7 @@ void panel(const Panels& pk, const Buffers& w, id<MTLCommandBuffer> cb, id<MTLBu
         [enc setComputePipelineState:pk.top];
         [enc setBuffer:A offset:off * 4 atIndex:0];
         [enc setBuffer:w.bsc offset:0 atIndex:1];
-        [enc setBuffer:tout offset:0 atIndex:2];
+        [enc setBuffer:tout offset:toff * 4 atIndex:2];
         [enc setBytes:&pp length:sizeof pp atIndex:3];
         [enc dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(32 * sgs, 1, 1)];
         [enc setComputePipelineState:pk.rebuild];
@@ -194,8 +205,9 @@ void panel(const Panels& pk, const Buffers& w, id<MTLCommandBuffer> cb, id<MTLBu
         [enc setBuffer:vout offset:voff * 4 atIndex:1];
         [enc setBuffer:w.bvt offset:0 atIndex:2];
         [enc setBuffer:w.br offset:0 atIndex:3];
-        [enc setBuffer:tout offset:0 atIndex:4];
+        [enc setBuffer:tout offset:toff * 4 atIndex:4];
         [enc setBytes:&pp length:sizeof pp atIndex:5];
+        [enc setBuffer:vk offset:vkoff * 4 atIndex:6];
         [enc dispatchThreadgroups:MTLSizeMake(leaves, 1, 1)
             threadsPerThreadgroup:MTLSizeMake((pp.leaf + 31) / 32 * 32, 1, 1)];
     }
@@ -213,15 +225,21 @@ void finish(id<MTLCommandBuffer> last) {
 // blocks: the same block steps with LAPACK on A's shared storage. Each step:
 // QR of the column panel, Q^T applied to the columns right of it, LQ of the
 // row panel, applied to the rows below it. Where a block is narrower than b,
-// the row panel's reflectors would lie inside the band, so they are cleared.
-void general_tail(float* A, uint32_t m, uint32_t n, uint32_t lda, uint32_t b, uint32_t k) {
+// the row panel's reflectors would lie inside the band, so they are cleared
+// (with `keep`, copied there first).
+void general_tail(float* A, uint32_t m, uint32_t n, uint32_t lda, uint32_t b, uint32_t k, BandKeep* keep) {
     std::vector<float> tau(kBandMax), work((size_t)std::max(m, n) * 64 + 64);
     L lw = (L)work.size(), info = 0, LDA = lda;
+    if (keep) {
+        keep->tail = k;
+        keep->steps.clear();
+    }
     for (; k < n;) {
         const uint32_t bk = std::min(b, n - k), nr = n - k - bk;
         L mr = m - k, BK = bk, NR = nr;
         float* Akk = A + (size_t)k * lda + k;
         sgeqrf_(&mr, &BK, Akk, &LDA, tau.data(), work.data(), &lw, &info);
+        if (keep) keep->steps.push_back({k, bk, nr, std::vector<float>(tau.begin(), tau.begin() + bk), {}, {}});
         if (nr == 0) break;
         sormqr_("L", "T", &mr, &NR, &BK, Akk, &LDA, tau.data(), Akk + (size_t)bk * lda, &LDA, work.data(), &lw, &info);
         float* Pr = Akk + (size_t)bk * lda;
@@ -229,6 +247,13 @@ void general_tail(float* A, uint32_t m, uint32_t n, uint32_t lda, uint32_t b, ui
         sgelqf_(&BK, &NR, Pr, &LDA, tau.data(), work.data(), &lw, &info);
         if (mb > 0)
             sormlq_("R", "T", &mb, &NR, &kr, Pr, &LDA, tau.data(), Pr + bk, &LDA, work.data(), &lw, &info);
+        if (keep) {
+            BandKeep::Step& st = keep->steps.back();
+            st.tp.assign(tau.begin(), tau.begin() + kr);
+            st.lq.resize((size_t)bk * nr);
+            for (uint32_t c = 0; c < nr; ++c)
+                for (uint32_t r = 0; r < bk; ++r) st.lq[r + (size_t)c * bk] = Pr[r + (size_t)c * lda];
+        }
         for (uint32_t r = 0; r < bk; ++r)
             for (uint32_t c = r + 1; c < nr; ++c) Pr[r + (size_t)c * lda] = 0.0f;
         k += bk;
@@ -236,6 +261,8 @@ void general_tail(float* A, uint32_t m, uint32_t n, uint32_t lda, uint32_t b, ui
 }
 
 } // namespace
+
+uint32_t band_blocks(uint32_t n, uint32_t b) { return n >= 2 * b ? (n - 2 * b) / b + 1 : 0; }
 
 uint32_t band_fit(uint32_t rows, uint32_t b) {
     for (; b >= 8; b /= 2)
@@ -250,7 +277,7 @@ uint32_t band_width(uint32_t want, const char* env) {
     return want <= 8 ? 8u : want <= 16 ? 16u : kBandMax;
 }
 
-bool band_reduce_general(id<MTLBuffer> Abuf, uint32_t m, uint32_t n, uint32_t lda, uint32_t b) {
+bool band_reduce_general(id<MTLBuffer> Abuf, uint32_t m, uint32_t n, uint32_t lda, uint32_t b, BandKeep* keep) {
     // A TSQR's stacked R's are one thread a row in one threadgroup: at most
     // 1024 / b leaves.
     if ((size_t)m * b > (size_t)kLeafRows * 1024) return false;
@@ -259,6 +286,11 @@ bool band_reduce_general(id<MTLBuffer> Abuf, uint32_t m, uint32_t n, uint32_t ld
     Buffers& w = st.buffers(m, n);
     id<MTLDevice> dev = st.rt.device;
     const uint32_t ldr = w.ldr;
+    if (keep) {
+        if (keep->qoff.size() < band_blocks(n, b) || keep->poff.size() < band_blocks(n, b))
+            throw std::logic_error("[band] BandKeep's layout is short of blocks");
+        keep->done.assign(band_blocks(n, b), nil);
+    }
     // Per block, with C the columns right of the column panel and C_low its
     // rows below the row panel: the column panel's QR (H = I - V T V^T),
     // W = T^T V^T C, the row panel C(0:b, :) - V(0:b, :) W, its LQ
@@ -272,15 +304,23 @@ bool band_reduce_general(id<MTLBuffer> Abuf, uint32_t m, uint32_t n, uint32_t ld
         const uint32_t m1 = m - k, n1 = n - k - b, m2 = m1 - b;
         const size_t akk = (size_t)k * lda + k, akb = (size_t)(k + b) * lda + k;
         id<MTLCommandBuffer> cb = [st.rt.queue commandBufferWithUnretainedReferences];
+        const uint32_t bi = k / b;
         // The column panel: R in place; V, V T, and V_low^T into [V_low^T; Y^T].
-        panel(pk, w, cb, Abuf, akk, PanelParams{m1, b, 1, lda, kBandMax, 3u, b, ldr, 0, 0, 0}, w.bv, 0, w.bt);
+        if (keep)
+            panel(pk, w, cb, Abuf, akk, PanelParams{m1, b, 1, lda, kBandMax, 3u, b, ldr, 0, 0, 0}, w.bv, 0, keep->qt,
+                  (size_t)bi * 1024, keep->qv, keep->qoff[bi], keep->qld[bi]);
+        else
+            panel(pk, w, cb, Abuf, akk, PanelParams{m1, b, 1, lda, kBandMax, 3u, b, ldr, 0, 0, 0}, w.bv, 0, w.bt);
         // W^T = C^T (V T), into [W^T U]
         gemm(dev, cb, mps(Abuf, akb, n1, m1, lda), false, mps(w.bvt, 0, m1, b, kBandMax), false,
              mps(w.bl, 0, n1, b, kLw), n1, b, m1, 1, 0);
         // The row panel, transposed, C(0:b, :)^T - W^T V(0:b, :)^T as it is
         // loaded (flag 4), and its QR, the row panel's LQ: L in place; U into
         // [W^T U], S.
-        panel(pk, w, cb, Abuf, akb, PanelParams{n1, b, lda, 1, kLw, 4u, 0, 0, 0, 0, 0}, w.bl, b, w.bs);
+        id<MTLBuffer> sbuf = keep ? keep->pt : w.bs;
+        const size_t soff = keep ? (size_t)bi * 1024 : 0;
+        panel(pk, w, cb, Abuf, akb, PanelParams{n1, b, lda, 1, kLw, 4u, 0, 0, 0, 0, 0}, w.bl, b, sbuf, soff,
+              keep ? keep->pv : nil, keep ? keep->poff[bi] : 0, keep ? keep->pld[bi] : 0);
         // X^T = U^T C_low^T
         gemm(dev, cb, mps(w.bl, b, n1, b, kLw), true, mps(Abuf, akb + b, n1, m2, lda), false,
              mps(w.bxt, 0, b, m2, ldr), b, m2, n1, 1, 0);
@@ -293,7 +333,7 @@ bool band_reduce_general(id<MTLBuffer> Abuf, uint32_t m, uint32_t n, uint32_t ld
             [enc setBuffer:w.bxt offset:0 atIndex:0];
             [enc setBuffer:w.br offset:0 atIndex:1];
             [enc setBuffer:w.bpart offset:0 atIndex:2];
-            [enc setBuffer:w.bs offset:0 atIndex:3];
+            [enc setBuffer:sbuf offset:soff * 4 atIndex:3];
             [enc setBytes:&q length:sizeof q atIndex:4];
             [enc dispatchThreadgroups:MTLSizeMake((m2 + kApplyPer - 1) / kApplyPer, 1, 1)
                 threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
@@ -303,10 +343,19 @@ bool band_reduce_general(id<MTLBuffer> Abuf, uint32_t m, uint32_t n, uint32_t ld
         gemm(dev, cb, mps(w.bl, 0, n1, 2 * b, kLw), false, mps(w.br, 0, 2 * b, m2, ldr), false,
              mps(Abuf, akb + b, n1, m2, lda), n1, m2, 2 * b, -1, 1);
         [cb commit];
+        if (keep) keep->done[bi] = cb;
         last = cb;
     }
+    if (keep && keep->while_gpu) {
+        try {
+            keep->while_gpu(*keep);
+        } catch (...) {
+            if (last) [last waitUntilCompleted];
+            throw;
+        }
+    }
     finish(last);
-    general_tail(static_cast<float*>(Abuf.contents), m, n, lda, b, k);
+    general_tail(static_cast<float*>(Abuf.contents), m, n, lda, b, k, keep);
     return true;
 }
 

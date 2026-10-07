@@ -3,8 +3,9 @@
 After 2.13.0 the work left on eigh and the SVD was written up as seven
 proposals ([docs/proposals/](../proposals/README.md)). This is what came of
 them in 2.15.0, measured on an Apple M5 Pro (20 GPU cores, 18 CPU cores,
-48 GB), and what turned up along the way. Six were built; the seventh, the
-two-stage SVD with vectors, was prototyped and parked.
+48 GB), and what turned up along the way. All seven were built; the
+seventh, the two-stage SVD with vectors, after a first prototype was parked
+the same day.
 
 | | before (2.14.1) | 2.15.0 | |
 |---|---|---|---|
@@ -12,6 +13,7 @@ two-stage SVD with vectors, was prototyped and parked.
 | SVD with vectors, `bidiag`, 4096 | 1535 ms | 943 ms | 1.63x |
 | eigvalsh, `band`, 4096 | 161 ms | 140 ms | 1.15x |
 | svdvals, `band`, 4096 | 226 ms | 197 ms | 1.15x |
+| SVD with vectors, `band` (new), 4096 | 1535 ms (`bidiag`) | 404 ms | 3.80x |
 
 (One matrix; 2.15.0 is the median of `sweep_eigh` and `sweep_svd`, section
 9; before, the routing sweep `20261004-06bc11` and section 1.)
@@ -228,11 +230,20 @@ re-measure will place it between them.
 
 ## 7. The two-stage SVD with vectors
 
-Prototyped and parked; see [the proposal](../proposals/two-stage-vectors.md#prototype-2026-10-07).
-The chase's reflectors can be recorded at no cost and applied by blocks of 16
-sweeps in an order that gives Q2 bit for bit; the best GPU kernel applies Q2
-in 170 ms a side at 4096, about twice what two stages need to beat
-`bidiag`, now that `bidiag`'s divide and conquer is fast.
+Built, after a first prototype was parked; see [the proposal](../proposals/two-stage-vectors.md#done-2026-10-07)
+and [svd.md](../svd.md#with-singular-vectors-since-2150). The chase's
+reflectors can be recorded at no cost and grouped into blocks of 16 sweeps
+whose order gives Q2 bit for bit. The first kernel applied them one group
+after another, every 32-column strip a chain of 32,896 dependent blocks at
+4096: 170 ms a side, about twice what would pay. Block (G - 1, p) needs only
+(G, p) and (G, p + 1), so `bd_chase_apply` runs four groups at once in a
+threadgroup, a simdgroup each, two tiles apart, the tiles handed down
+through threadgroup memory: 60-64 ms a side. And instead of applying Q2 to
+U_B after the divide and conquer, Q1 Q2 and P1 P2 are formed explicitly while
+the CPU runs it (and Q1, P1 while it chases the band), then U and V^T are one
+product each. At 4096: 404 ms against `bidiag`'s 942 (2.33x), 2.59x at 8192,
+1.17x at 1024. Routed from `band_min_k`, which stage 3c of `tune_svd.py`
+fits; 0 until the M5 Pro is re-measured.
 
 ## 8. Found along the way
 

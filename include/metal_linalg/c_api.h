@@ -181,6 +181,7 @@ typedef struct metal_linalg_svd_policy {
     uint32_t gpu_big_batch_min;     /* gpu_big_batch_min (0: never) */
     uint32_t values_band_min_k;     /* singular values alone: the band backend from this k (0: never) */
     uint32_t values_band_width;     /* ... its band's width, 8, 16 or 32 (0: 16) */
+    uint32_t band_min_k;            /* with vectors: the band backend from this k (0: never) */
 } metal_linalg_svd_policy;
 
 metal_linalg_qr_policy   metal_linalg_qr_policy_get(void);

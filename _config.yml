@@ -166,9 +166,9 @@ defaults:
   - scope: { path: docs/studies/proposals-2-15-apple-m5-pro.md }
     values:
       description: >-
-        A parallel divide and conquer, a TSQR tree, one-triangle updates and
-        IEEE arithmetic found in the way: metal-linalg 2.15.0's eigh and SVD
-        work, measured on an Apple M5 Pro.
+        A parallel divide and conquer, a TSQR tree, one-triangle updates, the
+        two-stage SVD with vectors and IEEE arithmetic found in the way:
+        metal-linalg 2.15.0's eigh and SVD work, measured on an Apple M5 Pro.
   - scope: { path: docs/proposals/README.md }
     values:
       title: "metal-linalg: proposals"

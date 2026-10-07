@@ -85,7 +85,8 @@ HISTORY = [
     ("svd", 8, "2.15.0", "2026-10-07",
      "the bidiag backend's singular vectors come from a divide and conquer on every core (sbdsdc's "
      "753 ms to 100 at 4096): the SVD with vectors 1.7-1.9x at 2048-4096; the band backend's panels "
-     "and small products are faster: svdvals 1.1-1.3x"),
+     "and small products are faster: svdvals 1.1-1.3x; and the band backend takes singular vectors "
+     "too (band_min_k): 2.3x bidiag at 4096"),
 ]
 
 REQUIRED = {
@@ -93,8 +94,8 @@ REQUIRED = {
     "eigh": {"cpu", "simd", "tg", "block", "tridiag", "ql", "ql_share",
              "cpu_vals", "simd_vals", "tg_vals", "block_vals", "tridiag_vals", "ql_vals", "ql_share_vals",
              "band_vals", "band8_vals", "band32_vals"},
-    "svd": {"cpu", "jacobi", "block", "qr", "qrblock", "bidiag", "gk", "gk_share", "cpu_vals", "bidiag_vals",
-            "gk_vals", "gk_share_vals", "band_vals", "band8_vals", "band32_vals"},
+    "svd": {"cpu", "jacobi", "block", "qr", "qrblock", "bidiag", "band", "gk", "gk_share", "cpu_vals",
+            "bidiag_vals", "gk_vals", "gk_share_vals", "band_vals", "band8_vals", "band32_vals"},
 }
 
 # Backends added after a decomposition's first measurements, and when: what
@@ -124,7 +125,8 @@ ADDED = {
 }
 # Where a backend name means something else for one decomposition.
 ADDED_FOR = {
-    "svd": {"cpu_vals": "the singular-value-only paths (2.7.0)"},
+    "svd": {"cpu_vals": "the singular-value-only paths (2.7.0)",
+            "band": "the band backend with singular vectors (2.15.0)"},
 }
 
 

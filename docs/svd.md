@@ -341,6 +341,76 @@ of `bidiag`: singular values within $1 \times 10^{-5}$ of float32 LAPACK's
 relative to $\sigma_\text{max}$. How the panel kernels got from 0.5 ms to
 0.15 ms each is in [the two-stage study](studies/two-stage-apple-m5-pro.md).
 
+### With singular vectors (since 2.15.0)
+
+The same two stages serve the SVD with vectors (`svd_band_vectors`, width
+16), which then needs both stages' transformations back: with $A = Q_1 B_b
+P_1^T$ (the band, $Q_1$ and $P_1$ the GPU stage's block reflectors) and
+$B_b = Q_2 B P_2^T$ (the bidiagonal, $Q_2$ and $P_2$ the chase's reflectors),
+$U = Q_1 Q_2 U_B$ and $V = P_1 P_2 V_B$. LAPACK's two-stage drivers do not
+take vectors; PLASMA's and MAGMA's two-stage eigensolvers do. Here $Q = Q_1
+Q_2$ and $P = P_1 P_2$ are formed explicitly on the GPU while the CPU does
+its two steps, so that most of the GPU's work hides behind the CPU's:
+
+1. **The band reduction keeps its reflectors.** A block's panels write their
+   Householder vectors straight into an aggregated layout as they factor
+   (flag 16 of the panel kernels), eight blocks to an aggregate of 128; as
+   the GPU completes each eight, the CPU builds the aggregate's $T$ from the
+   blocks' own (the block-reflector merge, from the Gram matrix $V^T V$).
+2. **$Q_1$ and $P_1$ explicit** (the thin $m \times k$ and $k \times k$): the
+   last columns' LAPACK reflectors on the CPU, then the aggregates on the GPU,
+   last first, three MPS products each, on the shrinking trailing block.
+   Meanwhile the CPU chases the band to bidiagonal, writing each reflector it
+   makes into the layout of step 3's kernel.
+3. **$Q \leftarrow Q_1 Q_2$ and $P \leftarrow P_1 P_2$** on the GPU
+   (`bd_chase_apply` in `shaders/Svd_Bidiag.metal`), while the CPU solves
+   $B = U_B \Sigma V_B^T$ by the divide and conquer. The chase's reflectors
+   of 16 consecutive sweeps at the same step form a block $I - V T V^T$, $V$
+   $32 \times 16$, acting on 32 consecutive rows; a group of sweeps runs its
+   blocks in order along the matrix, and the next group may follow two tiles
+   (32 rows) behind. A threadgroup owns 32 of $Q$'s rows (as columns of
+   $Q^T$) and runs four groups at once, a simdgroup each, the 16-row tiles
+   handed from one simdgroup to the next through threadgroup memory: a
+   pipeline about $k/16$ blocks long a pass, where one group at a time made
+   every column strip a chain of $k^2/512$ dependent blocks. At $k = 4096$,
+   32,896 blocks a side: 60-64 ms a side, against 176 ms for the groups one
+   after another.
+4. **$U = Q U_B$ and $V^T = V_B^T P^T$**, two MPS products, written row-major;
+   $U$ is copied out while the GPU forms $V^T$.
+
+On an M5 Pro, one $k \times k$ at 4096: the band reduction 158 ms; $Q_1$
+and $P_1$ 33 ms on the GPU under the chase's 40 on the CPU; $Q_2$ and $P_2$
+133 ms on the GPU, the divide and conquer 113 on the CPU; the products and
+the output 43 ms: about 400 ms, against `bidiag`'s 940 (whose one-stage
+reduction alone takes 700). Square, against the CPU path and `bidiag`
+(2.15.0, side by side, the median of `sweep_svd`):
+
+| $k$ | CPU | bidiag | band | band / bidiag | band / CPU |
+|---|---|---|---|---|---|
+| 512 | 16.8 ms | 13.3 ms | 12.4 ms | 1.08x | 1.36x |
+| 768 | 33.6 ms | 22.2 ms | 20.0 ms | 1.11x | 1.68x |
+| 1024 | 78.3 ms | 34.5 ms | 29.4 ms | 1.17x | 2.67x |
+| 1536 | 178 ms | 68.1 ms | 51.5 ms | 1.32x | 3.45x |
+| 2048 | 441 ms | 122 ms | 85.5 ms | 1.42x | 5.16x |
+| 3072 | 1.29 s | 0.357 s | 0.200 s | 1.78x | 6.42x |
+| 4096 | 3.68 s | 0.942 s | 0.404 s | 2.33x | 9.10x |
+| 8192 | | 7.89 s | 3.04 s | 2.59x | |
+
+Tall, 4096×2048, 1.20x `bidiag` (219 ms against 263); 8192×2048, through
+the QR first, 1.09x (390 against 426). A batch of two is where `bidiag`'s
+pipeline (one matrix's divide and conquer under the next's reduction) still
+wins at 1024 (54 ms against 59); at 2048, `band` 1.24x. The backend takes a
+batch one matrix after another, each overlapped within itself, from
+`band_min_k` within `bidiag_max_batch`.
+
+Accuracy is LAPACK's: reconstruction and orthogonality about $3 \times
+10^{-6}$ at 1024, $6 \times 10^{-6}$ at 4096 and $8 \times 10^{-6}$ at 8192
+(`bidiag` $2$, $4$ and $6 \times 10^{-6}$: two stages of float32 reflectors
+instead of one), singular values within $3 \times 10^{-7}$ of float64
+LAPACK's relative to $\|A\|_F$. Memory: at 8192 the call keeps about 1.1 GB
+more than `bidiag` (the chase's blocks, $V$ and $T$, 400 MB a side, and the
+explicit $Q$ and $P$).
+
 ## Routing
 
 With $k = \min(M, N)$ and $l = \max(M, N)$:
@@ -358,7 +428,7 @@ on the GPU:
     precondition with QR iff  l >= qr_min_rows,  k >= qr_min_k  and  l >= 2k
     block kernel iff  k >= block_min_k,  or  k >= block_min_k_batched and batch >= block_min_batch
 where that says CPU (up to bidiag_max_batch matrices; svdvals: values_bidiag_max_batch):
-  svdvals: band iff  k >= values_band_min_k  (0 = never)
+  band iff  k >= band_min_k  (svdvals: k >= values_band_min_k; 0 = never)
   bidiag instead iff  k >= bidiag_min_k  (svdvals: k >= values_bidiag_min_k; 0 = never)
 ```
 
@@ -376,7 +446,7 @@ Metal device name and GPU core count:
 
 | GPU | cores | GPU iff | golub_kahan | QR from | block from | else bidiag | status |
 |---|---|---|---|---|---|---|---|
-| Apple M5 Pro | 20 | k <= 56, l <= 256 and batch * k >= 16384, or 57 <= k <= 80 in batches of 1024+ (svdvals: k <= 56, l <= 256 and batch * k >= 16384) | k = 8 .. 80, shared with the CPU from batch 1024 | 512 rows, k >= 32 | k = 192; k = 64 in batches of 64+ | from k = 1024 (svdvals too, and `band` from 1536), batches up to 2 | measured — run [`20261004-06bc11`](results/apple-m5-pro-20gpu/20261004-06bc11/svd/report.md) |
+| Apple M5 Pro | 20 | k <= 56, l <= 256 and batch * k >= 16384, or 57 <= k <= 80 in batches of 1024+ (svdvals: k <= 56, l <= 256 and batch * k >= 16384) | k = 8 .. 80, shared with the CPU from batch 1024 | 512 rows, k >= 32 | k = 192; k = 64 in batches of 64+ | from k = 1024 (svdvals too, and `band` from 1536 for svdvals; never with vectors until measured), batches up to 2 | measured, stale (2.15.0's kernels) — run [`20261004-06bc11`](results/apple-m5-pro-20gpu/20261004-06bc11/svd/report.md) |
 | anything else | — | estimated | estimated | estimated | estimated | estimated | **estimated** from the M5 Pro's timings ([how](tuning.md#macs-nobody-has-measured)) |
 
 On the M5 Pro large batches of small matrices, up to 56×56 and a long side
@@ -417,9 +487,9 @@ entry, remain only for a Mac with nothing to estimate from
 `SVD_VALUES_GPU_MAX_L`, `SVD_BIDIAG_MIN_K`, `SVD_VALUES_BIDIAG_MIN_K`,
 `SVD_BIDIAG_MAX_BATCH`, `SVD_VALUES_BIDIAG_MAX_BATCH`, `SVD_GK_MIN_K`,
 `SVD_GK_MAX_K`, `SVD_SHARE_MIN_BATCH`, `SVD_GPU_BIG_BATCH_MAX_K`,
-`SVD_GPU_BIG_BATCH_MIN`, `SVD_VALUES_BAND_MIN_K` and
-`SVD_DEVICE=gpu|cpu|bidiag|band` override it (`band` for singular values
-alone; with vectors it means `bidiag`). `SVD_VALUES_BAND_WIDTH` sets the
+`SVD_GPU_BIG_BATCH_MIN`, `SVD_VALUES_BAND_MIN_K`, `SVD_BAND_MIN_K` and
+`SVD_DEVICE=gpu|cpu|bidiag|band` override it (`band` with vectors too since
+2.15.0; before, it meant `bidiag` there). `SVD_VALUES_BAND_WIDTH` sets the
 `band` backend's band width as a policy field (`values_band_width`, 8, 16 or
 32; 0 is 16), and `SVD_BAND_WIDTH=8|16|32` where the policy leaves it 0.
 `svd_backend(m, n, batch)` and `svdvals_backend(m, n, batch)` say which of the
@@ -520,19 +590,21 @@ cmake --build build --target test_svd
 ./build/test_svd          # or: ctest --test-dir build
 ```
 
-384 checks: square, tall and wide shapes around the simdgroup, pair-count and
+432 checks: square, tall and wide shapes around the simdgroup, pair-count and
 block boundaries, batches, every simdgroup count, all eight GPU backends and
 each branch of the CPU one (the `bidiag` backend from 1×1 to 1100×1060, with
 QR first and through the transpose, with vectors and without; `band` at each
 band width from 1×1 to 1100×1060, either side of the one-simdgroup panel and
-the TSQR leaf, rank one, zero, scaled and NaN inputs; `golub_kahan`
+the TSQR leaf, rank one, zero, scaled and NaN inputs, and with vectors from
+1×1 to 2049×2049, either side of the LAPACK tail alone, a partial aggregate,
+the chase's tiles and its two kernels, repeated and clustered values; `golub_kahan`
 from 1×1 to its limit, either side of its chaser simdgroup, directly and
 after a QR), rank deficiency repeated over random instances per shape and
 backend, structured spectra (graded columns, singular values from 1e+4 to
 1e-4, repeated values), magnitudes from 1e-30 to 1e+37, NaN inside a batch,
 and the routing policy, including the batch-dependent kernel crossover, the
 golub_kahan window, the long-side cap, the rule for singular values alone,
-sharing a batch with the CPU and the band threshold, without assuming any
+sharing a batch with the CPU and the band thresholds, without assuming any
 device's values.
 
 ## References

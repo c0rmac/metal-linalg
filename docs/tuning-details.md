@@ -232,7 +232,11 @@ or the CPU, within `values_bidiag_max_batch` (0: never, which a run from
 before 2.13.0 gives); stage 3b fits it, after `bidiag`'s threshold, on the
 points where `band_vals` was timed (k >= 512, where `bidiag_vals` is). Then
 `values_band_width`, chosen by stage 3b as stage 4b does for the
-eigensolver.
+eigensolver. And `band_min_k` (since 2.15.0): with singular vectors, from
+this k the `band` backend instead of `bidiag` or the CPU, within
+`bidiag_max_batch` (0: never, which a run from before 2.15.0 gives); stage 3c
+fits it as stage 3b does, on the points where `band` was timed with vectors
+(k >= 512).
 
 ## 5. Reading a report
 

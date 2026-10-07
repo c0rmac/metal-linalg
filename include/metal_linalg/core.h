@@ -437,6 +437,13 @@ namespace metal_linalg {
         // as EighPolicy::values_band_width (on an M5 Pro 16: at 4096 x 4096,
         // 329, 235 and 275 ms for 8, 16 and 32).
         unsigned values_band_width = 0;
+        // With singular vectors, from k >= band_min_k (within
+        // bidiag_max_batch), the band backend before bidiag: the two-stage
+        // reduction, its reflectors and the bulge chase's applied on the GPU
+        // while the CPU solves the bidiagonal problem (width 16; on an M5 Pro
+        // 2.3x the bidiag backend at 4096 x 4096). 0 means never, which is
+        // what a device without measurements of it has.
+        unsigned band_min_k = 0;
 
         // --- the golub_kahan backend, for k in [gk_min_k, gk_max_k] ---
         // On the GPU, inside this window, LAPACK's method in one threadgroup
@@ -701,6 +708,12 @@ namespace metal_linalg {
             // (sbdsqr) on the CPU. `width` the band's, 8, 16 or 32 (0: the
             // default, or SVD_BAND_WIDTH). See svd_bidiag.mm.
             void svd_band(const Matrices& a, float* s, uint32_t* info, uint32_t width = 0);
+
+            // The SVD with vectors by the two-stage reduction: the band's
+            // reflectors and the chase's kept and applied on the GPU while
+            // the CPU solves the bidiagonal problem. Width 16. See
+            // svd_bidiag.mm.
+            void svd_band_vectors(const Matrices& a, float* u, float* s, float* vt, uint32_t* info);
 
             // Householder bidiagonalization and implicit bidiagonal QR, one
             // threadgroup per matrix, for shapes that

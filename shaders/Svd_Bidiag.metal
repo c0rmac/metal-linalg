@@ -379,11 +379,13 @@ struct PanelParams {
     uint ldv;          // V row-major, ld ldv
     uint flags;        // 1: V T into VT (ld 32); 2: V^T, rows i >= shift, into Vtr (ld ldt);
                        // 4: before factoring, P(i, :) -= W(i, :) V0^T (the row panel's own update);
-                       // 8: V a second time, at Vout + dup
+                       // 8: V a second time, at Vout + dup; 16: V into Vk too (row-major, ld ldk),
+                       // kept for the back-transformation
     uint shift, ldt;
     uint leaf;         // rows per TSQR leaf
     uint ldw;          // W's ld (flag 4)
     uint dup;          // flag 8: V again at Vout + dup
+    uint ldk;          // flag 16: Vk's ld
 };
 
 // The panel kernels take the norms as plain sums of squares, not slarfg's
@@ -492,9 +494,10 @@ __attribute__((always_inline)) static void load_row(device const float* P, devic
 template <uint B>
 __attribute__((always_inline)) static void store_v(thread const float (&v)[B], uint i, constant PanelParams& p,
                                                     device float* Vout, device float* VT, device float* Vtr,
-                                                    threadgroup float (*Tm)[32]) {
+                                                    threadgroup float (*Tm)[32], device float* Vk) {
     UNROLL(B, c, { Vout[(ulong)i * p.ldv + c] = v[c]; });
     if (p.flags & 8u) UNROLL(B, c, { Vout[(ulong)i * p.ldv + p.dup + c] = v[c]; });
+    if (p.flags & 16u) UNROLL(B, c, { Vk[(ulong)i * p.ldk + c] = v[c]; });
     if (p.flags & 1u)
         UNROLL(B, c, {
             float s = 0.0f;
@@ -516,7 +519,7 @@ kernel void bd_panel_qr(device float* P [[buffer(0)]], device float* Vout [[buff
                         device float* VT [[buffer(2)]], device float* Vtr [[buffer(3)]],
                         device float* Tout [[buffer(4)]], constant PanelParams& p [[buffer(5)]],
                         device const float* W [[buffer(6)]], device const float* V0 [[buffer(7)]],
-                        uint lane [[thread_index_in_simdgroup]]) {
+                        device float* Vk [[buffer(8)]], uint lane [[thread_index_in_simdgroup]]) {
     threadgroup float Tm[32][32], D[32][32], taus[32];
     float x[PANEL_R][B];
     UNROLL(PANEL_R, s, {
@@ -533,7 +536,7 @@ kernel void bd_panel_qr(device float* P [[buffer(0)]], device float* Vout [[buff
                 v[c] = row > c ? x[s][c] : (row == c ? 1.0f : 0.0f);
                 if (row <= c) P[row * p.rs + c * p.cs] = x[s][c];   // R
             });
-            store_v<B>(v, row, p, Vout, VT, Vtr, Tm);
+            store_v<B>(v, row, p, Vout, VT, Vtr, Tm, Vk);
         }
     });
     for (uint q = lane; q < B * B; q += 32) Tout[(q / B) * 32 + q % B] = Tm[q / B][q % B];
@@ -783,6 +786,7 @@ template <uint B>
 kernel void bd_tsqr_rebuild(device const float* S [[buffer(0)]], device float* Vout [[buffer(1)]],
                             device float* VT [[buffer(2)]], device float* Vtr [[buffer(3)]],
                             device const float* Tin [[buffer(4)]], constant PanelParams& p [[buffer(5)]],
+                            device float* Vk [[buffer(6)]],
                             uint l [[threadgroup_position_in_grid]], uint t [[thread_position_in_threadgroup]],
                             uint nt [[threads_per_threadgroup]]) {
     threadgroup float A[32][33], E[32][33], M[32][33], Tm[32][32], Ui[32][33], L1[32][33];
@@ -832,13 +836,13 @@ kernel void bd_tsqr_rebuild(device const float* S [[buffer(0)]], device float* V
             v[c] = s;
         });
     }
-    store_v<B>(v, i, p, Vout, VT, Vtr, Tm);
+    store_v<B>(v, i, p, Vout, VT, Vtr, Tm, Vk);
 }
 
 #define BD_PANEL_KERNELS(B)                                                                                     \
     template [[host_name("bd_panel_qr_" #B)]] kernel void bd_panel_qr<B>(                                       \
         device float*, device float*, device float*, device float*, device float*, constant PanelParams&,      \
-        device const float*, device const float*, uint);                                                       \
+        device const float*, device const float*, device float*, uint);                                        \
     template [[host_name("bd_tsqr_leaf_" #B)]] kernel void bd_tsqr_leaf<B>(                                     \
         device const float*, device float*, constant PanelParams&, device const float*, device const float*,   \
         uint, uint);                                                                                            \
@@ -846,7 +850,7 @@ kernel void bd_tsqr_rebuild(device const float* S [[buffer(0)]], device float* V
         device float*, device float*, device float*, constant PanelParams&, uint, uint, uint);                 \
     template [[host_name("bd_tsqr_rebuild_" #B)]] kernel void bd_tsqr_rebuild<B>(                               \
         device const float*, device float*, device float*, device float*, device const float*,                 \
-        constant PanelParams&, uint, uint, uint);
+        constant PanelParams&, device float*, uint, uint, uint);
 BD_PANEL_KERNELS(8)
 BD_PANEL_KERNELS(16)
 BD_PANEL_KERNELS(32)
@@ -1088,3 +1092,232 @@ kernel void bd_restore(device float* Ak [[buffer(0)]], device const float* d [[b
     Ak[j + j * q.lda] = d[q.k + j];
     Ak[j + (j + 1) * q.lda] = e[q.k + j];
 }
+
+// =============================================================================
+// The two-stage SVD with vectors: the bulge chase's reflectors applied on the
+// GPU (svd_bidiag.mm). Width-16 band. Block (G, j): the reflectors of sweeps
+// 16 G .. 16 G + 15 at step j, as one I - V T V^T, V 32 x 16 (column c the
+// reflector of sweep 16 G + c, at row offset c), acting on rows
+// 1 + 16 p .. 16 p + 31 of X, p = G + j: tiles p and p + 1, tile t being rows
+// 1 + 16 t .. 16 + 16 t.
+//
+// up (X <- Q X): groups from the last to the first, in a group p ascending.
+// Block (G - 1, p) needs (G, p) and (G, p + 1) done, so the K groups of a pass
+// run together, a simdgroup each, group G_top - k at p = G_top + s - 2 k at
+// step s: disjoint tiles. Each simdgroup keeps its block's two tiles in
+// registers; from one step to the next the upper becomes the lower, the new
+// upper comes from the simdgroup before (its lower, through threadgroup
+// memory) or, for the first, from X; the lower goes to the next simdgroup,
+// or for the last back to X. A pass's chain is about n / 16 + 2 K steps of K
+// blocks, where applying the groups one after another was n / 16 a group.
+//
+// down (X <- Q^T X): the blocks in the reverse order, transposed: groups from
+// the first to the last, in a group p descending, group G_0 + k at
+// p = pmax - s + 2 k; the lower becomes the upper, and so on mirrored. With X
+// = M^T for M column-major, M <- M Q, as the back-transformation forms Q1 Q2.
+//
+// A threadgroup owns a strip of 8 CT columns of X for the whole call.
+// Vb: per block V (32 x 16, row-major); Tb: per block -T (16 x 16,
+// row-major); block (G, p) at chase_block(G, p).
+//
+// On an M5 Pro, n = 4096 (32,896 blocks), 64 ms a side (CT = 4, K = 4); with
+// the groups one after another, a threadgroup a strip, 176 ms.
+// =============================================================================
+
+struct ChaseParams {
+    uint n;       // X's rows: 1 .. n - 1 are acted on
+    uint rs, cs;  // X(r, c) at X[r rs + c cs]
+    uint pmax;    // the last block position, (n - 2) / 16; groups 0 .. pmax
+    uint down;
+};
+
+constant constexpr uint CHASE_TP = 4;   // padding of a staged tile's rows
+
+// Block index of (G, p): groups in order, a group's blocks p = G .. pmax.
+inline uint chase_block(uint G, uint p, uint pmax) {
+    return G * (pmax + 1) - G * (G - 1) / 2 + (p - G);
+}
+
+template <uint CT>
+inline void chase_from_dev(thread simdgroup_float8x8 (&m)[2][CT], device const float* X, constant ChaseParams& q,
+                          uint t, uint c0, threadgroup float* S, uint lane) {
+    constexpr uint C = 8 * CT, LD = C + CHASE_TP;
+    const uint r0 = 1 + 16 * t;
+    if (q.rs == 1) {   // column-major: rows contiguous
+        for (uint e = lane; e < 16 * C; e += 32) {
+            const uint i = e % 16, c = e / 16, r = r0 + i;
+            S[i * LD + c] = r < q.n ? X[r + (ulong)(c0 + c) * q.cs] : 0.0f;
+        }
+    } else {
+        for (uint e = lane; e < 16 * C; e += 32) {
+            const uint i = e / C, c = e % C, r = r0 + i;
+            S[i * LD + c] = r < q.n ? X[(ulong)r * q.rs + c0 + c] : 0.0f;
+        }
+    }
+    simdgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint a = 0; a < 2; ++a)
+        for (uint c = 0; c < CT; ++c) simdgroup_load(m[a][c], S + 8 * a * LD + 8 * c, LD);
+    simdgroup_barrier(mem_flags::mem_threadgroup);
+}
+
+template <uint CT>
+inline void chase_to_dev(thread simdgroup_float8x8 (&m)[2][CT], device float* X, constant ChaseParams& q, uint t,
+                        uint c0, threadgroup float* S, uint lane) {
+    constexpr uint C = 8 * CT, LD = C + CHASE_TP;
+    const uint r0 = 1 + 16 * t;
+    for (uint a = 0; a < 2; ++a)
+        for (uint c = 0; c < CT; ++c) simdgroup_store(m[a][c], S + 8 * a * LD + 8 * c, LD);
+    simdgroup_barrier(mem_flags::mem_threadgroup);
+    if (q.rs == 1) {
+        for (uint e = lane; e < 16 * C; e += 32) {
+            const uint i = e % 16, c = e / 16, r = r0 + i;
+            if (r < q.n) X[r + (ulong)(c0 + c) * q.cs] = S[i * LD + c];
+        }
+    } else {
+        for (uint e = lane; e < 16 * C; e += 32) {
+            const uint i = e / C, c = e % C, r = r0 + i;
+            if (r < q.n) X[(ulong)r * q.rs + c0 + c] = S[i * LD + c];
+        }
+    }
+    simdgroup_barrier(mem_flags::mem_threadgroup);
+}
+
+template <uint CT>
+inline void chase_to_tg(thread simdgroup_float8x8 (&m)[2][CT], threadgroup float* S) {
+    constexpr uint LD = 8 * CT + CHASE_TP;
+    for (uint a = 0; a < 2; ++a)
+        for (uint c = 0; c < CT; ++c) simdgroup_store(m[a][c], S + 8 * a * LD + 8 * c, LD);
+}
+
+template <uint CT>
+inline void chase_from_tg(thread simdgroup_float8x8 (&m)[2][CT], threadgroup const float* S) {
+    constexpr uint LD = 8 * CT + CHASE_TP;
+    for (uint a = 0; a < 2; ++a)
+        for (uint c = 0; c < CT; ++c) simdgroup_load(m[a][c], S + 8 * a * LD + 8 * c, LD);
+}
+
+// The block on [lo; hi] (32 x 8 CT): X += V (-T) V^T X (up), X += V (-T)^T V^T X (down).
+template <uint CT>
+inline void chase_block_apply(thread simdgroup_float8x8 (&lo)[2][CT], thread simdgroup_float8x8 (&hi)[2][CT],
+                        device const float* V, device const float* T, bool down) {
+    simdgroup_float8x8 vt00, vt10, vt20, vt11, vt21, vt31;   // V(r, a)^T
+    simdgroup_load(vt00, V, 16, ulong2(0, 0), true);
+    simdgroup_load(vt10, V, 16, ulong2(0, 8), true);
+    simdgroup_load(vt20, V, 16, ulong2(0, 16), true);
+    simdgroup_load(vt11, V, 16, ulong2(8, 8), true);
+    simdgroup_load(vt21, V, 16, ulong2(8, 16), true);
+    simdgroup_load(vt31, V, 16, ulong2(8, 24), true);
+    simdgroup_float8x8 W0[CT], W1[CT];
+    for (uint c = 0; c < CT; ++c) {
+        simdgroup_float8x8 a = simdgroup_float8x8(0.0f), b = simdgroup_float8x8(0.0f);
+        simdgroup_multiply_accumulate(a, vt00, lo[0][c], a);
+        simdgroup_multiply_accumulate(a, vt10, lo[1][c], a);
+        simdgroup_multiply_accumulate(a, vt20, hi[0][c], a);
+        simdgroup_multiply_accumulate(b, vt11, lo[1][c], b);
+        simdgroup_multiply_accumulate(b, vt21, hi[0][c], b);
+        simdgroup_multiply_accumulate(b, vt31, hi[1][c], b);
+        W0[c] = a;
+        W1[c] = b;
+    }
+    simdgroup_float8x8 t00, t01, t11;   // (-T) or (-T)^T blocks: out = [t00 t01; 0 t11] (up), [t00 0; t01 t11] (down)
+    simdgroup_load(t00, T, 16, ulong2(0, 0), down);
+    simdgroup_load(t01, T, 16, ulong2(8, 0), down);
+    simdgroup_load(t11, T, 16, ulong2(8, 8), down);
+    simdgroup_float8x8 Z0[CT], Z1[CT];
+    if (!down) {
+        for (uint c = 0; c < CT; ++c) {
+            simdgroup_float8x8 a = simdgroup_float8x8(0.0f), b = simdgroup_float8x8(0.0f);
+            simdgroup_multiply_accumulate(a, t00, W0[c], a);
+            simdgroup_multiply_accumulate(a, t01, W1[c], a);
+            simdgroup_multiply_accumulate(b, t11, W1[c], b);
+            Z0[c] = a;
+            Z1[c] = b;
+        }
+    } else {
+        for (uint c = 0; c < CT; ++c) {
+            simdgroup_float8x8 a = simdgroup_float8x8(0.0f), b = simdgroup_float8x8(0.0f);
+            simdgroup_multiply_accumulate(a, t00, W0[c], a);
+            simdgroup_multiply_accumulate(b, t01, W0[c], b);
+            simdgroup_multiply_accumulate(b, t11, W1[c], b);
+            Z0[c] = a;
+            Z1[c] = b;
+        }
+    }
+    simdgroup_float8x8 v00, v10, v20, v11, v21, v31;
+    simdgroup_load(v00, V, 16, ulong2(0, 0));
+    simdgroup_load(v10, V, 16, ulong2(0, 8));
+    simdgroup_load(v20, V, 16, ulong2(0, 16));
+    simdgroup_load(v11, V, 16, ulong2(8, 8));
+    simdgroup_load(v21, V, 16, ulong2(8, 16));
+    simdgroup_load(v31, V, 16, ulong2(8, 24));
+    for (uint c = 0; c < CT; ++c) {
+        simdgroup_multiply_accumulate(lo[0][c], v00, Z0[c], lo[0][c]);
+        simdgroup_multiply_accumulate(lo[1][c], v10, Z0[c], lo[1][c]);
+        simdgroup_multiply_accumulate(lo[1][c], v11, Z1[c], lo[1][c]);
+        simdgroup_multiply_accumulate(hi[0][c], v20, Z0[c], hi[0][c]);
+        simdgroup_multiply_accumulate(hi[0][c], v21, Z1[c], hi[0][c]);
+        simdgroup_multiply_accumulate(hi[1][c], v31, Z1[c], hi[1][c]);
+    }
+}
+
+template <uint CT, uint K>
+kernel void bd_chase_apply(device float* X [[buffer(0)]], device const float* Vb [[buffer(1)]],
+                device const float* Tb [[buffer(2)]], constant ChaseParams& q [[buffer(3)]],
+                uint tg [[threadgroup_position_in_grid]], uint sg [[simdgroup_index_in_threadgroup]],
+                uint lane [[thread_index_in_simdgroup]]) {
+    constexpr uint C = 8 * CT, TILE = 16 * (C + CHASE_TP);
+    threadgroup float hand[2][K][TILE];
+    const uint c0 = tg * C, pmax = q.pmax, ng = pmax + 1;
+    const int k = (int)sg;
+    simdgroup_float8x8 lo[2][CT], hi[2][CT];
+    for (uint pass = 0; pass * K < ng; ++pass) {
+        const uint kpass = min(K, ng - pass * K);
+        // up: group G = gtop - k at p = gtop + s - 2k; down: G = g0 + k at p = pmax - s + 2k
+        const int gtop = (int)ng - 1 - (int)(pass * K), g0 = (int)(pass * K);
+        const int G = q.down ? g0 + k : gtop - k;
+        const bool mine = k < (int)kpass;
+        const int steps = q.down ? (int)pmax - g0 + (int)kpass : (int)pmax - gtop + 2 * (int)kpass - 1;
+        for (int s = 0; s < steps; ++s) {
+            const int p = q.down ? (int)pmax - s + 2 * k : gtop + s - 2 * k;
+            const bool active = mine && p >= G && p <= (int)pmax;
+            threadgroup float* out = hand[s & 1][k];
+            if (active) {
+                if (!q.down) {
+                    // lo: the previous upper, or X at the group's first step
+                    if (p == G) chase_from_dev<CT>(lo, X, q, p, c0, out, lane);
+                    else
+                        for (uint a = 0; a < 2; ++a)
+                            for (uint c = 0; c < CT; ++c) lo[a][c] = hi[a][c];
+                    // hi: the previous simdgroup's lower, or X
+                    if (k > 0 && p < (int)pmax) chase_from_tg<CT>(hi, hand[(s - 1) & 1][k - 1]);
+                    else chase_from_dev<CT>(hi, X, q, p + 1, c0, out, lane);
+                } else {
+                    if (p == (int)pmax) chase_from_dev<CT>(hi, X, q, p + 1, c0, out, lane);
+                    else
+                        for (uint a = 0; a < 2; ++a)
+                            for (uint c = 0; c < CT; ++c) hi[a][c] = lo[a][c];
+                    if (k > 0) chase_from_tg<CT>(lo, hand[(s - 1) & 1][k - 1]);
+                    else chase_from_dev<CT>(lo, X, q, p, c0, out, lane);
+                }
+                const ulong b = chase_block((uint)G, (uint)p, pmax);
+                chase_block_apply<CT>(lo, hi, Vb + b * 512, Tb + b * 256, q.down != 0);
+                if (!q.down) {   // (the staging area is the handoff's: the store first)
+                    if (p == (int)pmax) chase_to_dev<CT>(hi, X, q, p + 1, c0, out, lane);
+                    if (k + 1 < (int)kpass) chase_to_tg<CT>(lo, out);
+                    else chase_to_dev<CT>(lo, X, q, p, c0, out, lane);
+                } else {
+                    if (p == G) chase_to_dev<CT>(lo, X, q, p, c0, out, lane);
+                    if (k + 1 < (int)kpass && p < (int)pmax) chase_to_tg<CT>(hi, out);
+                    else chase_to_dev<CT>(hi, X, q, p + 1, c0, out, lane);
+                }
+            }
+            threadgroup_barrier(mem_flags::mem_threadgroup | mem_flags::mem_device);
+        }
+    }
+}
+
+#define BD_CHASE_APPLY(CT, K) \
+    template [[host_name("bd_chase_apply_" #CT "_" #K)]] kernel void bd_chase_apply<CT, K>(device float*, device const float*, \
+        device const float*, constant ChaseParams&, uint, uint, uint);
+BD_CHASE_APPLY(2, 8)
+BD_CHASE_APPLY(4, 4)

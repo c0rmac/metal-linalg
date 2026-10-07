@@ -116,15 +116,17 @@ conquer between them runs on every CPU core (since 2.15.0). For the eigenvalues
 or singular values alone, large matrices are reduced in two stages (since
 2.13.0): to a band on the GPU, in blocks whose work is matrix products, then
 to tridiagonal or bidiagonal on every CPU core, and the values come from
-bisection on the GPU. QR's kernels win on their own. One N×N matrix against
-the CPU:
+bisection on the GPU. Since 2.15.0 the SVD with vectors can take the two
+stages too, both stages' transformations applied on the GPU while the CPU
+chases the band and solves the bidiagonal problem. QR's kernels win on their
+own. One N×N matrix against the CPU:
 
 | | 1024 | 1536 | 2048 | 3072 | 4096 |
 |---|---|---|---|---|---|
 | svdvals, singular values alone | 1.72x | 2.56x | **3.97x** | **6.85x** | **10.5x** |
 | eigh, with eigenvectors | 2.30x | **3.04x** | **4.39x** | **5.49x** | **8.15x** |
 | eigvalsh, eigenvalues alone | 1.49x | 1.94x | 2.32x | 2.71x | **3.44x** |
-| SVD, with vectors | 2.29x | 2.64x | **3.79x** | **3.67x** | **3.74x** |
+| SVD, with vectors | 2.67x | **3.45x** | **5.16x** | **6.42x** | **9.10x** |
 | QR | 1.14x | 1.29x | 1.89x | 2.12x | — |
 
 At 8192, the singular values alone take 1.10 s against the CPU's 12.6 s
@@ -132,9 +134,11 @@ At 8192, the singular values alone take 1.10 s against the CPU's 12.6 s
 against 2.64 s (3.6x, against LAPACK's own two-stage driver). The M5 Pro uses
 these backends from N = 1024, for one matrix or a few: a batch of them is
 pipelined, the CPU solving one matrix's small problem while the GPU reduces
-the next, but the CPU path spreads a large batch over its cores. At 4096,
-2.14 had svdvals at 8.62x, eigh 5.62x, eigvalsh 2.91x and the SVD with
-vectors 2.32x.
+the next, but the CPU path spreads a large batch over its cores. The SVD
+with vectors' row is the two-stage `band` backend, which a Mac routes to once
+its measurements include it (the M5 Pro's next run; until then `bidiag`,
+3.9x at 4096). At 4096, 2.14 had svdvals at 8.62x, eigh 5.62x, eigvalsh
+2.91x and the SVD with vectors 2.32x.
 
 **Large batches of small matrices: up to 2.2x.** LAPACK's own methods in one
 threadgroup per matrix carry the GPU's lead: the eigensolver's `ql` kernel
@@ -161,7 +165,8 @@ stay on the CPU, which is 3-100x faster there: since 2.9.0 it spreads a
 batch over every core ([the performance-headroom
 study](docs/studies/performance-headroom-apple-m5-pro.md) has why). The numbers
 for one large matrix are 2.15.0's, measured side by side with the CPU path
-(`sweep_eigh`, `sweep_svd`, median); QR's and the batches' are from the
+(`sweep_eigh`, `sweep_svd`, median; the SVD with vectors in a run of its
+own, with `bidiag`); QR's and the batches' are from the
 routing sweeps [`20261004-06bc11`](docs/results/apple-m5-pro-20gpu/20261004-06bc11/summary.md)
 (eigh, SVD) and [`20261004-4d6208`](docs/results/apple-m5-pro-20gpu/20261004-4d6208/summary.md)
 (QR). The full tables are in the per-solver docs; how the two-stage reduction
@@ -178,7 +183,7 @@ the Metal device name and GPU core count:
 | device | QR | eigh | SVD |
 |---|---|---|---|
 | Apple M1, 8 GPU cores | estimated (out of date) | estimated (out of date) | estimated |
-| Apple M5 Pro, 20 GPU cores | measured | measured | measured |
+| Apple M5 Pro, 20 GPU cores | measured | measured (stale) | measured (stale) |
 | anything else | estimated | estimated | estimated |
 
 Every chip, and what is current: [the measurements page](https://c0rmac.github.io/metal-linalg/docs/measurements).

@@ -1,6 +1,6 @@
 // The SVD's `bidiag` backend: LAPACK's method with its two expensive steps on
-// the GPU; and the `band` backend, singular values alone in two stages
-// (below, band_reduce).
+// the GPU; and the `band` backend, in two stages (below, band_reduce), for
+// singular values alone and, since 2.15.0, with vectors (band_vectors).
 //
 //   1. Bidiagonalize, A = Q B P^T, entirely on the GPU (shaders/Svd_Bidiag.metal):
 //      blocked sgebrd (upper bidiagonal), per column slabrd's steps as four
@@ -40,7 +40,10 @@
 // chasing on the CPU's cores (band_chase.cpp) and its singular values by
 // bisection on the GPU (bisect.mm). On an M5 Pro, one 4096 x 4096: 234 ms
 // against bidiag's 757; from about 2048 it is the faster. See
-// docs/studies/two-stage-apple-m5-pro.md.
+// docs/studies/two-stage-apple-m5-pro.md. With vectors, both stages'
+// reflectors are kept and applied on the GPU while the CPU chases the band
+// and solves the bidiagonal problem (band_vectors, below): 404 ms against
+// bidiag's 942 at 4096.
 
 #ifndef ACCELERATE_NEW_LAPACK
 #define ACCELERATE_NEW_LAPACK
@@ -351,6 +354,263 @@ void back_transform(Cache& c, Workspace& ws, id<MTLBuffer> Abuf, id<MTLBuffer> U
     }
 }
 
+// The two-stage reduction with singular vectors (`band` with vectors): A =
+// Q1 Q2 B P2^T P1^T, Q1 and P1 the GPU stage's block reflectors (BandKeep),
+// Q2 and P2 the bulge chase's. U = (Q1 Q2) U_B and V = (P1 P2) V_B, with
+// Q = Q1 Q2 and P = P1 P2 formed explicitly on the GPU while the CPU chases
+// the band and solves the bidiagonal problem:
+//   1. the band reduction, keeping its reflectors; on the CPU meanwhile, the
+//      aggregated T of every kAgg panels as their command buffers complete;
+//   2. Q1 (m x n, thin) and P1 (n x n) explicit: the LAPACK tail's
+//      reflectors on the CPU, then the aggregated blocks on the GPU, three
+//      MPS products each, last first; the CPU meanwhile chases the band to
+//      bidiagonal, keeping its reflectors;
+//   3. Q <- Q Q2 and P <- P P2 on the GPU (bd_chase_apply, its blocks' V and
+//      T built on the CPU); the CPU meanwhile solves B = U_B S V_B^T;
+//   4. U = Q U_B and V = P V_B, two MPS products.
+// Width 16 only (bd_chase_apply's blocks).
+constexpr uint32_t kAgg = 8;   // panels per aggregated block reflector
+
+// Buffers for one (m, n), only the latest kept. The band reduction writes its
+// blocks' V and U straight into the aggregated layout (qagg, pagg: per
+// aggregate, row-major len x kb, a panel's at its row and column offset, the
+// zeros above it never written); the chase writes its reflectors straight into
+// bd_chase_apply's blocks (lv, rv), their T built in lt, rt.
+struct BandVectors {
+    uint32_t m = 0, n = 0, ldq = 0, ldp = 0, blocks = 0, aggs = 0;
+    metal_linalg::detail::BandKeep keep;
+    id<MTLBuffer> Q, P, qagg, pagg, qtagg, ptagg, ub, vb, Z, Z2, lv, lt, rv, rt;
+    std::vector<size_t> qaoff, paoff;
+    std::vector<float> ltau, rtau;   // the chase's taus, 16 a block
+    size_t nblocks = 0;
+    id<MTLComputePipelineState> apply_wide, apply_narrow;
+};
+
+// T of H_0 ... H_{p-1} = I - V T V^T for p block reflectors I - V_i T_i V_i^T
+// of b columns each, V = [V_0 ... V_{p-1}] (len x p b, row-major), from the
+// Gram matrix: T(0:ib, ib:(i+1)b) = -T(0:ib, 0:ib) G(0:ib, ib:(i+1)b) T_i.
+// T_i row-major (ld 32) at Ts + i 1024; T row-major, ld kb.
+void merge_t(uint32_t len, uint32_t p, uint32_t b, const float* V, const float* Ts, float* T) {
+    const uint32_t kb = p * b;
+    std::vector<float> G((size_t)kb * kb), X((size_t)kb * b), Y((size_t)kb * b);
+    cblas_ssyrk(CblasRowMajor, CblasUpper, CblasTrans, (int)kb, (int)len, 1.0f, V, (int)kb, 0.0f, G.data(), (int)kb);
+    std::fill(T, T + (size_t)kb * kb, 0.0f);
+    for (uint32_t i = 0; i < p; ++i)
+        for (uint32_t r = 0; r < b; ++r)
+            for (uint32_t c = r; c < b; ++c) T[(size_t)(i * b + r) * kb + i * b + c] = Ts[(size_t)i * 1024 + r * 32 + c];
+    for (uint32_t i = 1; i < p; ++i) {
+        const uint32_t ib = i * b;
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, (int)ib, (int)b, (int)b, 1.0f, G.data() + ib, (int)kb,
+                    Ts + (size_t)i * 1024, 32, 0.0f, X.data(), (int)b);
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, (int)ib, (int)b, (int)ib, -1.0f, T, (int)kb, X.data(),
+                    (int)b, 0.0f, Y.data(), (int)b);
+        for (uint32_t r = 0; r < ib; ++r)
+            for (uint32_t c = 0; c < b; ++c) T[(size_t)r * kb + ib + c] = Y[(size_t)r * b + c];
+    }
+}
+
+BandVectors& band_vectors(Cache& c, uint32_t m, uint32_t n) {
+    static BandVectors bv;
+    if (bv.Q && bv.m == m && bv.n == n) return bv;
+    constexpr uint32_t b = 16;
+    bv = BandVectors{};
+    bv.m = m;
+    bv.n = n;
+    bv.ldq = (m + 31) / 32 * 32;
+    bv.ldp = (n + 31) / 32 * 32;
+    const uint32_t blocks = metal_linalg::detail::band_blocks(n, b);
+    bv.blocks = blocks;
+    bv.aggs = (blocks + kAgg - 1) / kAgg;
+    bv.qaoff.assign(bv.aggs + 1, 0);
+    bv.paoff.assign(bv.aggs + 1, 0);
+    auto& keep = bv.keep;
+    keep.qoff.resize(blocks);
+    keep.poff.resize(blocks);
+    keep.qld.resize(blocks);
+    keep.pld.resize(blocks);
+    for (uint32_t a = 0; a < bv.aggs; ++a) {
+        const uint32_t kb = std::min(kAgg, blocks - a * kAgg) * b, r0 = a * kAgg * b;
+        bv.qaoff[a + 1] = bv.qaoff[a] + (size_t)(m - r0) * kb;
+        bv.paoff[a + 1] = bv.paoff[a] + (size_t)(n - r0 - b) * kb;
+        for (uint32_t t = 0; t < kb / b; ++t) {   // panel a kAgg + t at row and column t b
+            const uint32_t k = a * kAgg + t;
+            keep.qoff[k] = bv.qaoff[a] + (size_t)t * b * kb + t * b;
+            keep.poff[k] = bv.paoff[a] + (size_t)t * b * kb + t * b;
+            keep.qld[k] = keep.pld[k] = kb;
+        }
+    }
+    auto shared = [&](size_t f) {
+        return [c.rt.device newBufferWithLength:std::max<size_t>(f, 4) * 4 options:MTLResourceStorageModeShared];
+    };
+    auto priv = [&](size_t f) {
+        return [c.rt.device newBufferWithLength:std::max<size_t>(f, 4) * 4 options:MTLResourceStorageModePrivate];
+    };
+    const size_t kmax = kAgg * b;
+    bv.Q = shared((size_t)bv.ldq * n);
+    bv.P = shared((size_t)bv.ldp * n);
+    bv.qagg = shared(bv.qaoff[bv.aggs]);
+    bv.pagg = shared(bv.paoff[bv.aggs]);
+    bv.qtagg = shared((size_t)std::max(bv.aggs, 1u) * kmax * kmax);
+    bv.ptagg = shared((size_t)std::max(bv.aggs, 1u) * kmax * kmax);
+    keep.qv = bv.qagg;
+    keep.pv = bv.pagg;
+    keep.qt = shared((size_t)std::max(blocks, 1u) * 1024);
+    keep.pt = shared((size_t)std::max(blocks, 1u) * 1024);
+    bv.ub = shared((size_t)n * n);
+    bv.vb = shared((size_t)n * n);
+    bv.Z = priv((size_t)std::max(m, n) * kmax);
+    bv.Z2 = priv((size_t)std::max(m, n) * kmax);
+    const size_t pmax = n >= 2 ? (n - 2) / 16 : 0;
+    bv.nblocks = (pmax + 1) * (pmax + 2) / 2;
+    bv.ltau.resize(bv.nblocks * 16);
+    bv.rtau.resize(bv.nblocks * 16);
+    bv.lv = shared(bv.nblocks * 512);
+    bv.lt = shared(bv.nblocks * 256);
+    bv.rv = shared(bv.nblocks * 512);
+    bv.rt = shared(bv.nblocks * 256);
+    bv.apply_wide = make_pipeline(c.rt.device, c.rt.library, @"bd_chase_apply_4_4", nil);
+    bv.apply_narrow = make_pipeline(c.rt.device, c.rt.library, @"bd_chase_apply_2_8", nil);
+    return bv;
+}
+
+// The aggregated T of aggregate a, for Q (left) or P, its V written by the
+// band reduction.
+void build_aggregate(BandVectors& bv, uint32_t a, bool left) {
+    constexpr uint32_t b = 16;
+    const uint32_t k0 = a * kAgg, p = std::min(kAgg, bv.blocks - k0);
+    const uint32_t r0 = k0 * b + (left ? 0 : b), len = (left ? bv.m : bv.n) - r0;
+    const float* V = static_cast<const float*>((left ? bv.qagg : bv.pagg).contents) + (left ? bv.qaoff : bv.paoff)[a];
+    const float* Ts = static_cast<const float*>((left ? bv.keep.qt : bv.keep.pt).contents) + (size_t)k0 * 1024;
+    float* T = static_cast<float*>((left ? bv.qtagg : bv.ptagg).contents) + (size_t)a * (kAgg * b) * (kAgg * b);
+    merge_t(len, p, b, V, Ts, T);
+}
+
+// Step 2: Q = Q1 (thin) and P = P1 explicit, the tail's reflectors on the
+// CPU, then the GPU's blocks, last first, queued (not waited for).
+id<MTLCommandBuffer> form_q1_p1(Cache& c, BandVectors& bv, const float* A, uint32_t lda) {
+    constexpr uint32_t b = 16;
+    const uint32_t m = bv.m, n = bv.n, ldq = bv.ldq, ldp = bv.ldp;
+    float* Q = static_cast<float*>(bv.Q.contents);
+    float* P = static_cast<float*>(bv.P.contents);
+    metal_linalg::detail::parallel_for(n, [&](size_t j) {
+        std::fill(Q + j * ldq, Q + (j + 1) * ldq, 0.0f);
+        Q[j * ldq + j] = 1.0f;
+        std::fill(P + j * ldp, P + (j + 1) * ldp, 0.0f);
+        P[j * ldp + j] = 1.0f;
+    });
+    // The tail, last step first: Q(k:, k:) <- H Q(k:, k:), P(k+bk:, k+bk:) <- G P(k+bk:, k+bk:)
+    std::vector<float> work((size_t)std::max(m, n) * 64 + 64);
+    L lw = (L)work.size(), info = 0;
+    for (auto it = bv.keep.steps.rbegin(); it != bv.keep.steps.rend(); ++it) {
+        const auto& st = *it;
+        if (st.nr > 0) {
+            L N = st.nr, K = (L)st.tp.size(), LD = st.bk, LDP = ldp;
+            sormlq_("L", "T", &N, &N, &K, const_cast<float*>(st.lq.data()), &LD, const_cast<float*>(st.tp.data()),
+                    P + (size_t)(st.k + st.bk) * ldp + st.k + st.bk, &LDP, work.data(), &lw, &info);
+        }
+        L M = m - st.k, N = n - st.k, K = st.bk, LDA = lda, LDQ = ldq;
+        sormqr_("L", "N", &M, &N, &K, const_cast<float*>(A) + (size_t)st.k * lda + st.k, &LDA, st.tq.data(),
+                Q + (size_t)st.k * ldq + st.k, &LDQ, work.data(), &lw, &info);
+    }
+    // The GPU's blocks: Z = X22^T (row-major view), Z <- Z - ((Z V) T^T) V^T
+    id<MTLDevice> dev = c.rt.device;
+    id<MTLCommandBuffer> cb = [c.rt.queue commandBuffer];
+    const uint32_t kmax = kAgg * b;
+    for (int a = (int)bv.aggs - 1; a >= 0; --a) {
+        const uint32_t kb = std::min(kAgg, bv.blocks - (uint32_t)a * kAgg) * b;
+        for (int side = 0; side < 2; ++side) {
+            const bool left = side == 0;
+            const uint32_t r0 = (uint32_t)a * kAgg * b + (left ? 0 : b), len = (left ? m : n) - r0, cols = n - r0;
+            const uint32_t ld = left ? ldq : ldp;
+            MPSMatrix* Zm = mps(left ? bv.Q : bv.P, (size_t)r0 * ld + r0, cols, len, ld);
+            MPSMatrix* Vm = mps(left ? bv.qagg : bv.pagg, (left ? bv.qaoff : bv.paoff)[a], len, kb, kb);
+            MPSMatrix* Tm = mps(left ? bv.qtagg : bv.ptagg, (size_t)a * kmax * kmax, kb, kb, kb);
+            MPSMatrix* W = mps(bv.Z, 0, cols, kb, kb);
+            MPSMatrix* W2 = mps(bv.Z2, 0, cols, kb, kb);
+            gemm(dev, cb, Zm, false, Vm, false, W, cols, kb, len, 1, 0);
+            gemm(dev, cb, W, false, Tm, true, W2, cols, kb, kb, 1, 0);
+            gemm(dev, cb, W2, false, Vm, true, Zm, cols, len, kb, -1, 1);
+        }
+    }
+    [cb commit];
+    return cb;
+}
+
+// bd_chase_apply's blocks, their V written by the chase: per block (G, p),
+// -T (16 x 16, row-major) from V and the taus; a column with no reflector
+// (length 1, or past the last sweep) set to zero with tau 0.
+void chase_blocks(BandVectors& bv, bool left) {
+    const long n = bv.n, pmax = (n - 2) / 16;
+    float* Vp = static_cast<float*>((left ? bv.lv : bv.rv).contents);
+    float* Tp = static_cast<float*>((left ? bv.lt : bv.rt).contents);
+    float* taus = (left ? bv.ltau : bv.rtau).data();
+    metal_linalg::detail::parallel_for((size_t)pmax + 1, [&](size_t Gs) {
+        const long G = (long)Gs;
+        for (long p = G; p <= pmax; ++p) {
+            const long j = p - G, blk = G * (pmax + 1) - G * (G - 1) / 2 + j;
+            float* V = Vp + blk * 512;
+            float* T = Tp + blk * 256;
+            float* tau = taus + blk * 16;
+            for (long c = 0; c < 16; ++c) {
+                const long s = 16 * G + c, a = s + 1 + 16 * j, e = std::min(s + 16 * (j + 1), n - 1);
+                if (s <= n - 2 && e - a + 1 >= 2) continue;
+                for (long r = 0; r < 32; ++r) V[r * 16 + c] = 0.0f;
+                tau[c] = 0.0f;
+            }
+            float Tt[16][16] = {};
+            for (long c = 0; c < 16; ++c) {   // slarft forward columnwise
+                float z[16] = {};
+                for (long i = 0; i < c; ++i) {
+                    float acc = 0.0f;
+                    for (long r = c; r < 32; ++r) acc += V[r * 16 + i] * V[r * 16 + c];
+                    z[i] = acc;
+                }
+                for (long i = 0; i < c; ++i) {
+                    float acc = 0.0f;
+                    for (long k = i; k < c; ++k) acc += Tt[i][k] * z[k];
+                    Tt[i][c] = -tau[c] * acc;
+                }
+                Tt[c][c] = tau[c];
+            }
+            for (long i = 0; i < 16; ++i)
+                for (long c = 0; c < 16; ++c) T[i * 16 + c] = -Tt[i][c];
+        }
+    });
+}
+
+// Must match ChaseParams in Svd_Bidiag.metal.
+struct ChaseParams { uint32_t n, rs, cs, pmax, down; };
+
+// Step 3's GPU side: Q <- Q Q2, P <- P P2, queued.
+id<MTLCommandBuffer> apply_chase(Cache& c, BandVectors& bv) {
+    const uint32_t n = bv.n;
+    id<MTLCommandBuffer> cb = [c.rt.queue commandBuffer];
+    if (n < 3) {
+        [cb commit];
+        return cb;
+    }
+    // One after the other: run concurrently, the two took 177 ms at 4096
+    // against 132 (their strips competing for the caches).
+    id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+    for (int side = 0; side < 2; ++side) {
+        const bool left = side == 0;
+        const uint32_t ld = left ? bv.ldq : bv.ldp;   // X = M^T: ncols = ld (padded), rows n
+        const bool wide = ld / 32 >= 64;
+        id<MTLComputePipelineState> ps = wide ? bv.apply_wide : bv.apply_narrow;
+        const uint32_t C = wide ? 32 : 16, K = wide ? 4 : 8;
+        const ChaseParams q{n, ld, 1, (n - 2) / 16, 1};
+        [enc setComputePipelineState:ps];
+        [enc setBuffer:left ? bv.Q : bv.P offset:0 atIndex:0];
+        [enc setBuffer:left ? bv.lv : bv.rv offset:0 atIndex:1];
+        [enc setBuffer:left ? bv.lt : bv.rt offset:0 atIndex:2];
+        [enc setBytes:&q length:sizeof q atIndex:3];
+        [enc dispatchThreadgroups:MTLSizeMake(ld / C, 1, 1) threadsPerThreadgroup:MTLSizeMake(32 * K, 1, 1)];
+    }
+    [enc endEncoding];
+    [cb commit];
+    return cb;
+}
+
 // Both backends: `band` (> 0, singular values alone) the two-stage reduction's
 // band width, 0 the one-stage reduction.
 void bidiag_impl(const Matrices& a, float* u_out, float* s_out, float* vt_out, uint32_t* info_out, uint32_t band) {
@@ -390,13 +650,17 @@ void bidiag_impl(const Matrices& a, float* u_out, float* s_out, float* vt_out, u
     struct Slot {
         std::vector<float> t, q, d, e, tq, tp, ub, vb, ab;
         float scale = 1.0f;
+        id<MTLCommandBuffer> pending = nil;   // two-stage with vectors: the GPU's Q and P
     };
+    // Two-stage with vectors: one matrix at a time, in one slot.
+    BandVectors* bvp = band && vectors ? &band_vectors(cache, rows, K) : nullptr;
+
     Slot slots[2];
     for (Slot& sl : slots) {
         if (qr_first) sl.t.resize((size_t)l * K);
         if (qr_first && vectors) sl.q.resize((size_t)l * K);
         sl.d.resize(K); sl.e.resize(K); sl.tq.resize(K); sl.tp.resize(K);
-        if (vectors) { sl.ub.resize((size_t)K * K); sl.vb.resize((size_t)K * K); }
+        if (vectors && !bvp) { sl.ub.resize((size_t)K * K); sl.vb.resize((size_t)K * K); }
     }
 
     // Step 1 for matrix b in slot s: scale, the QR if much taller than wide
@@ -429,8 +693,23 @@ void bidiag_impl(const Matrices& a, float* u_out, float* s_out, float* vt_out, u
             bidiagonalize(cache, ws, ws.A[s], sl.d.data(), sl.e.data(), sl.tq.data(), sl.tp.data());
             return;
         }
-        if (!metal_linalg::detail::band_reduce_general(ws.A[s], ws.m, ws.n, ws.lda, band)) {
+        metal_linalg::detail::BandKeep* keep = bvp ? &bvp->keep : nullptr;
+        if (keep)   // the aggregated blocks' V and T, as the GPU's blocks complete
+            keep->while_gpu = [&](metal_linalg::detail::BandKeep& kp) {
+                for (uint32_t ag = 0; ag < bvp->aggs; ++ag) {
+                    [kp.done[std::min((ag + 1) * kAgg, bvp->blocks) - 1] waitUntilCompleted];
+                    build_aggregate(*bvp, ag, true);
+                    build_aggregate(*bvp, ag, false);
+                }
+            };
+        const bool banded = metal_linalg::detail::band_reduce_general(ws.A[s], ws.m, ws.n, ws.lda, band, keep);
+        if (keep) keep->while_gpu = nullptr;   // it refers to this call's locals
+        if (!banded) {
             sl.ab.clear();   // too tall for the band reduction's panels: one stage
+            if (vectors && sl.ub.empty()) {   // (svd_band_vectors checks the width fits first)
+                sl.ub.resize((size_t)K * K);
+                sl.vb.resize((size_t)K * K);
+            }
             bidiagonalize(cache, ws, ws.A[s], sl.d.data(), sl.e.data(), sl.tq.data(), sl.tp.data());
             return;
         }
@@ -441,6 +720,7 @@ void bidiag_impl(const Matrices& a, float* u_out, float* s_out, float* vt_out, u
         for (uint32_t j = 0; j < K; ++j)
             for (uint32_t i = j > band ? j - band : 0; i <= j; ++i)
                 sl.ab[(size_t)j * ld + ku + i - j] = A[(size_t)j * ws.lda + i];
+        if (bvp) sl.pending = form_q1_p1(cache, *bvp, A, ws.lda);
     };
 
     // Step 2 for matrix b in slot s, on the CPU: the singular values (into
@@ -454,7 +734,24 @@ void bidiag_impl(const Matrices& a, float* u_out, float* s_out, float* vt_out, u
         L n = K, info = 0, zero = 0, one = 1;
         float qd = 0;
         const char* routine = vectors ? "sbdsdc" : "sbdsqr";
-        if (vectors) {
+        if (vectors && !sl.ab.empty()) {
+            // Two stages: the chase keeping its reflectors; Q <- Q Q2 and
+            // P <- P P2 queued on the GPU; the divide and conquer meanwhile.
+            BandVectors& bv = *bvp;
+            const metal_linalg::detail::ChaseReflectors rec{
+                static_cast<float*>(bv.lv.contents), bv.ltau.data(), static_cast<float*>(bv.rv.contents),
+                bv.rtau.data(), K >= 2 ? (K - 2) / 16 : 0};
+            metal_linalg::detail::band_to_bidiagonal(K, band, sl.ab.data(), 3 * (size_t)band + 1, 2 * (size_t)band,
+                                                     sl.d.data(), sl.e.data(),
+                                                     metal_linalg::detail::cpu_threads_beside_gpu(), &rec);
+            chase_blocks(bv, true);
+            chase_blocks(bv, false);
+            sl.pending = apply_chase(cache, bv);
+            info = (L)metal_linalg::detail::bidiagonal_svd(K, sl.d.data(), sl.e.data(),
+                                                           static_cast<float*>(bv.ub.contents), K,
+                                                           static_cast<float*>(bv.vb.contents), K,
+                                                           metal_linalg::detail::cpu_threads_beside_gpu());
+        } else if (vectors) {
             // sbdsdc's divide and conquer on the CPU's cores but the two the
             // GPU's host work keeps (divide_conquer.cpp)
             info = (L)metal_linalg::detail::bidiagonal_svd(K, sl.d.data(), sl.e.data(), sl.ub.data(), K,
@@ -483,11 +780,48 @@ void bidiag_impl(const Matrices& a, float* u_out, float* s_out, float* vt_out, u
     };
 
     // Step 3 for matrix b in slot s, and the output.
-    std::vector<float> ut(vectors ? (size_t)l * K : 0), vtt(vectors ? (size_t)K * K : 0);
-    std::vector<float> urt(qr_first && vectors ? (size_t)K * K : 0);
+    std::vector<float> ut(vectors && (!bvp || qr_first) ? (size_t)l * K : 0), vtt(vectors && !bvp ? (size_t)K * K : 0);
+    std::vector<float> urt(qr_first && vectors && !bvp ? (size_t)K * K : 0);
     auto finish = [&](uint32_t b, int s) {
         Slot& sl = slots[s];
-        if (vectors) {
+        float* u = vectors && u_out ? u_out + (size_t)b * M * K : nullptr;
+        float* vt = vectors && vt_out ? vt_out + (size_t)b * K * N : nullptr;
+        if (vectors && !sl.ab.empty()) {
+            // Two stages: U = Q U_B and V^T = V_B^T P^T on the GPU, row-major
+            // into U and VT (on the row-major views, Q^T and U_B^T, V_B and
+            // P^T); U copied out while the GPU forms V^T.
+            [sl.pending waitUntilCompleted];
+            check(sl.pending);
+            sl.pending = nil;
+            id<MTLDevice> dev = cache.rt.device;
+            id<MTLCommandBuffer> cu = [cache.rt.queue commandBuffer], cv = [cache.rt.queue commandBuffer];
+            gemm(dev, cu, mps(bvp->Q, 0, K, rows, bvp->ldq), true, mps(bvp->ub, 0, K, K, K), true,
+                 mps(ws.U[s], 0, rows, K, K), rows, K, K, 1, 0);
+            gemm(dev, cv, mps(bvp->vb, 0, K, K, K), true, mps(bvp->P, 0, K, K, bvp->ldp), false,
+                 mps(ws.VT[s], 0, K, K, K), K, K, K, 1, 0);
+            [cu commit];
+            [cv commit];
+            const float* Ur = static_cast<const float*>(ws.U[s].contents);    // rows x K
+            const float* Vr = static_cast<const float*>(ws.VT[s].contents);   // K x K
+            [cu waitUntilCompleted];
+            check(cu);
+            if (qr_first && (wide ? vt : u)) {   // U = Q U_R
+                cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, l, K, K, 1.0f, sl.q.data(), K, Ur, K, 0.0f,
+                            ut.data(), K);
+                Ur = ut.data();
+            }
+            if (!wide && u) std::memcpy(u, Ur, (size_t)l * K * 4);
+            if (wide && vt) vDSP_mtrans(Ur, 1, vt, 1, K, l);   // Vt = U'^T
+            [cv waitUntilCompleted];
+            check(cv);
+            if (!wide && vt) std::memcpy(vt, Vr, (size_t)K * K * 4);
+            if (wide && u) vDSP_mtrans(Vr, 1, u, 1, K, K);     // U = V' = (Vt')^T
+        } else if (vectors) {
+            if (vtt.empty()) {   // a two-stage call that fell back to one stage
+                ut.resize((size_t)l * K);
+                vtt.resize((size_t)K * K);
+                if (qr_first) urt.resize((size_t)K * K);
+            }
             float* U = static_cast<float*>(ws.U[s].contents);
             std::fill(U, U + (size_t)rows * K, 0.0f);
             for (uint32_t j = 0; j < K; ++j)
@@ -503,8 +837,6 @@ void bidiag_impl(const Matrices& a, float* u_out, float* s_out, float* vt_out, u
             } else {
                 vDSP_mtrans(U, 1, ut.data(), 1, l, K);                                      // row-major l x K
             }
-            float* u = u_out ? u_out + (size_t)b * M * K : nullptr;
-            float* vt = vt_out ? vt_out + (size_t)b * K * N : nullptr;
             if (!wide) {
                 if (u) std::copy(ut.begin(), ut.end(), u);
                 if (vt) std::copy(vtt.begin(), vtt.end(), vt);
@@ -516,6 +848,20 @@ void bidiag_impl(const Matrices& a, float* u_out, float* s_out, float* vt_out, u
         }
         if (info_out) info_out[b] = 1u | (1u << 16);
     };
+
+    if (bvp) {   // two-stage with vectors: overlapped within each matrix instead
+        for (uint32_t b : todo) {
+            try {
+                reduce(b, 0);
+                solve(b, 0);
+                finish(b, 0);
+            } catch (...) {
+                if (slots[0].pending) [slots[0].pending waitUntilCompleted];
+                throw;
+            }
+        }
+        return;
+    }
 
     // The pipeline: matrix t in slot t % 2. The CPU solves t while the GPU
     // reduces t + 1, and solves t + 1 while the GPU back-transforms t.
@@ -549,6 +895,14 @@ namespace core::detail {
 
 void svd_bidiag(const Matrices& a, float* u, float* s, float* vt, uint32_t* info) {
     bidiag_impl(a, u, s, vt, info, 0);
+}
+
+void svd_band_vectors(const Matrices& a, float* u, float* s, float* vt, uint32_t* info) {
+    // Width 16 (bd_chase_apply's blocks), or if the matrix is too tall for
+    // the panel kernels at 16, the one-stage reduction.
+    const uint32_t M = a.rows, N = a.cols, K = std::min(M, N), l = std::max(M, N);
+    const uint32_t rows = l >= 2 * K && K >= kQrFirstMinK ? K : l;
+    bidiag_impl(a, u, s, vt, info, metal_linalg::detail::band_fit(rows, 16) == 16 ? 16u : 0u);
 }
 
 void svd_band(const Matrices& a, float* s, uint32_t* info, uint32_t width) {
