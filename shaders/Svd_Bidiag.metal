@@ -1004,15 +1004,15 @@ static uint2 lower_tile(uint t) {
     return uint2(I, t - I * (I + 1) / 2);
 }
 
-// A 64 x 64 tile of M = A22^T, rows r0.. and columns c0.. (A22's columns r0..,
-// rows c0..), into T (ld 65, so that a column's entries fall in different
-// banks) and back, and its transpose to M's tile (c0, r0): float4s along M's
-// rows (A22's columns), all of the threadgroup's threads; outside A22, zeros
-// in and nothing out. A22's columns are 16-byte aligned (the band width and
-// lda are multiples of 4).
-static void tile_in(device const float* A, uint lda, uint n, uint r0, uint c0, threadgroup float (*T)[65], uint t,
-                    uint nt) {
-    const bool inside = r0 + 64 <= n && c0 + 64 <= n;
+// A 64 x 64 tile of a row-major view M (nr x nc, ld lda), rows r0.. and
+// columns c0.., into T (ld 65, so that a column's entries fall in different
+// banks) and back, or its transpose to M's tile (c0, r0): float4s along M's
+// rows, all of the threadgroup's threads; outside M, zeros in and nothing
+// out. M's rows are 16-byte aligned (the band width and lda are multiples of
+// 4). For sb_update M = A22^T: A22's columns are M's rows.
+static void tile_in(device const float* A, uint lda, uint nr, uint nc, uint r0, uint c0, threadgroup float (*T)[65],
+                    uint t, uint nt) {
+    const bool inside = r0 + 64 <= nr && c0 + 64 <= nc;
     for (uint e = t; e < 64 * 16; e += nt) {
         const uint r = e / 16, c = (e % 16) * 4;
         device const float* src = A + (ulong)(r0 + r) * lda + c0 + c;
@@ -1021,16 +1021,16 @@ static void tile_in(device const float* A, uint lda, uint n, uint r0, uint c0, t
             v = *(device const float4*)src;
         } else {
             v = float4(0.0f);
-            if (r0 + r < n)
+            if (r0 + r < nr)
                 for (uint i = 0; i < 4; ++i)
-                    if (c0 + c + i < n) v[i] = src[i];
+                    if (c0 + c + i < nc) v[i] = src[i];
         }
         T[r][c] = v.x; T[r][c + 1] = v.y; T[r][c + 2] = v.z; T[r][c + 3] = v.w;
     }
 }
-static void tile_out(device float* A, uint lda, uint n, uint r0, uint c0, threadgroup float (*T)[65], uint t,
-                     uint nt, bool transposed = false) {
-    const bool inside = r0 + 64 <= n && c0 + 64 <= n;
+static void tile_out(device float* A, uint lda, uint nr, uint nc, uint r0, uint c0, threadgroup float (*T)[65],
+                     uint t, uint nt, bool transposed = false) {   // transposed: nr = nc
+    const bool inside = r0 + 64 <= nr && c0 + 64 <= nc;
     for (uint e = t; e < 64 * 16; e += nt) {
         const uint r = e / 16, c = (e % 16) * 4;
         device float* dst = A + (ulong)((transposed ? c0 : r0) + r) * lda + (transposed ? r0 : c0) + c;
@@ -1039,9 +1039,9 @@ static void tile_out(device float* A, uint lda, uint n, uint r0, uint c0, thread
         const uint rr = (transposed ? c0 : r0) + r, cc = (transposed ? r0 : c0) + c;
         if (inside) {
             *(device float4*)dst = v;
-        } else if (rr < n) {
+        } else if (rr < nr) {
             for (uint i = 0; i < 4; ++i)
-                if (cc + i < n) dst[i] = v[i];
+                if (cc + i < nc) dst[i] = v[i];
         }
     }
 }
@@ -1058,7 +1058,7 @@ kernel void sb_update(device float* A [[buffer(0)]], device const float* W [[buf
     threadgroup float T[64][65];
     const uint2 IJ = lower_tile(tg);
     const uint I0 = IJ.x * 64, J0 = IJ.y * 64, K = 2 * q.b;
-    tile_in(A, q.lda, q.n, J0, I0, T, t, 256);
+    tile_in(A, q.lda, q.n, q.n, J0, I0, T, t, 256);
     threadgroup_barrier(mem_flags::mem_threadgroup);
     const uint jq = (sg / 2) * 16, iq = (sg % 2) * 32;
     simdgroup_float8x8 acc[2][4];
@@ -1079,8 +1079,8 @@ kernel void sb_update(device float* A [[buffer(0)]], device const float* W [[buf
     for (uint x = 0; x < 2; ++x)
         for (uint y = 0; y < 4; ++y) simdgroup_store(acc[x][y], &T[jq + 8 * x][iq + 8 * y], 65);
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    tile_out(A, q.lda, q.n, J0, I0, T, t, 256);
-    if (I0 != J0) tile_out(A, q.lda, q.n, J0, I0, T, t, 256, true);
+    tile_out(A, q.lda, q.n, q.n, J0, I0, T, t, 256);
+    if (I0 != J0) tile_out(A, q.lda, q.n, q.n, J0, I0, T, t, 256, true);
 }
 
 // After the panel's trailing update: Ak(j, j) = d, Ak(j, j+1) = e (the units

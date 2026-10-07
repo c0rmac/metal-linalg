@@ -96,8 +96,11 @@ struct State {
         Buffers w;
         w.m = m;
         w.n = n;
+        // sb_update works in tiles of 64 that may run past the trailing
+        // matrix's last row and column, and stages [V Y V]'s rows that far:
+        // 64 rows of slack.
         w.ldr = (m + 3) / 4 * 4;
-        w.bl  = priv((size_t)std::max(m, n) * kLw);
+        w.bl  = priv(((size_t)std::max(m, n) + 64) * kLw);
         w.br  = priv((size_t)2 * kBandMax * w.ldr);
         w.bv  = priv((size_t)m * kBandMax);
         w.bvt = priv((size_t)m * kBandMax);
@@ -261,7 +264,8 @@ bool band_reduce_general(id<MTLBuffer> Abuf, uint32_t m, uint32_t n, uint32_t ld
     // W = T^T V^T C, the row panel C(0:b, :) - V(0:b, :) W, its LQ
     // (G = I - U S U^T), X = C_low U, and then
     // C_low -= V_low W + (X - V_low W U) S U^T as one product: C read three
-    // times and written once a block.
+    // times and written once a block. (sb_update's tiles over all of C, which
+    // has no symmetry to save on, did no better than MPS's product.)
     id<MTLCommandBuffer> last = nil;
     uint32_t k = 0;
     for (; k + 2 * b <= n; k += b) {
