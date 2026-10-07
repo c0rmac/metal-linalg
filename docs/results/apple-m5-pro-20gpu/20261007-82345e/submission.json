@@ -69,7 +69,7 @@
  "results": {
   "qr": {
    "trustworthy": true,
-   "row": "{\"Apple M5 Pro\", 20, 128, 128, 16,   kQrNoLimit, 512, 1, 256,   3072, 1,   1024},",
+   "row": "{\"Apple M5 Pro\", 20, 128, 128, 16,   256, 20480, 1, 16,   512, 64,   1024},",
    "why": null,
    "probe_drift": null
   }

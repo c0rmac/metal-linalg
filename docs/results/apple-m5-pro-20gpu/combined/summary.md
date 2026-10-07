@@ -27,4 +27,4 @@ Each run's machine, and how the settings it fitted on its own differ from the co
 | 20261004-4d6208 | MacBook Pro (16-inch, M5 Pro) (Mac17,8) | 48 GB | 27.0.1 | mains, 140 W charger, power mode automatic, load 4.1-4.6, no thermal warnings | not used | — | — |
 | 20261004-fd9bd8 | MacBook Pro (16-inch, M5 Pro) (Mac17,8) | 48 GB | 27.0.1 | mains, 140 W charger, power mode automatic, load 1.6-4.8, no thermal warnings | — | not used | not used |
 | 20261007-246324 | MacBook Pro (16-inch, M5 Pro) (Mac17,8) | 48 GB | 27.0.1 | mains, 140 W charger, power mode automatic, load 2.0-7.5, no thermal warnings | not used | same | same |
-| 20261007-82345e | MacBook Pro (16-inch, M5 Pro) (Mac17,8) | 48 GB | 27.0.1 | mains, 140 W charger, power mode automatic, load 3.1-3.7, no thermal warnings | gpu_max_k kQrNoLimit (combined 256); gpu_min_batch_times_k 512 (combined 20480); gpu_min_k 256 (combined 16); gpu_large_min_k 3072 (combined 512); gpu_large_max_batch 1 (combined 64) | — | — |
+| 20261007-82345e | MacBook Pro (16-inch, M5 Pro) (Mac17,8) | 48 GB | 27.0.1 | mains, 140 W charger, power mode automatic, load 3.1-3.7, no thermal warnings | same | — | — |
