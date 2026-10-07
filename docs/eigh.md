@@ -473,7 +473,15 @@ threads cost more than they save, which is what the fitted threshold
 All three split large batches across command buffers. macOS kills a
 command buffer that monopolises the GPU for more than a couple of seconds
 ("Impacting Interactivity"), so the host bounds each one with a conservative
-cost model, never going below one matrix per core.
+cost model, never going below one matrix per core. And with the display busy
+it ends one whose threadgroup has run for more than about a quarter of a
+second ("GPU Hang Error"), which in threadgroup mode one matrix's whole solve
+takes from N ~ 400 on an M5 Pro (and 1.7 s at 768). So since 2.15.0 a solve
+the cost model puts over 40 ms (`EIGH_DISPATCH_MS`) is split over dispatches
+of a few rounds of the tournament, each matrix resuming where it stopped
+(its W and V are in device memory already, so only its scale, $\|A\|_F$, the
+sweep and the round are kept): bit for bit the same result, in the same time,
+at about 15 ms a dispatch.
 
 ## Accuracy
 
@@ -724,6 +732,7 @@ To probe another GPU without a rebuild:
 | `EIGH_MODE=simd` / `threadgroup` | force the execution mode of backend 1 |
 | `EIGH_INNER_SWEEPS=<k>` | scalar sweeps per block subproblem |
 | `EIGH_CHUNK_MS=<ms>` | wall-time budget per command buffer |
+| `EIGH_DISPATCH_MS=<ms>` | backend 1, threadgroup mode: a solve the cost model puts over this (default 40) is split over dispatches of about this much |
 
 `EighOptions` (in `include/metal_linalg/eigh.h`) exposes the same knobs programmatically, plus the
 tolerance and sweep bound, through the `metal_linalg::detail` entry points, which

@@ -495,6 +495,17 @@ entry, remain only for a Mac with nothing to estimate from
 `svd_backend(m, n, batch)` and `svdvals_backend(m, n, batch)` say which of the
 nine backends a problem gets, with vectors and for singular values alone.
 
+The whole-matrix Jacobi kernel gives a matrix one threadgroup for its whole
+solve: 263 ms at 512×512 on an M5 Pro, 2.7 s at 1024×1024. With the display
+busy macOS ends a command buffer whose threadgroup runs for more than about
+a quarter of a second ("GPU Hang Error"), so since 2.15.0 a solve the cost
+model puts over 40 ms (`SVD_DISPATCH_MS`) is split over dispatches of a few
+rounds, each matrix resuming where it stopped (its columns and V are in
+device memory already; its scale, the sweep's null and negligible levels,
+the sweep, the round and whether a pair has rotated yet are kept): bit for
+bit the same result, in the same time. The routing does not send such sizes
+to the kernel on the M5 Pro, but forced kernels and estimated policies may.
+
 **Singular values alone** (since 2.11.0) have a GPU-or-CPU rule of their own,
 the `values_gpu_*` constants: both sides skip the vectors, by different
 amounts (the CPU's back-transformation and the GPU's vector updates), so the

@@ -211,6 +211,43 @@ void transpose_scaled(const float* src, size_t ld_src, float* dst, size_t ld_dst
     });
 }
 
+uint32_t jacobi_round_budget(double solve_core_ms, uint32_t rounds, const char* env) {
+    constexpr double kSweeps = 8.0;   // a typical solve's, for the cost of a round
+    double target = 40.0;
+    if (const char* s = env ? std::getenv(env) : nullptr) {   // fractions too (the tests split to a round)
+        const double v = std::strtod(s, nullptr);
+        if (v > 0.0) target = v;
+    }
+    if (rounds == 0 || solve_core_ms <= target) return 0;
+    const double round_ms = solve_core_ms / (kSweeps * rounds);
+    return (uint32_t)std::max(1.0, std::floor(target / round_ms));
+}
+
+void run_split_jacobi(id<MTLCommandQueue> queue, id<MTLBuffer> state, size_t offset, uint32_t count,
+                      uint32_t per_buffer, uint32_t max_dispatches,
+                      const std::function<void(id<MTLComputeCommandEncoder>)>& encode, const std::string& what) {
+    constexpr uint32_t kDone = 2;   // kJacobiDone
+    auto* st = static_cast<unsigned char*>(state.contents) + offset;
+    std::memset(st, 0, (size_t)count * kJacobiStateBytes);
+    for (uint32_t sent = 0; sent < max_dispatches;) {
+        id<MTLCommandBuffer> cmd = [queue commandBuffer];
+        id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
+        for (uint32_t d = 0; d < per_buffer && sent < max_dispatches; ++d, ++sent) encode(enc);
+        [enc endEncoding];
+        [cmd commit];
+        [cmd waitUntilCompleted];
+        if (cmd.error)
+            throw std::runtime_error(what + ": GPU kernel error: " + cmd.error.localizedDescription.UTF8String);
+        bool all = true;
+        for (uint32_t b = 0; b < count && all; ++b) {
+            uint32_t flags;
+            std::memcpy(&flags, st + (size_t)b * kJacobiStateBytes + 20, 4);
+            all = (flags & kDone) != 0;
+        }
+        if (all) return;
+    }
+}
+
 void compact_wy_t(uint32_t m, uint32_t kb, const float* V, const float* tau, float* T, uint32_t ldt) {
     std::vector<float> G((size_t)kb * kb);
     cblas_ssyrk(CblasColMajor, CblasUpper, CblasTrans, (int)kb, (int)m, 1.0f, V, (int)m, 0.0f, G.data(), (int)kb);

@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <string>
 #include <vector>
 
 namespace metal_linalg::detail {
@@ -232,6 +233,27 @@ id<MTLComputePipelineState> make_pipeline(id<MTLDevice> device,
 // built a block's V and T on the CPU while the GPU applied the last, and the
 // CPU's side was the slower.
 void compact_wy_t(uint32_t m, uint32_t kb, const float* V, const float* tau, float* T, uint32_t ldt);
+
+// The whole-matrix Jacobi kernels (Eigh_Jacobi, Svd_Jacobi) give a matrix one
+// threadgroup for its whole solve. With the display busy, macOS ends a command
+// buffer whose threadgroup runs for more than about a quarter of a second
+// ("GPU Hang Error"), which on an M5 Pro the eigensolver's threadgroup mode
+// reaches from N ~ 400 and the SVD's kernel from 512 x 512. A longer solve is
+// split over dispatches of a few rounds each, every matrix resuming where it
+// stopped (JacobiState in eigh_jacobi_common.h, 24 bytes a matrix).
+constexpr size_t kJacobiStateBytes = 24;
+// Rounds per dispatch for a solve the cost model puts at `solve_core_ms` on
+// one core, of `rounds` per sweep: 0 (the whole solve in one dispatch) when it
+// is under the dispatch target (40 ms, or the environment variable `env`),
+// else enough rounds for about that much.
+uint32_t jacobi_round_budget(double solve_core_ms, uint32_t rounds, const char* env);
+// Runs a split solve: command buffers of `per_buffer` dispatches, each
+// encoded by `encode`, until the `count` matrices' states (in `state`, from
+// `offset` bytes) are all done, or `max_dispatches`. Throws on a GPU error,
+// naming `what`.
+void run_split_jacobi(id<MTLCommandQueue> queue, id<MTLBuffer> state, size_t offset, uint32_t count,
+                      uint32_t per_buffer, uint32_t max_dispatches,
+                      const std::function<void(id<MTLComputeCommandEncoder>)>& encode, const std::string& what);
 
 // Threads for CPU work that runs beside the GPU's (the band chase, the divide
 // and conquer): cpu_threads() less the two cores the GPU's host work keeps

@@ -13,13 +13,11 @@ Apple M5 Pro's (20 GPU cores, 18 CPU cores).
 | [The CPU path's divide and conquer](cpu-path-divide-and-conquer.md) | eigh and SVD with vectors on the CPU, one matrix | `sstedc` 43 of 239 ms, `sbdsdc` 133 of 439 at 2048 | about 2 days | eigh 1.15-1.25x, SVD ~1.34x at 1024-2048 (estimate) |
 | [IEEE arithmetic in the remaining shaders](ieee-mode-audit.md) | the SVD's Jacobi kernel, svdvals on `bidiag` | 1.21x measured with fast math; 7% left on `bidiag` | about a day | 1.2x and up to 7% |
 | [The divide and conquer's top products on the GPU](divide-and-conquer-gpu-products.md) | eigh and SVD with vectors, one large matrix | 23 of 50 ms, 48 of 100 at 4096 | about 2 days | ~1.05x (estimate) |
-| [Long single-threadgroup kernels and the watchdog](gpu-watchdog-long-kernels.md) | forced and estimated routings, the tests | calls that fail while the display is busy | about a day | robustness, not speed |
 
 Suggested order: the CPU path's divide and conquer (the calls most people
 make, at sizes the GPU does not take); then the IEEE audit; then the band
 SVD's overlap together with the divide and conquer's products on the GPU,
-which it frees the GPU for. The watchdog one is small and makes the suites
-and the sweeps robust on a Mac in use.
+which it frees the GPU for.
 
 **Not code, but open:**
 
@@ -44,6 +42,7 @@ In 2.15.0 (2026-10-07); see [the study](../studies/proposals-2-15-apple-m5-pro.m
 | [Symmetric trailing update](symmetric-trailing-update.md) | the update on the lower triangle, mirrored: eigvalsh on `band` 1.08x at 4096, 1.17x at 8192; X from the lower triangle lost to MPS |
 | [Band width per device](band-width-per-device.md) | `values_band_width`, measured by stages 3b and 4b |
 | [Band threshold tie-break](band-threshold-tie-break.md) | a finer grid, and thresholds compared on the points where they disagree |
+| [Long single-threadgroup kernels and the watchdog](gpu-watchdog-long-kernels.md) | the whole-matrix Jacobi kernels split a long solve over dispatches of a few rounds (about 15 ms each, from 1.7-2.8 s for one threadgroup), bit for bit the same and in the same time |
 | [Two-stage reduction with vectors](two-stage-vectors.md) | the SVD with vectors on `band`: 1.17x `bidiag` at 1024, 1.42x at 2048, 2.33x at 4096, 2.59x at 8192 (Q2 applied by a pipeline of groups, 60-64 ms a side at 4096; Q = Q1 Q2 and P = P1 P2 formed under the CPU's chase and divide and conquer) |
 
 Found along the way, also in 2.15.0: the tridiag and bidiag backends' block

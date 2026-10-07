@@ -49,6 +49,7 @@ struct Params {
     uint  max_sweeps;
     float tol;
     float null_tol;
+    uint  round_budget;   // rounds per dispatch (0: the whole solve)
 };
 
 constexpr uint kRedFloats = 32;   // kRedFloats in the shader
@@ -75,7 +76,7 @@ unsigned env_uint(const char* name, unsigned fallback) {
 }
 
 struct Workspace {
-    id<MTLBuffer> G, V, S, U, Vt, info;
+    id<MTLBuffer> G, V, S, U, Vt, info, state;   // state: a split solve's per-matrix JacobiState
 };
 
 struct Cache {
@@ -102,6 +103,7 @@ struct Cache {
         w.G    = buf((size_t)batch * m * n * f);
         w.S    = buf((size_t)batch * n * f);
         w.info = buf((size_t)batch * sizeof(uint));
+        w.state = buf((size_t)batch * metal_linalg::detail::kJacobiStateBytes);
         w.V    = uv ? buf((size_t)batch * n * n * f) : nil;
         w.U    = uv ? buf((size_t)batch * m * n * f) : nil;
         w.Vt   = uv ? buf((size_t)batch * n * n * f) : nil;
@@ -483,8 +485,12 @@ void svd_jacobi(const Matrices& a, const SvdOptions& opt,
     id<MTLBuffer> buf_src = input_buffer(dev, a, wide);
 
     uint chunk = batch;
+    const double per_matrix_core_ms = kCoreMsPerMN2 * (double)m * n * n;
+    // A threadgroup's solve longer than a dispatch should run (the GPU's
+    // watchdog; metal_runtime.h) is split over dispatches of a few rounds.
+    const uint rounds = 2 * np - 1;
+    prm.round_budget = metal_linalg::detail::jacobi_round_budget(per_matrix_core_ms, rounds, "SVD_DISPATCH_MS");
     {
-        const double per_matrix_core_ms = kCoreMsPerMN2 * (double)m * n * n;
         const double budget = (double)env_uint("SVD_CHUNK_MS", (unsigned)kChunkBudgetMs);
         const double fit = std::floor(budget * cores / per_matrix_core_ms);
         chunk = (uint)std::max((double)cores, std::min((double)batch, fit));
@@ -495,20 +501,38 @@ void svd_jacobi(const Matrices& a, const SvdOptions& opt,
     for (uint b0 = 0; b0 < batch; b0 += chunk) {
         const uint bc = std::min(chunk, batch - b0);
 
+        auto encode = [&](id<MTLComputeCommandEncoder> enc) {
+            [enc setComputePipelineState:pso];
+            [enc setBuffer:buf_src offset:((size_t)b0 * m * n * f) atIndex:0];
+            [enc setBuffer:ws.G    offset:((size_t)b0 * m * n * f) atIndex:1];
+            [enc setBuffer:(compute_uv ? ws.V  : ws.G) offset:(compute_uv ? (size_t)b0 * n * n * f : 0) atIndex:2];
+            [enc setBuffer:ws.S    offset:((size_t)b0 * n * f) atIndex:3];
+            [enc setBuffer:(compute_uv ? ws.U  : ws.G) offset:(compute_uv ? (size_t)b0 * m * n * f : 0) atIndex:4];
+            [enc setBuffer:(compute_uv ? ws.Vt : ws.G) offset:(compute_uv ? (size_t)b0 * n * n * f : 0) atIndex:5];
+            [enc setBuffer:ws.info offset:((size_t)b0 * sizeof(uint)) atIndex:6];
+            [enc setBytes:&prm length:sizeof(prm) atIndex:7];
+            [enc setBuffer:ws.state offset:((size_t)b0 * metal_linalg::detail::kJacobiStateBytes) atIndex:8];
+            [enc setThreadgroupMemoryLength:tg_bytes atIndex:0];
+            [enc dispatchThreadgroups:MTLSizeMake(bc, 1, 1)
+                threadsPerThreadgroup:MTLSizeMake(threads, 1, 1)];
+        };
+        if (prm.round_budget) {
+            // Command buffers of about kChunkBudgetMs, the chunk's matrices in
+            // waves of one per core, until each has finished.
+            const uint waves = (bc + cores - 1) / cores;
+            const uint per_buffer = std::max(1u, (uint)(kChunkBudgetMs / (40.0 * waves)));
+            const uint max_dispatches = (uint)std::min<uint64_t>(
+                0xFFFFFFFFu, (uint64_t)opt.max_sweeps * rounds / prm.round_budget + 3);
+            metal_linalg::detail::run_split_jacobi(cache.rt.queue, ws.state,
+                                                   (size_t)b0 * metal_linalg::detail::kJacobiStateBytes, bc,
+                                                   per_buffer, max_dispatches, encode,
+                                                   "[svd] " + std::to_string(m) + "x" + std::to_string(n));
+            continue;
+        }
+
         id<MTLCommandBuffer> cmd = [cache.rt.queue commandBuffer];
         id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
-        [enc setComputePipelineState:pso];
-        [enc setBuffer:buf_src offset:((size_t)b0 * m * n * f) atIndex:0];
-        [enc setBuffer:ws.G    offset:((size_t)b0 * m * n * f) atIndex:1];
-        [enc setBuffer:(compute_uv ? ws.V  : ws.G) offset:(compute_uv ? (size_t)b0 * n * n * f : 0) atIndex:2];
-        [enc setBuffer:ws.S    offset:((size_t)b0 * n * f) atIndex:3];
-        [enc setBuffer:(compute_uv ? ws.U  : ws.G) offset:(compute_uv ? (size_t)b0 * m * n * f : 0) atIndex:4];
-        [enc setBuffer:(compute_uv ? ws.Vt : ws.G) offset:(compute_uv ? (size_t)b0 * n * n * f : 0) atIndex:5];
-        [enc setBuffer:ws.info offset:((size_t)b0 * sizeof(uint)) atIndex:6];
-        [enc setBytes:&prm length:sizeof(prm) atIndex:7];
-        [enc setThreadgroupMemoryLength:tg_bytes atIndex:0];
-        [enc dispatchThreadgroups:MTLSizeMake(bc, 1, 1)
-            threadsPerThreadgroup:MTLSizeMake(threads, 1, 1)];
+        encode(enc);
         [enc endEncoding];
         [cmd commit];
         [cmd waitUntilCompleted];

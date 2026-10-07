@@ -25,6 +25,15 @@ and what turned up while doing them; measured in
   and Swift; a `band` sweep backend and stage 3c of `tuning/tune_svd.py` fit
   it. Until a Mac's routing is measured with it, `band_min_k` is 0 there
   (never).
+- **Long Jacobi solves split over dispatches.** The whole-matrix Jacobi
+  kernels (the eigensolver's threadgroup mode, the SVD's Jacobi kernel) give
+  a matrix one threadgroup for its whole solve, which with the display busy
+  macOS ends after about a quarter of a second ("GPU Hang Error"): on an M5
+  Pro from N ~ 400 (eigh) and 512 x 512 (SVD), reached by forced kernels and
+  estimated policies. A solve the cost model puts over 40 ms
+  (`EIGH_DISPATCH_MS`, `SVD_DISPATCH_MS`) now runs a few rounds a dispatch,
+  each matrix resuming where it stopped: the same result bit for bit, in the
+  same time, about 15 ms a dispatch where one threadgroup ran 1.7-2.8 s.
 - **The divide and conquer on every core.** With vectors, `tridiag` and
   `bidiag` solved the tridiagonal or bidiagonal problem with LAPACK's
   `sstedc` and `sbdsdc`, on one core. `src/divide_conquer.cpp` walks the same
@@ -92,9 +101,8 @@ and what turned up while doing them; measured in
   rows past its staging buffer (never stored); `tuning/kernels.py` did not
   watch the band files for epoch changes.
 - New proposals: the CPU path's divide and conquer, IEEE arithmetic in the
-  remaining shaders, the divide and conquer's products on the GPU, the band
-  SVD with vectors overlapped further, and long single-threadgroup kernels
-  against the GPU's watchdog.
+  remaining shaders, the divide and conquer's products on the GPU, and the
+  band SVD with vectors overlapped further.
 
 ## 2.14.0 (2026-10-05)
 

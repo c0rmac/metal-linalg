@@ -323,6 +323,7 @@ and [`studies/svd-design-notes.md`](studies/svd-design-notes.md).
 | symptom | cause and fix |
 |---|---|
 | `Impacting Interactivity` in an error message | macOS stopped a GPU command buffer that ran for several seconds. The library splits large batches to avoid this; during a sweep the point is retried and then recorded as failed. Lower `EIGH_CHUNK_MS` or `SVD_CHUNK_MS` (default 750) if it recurs |
+| `GPU Hang Error` in an error message | with the display busy, macOS stopped a threadgroup that ran for more than about a quarter of a second. Since 2.15.0 the whole-matrix Jacobi kernels split a long solve over dispatches (`EIGH_DISPATCH_MS`, `SVD_DISPATCH_MS`, default 40); if another kernel shows it, measure with the Mac idle |
 | rows with `ok` = 0 in `raw.csv` | the backend failed its correctness gate or timed out at that point, and the point is excluded. A few are harmless; many at small sizes indicate a real fault |
 | `sweep_eigh --policy failed` (or another sweep) | the binary is older than the harness; rebuild it |
 | `missing Metal Toolchain` | only matters when changing a shader; the build otherwise uses `shaders/prebuilt/`. `xcodebuild -downloadComponent MetalToolchain` installs it |

@@ -287,8 +287,10 @@ own first.
 **A quarter-second watchdog.** In the afternoon of the measurements, with
 the display busy, macOS ended single-threadgroup Jacobi kernels after about
 250 ms (eigh in threadgroup mode from N = 448, the SVD's at 512 x 512), which
-had run that morning; see
-[gpu-watchdog-long-kernels.md](../proposals/gpu-watchdog-long-kernels.md).
+had run that morning. Fixed in 2.15.0: the two kernels now split a long
+solve over dispatches of a few rounds, about 15 ms each, the result bit for
+bit the same; see
+[gpu-watchdog-long-kernels.md](../proposals/gpu-watchdog-long-kernels.md#done-2026-10-07).
 
 **`kernels.py` did not watch the band files.** The epoch check's `PATHS`
 missed `src/band_*`, `src/bisect`, and `shaders/Svd_Bidiag` for eigh, all
