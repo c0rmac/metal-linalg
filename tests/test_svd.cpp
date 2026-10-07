@@ -551,6 +551,10 @@ int main() {
         std::vector<float> big(2048);   // deflation in the merges whose products run on the GPU
         for (int i = 0; i < 2048; ++i) big[i] = i < 900 ? 3.0f : 1e-3f * (float)(2048 - i);
         run_bidiag("bidiag repeated and tiny values 2100x2048", with_singular_values(2100, 2048, big));
+        // One on which LAPACK's sbdsdc, and the divide and conquer like it,
+        // fails to converge (info 1): solved again in double precision.
+        random::seed(12);
+        run_bidiag("bidiag sbdsdc's failure 2100x2048", with_singular_values(2100, 2048, big));
     }
     {   // singular values alone == with vectors
         array A = random_matrix(1, 300, 260, 1400);

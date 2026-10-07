@@ -120,7 +120,12 @@ and what turned up while doing them; measured in
   GPU's watchdog); `cpu_threads() - 2` wrapped around for a thread cap of 1
   or 2, and the band chase then ignored the cap; `sb_update` read up to 63
   rows past its staging buffer (never stored); `tuning/kernels.py` did not
-  watch the band files for epoch changes.
+  watch the band files for epoch changes; the divide and conquer, like
+  LAPACK's `sbdsdc`, could fail to converge (one in about 30 random
+  bidiagonals of 2048 with 900 equal singular values and the rest tiny, a
+  test case's, which failed now and then), and the SVD threw: now it is
+  solved again in double precision (`dbdsdc`, `dstedc`; 0.3 s at 2048), and
+  by QR iteration if that fails too.
 - New proposals: the CPU path's divide and conquer, the divide and
   conquer's products on the GPU, and the band SVD with vectors overlapped
   further.

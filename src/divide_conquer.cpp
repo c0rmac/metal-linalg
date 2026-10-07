@@ -829,9 +829,9 @@ struct WithGpu {
     GpuGemm* was;
 };
 
-long tridiagonal_eigensystem(uint32_t n, float* d, float* e, float* z, size_t ldz, unsigned threads,
-                             GpuGemm* gpu) {
-    const WithGpu with(gpu);
+namespace {
+
+long tridiagonal_dc(uint32_t n, float* d, float* e, float* z, size_t ldz, unsigned threads) {
     L N = n, LDZ = (L)ldz, info = 0;
     if (n == 0) return 0;
     if (n <= kSerialMaxN || threads <= 1) {
@@ -879,9 +879,7 @@ long tridiagonal_eigensystem(uint32_t n, float* d, float* e, float* z, size_t ld
     return 0;
 }
 
-long bidiagonal_svd(uint32_t n, float* d, float* e, float* u, size_t ldu, float* vt, size_t ldvt, unsigned threads,
-                    GpuGemm* gpu) {
-    const WithGpu with(gpu);
+long bidiagonal_dc(uint32_t n, float* d, float* e, float* u, size_t ldu, float* vt, size_t ldvt, unsigned threads) {
     L N = n, LDU = (L)ldu, LDVT = (L)ldvt, info = 0;
     if (n == 0) return 0;
     if (n <= kSerialMaxN || threads <= 1) {
@@ -924,6 +922,82 @@ long bidiagonal_svd(uint32_t n, float* d, float* e, float* u, size_t ldu, float*
     slascl_("G", &zero, &zero, &unit, &orgnrm, &N, &one, d, &N, &info);
     sort_with_vectors(threads, N, d, u, LDU, vt, LDVT, true);
     return 0;
+}
+
+} // namespace
+
+// The divide and conquer's secular equations can fail to converge, LAPACK's
+// own too: sbdsdc on one in about 30 random bidiagonals of 2048 with 900
+// equal singular values and the rest tiny. Then the same in double precision
+// (dstedc, dbdsdc), from the input kept, and QR iteration (ssteqr, sbdsqr) if
+// that fails too: at 2048, about 0.3 and 30 s.
+long tridiagonal_eigensystem(uint32_t n, float* d, float* e, float* z, size_t ldz, unsigned threads,
+                             GpuGemm* gpu) {
+    const WithGpu with(gpu);
+    const std::vector<float> d0(d, d + n), e0(e, e + (n > 1 ? n - 1 : 0));
+    L info = tridiagonal_dc(n, d, e, z, ldz, threads);
+    if (info <= 0) return info;
+    L N = n, LDZ = (L)ldz;
+    {
+        std::vector<double> dd(d0.begin(), d0.end()), ed(e0.begin(), e0.end()), zd((size_t)n * n);
+        L lw = -1, liw = -1, iq = 0, ld = N;
+        double q = 0.0;
+        dstedc_("I", &N, dd.data(), ed.data(), zd.data(), &ld, &q, &lw, &iq, &liw, &info);
+        std::vector<double> work(std::max<L>(1, (L)q));
+        std::vector<L> iwork(std::max<L>(1, iq));
+        lw = (L)work.size();
+        liw = (L)iwork.size();
+        dstedc_("I", &N, dd.data(), ed.data(), zd.data(), &ld, work.data(), &lw, iwork.data(), &liw, &info);
+        if (info == 0) {
+            for (L j = 0; j < N; ++j) {
+                d[j] = (float)dd[j];
+                for (L i = 0; i < N; ++i) z[(size_t)j * ldz + i] = (float)zd[(size_t)j * n + i];
+            }
+            return 0;
+        }
+    }
+    std::copy(d0.begin(), d0.end(), d);
+    std::copy(e0.begin(), e0.end(), e);
+    identity(threads, N, z, LDZ);
+    std::vector<float> work(std::max<L>(1, 2 * N - 2));
+    ssteqr_("I", &N, d, e, z, &LDZ, work.data(), &info);
+    return info;
+}
+
+long bidiagonal_svd(uint32_t n, float* d, float* e, float* u, size_t ldu, float* vt, size_t ldvt, unsigned threads,
+                    GpuGemm* gpu) {
+    const WithGpu with(gpu);
+    const std::vector<float> d0(d, d + n), e0(e, e + (n > 1 ? n - 1 : 0));
+    L info = bidiagonal_dc(n, d, e, u, ldu, vt, ldvt, threads);
+    if (info <= 0) return info;
+    L N = n, LDU = (L)ldu, LDVT = (L)ldvt, zero = 0, one = 1;
+    {
+        std::vector<double> dd(d0.begin(), d0.end()), ed(e0.begin(), e0.end()), ud((size_t)n * n),
+            vd((size_t)n * n), work(3 * (size_t)n * n + 4 * (size_t)n + 16);
+        std::vector<L> iwork(8 * (size_t)n + 8);
+        L iq = 0, ld = N;
+        double qd = 0.0;
+        dbdsdc_("U", "I", &N, dd.data(), ed.data(), ud.data(), &ld, vd.data(), &ld, &qd, &iq, work.data(),
+                iwork.data(), &info);
+        if (info == 0) {
+            for (L j = 0; j < N; ++j) {
+                d[j] = (float)dd[j];
+                for (L i = 0; i < N; ++i) {
+                    u[(size_t)j * ldu + i] = (float)ud[(size_t)j * n + i];
+                    vt[(size_t)j * ldvt + i] = (float)vd[(size_t)j * n + i];
+                }
+            }
+            return 0;
+        }
+    }
+    std::copy(d0.begin(), d0.end(), d);
+    std::copy(e0.begin(), e0.end(), e);
+    identity(threads, N, u, LDU);
+    identity(threads, N, vt, LDVT);
+    float qd = 0.0f;
+    std::vector<float> work(4 * (size_t)N + 4);
+    sbdsqr_("U", &N, &N, &N, &zero, d, e, vt, &LDVT, u, &LDU, &qd, &one, work.data(), &info);
+    return info;
 }
 
 } // namespace metal_linalg::detail
