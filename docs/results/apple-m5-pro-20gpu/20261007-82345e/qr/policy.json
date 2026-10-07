@@ -1,0 +1,16 @@
+{
+ "device": "Apple M5 Pro",
+ "gpu_cores": 20,
+ "source": "tuned:Apple M5 Pro",
+ "m_crossover_small_batch": 384,
+ "m_crossover_large_batch": 384,
+ "batch_threshold": 16,
+ "gpu_max_k": 128,
+ "gpu_min_batch_times_k": 20480,
+ "gpu_min_batch": 1,
+ "concurrent_matrices": 120,
+ "gpu_large_min_k": 768,
+ "gpu_large_max_batch": 4,
+ "gpu_min_k": 16,
+ "share_min_batch": 64
+}

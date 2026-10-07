@@ -14,9 +14,12 @@ the same day.
 | eigvalsh, `band`, 4096 | 161 ms | 140 ms | 1.15x |
 | svdvals, `band`, 4096 | 226 ms | 197 ms | 1.15x |
 | SVD with vectors, `band` (new), 4096 | 1535 ms (`bidiag`) | 402 ms | 3.82x |
+| QR, one 4096 x 4096 | 231 ms | 60 ms | 3.85x |
+| QR, 16 x 1024 x 1024 | 45 ms (the CPU) | 24 ms | 1.91x |
 
 (One matrix; 2.15.0 is the median of `sweep_eigh` and `sweep_svd`, section
-9; before, the routing sweep `20261004-06bc11` and section 1.)
+10, and of `sweep_qr`, section 9; before, the routing sweep
+`20261004-06bc11` and section 1.)
 
 ## 1. The divide and conquer on every core
 
@@ -207,7 +210,7 @@ than MPS and were dropped.
 the band at 8, 16 and 32 at the band points. Stages 3b and 4b choose the
 width with the lowest geometric mean of each width's time over the best
 width's at each point, 16 unless another wins by more than 1%, and fit the
-threshold on that width's times. On the M5 Pro, side by side (section 9),
+threshold on that width's times. On the M5 Pro, side by side (section 10),
 16 is the fastest width or within 2% of it at every point but one: eigvalsh
 at 4096, where 32 takes 130 ms against 140. 32 loses 9% at 3072 and ties at
 8192, and 8 loses 15-125% from 1536 on, so the fit should keep 16 for both;
@@ -325,7 +328,32 @@ added in 2.13; they, and `src/divide_conquer`, are now watched.
 1 or 2, and the band chase then ignored the cap (it still stopped at one
 thread per 256 rows); `cpu_threads_beside_gpu()` replaces it.
 
-## 9. Results
+## 9. QR on the band reduction's panels
+
+Found while the routing was re-measured: QR's GPU path for large matrices
+ran at 0.8 TFLOP/s (one 4096 x 4096 in 231 ms), its panels in one
+threadgroup each and its updates streamed a tile at a time, where the band
+reduction already had faster panels (TSQR) and its updates as MPS products.
+A blocked QR on them ([qr-blocked.md](../proposals/qr-blocked.md#done-2026-10-07)):
+panels of 16 columns in aggregates of 128 (rank-128 updates; 32-column
+panels were slower), each matrix padded to whole panels so the GPU takes
+every column, a batch at once ([qr-blocked-batched.md](../proposals/qr-blocked-batched.md#done-2026-10-07);
+MPS's batched products ignore `matrixBytes` for their left and result
+matrices, worked around), and any height (the TSQR tree's level array, not
+its design, had stopped it at 16384 rows). One 4096 x 4096 in 60 ms, 3.85x
+2.14's GPU path and 10.3x the CPU; 1024 x 1024 2.6x the CPU; it beats the
+streaming kernels everywhere, so the grid-parallel backend hands it every
+call it can.
+
+The routing re-measured with it moved: the kernel crossover from 512 rows
+to 128, and the large-matrix clause on `sqrt(M k)` rather than `k`
+([qr-large-clause.md](../proposals/qr-large-clause.md#done-2026-10-07)), so
+that a tall 8192 x 512 (8.5 ms on the GPU, 48 on the CPU) is the GPU's. Of
+the panels' cost, which the latency of the TSQR's three kernels sets, a
+second queue, wider panels and taller leaves all failed to take anything
+([qr-fixed-costs.md](../proposals/qr-fixed-costs.md#done-2026-10-07)).
+
+## 10. Results
 
 One matrix, 2.15.0 against the CPU path, measured side by side on the
 afternoon of 2026-10-07: the median of `sweep_eigh` and `sweep_svd` (at

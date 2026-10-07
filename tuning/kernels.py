@@ -94,8 +94,8 @@ HISTORY = [
     ("qr", 5, "2.15.0", "2026-10-07",
      "the blocked QR takes a batch at once and any height (padded to whole panels, batched MPS "
      "products): every shape the reduced backend's streaming kernels took, 1.8-3.5x faster; batches "
-     "of 512-2048 now beat the CPU (16 x 1024^2: 25 ms against 48); the large clause counts a "
-     "matrix's work, cbrt(max(M, N) k^2), and the grid has tall large shapes"),
+     "of 512-2048 now beat the CPU (16 x 1024^2: 25 ms against 48); the large clause counts rows "
+     "and k, sqrt(M k), and the grid has tall large shapes"),
 ]
 
 REQUIRED = {

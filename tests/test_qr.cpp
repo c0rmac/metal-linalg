@@ -441,6 +441,7 @@ int main() {
         // GPU or CPU: never the GPU, then only from a batch * k threshold.
         forced = original;
         forced.gpu_max_k = 0;
+        forced.gpu_large_min_k = 0;   // the large-matrix clause, tested below
         set_qr_policy(forced);
         if (qr_backend(4096, 512, 64) != QrBackend::cpu) fail("qr_backend", "gpu_max_k 0 -> GPU");
         else { std::printf("  ok    qr_backend: gpu_max_k 0 -> cpu at 64 x 4096x512\n"); ++g_checks; }
@@ -501,11 +502,11 @@ int main() {
         {
             const bool ok = qr_backend(2048, 2048, 1) != QrBackend::cpu && qr_backend(1024, 4096, 4) != QrBackend::cpu &&
                             qr_backend(2048, 2048, 5) == QrBackend::cpu && qr_backend(1023, 1023, 1) == QrBackend::cpu &&
-                            qr_backend(8192, 512, 1) != QrBackend::cpu && qr_backend(4096, 256, 1) == QrBackend::cpu;
+                            qr_backend(8192, 512, 1) != QrBackend::cpu && qr_backend(2048, 256, 1) == QrBackend::cpu;
             ++g_checks;
             if (!ok) fail("qr_backend", "large-matrix clause not applied");
-            else std::printf("  ok    qr_backend: large clause from 1024 by work, batch<=4 -> GPU at 1 x 2048^2, 4 x 1024x4096 "
-                             "and 8192x512 (1290), CPU at 5 x 2048^2, 1023^2 and 4096x256 (645)\n");
+            else std::printf("  ok    qr_backend: large clause sqrt(M k) >= 1024, batch<=4 -> GPU at 1 x 2048^2, 4 x 1024x4096 "
+                             "and 8192x512 (2048), CPU at 5 x 2048^2, 1023^2 and 2048x256 (724)\n");
             forced.gpu_large_max_batch = 0;
             set_qr_policy(forced);
             ++g_checks;

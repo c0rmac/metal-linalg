@@ -25,15 +25,18 @@ namespace metal_linalg {
     //
     //   GPU or CPU   GPU iff gpu_min_k <= k <= gpu_max_k, batch * k >=
     //                gpu_min_batch_times_k and batch >= gpu_min_batch, or
-    //                cbrt(max(M, N) k^2) >= gpu_large_min_k in a batch of at
-    //                most gpu_large_max_batch
+    //                sqrt(M k) >= gpu_large_min_k in a batch of at most
+    //                gpu_large_max_batch
     //   kernel       grid-parallel iff M >= m_crossover_*, else single-threadgroup
     //
-    // The sign of R's diagonal is the one each backend produces: LAPACK's
-    // Householder convention for the CPU and the single-threadgroup kernel,
-    // non-negative (and, for square input, det(Q) = +1) for the grid-parallel
-    // one. A caller that needs one convention normalises it: flip column i of
-    // Q and row i of R wherever R[i][i] < 0.
+    // The sign of R's diagonal is the one each backend produces: the
+    // Householder reflections' (about half negative, as LAPACK's) for the
+    // CPU, the single-threadgroup kernel and the grid-parallel path's blocked
+    // QR; non-negative (and, for square
+    // input, det(Q) = +1) for its streaming kernels, which take only matrices
+    // taller than 2^22 rows (or every call with QR_BLOCKED=0). A caller that
+    // needs one convention normalises it: flip column i of Q and row i of R
+    // wherever R[i][i] < 0.
 
     // gpu_max_k value meaning "no upper limit on k".
     constexpr unsigned kQrNoLimit = 0xFFFFFFFFu;
@@ -74,9 +77,8 @@ namespace metal_linalg {
 
         // Large matrices: the GPU also from gpu_large_min_k in a batch of at
         // most gpu_large_max_batch (0: any batch), whatever the rule above
-        // says; the size is the work's, the side of the square matrix as much
-        // work, cbrt(max(M, N) k^2) (k for a square matrix), so that a tall
-        // one counts by its rows too. Since the CPU path spreads a batch over every core, it beats
+        // says; the size is sqrt(M k), rows and k both (k for a square or
+        // wide matrix), so that a tall one counts by its rows too. Since the CPU path spreads a batch over every core, it beats
         // the GPU kernels for batches of small and mid-size matrices, while
         // one large matrix, which Accelerate threads only weakly, is still
         // faster on the GPU (on an M5 Pro 2x at 2048 x 2048); one product

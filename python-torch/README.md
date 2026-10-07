@@ -108,24 +108,25 @@ them in place, see [MPS tensors](#mps-tensors)):
 
 | | torch, CPU | torch, MPS | metal-linalg-torch |
 |---|---|---|---|
-| QR, 1024 × 128×128 | 201 ms | 32 ms | 15 ms |
+| QR, 1024 × 128×128 | 201 ms | 32 ms | 12 ms |
 | SVD, 256 × 128×64 | 69 ms | 71 ms | 5.3 ms |
 | SVD, 4096 × 32×32 | 224 ms | 224 ms | 6.1 ms |
 | eigh, 4096 × 16×16 | 34 ms | 36 ms | 2.1 ms |
 | eigh, one 2048×2048 | 251 ms | 259 ms | 55 ms |
-| SVD, one 4096×4096 | 3.60 s | 3.58 s | 896 ms |
-| eigvalsh, one 4096×4096 | 1.78 s | 1.85 s | 141 ms |
+| SVD, one 4096×4096 | 3.60 s | 3.58 s | 355 ms |
+| eigvalsh, one 4096×4096 | 1.78 s | 1.85 s | 128 ms |
 | svdvals, one 4096×4096 | 2.01 s | 2.03 s | 197 ms |
 
 It is ahead on every row. Of these calls PyTorch 2.13 runs only QR on the GPU
-for MPS tensors, and this is 2.1x faster there; its SVD takes as long on MPS
+for MPS tensors, and this is 2.7x faster there; its SVD takes as long on MPS
 as on the CPU, and eigh, eigvalsh and svdvals have no MPS kernels and go
 through its CPU fallback. Against those, 13-37x for the other batches of
 small matrices (the SVD of 256 matrices of 128×64 runs on the library's CPU
 path, which spreads a batch over every core; the two batches of 4096, and the
-QR batch, run on the GPU and the CPU at once), 4.0-4.7x for one large matrix
-with its vectors, and 10-13x for its eigenvalues or singular values alone, by
-a two-stage reduction. Which
+QR batch, run on the GPU and the CPU at once), 4.6x for eigh of one 2048×2048
+and 10x for the SVD of one 4096×4096 with its vectors, and 10-14x for its
+eigenvalues or singular values alone (the last three by a two-stage
+reduction). Which
 backend a shape gets on your Mac: `mlt.svd_backend(m, n, batch)` and its
 siblings.
 

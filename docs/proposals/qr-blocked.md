@@ -90,19 +90,32 @@ given):
 | 2 x 1024 x 1024 | 19.5 ms | 16.8 ms | 14.2 ms | 1.2x |
 | 4 x 2048 x 2048 | 142 ms | 99 ms | 76 ms | 1.3x |
 
-It takes a batch one matrix after another, so the streaming kernels (a
-batch at once) and the CPU (a matrix a core) win batches of small and
-mid-size matrices: the reduced backend hands a call to it for one matrix,
-or when batch x 512 <= min(m, n) (`qr_blocked_preferred`; `QR_BLOCKED=0`
-turns it off). Accuracy is LAPACK's or a little better (reconstruction and
+It took a batch one matrix after another at first, so the streaming kernels
+(a batch at once) and the CPU (a matrix a core) won batches of small and
+mid-size matrices, and the reduced backend handed it one matrix, or batch x
+512 <= min(m, n); a batch at once since (below), it takes every call it can
+(`qr_blocked_preferred`; `QR_BLOCKED=0` turns it off). Accuracy is LAPACK's or a little better (reconstruction and
 orthogonality 2.1e-6 at 4096 against LAPACK's 2.4e-6: the TSQR panels).
-Up to 16384 rows (the TSQR's leaves fit one threadgroup's top: 8-column
-panels above 8192 rows); taller matrices stay on the streaming kernels.
+Up to 16384 rows at first (8-column panels above 8192), any height since
+(below).
 
 The routing is re-measured at the new kernels (epoch qr 4): until then the
 M5 Pro's row is 2.14's, which sends one matrix to the GPU only from k =
 1024, so a 512 x 512 or a tall 8192 x 512 still goes to the CPU.
 
-**Left**: a batch at once, as a proposal ([qr-blocked-batched.md](qr-blocked-batched.md)).
-The panels under the trailing update on a second queue were tried and gave
-nothing ([qr-look-ahead.md](qr-look-ahead.md#tried-2026-10-07)).
+**Then, the same day:**
+
+- Every matrix padded with zero rows and columns to whole panels, so the GPU
+  takes every column (no LAPACK tail, no round trip to the CPU between the
+  passes), and a batch at once ([qr-blocked-batched.md](qr-blocked-batched.md#done-2026-10-07)):
+  the reduced backend hands it every call it takes.
+- Any height: the panels' TSQR top is a tree of pairs, bounded only by its
+  level array (8 entries, 128 leaves of 128 rows, hence 16384 rows); with 16
+  entries it takes $2^{15}$ leaves, and the blocked QR keeps 16-column panels
+  at any height up to $2^{22}$ rows. 100000 x 32 in 4.0 ms (streaming 58,
+  CPU 7.8), 40000 x 256 in 18 (191 and 79).
+- The large-matrix clause by rows and k, sqrt(M k), rather than k
+  ([qr-large-clause.md](qr-large-clause.md)).
+- The panels under the trailing update on a second queue: no gain
+  ([qr-look-ahead.md](qr-look-ahead.md#tried-2026-10-07)); what else was
+  tried on the panels and the fixed costs: [qr-fixed-costs.md](qr-fixed-costs.md).

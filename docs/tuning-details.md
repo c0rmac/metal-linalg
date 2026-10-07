@@ -149,9 +149,10 @@ held-out validation. Then the CPU boundary, `gpu_max_k`,
 `gpu_min_batch_times_k`, `gpu_min_batch` and `gpu_min_k` (the GPU only from
 this k, so that the smallest matrices stay on the CPU at any batch; 0 in a run
 from before 2.10.0), the large-matrix clause,
-`gpu_large_min_k` and `gpu_large_max_batch`: the GPU also for `k` from the
-first in a batch of at most the second (0: any; `0, 0`: never, which a run
-from before 2.9.0 gives). Since the CPU path spreads a batch over every core
+`gpu_large_min_k` and `gpu_large_max_batch`: the GPU also from the first in
+a batch of at most the second (0: any; `0, 0`: never, which a run from
+before 2.9.0 gives), the size being `k` before 2.15.0 and `sqrt(M k)` since,
+so that a tall matrix counts by its rows too. Since the CPU path spreads a batch over every core
 it wins batches of small and mid-size matrices, while one large matrix is
 still faster on the GPU, and one product rule cannot say both. Last,
 `share_min_batch`: from this batch a GPU batch is shared with the CPU path

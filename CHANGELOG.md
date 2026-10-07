@@ -6,16 +6,31 @@ The proposals left after 2.13.0 ([docs/proposals/](docs/proposals/README.md)),
 and what turned up while doing them; measured in
 [the 2.15.0 study](docs/studies/proposals-2-15-apple-m5-pro.md).
 
-- **A blocked QR for large matrices** (`qr_blocked`): the band reduction's
-  panel kernels (TSQR for tall panels) on the row-major matrix in place,
-  panels of 16 columns gathered into aggregates of 128 whose T is merged on
-  the GPU, the updates and Q's formation as rank-128 MPS products, the last
-  columns by LAPACK. The reduced backend hands it one matrix, or a few large
-  ones (`qr_blocked_preferred`, `QR_BLOCKED=0` to turn it off). On an M5 Pro,
-  one matrix: 2.1x the streaming kernels at 1024, 2.6x at 2048, 3.7x at 4096
-  (62 ms against 231, and 634 on the CPU), 5x on tall 4096 x 1024 and 8192 x
-  512 (12 and 10 ms against 63-67 and 49-64). Accuracy LAPACK's or a little
-  better. Kernel epoch qr 4: the routing is re-measured with it.
+- **A blocked QR** (`qr_blocked`), which the grid-parallel backend
+  (`streaming_reduced`) hands every call it can: the band reduction's panel
+  kernels (TSQR for tall panels) on the row-major matrices in place, panels
+  of 16 columns gathered into aggregates of 128 whose T is merged on the
+  GPU, the updates and Q's formation as rank-128 MPS products; each matrix
+  padded with zero rows and columns to whole panels, so the GPU takes every
+  column; a batch at once (every kernel's grid takes the batch, every product
+  is one batched MPS product); any height up to 2^22 rows (the TSQR's tree
+  of leaves). On an M5 Pro, one matrix against 2.14's GPU path and the CPU:
+  1024 6.5 ms (15, 17), 2048 18 (49, 93), 4096 60 (231, 619), 8192 x 512 8.5 (64, 48), 100000 x 32 4.0 (58, 7.8); batches: 16 x
+  1024^2 24 ms (51, 45), 4 x 2048^2 37 (99, 143), 1024 x 128^2 18 (52, 25).
+  Accuracy LAPACK's or a little better. `QR_BLOCKED=0` keeps the streaming
+  kernels.
+- **QR's routing re-measured with it** (kernel epochs qr 4, then 5): on the
+  M5 Pro the GPU from `sqrt(M k) >= 512` in a batch of up to 64 (was k >=
+  1024, batch <= 4) besides large batches of k = 16-256, the kernel
+  crossover at 128 rows (was 512), batches shared with the CPU from 1024
+  (was 64); 1.013x geometric-mean regret over 207 shapes. The large-matrix
+  clause now compares `sqrt(M k)`, rows and `k` both, rather than `k`
+  (`gpu_large_min_k` keeps its meaning for square matrices): a rule on `k`
+  sent a tall 8192 x 512 to the CPU (48 ms against 8.5); `tune_qr.py`'s grid
+  gains tall matrices up to 16384 x 64 and batches of 16 large ones, and its
+  fit tries the clause and the window in both orders. Wider panels, taller
+  TSQR leaves and a look-ahead on a second queue were tried and gave nothing
+  ([docs/proposals/qr-fixed-costs.md](docs/proposals/qr-fixed-costs.md)).
 - **The SVD with vectors by the two-stage reduction** (`band` with vectors,
   `svd_band_vectors`, routed from the new `band_min_k`): the band reduction
   keeps its reflectors (written straight into blocks of 128 as the panels
@@ -114,12 +129,14 @@ and what turned up while doing them; measured in
   Newton steps (with one, V's orthogonality was 10x worse; with two, a little
   better than with the IEEE sequence).
 - Kernel epochs eigh 6, SVD 8 (whose runs must also time `band` with
-  vectors): every Mac's eigh and SVD routing, the M5 Pro's included, is
-  marked stale and applies as it is, at width 16 and without `band` for the
-  SVD with vectors, until that Mac is measured again (`tuning/run.py`); no
-  run yet has the band's widths. The estimated policies of other Macs are
-  2.14's until the M5 Pro is re-measured (they are refitted only from a
-  Mac measured at the current kernels).
+  vectors), QR 5: every other Mac's routing is stale until it is measured
+  again (`tuning/run.py`). The M5 Pro is re-measured (runs
+  [`20261007-246324`](docs/results/apple-m5-pro-20gpu/20261007-246324/summary.md),
+  eigh and SVD, and [`20261007-82345e`](docs/results/apple-m5-pro-20gpu/20261007-82345e/summary.md),
+  QR): the SVD with vectors on `band` from k = 1024 (`band_min_k`), the
+  singular values alone from 768 and the eigenvalues alone from 2048, at
+  width 16; and the estimated policies of the Macs nobody has measured are
+  refitted from it.
 - On an M5 Pro, one matrix against the CPU path: svdvals 10.5x at 4096 and
   11.5x at 8192, eigh 8.8x and 8.8x, eigvalsh 3.4x and 3.6x, the SVD with
   vectors 3.7x at 4096 on `bidiag` and 8.7x on `band` (2.14: 8.6x, 5.6x,
@@ -138,8 +155,7 @@ and what turned up while doing them; measured in
   by QR iteration if that fails too.
 - New proposals: the CPU path's divide and conquer, the divide and
   conquer's products on the GPU, the band SVD with vectors overlapped
-  further, and the blocked QR for a batch at once (its panels under its
-  trailing update were tried: no gain).
+  further.
 
 ## 2.14.0 (2026-10-05)
 
