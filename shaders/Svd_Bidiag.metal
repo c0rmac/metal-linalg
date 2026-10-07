@@ -977,6 +977,112 @@ kernel void bd_ge_apply(device const float* X [[buffer(0)]], device float* R [[b
     }
 }
 
+// =============================================================================
+// The symmetric band reduction's trailing update, A22 -= [V Y] [Y V]^T, on
+// its lower triangle. MPS has products but no symmetric ones, so the update
+// was a product over the whole of A22, both triangles read and written. This
+// reads and writes the lower triangle and writes each off-diagonal tile's
+// transpose over the upper: 1.5 n^2 of memory a block against 2 n^2, and
+// A22 stays whole for the product X = A22 V T, which MPS does better than a
+// kernel reading the lower triangle twice did (on an M5 Pro 365 us against
+// 470 at n = 4096, 62 against 150 at 2048). A22 is column-major (ld lda): in
+// its row-major view, M = A22^T, a lower tile of A22 is an upper tile of M.
+// =============================================================================
+
+struct SyParams {
+    uint n;     // A22's order
+    uint lda;   // A's
+    uint ldw;   // W = [V Y V] (row-major, ld ldw)
+    uint b;     // the band's width: the update is of rank 2b
+};
+
+// The lower tiles in order: t to (I, J), I >= J, t = I (I + 1) / 2 + J.
+static uint2 lower_tile(uint t) {
+    uint I = (uint)((fast::sqrt(8.0f * (float)t + 1.0f) - 1.0f) * 0.5f);
+    while (I * (I + 1) / 2 > t) --I;
+    while ((I + 1) * (I + 2) / 2 <= t) ++I;
+    return uint2(I, t - I * (I + 1) / 2);
+}
+
+// A 64 x 64 tile of M = A22^T, rows r0.. and columns c0.. (A22's columns r0..,
+// rows c0..), into T (ld 65, so that a column's entries fall in different
+// banks) and back, and its transpose to M's tile (c0, r0): float4s along M's
+// rows (A22's columns), all of the threadgroup's threads; outside A22, zeros
+// in and nothing out. A22's columns are 16-byte aligned (the band width and
+// lda are multiples of 4).
+static void tile_in(device const float* A, uint lda, uint n, uint r0, uint c0, threadgroup float (*T)[65], uint t,
+                    uint nt) {
+    const bool inside = r0 + 64 <= n && c0 + 64 <= n;
+    for (uint e = t; e < 64 * 16; e += nt) {
+        const uint r = e / 16, c = (e % 16) * 4;
+        device const float* src = A + (ulong)(r0 + r) * lda + c0 + c;
+        float4 v;
+        if (inside) {
+            v = *(device const float4*)src;
+        } else {
+            v = float4(0.0f);
+            if (r0 + r < n)
+                for (uint i = 0; i < 4; ++i)
+                    if (c0 + c + i < n) v[i] = src[i];
+        }
+        T[r][c] = v.x; T[r][c + 1] = v.y; T[r][c + 2] = v.z; T[r][c + 3] = v.w;
+    }
+}
+static void tile_out(device float* A, uint lda, uint n, uint r0, uint c0, threadgroup float (*T)[65], uint t,
+                     uint nt, bool transposed = false) {
+    const bool inside = r0 + 64 <= n && c0 + 64 <= n;
+    for (uint e = t; e < 64 * 16; e += nt) {
+        const uint r = e / 16, c = (e % 16) * 4;
+        device float* dst = A + (ulong)((transposed ? c0 : r0) + r) * lda + (transposed ? r0 : c0) + c;
+        const float4 v = transposed ? float4(T[c][r], T[c + 1][r], T[c + 2][r], T[c + 3][r])
+                                    : float4(T[r][c], T[r][c + 1], T[r][c + 2], T[r][c + 3]);
+        const uint rr = (transposed ? c0 : r0) + r, cc = (transposed ? r0 : c0) + c;
+        if (inside) {
+            *(device float4*)dst = v;
+        } else if (rr < n) {
+            for (uint i = 0; i < 4; ++i)
+                if (cc + i < n) dst[i] = v[i];
+        }
+    }
+}
+
+// A22 -= [V Y] [Y V]^T on its lower 64 x 64 tiles (the diagonal ones whole),
+// each off-diagonal one's transpose then over its mirror in the upper
+// triangle; a tile a threadgroup of eight simdgroups, each 16 x 32 of it as
+// 2 x 4 simdgroup matrices. In M's terms a tile is M(J, I) -= Q_J P_I^T with
+// P = [V Y] = W[:, 0:2b] and Q = [Y V] = W[:, b:3b], their 8 x 8 pieces
+// loaded from W, which is small and stays in cache.
+kernel void sb_update(device float* A [[buffer(0)]], device const float* W [[buffer(1)]],
+                      constant SyParams& q [[buffer(2)]], uint tg [[threadgroup_position_in_grid]],
+                      uint sg [[simdgroup_index_in_threadgroup]], uint t [[thread_position_in_threadgroup]]) {
+    threadgroup float T[64][65];
+    const uint2 IJ = lower_tile(tg);
+    const uint I0 = IJ.x * 64, J0 = IJ.y * 64, K = 2 * q.b;
+    tile_in(A, q.lda, q.n, J0, I0, T, t, 256);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    const uint jq = (sg / 2) * 16, iq = (sg % 2) * 32;
+    simdgroup_float8x8 acc[2][4];
+    for (uint x = 0; x < 2; ++x)
+        for (uint y = 0; y < 4; ++y) simdgroup_load(acc[x][y], &T[jq + 8 * x][iq + 8 * y], 65);
+    for (uint k = 0; k < K; k += 8) {
+        simdgroup_float8x8 qm[2], pm[4];
+        for (uint x = 0; x < 2; ++x) {
+            simdgroup_load(qm[x], W + (ulong)(J0 + jq + 8 * x) * q.ldw + q.b + k, q.ldw);
+            qm[x].thread_elements() = -qm[x].thread_elements();
+        }
+        for (uint y = 0; y < 4; ++y)
+            simdgroup_load(pm[y], W + (ulong)(I0 + iq + 8 * y) * q.ldw + k, q.ldw, ulong2(0, 0), true);
+        for (uint x = 0; x < 2; ++x)
+            for (uint y = 0; y < 4; ++y) simdgroup_multiply_accumulate(acc[x][y], qm[x], pm[y], acc[x][y]);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint x = 0; x < 2; ++x)
+        for (uint y = 0; y < 4; ++y) simdgroup_store(acc[x][y], &T[jq + 8 * x][iq + 8 * y], 65);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    tile_out(A, q.lda, q.n, J0, I0, T, t, 256);
+    if (I0 != J0) tile_out(A, q.lda, q.n, J0, I0, T, t, 256, true);
+}
+
 // After the panel's trailing update: Ak(j, j) = d, Ak(j, j+1) = e (the units
 // were only for the reflectors).
 struct RestoreParams { uint nb, lda, k; };
