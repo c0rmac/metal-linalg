@@ -147,9 +147,12 @@ threadgroup per matrix carry the GPU's lead: the eigensolver's `ql` kernel
 (tridiagonalization and QL) and the SVD's `golub_kahan` (bidiagonalization and
 implicit QR, 1.6-3x faster than the Jacobi kernels it replaced). From 1024
 matrices the batch is shared, the GPU and the CPU solving it at once (1.4-1.7x
-over either alone), up to 64×64 for eigh and 80×80 for the SVD; a QR batch is
-shared from 1024 matrices (1.6x at 1024 of 128×128). The best GPU route against
-the CPU alone:
+over either alone), up to 64×64 for eigh and 80×80 for the SVD. QR's batches
+go to the blocked QR (a batch at once, its products MPS's), shared with the
+CPU from 1024 matrices: from 128×128 the GPU leads, while up to 64×64 the
+CPU, which spreads a batch over its cores, is level or ahead even at 4096
+matrices (between runs the GPU's ratio there moves either side of 1x). The
+best GPU route against the CPU alone:
 
 | | lone matrix | batch 16 | batch 256 | batch 4096 |
 |---|---|---|---|---|
@@ -161,6 +164,10 @@ the CPU alone:
 | SVD 32×32 | 0.13x | 0.52x | 1.27x | **2.14x** |
 | SVD 48×48 | 0.16x | 0.37x | 1.55x | 1.87x |
 | SVD 64×64 | 0.19x | 0.36x | 1.21x | 1.58x |
+| QR 16×16 | 0.01x | 0.11x | 0.49x | 0.73x |
+| QR 32×32 | 0.02x | 0.40x | 0.61x | 0.94x |
+| QR 64×64 | 0.09x | 0.33x | 0.71x | 0.93x |
+| QR 128×128 | 0.31x | 0.67x | 1.60x | 1.93x |
 
 Lone small matrices, small batches and mid-size matrices (about 96 to 512)
 stay on the CPU, which is 3-100x faster there: since 2.9.0 it spreads a
@@ -171,7 +178,9 @@ for one large matrix are 2.15.0's, measured side by side with the CPU path
 earlier run of the same day, its path unchanged since); the batches' are
 from the routing sweep
 [`20261007-246324`](docs/results/apple-m5-pro-20gpu/20261007-246324/summary.md)
-(eigh, SVD), and QR's batches and tall matrices from
+(eigh, SVD), QR's from `sweep_qr` side by side on 2.15.0 (its CPU path, both
+GPU kernels and the shared route, the best of two passes), and QR's tall
+matrices from
 [`20261007-82345e`](docs/results/apple-m5-pro-20gpu/20261007-82345e/summary.md). The full tables are in the per-solver docs; how the two-stage reduction
 got there is in [the two-stage study](docs/studies/two-stage-apple-m5-pro.md),
 and 2.15.0's changes in [its study](docs/studies/proposals-2-15-apple-m5-pro.md).
