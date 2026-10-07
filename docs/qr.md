@@ -203,13 +203,50 @@ or a little better (reconstruction and orthogonality 2.1e-6 at 4096 against
 2.4e-6). See [the proposal](proposals/qr-blocked.md#done-2026-10-07) for
 the measurements behind each choice.
 
+### Algorithm: `qr_householder` (since 2.16.0, small matrices)
+
+`qr_unblocked`'s kernel (above) gives each matrix a threadgroup and works
+column by column through device memory, a barrier per phase of every
+column, one thread building T, the matrix padded to 32 rows; and around it
+the CPU scanned and copied the input and copied Q and R back, which for 4096
+matrices of 16×16 took as long as the CPU path's whole call. Since 2.16.0
+`qr_unblocked` hands small matrices to two kernels built as the SVD's
+`golub_kahan` and the eigensolver's `ql` are: LAPACK's `sgeqr2` (a
+Householder reflector a column, applied to the columns right of it) and
+`sorg2r` (Q accumulated in place from the reflectors, backward).
+
+**In registers, a simdgroup a matrix**, for $n \le 64$ with $m \le 64$ and
+$n \le 32$ with $m \le 128$: each lane holds its rows (row $s \cdot 32 +$
+lane), as the band reduction's panels do. A column's norm is one
+`simd_sum`; the dot products of the columns right of it are `simd_sum`s too,
+four columns to one (on a `float4`); every update is the lane's own FMAs.
+No barrier, no threadgroup memory, several matrices to a threadgroup. A
+lane's row is only ever indexed by constants (the loops are expanded by the
+preprocessor), so the current column is kept at index 0 by rotating the
+row, left a step while factoring and right a step while Q is formed.
+
+**In threadgroup memory, a threadgroup a matrix**, for narrow matrices
+beyond that ($n \le 32$, up to the threadgroup memory: 200×30, 1000×7): a
+thread a row, the matrix at an odd row stride, column sums by groups of
+lanes, three barriers a column, as `golub_kahan`.
+
+Both read the caller's input row-major as it is, find each matrix's scale
+and non-finite entries on the GPU, and write Q and R straight out, into the
+caller's memory where it is page-aligned. On an M5 Pro, 4096 matrices, GPU
+time: 16×16 0.19 ms, 32×32 0.64, 64×64 4.6 (`qr_unblocked`'s kernel 1.07,
+2.6, 15.9; the CPU path's call about 1.0, 2.7 and 9-10 ms). Tried and
+slower: a column a lane, each lane's dot products its own and the
+reflector's vector shuffled across (2.2x at 32×32, 6x at 64×64:
+`simd_sum` is cheap on this GPU); rows staged through threadgroup memory
+for coalesced loads. See [the proposal](proposals/qr-small-kernel.md).
+
 ## How it works
 
 Two Metal backends and a CPU path handle different regimes, with a dispatcher that selects between them at runtime (a third Metal backend is retained but unused):
 
 **CPU (`qr_cpu`)** — LAPACK's `sgeqrf` and `sorgqr` (Accelerate), after transposing each matrix into the column-major layout LAPACK reads. A batch is spread over every CPU core (since 2.9.0), each core solving whole matrices with Accelerate's own threading off: on an M5 Pro that is 10-12x faster than one matrix at a time for batches of 16×16 to 64×64, and 6-8x for 512×512 and larger. A lone matrix keeps Accelerate's threading. `set_cpu_threads()` or `METAL_LINALG_CPU_THREADS` caps the cores used, for a program that runs several solves at once. A wide matrix (M < N) is factored by its leading M×M block, $A_1 = Q R_1$, and $R_2 = Q^T A_2$ by one matrix product: the same reflectors and the same R as `sgeqrf` on the whole matrix, which Accelerate ran 10-40x slower (since 2.11.0; on an M5 Pro one 64×2048 in 0.09 ms against 1.47, 16 of them in 0.33 ms against 4.2). Before, the GPU was 2-3x faster than this path for small batches of wide matrices, which a rule on k alone sent to the CPU.
 
-**`qr_unblocked`** — Standard Householder QR in a single kernel dispatch. Used for smaller matrices where the overhead of multi-pass streaming is not worth it.
+**`qr_unblocked`** — The GPU path for small matrices. Since 2.16.0 it hands them to the Householder kernels (`qr_householder`, above): in registers where they fit, in threadgroup memory for narrow ones (`QR_HOUSEHOLDER=0` turns that off). Its own kernel, kept for the rest: standard Householder QR in a single kernel dispatch, one threadgroup per matrix.
 
 **`qr_streaming_amx_reduced`** — The GPU path for large matrices. Since 2.15.0 it hands every call it can to the blocked QR (`qr_blocked`, above; `QR_BLOCKED=0` turns that off), which beat its own kernels at every shape and batch measured (1.8-3.5x on an M5 Pro). Its own kernels, kept for matrices taller than $2^{22}$ rows: multi-pass panel factorisation with grid-parallel trailing matrix updates, column panels of width 32, the T-matrix for each WY representation, then a grid of threadgroups for the trailing update, Q accumulated at its economic width of `K = min(M, N)` columns by a backward pass.
 

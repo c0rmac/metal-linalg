@@ -1,5 +1,23 @@
 # Changes
 
+## 2.16.0
+
+- **QR kernels for batches of small matrices** (`qr_householder`), to which
+  the `unblocked` backend hands them: LAPACK's method (`sgeqr2`, then `sorg2r`
+  forming Q in place) as the SVD's `golub_kahan` and the eigensolver's `ql`
+  are built. In a simdgroup's registers for n <= 64 with m <= 64 and n <= 32
+  with m <= 128 (rows a lane, a step's dot products four columns to a
+  `simd_sum`, no barrier and no threadgroup memory, several matrices to a
+  threadgroup); in threadgroup memory, a thread a row, for narrow matrices
+  beyond that. The input read row-major, scanned and scaled on the GPU, Q
+  and R written straight out: no CPU pass. On an M5 Pro, 4096 matrices, GPU
+  time: 16x16 0.19 ms, 32x32 0.64, 64x64 4.6, where `unblocked`'s own kernel
+  took 1.07, 2.6 and 15.9 and the CPU path's call takes about 1.0, 2.7 and
+  9-10. `QR_HOUSEHOLDER=0` keeps `unblocked`'s kernel.
+- Kernel epoch qr 6; `tune_qr.py`'s kernel crossover may go down to 64 rows
+  (its grid gains 80 x 80 and 96 x 96).
+- README: QR in the table of large batches of small matrices.
+
 ## 2.15.0 (2026-10-07)
 
 The proposals left after 2.13.0 ([docs/proposals/](docs/proposals/README.md)),
