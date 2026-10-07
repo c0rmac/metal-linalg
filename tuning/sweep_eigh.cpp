@@ -140,7 +140,11 @@ std::pair<array, array> vals_block(const array& A) {
 float values_error(const Solver& s, const array& A) {
     try {
         array w = s.fn(A).first;
+        // The reference on its own first: queued behind it, the comparison's
+        // GPU work waits on the CPU, and from N ~ 6500 that wait outlasts the
+        // GPU's watchdog (a timeout error, which read as a failed gate).
         array w_ref = linalg::eigvalsh(A, "L", Device::cpu);
+        eval({w_ref});
         array e  = max(abs(subtract(w, w_ref)));
         array nA = sqrt(sum(square(A)));
         eval({e, nA});

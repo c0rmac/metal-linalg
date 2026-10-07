@@ -96,7 +96,10 @@ SvdResult vals_gk_share(const array& A)  { return detail::svd_golub_kahan_shared
 float values_error(const Solver& s, const array& A) {
     try {
         array S = s.fn(A).S;
+        // The reference on its own first, as in sweep_eigh.cpp: queued behind
+        // it, the comparison's GPU work outlasted the GPU's watchdog.
         array ref = linalg::svd(A, false, Device::cpu)[0];
+        eval({ref});
         array e = max(abs(subtract(S, ref)));
         array top = max(abs(ref));
         eval({e, top});
