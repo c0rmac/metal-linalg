@@ -301,7 +301,8 @@ void tridiagonalize(Cache& cache, Workspace& ws, id<MTLBuffer> Abuf, uint32_t n,
 // Z is column-major (ld n), so Z^T row-major; per block of reflectors k0 ..
 // k0 + kb - 1, acting on rows k0 + 1 ..:  Z^T(:, k0+1:) -= ((Z^T(:, k0+1:) V) T^T) V^T.
 // The blocks are applied last first; each block's V and T are built on the CPU
-// (slarft) into one of two slots while the GPU works on the other.
+// (compact_wy_t, the copies on every core) into one of two slots while the GPU
+// works on the other.
 void back_transform(Cache& cache, Workspace& ws, id<MTLBuffer> Abuf, id<MTLBuffer> Zbuf, uint32_t n,
                     const float* tau) {
     if (n < 2) return;
@@ -314,18 +315,21 @@ void back_transform(Cache& cache, Workspace& ws, id<MTLBuffer> Abuf, id<MTLBuffe
     for (int k0 = (int)(((n - 2) / bb) * bb); k0 >= 0; k0 -= (int)bb) {
         const uint32_t kb = std::min<uint32_t>(bb, n - 1 - (uint32_t)k0), m = n - (uint32_t)k0 - 1;
         if (inflight[slot]) [inflight[slot] waitUntilCompleted];   // the slot's previous block is done
-        vcol.assign((size_t)m * kb, 0.0f);
-        for (uint32_t j = 0; j < kb; ++j) {
-            vcol[(size_t)j * m + j] = 1.0f;
+        vcol.resize((size_t)m * kb);
+        metal_linalg::detail::parallel_for(kb, [&](size_t j) {
+            float* col = vcol.data() + j * m;
             const float* src = A + (size_t)(k0 + j) * lda + k0 + 1;
-            std::copy(src + j + 1, src + m, vcol.begin() + (size_t)j * m + j + 1);
-        }
-        L M = m, KB = kb, LDT = bb;
-        slarft_("F", "C", &M, &KB, vcol.data(), &M, tau + k0, tcol.data(), &LDT);
+            std::fill(col, col + j, 0.0f);
+            col[j] = 1.0f;
+            std::copy(src + j + 1, src + m, col + j + 1);
+        });
+        metal_linalg::detail::compact_wy_t(m, kb, vcol.data(), tau + k0, tcol.data(), bb);
         float* V = static_cast<float*>(ws.V[slot].contents);
         float* T = static_cast<float*>(ws.T[slot].contents);
-        for (uint32_t r = 0; r < m; ++r)
-            for (uint32_t j = 0; j < bb; ++j) V[(size_t)r * bb + j] = j < kb ? vcol[(size_t)j * m + r] : 0.0f;
+        metal_linalg::detail::parallel_for((m + 255) / 256, [&](size_t t) {
+            for (uint32_t r = (uint32_t)t * 256; r < std::min<uint32_t>(m, (uint32_t)t * 256 + 256); ++r)
+                for (uint32_t j = 0; j < bb; ++j) V[(size_t)r * bb + j] = j < kb ? vcol[(size_t)j * m + r] : 0.0f;
+        });
         for (uint32_t i = 0; i < bb; ++i)
             for (uint32_t j = 0; j < bb; ++j)
                 T[(size_t)i * bb + j] = (i < kb && j < kb && j >= i) ? tcol[(size_t)j * bb + i] : 0.0f;

@@ -223,6 +223,16 @@ id<MTLComputePipelineState> make_pipeline(id<MTLDevice> device,
                                           NSString* name,
                                           MTLFunctionConstantValues* constants);
 
+// The upper triangular T of the compact WY form H(0) ... H(kb-1) = I - V T V^T
+// of kb Householder reflectors, as LAPACK's slarft("F", "C"): V (m x kb,
+// column-major, ld m) unit lower trapezoidal with its zeros and ones
+// explicit, T column-major (ld ldt). From the Gram matrix V^T V, one ssyrk on
+// the CPU's matrix units, rather than slarft's matrix-vector products: on an
+// M5 Pro 0.1 ms against 1.1 at 4096 x 128, where the back-transformations
+// built a block's V and T on the CPU while the GPU applied the last, and the
+// CPU's side was the slower.
+void compact_wy_t(uint32_t m, uint32_t kb, const float* V, const float* tau, float* T, uint32_t ldt);
+
 // Threads for CPU work that runs beside the GPU's (the band chase, the divide
 // and conquer): cpu_threads() less the two cores the GPU's host work keeps
 // (encoding the next matrix's work in a batch, waiting on the GPU), and at

@@ -284,8 +284,8 @@ void bidiagonalize(Cache& c, Workspace& ws, id<MTLBuffer> Abuf, float* d, float*
 // Step 3. Q's reflector j acts on rows j.. (offset 0), P's on columns j+1..
 // (offset 1), both read from Abuf. `left`: Z <- Q Z for Z = Ubuf (m x n);
 // else Z <- Z P^T for Z = VTbuf (n x n). Blocks are applied last first; each
-// block's V and T are built on the CPU (slarft) in one of two slots while the
-// GPU applies the other.
+// block's V and T are built on the CPU (compact_wy_t, the copies on every
+// core) in one of two slots while the GPU applies the other.
 void back_transform(Cache& c, Workspace& ws, id<MTLBuffer> Abuf, id<MTLBuffer> Ubuf, id<MTLBuffer> VTbuf,
                     const float* tau, bool left) {
     const uint32_t m = ws.m, n = ws.n, lda = ws.lda, bb = kBackBlock;
@@ -300,19 +300,22 @@ void back_transform(Cache& c, Workspace& ws, id<MTLBuffer> Abuf, id<MTLBuffer> U
         const uint32_t kb = std::min<uint32_t>(bb, refl - (uint32_t)k0);
         const uint32_t len = (left ? m : n) - (uint32_t)k0 - off;   // the rows (Q) or columns (P) acted on
         if (inflight[slot]) [inflight[slot] waitUntilCompleted];
-        vc.assign((size_t)len * kb, 0.0f);
-        for (uint32_t j = 0; j < kb; ++j) {
-            vc[(size_t)j * len + j] = 1.0f;
-            for (uint32_t r = j + 1; r < len; ++r)
-                vc[(size_t)j * len + r] = left ? A[(size_t)(k0 + j) * lda + k0 + r]         // column j, below the diagonal
-                                               : A[(size_t)(k0 + 1 + r) * lda + k0 + j];    // row j, right of the superdiagonal
-        }
-        L M = len, KB = kb, LDT = bb;
-        slarft_("F", "C", &M, &KB, vc.data(), &M, const_cast<float*>(tau) + k0, tc.data(), &LDT);
+        vc.resize((size_t)len * kb);
+        metal_linalg::detail::parallel_for(kb, [&](size_t j) {
+            float* col = vc.data() + j * len;
+            std::fill(col, col + j, 0.0f);
+            col[j] = 1.0f;
+            for (uint32_t r = (uint32_t)j + 1; r < len; ++r)
+                col[r] = left ? A[(size_t)(k0 + j) * lda + k0 + r]         // column j, below the diagonal
+                              : A[(size_t)(k0 + 1 + r) * lda + k0 + j];    // row j, right of the superdiagonal
+        });
+        metal_linalg::detail::compact_wy_t(len, kb, vc.data(), tau + k0, tc.data(), bb);
         float* V = static_cast<float*>(ws.V[slot].contents);
         float* T = static_cast<float*>(ws.T[slot].contents);
-        for (uint32_t r = 0; r < len; ++r)
-            for (uint32_t j = 0; j < bb; ++j) V[(size_t)r * bb + j] = j < kb ? vc[(size_t)j * len + r] : 0.0f;
+        metal_linalg::detail::parallel_for((len + 255) / 256, [&](size_t t) {
+            for (uint32_t r = (uint32_t)t * 256; r < std::min<uint32_t>(len, (uint32_t)t * 256 + 256); ++r)
+                for (uint32_t j = 0; j < bb; ++j) V[(size_t)r * bb + j] = j < kb ? vc[(size_t)j * len + r] : 0.0f;
+        });
         for (uint32_t i = 0; i < bb; ++i)
             for (uint32_t j = 0; j < bb; ++j)
                 T[(size_t)i * bb + j] = (i < kb && j < kb && j >= i) ? tc[(size_t)j * bb + i] : 0.0f;

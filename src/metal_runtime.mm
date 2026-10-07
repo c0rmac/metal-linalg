@@ -211,6 +211,19 @@ void transpose_scaled(const float* src, size_t ld_src, float* dst, size_t ld_dst
     });
 }
 
+void compact_wy_t(uint32_t m, uint32_t kb, const float* V, const float* tau, float* T, uint32_t ldt) {
+    std::vector<float> G((size_t)kb * kb);
+    cblas_ssyrk(CblasColMajor, CblasUpper, CblasTrans, (int)kb, (int)m, 1.0f, V, (int)m, 0.0f, G.data(), (int)kb);
+    for (uint32_t j = 0; j < kb; ++j) {   // T(0:j, j) = -tau_j T(0:j, 0:j) G(0:j, j)
+        for (uint32_t i = 0; i < j; ++i) {
+            float s = 0.0f;
+            for (uint32_t k = i; k < j; ++k) s += T[i + (size_t)k * ldt] * G[k + (size_t)j * kb];
+            T[i + (size_t)j * ldt] = -tau[j] * s;
+        }
+        T[j + (size_t)j * ldt] = tau[j];
+    }
+}
+
 namespace {
 
 // Chunks per thread in lapack_batches: more than one, so that threads on the
