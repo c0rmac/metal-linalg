@@ -180,6 +180,7 @@ struct TunedEntry {
     unsigned    gpu_big_batch_max_n;
     unsigned    gpu_big_batch_min;
     unsigned    values_band_min_n;   // 0 = never, which rows from before 2.13.0 leave
+    unsigned    values_band_width;   // 0 = 16, which rows from before 2.15.0 leave
     unsigned    calibration;   // kCalibration* (calibration.h); rows without it are current
 };
 
@@ -189,7 +190,7 @@ struct TunedEntry {
 // docs/studies/. The last row keeps the array non-empty and matches nothing.
 constexpr TunedEntry kTuned[] = {
 #include "tuned/eigh.inc"
-    {"", 0,   0, 0, 0, 0,   0, 0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0, 0,   0,   0},
+    {"", 0,   0, 0, 0, 0,   0, 0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0, 0,   0, 0,   0},
 };
 
 // The estimated rows, for every slowdown pair on tuning/estimate.py's ladder
@@ -226,6 +227,7 @@ void apply(const TunedEntry& e, EighPolicy& p) {
     p.gpu_big_batch_max_n          = e.gpu_big_batch_max_n;
     p.gpu_big_batch_min            = e.gpu_big_batch_min;
     p.values_band_min_n            = e.values_band_min_n;
+    p.values_band_width            = e.values_band_width;
 }
 
 struct ResolvedPolicy {
@@ -305,6 +307,7 @@ ResolvedPolicy resolve_policy() {
     over("EIGH_GPU_BIG_BATCH_MAX_N",          r.policy.gpu_big_batch_max_n);
     over("EIGH_GPU_BIG_BATCH_MIN",            r.policy.gpu_big_batch_min);
     over("EIGH_VALUES_BAND_MIN_N",            r.policy.values_band_min_n);
+    over("EIGH_VALUES_BAND_WIDTH",            r.policy.values_band_width);
     if (!env.empty()) r.source = "env:" + env;
     return r;
 }
@@ -766,7 +769,7 @@ void core::eigh(const Matrices& a, bool lower, float* w, float* v, uint32_t* inf
         return;
     }
     if (backend == EighBackend::band) {   // eigenvalues alone
-        core::detail::eigh_band(a, lower, w, info);
+        core::detail::eigh_band(a, lower, w, info, policy_state().policy.values_band_width);
         return;
     }
     if (backend == EighBackend::ql) {

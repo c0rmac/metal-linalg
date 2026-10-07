@@ -977,6 +977,18 @@ int main() {
                 const float d = max_abs(subtract(s, ref.S)) / max_abs(ref.S);
                 if (!(d <= 2e-5f)) fail("svdvals routed to band (400x300)", std::to_string(d));
                 else std::printf("  ok    %-44s |ds|=%.1e\n", "svdvals routed to band (400x300)", d);
+                for (unsigned width : {8u, 32u}) {   // the policy's band width reaches the backend
+                    c.values_band_width = width;
+                    set_svd_policy(c);
+                    array sb = svdvals_accelerated(A);
+                    eval({sb});
+                    ++g_checks;
+                    const float db = max_abs(subtract(sb, ref.S)) / max_abs(ref.S);
+                    const std::string label = "svdvals band, values_band_width = " + std::to_string(width);
+                    if (!(db <= 2e-5f) || !(max_abs(subtract(sb, s)) > 0.0f)) fail(label, std::to_string(db));
+                    else std::printf("  ok    %-44s |ds|=%.1e\n", label.c_str(), db);
+                }
+                c.values_band_width = 0;
             }
             c.values_band_min_k = 0;
             set_svd_policy(c);

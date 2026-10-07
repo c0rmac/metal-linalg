@@ -209,6 +209,12 @@ namespace metal_linalg {
         // matrix products, the band to tridiagonal on the CPU's cores. 0
         // means never.
         unsigned values_band_min_n = 0;
+        // ... and the band's width, 8, 16 or 32 (0: 16, or EIGH_BAND_WIDTH).
+        // A wider band halves the GPU's panels and doubles each one's
+        // columns, and makes the CPU's chase dearer; which is best depends on
+        // the GPU and the CPU together (on an M5 Pro 16: at 4096 x 4096, 262,
+        // 165 and 166 ms for 8, 16 and 32).
+        unsigned values_band_width = 0;
 
         // Large batches: the GPU also for N above gpu_max_n, up to
         // gpu_big_batch_max_n, in a batch of at least gpu_big_batch_min (with
@@ -427,6 +433,10 @@ namespace metal_linalg {
         // matrix products, then the band to bidiagonal on the CPU (on an M5
         // Pro 1.8x the bidiag backend at 4096 x 4096). 0 means never.
         unsigned values_band_min_k = 0;
+        // ... and the band's width, 8, 16 or 32 (0: 16, or SVD_BAND_WIDTH),
+        // as EighPolicy::values_band_width (on an M5 Pro 16: at 4096 x 4096,
+        // 329, 235 and 275 ms for 8, 16 and 32).
+        unsigned values_band_width = 0;
 
         // --- the golub_kahan backend, for k in [gk_min_k, gk_max_k] ---
         // On the GPU, inside this window, LAPACK's method in one threadgroup

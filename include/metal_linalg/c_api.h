@@ -152,6 +152,7 @@ typedef struct metal_linalg_eigh_policy {
     uint32_t gpu_big_batch_max_n;    /* the GPU also for N up to this in a batch of at least */
     uint32_t gpu_big_batch_min;      /* gpu_big_batch_min (0: never) */
     uint32_t values_band_min_n;      /* eigenvalues alone: the band backend from this N (0: never) */
+    uint32_t values_band_width;      /* ... its band's width, 8, 16 or 32 (0: 16) */
 } metal_linalg_eigh_policy;
 
 typedef struct metal_linalg_svd_policy {
@@ -179,6 +180,7 @@ typedef struct metal_linalg_svd_policy {
     uint32_t gpu_big_batch_max_k;   /* the GPU also for k up to this in a batch of at least */
     uint32_t gpu_big_batch_min;     /* gpu_big_batch_min (0: never) */
     uint32_t values_band_min_k;     /* singular values alone: the band backend from this k (0: never) */
+    uint32_t values_band_width;     /* ... its band's width, 8, 16 or 32 (0: 16) */
 } metal_linalg_svd_policy;
 
 metal_linalg_qr_policy   metal_linalg_qr_policy_get(void);

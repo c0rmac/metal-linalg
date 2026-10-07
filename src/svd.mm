@@ -220,6 +220,7 @@ struct TunedEntry {
     unsigned    gpu_big_batch_max_k;
     unsigned    gpu_big_batch_min;
     unsigned    values_band_min_k;     // 0 = never, which rows from before 2.13.0 leave
+    unsigned    values_band_width;     // 0 = 16, which rows from before 2.15.0 leave
     unsigned    calibration;   // kCalibration* (calibration.h); rows without it are current
 };
 
@@ -229,7 +230,7 @@ struct TunedEntry {
 // docs/studies/. The last row keeps the array non-empty and matches nothing.
 constexpr TunedEntry kTuned[] = {
 #include "tuned/svd.inc"
-    {"", 0,   0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0, 0,   0,   0},
+    {"", 0,   0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0, 0,   0, 0,   0},
 };
 
 // A device with no entry gets an estimated row: a measured device's timings
@@ -270,6 +271,7 @@ void apply(const TunedEntry& e, SvdPolicy& p) {
     p.gpu_big_batch_max_k          = e.gpu_big_batch_max_k;
     p.gpu_big_batch_min            = e.gpu_big_batch_min;
     p.values_band_min_k            = e.values_band_min_k;
+    p.values_band_width            = e.values_band_width;
 }
 
 struct ResolvedPolicy {
@@ -348,6 +350,7 @@ ResolvedPolicy resolve_policy() {
     over("SVD_GPU_BIG_BATCH_MAX_K",   r.policy.gpu_big_batch_max_k);
     over("SVD_GPU_BIG_BATCH_MIN",     r.policy.gpu_big_batch_min);
     over("SVD_VALUES_BAND_MIN_K",     r.policy.values_band_min_k);
+    over("SVD_VALUES_BAND_WIDTH",     r.policy.values_band_width);
     if (!env.empty()) r.source = "env:" + env;
     return r;
 }
@@ -867,7 +870,7 @@ void core::svd(const Matrices& a, float* u, float* s, float* vt, uint32_t* info)
             core::detail::svd_bidiag(a, u, s, vt, info);
             return;
         case SvdBackend::band:   // singular values alone
-            core::detail::svd_band(a, s, info);
+            core::detail::svd_band(a, s, info, policy_state().policy.values_band_width);
             return;
         case SvdBackend::block_jacobi:
             core::detail::svd_block_jacobi(a, opt, u, s, vt, info);

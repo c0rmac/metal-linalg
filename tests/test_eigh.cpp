@@ -1039,6 +1039,16 @@ int main() {
                     eval({w, w_ref});
                     const float d = max_abs(subtract(w, w_ref)) / std::max(frobenius(A), 1.0f);
                     expect("eigvalsh routed to band (700x700) == LAPACK", d < kEigTol, "differ by " + std::to_string(d));
+                    for (unsigned width : {8u, 32u}) {   // the policy's band width reaches the backend
+                        c.values_band_width = width;
+                        set_eigh_policy(c);
+                        array wb = eigvalsh_accelerated(A);
+                        eval({wb});
+                        const float db = max_abs(subtract(wb, w_ref)) / std::max(frobenius(A), 1.0f);
+                        expect("eigvalsh band, values_band_width = " + std::to_string(width) + " == LAPACK",
+                               db < kEigTol && max_abs(subtract(wb, w)) > 0.0f, "differ by " + std::to_string(db));
+                    }
+                    c.values_band_width = 0;
                 }
                 c.values_band_min_n = 0;
                 set_eigh_policy(c);

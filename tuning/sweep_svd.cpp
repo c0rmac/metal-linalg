@@ -13,7 +13,8 @@
 //                      library's QR, as svd.mm routes it; k up to its device limit
 //             gk_share golub_kahan and the CPU path sharing the batch (share_min_batch)
 //             cpu_vals, bidiag_vals, gk_vals, gk_share_vals   the same for singular values alone
-//             band_vals  singular values alone by the two-stage reduction (svd_bidiag.mm)
+//             band_vals  singular values alone by the two-stage reduction (svd_bidiag.mm), its band
+//                        16 wide; band8_vals, band32_vals the same 8 and 32 wide
 //   out:   batch,M,N,backend,ok,ms,p25,p75,reps   (one row per backend)
 //
 //   usage: sweep_svd --policy
@@ -79,7 +80,9 @@ SvdResult solve_bidiag(const array& A)  { return detail::svd_bidiag(A, true); }
 // Singular values alone, as svdvals runs them.
 SvdResult vals_cpu(const array& A)      { return detail::svd_cpu(A, false); }
 SvdResult vals_bidiag(const array& A)   { return detail::svd_bidiag(A, false); }
-SvdResult vals_band(const array& A)     { return detail::svd_band(A); }
+SvdResult vals_band(const array& A)     { return detail::svd_band(A, 16); }
+SvdResult vals_band8(const array& A)    { return detail::svd_band(A, 8); }
+SvdResult vals_band32(const array& A)   { return detail::svd_band(A, 32); }
 // golub_kahan as svd.mm routes it inside its window.
 SvdResult gk(const array& A, bool uv) {
     const int M = A.shape(-2), N = A.shape(-1);
@@ -186,7 +189,8 @@ int main(int argc, char** argv) {
                     "\"gk_min_k\": %u, \"gk_max_k\": %u, \"gk_limit\": %u, "
                     "\"values_gpu_max_k\": %u, \"values_gpu_min_batch_times_k\": %u, "
                     "\"values_gpu_min_batch\": %u, \"values_gpu_max_l\": %u, \"share_min_batch\": %u, "
-                    "\"gpu_big_batch_max_k\": %u, \"gpu_big_batch_min\": %u, \"values_band_min_k\": %u}\n",
+                    "\"gpu_big_batch_max_k\": %u, \"gpu_big_batch_min\": %u, \"values_band_min_k\": %u, "
+                    "\"values_band_width\": %u}\n",
                     device_name(), p.gpu_cores, svd_policy_source(),
                     p.qr_min_rows, p.qr_min_k,
                     p.block_min_k, p.block_min_k_batched, p.block_min_batch,
@@ -195,11 +199,11 @@ int main(int argc, char** argv) {
                     p.gk_min_k, p.gk_max_k, metal_linalg::detail::svd_gk_max_k(),
                     p.values_gpu_max_k, p.values_gpu_min_batch_times_k, p.values_gpu_min_batch,
                     p.values_gpu_max_l, p.share_min_batch, p.gpu_big_batch_max_k, p.gpu_big_batch_min,
-                    p.values_band_min_k);
+                    p.values_band_min_k, p.values_band_width);
         return 0;
     }
     if (argc != 5) {
-        std::fprintf(stderr, "usage: %s <batch> <M> <N> <cpu|jacobi|block|qr|qrblock|bidiag|gk|gk_share|cpu_vals|bidiag_vals|band_vals|gk_vals|gk_share_vals>[,...]\n"
+        std::fprintf(stderr, "usage: %s <batch> <M> <N> <cpu|jacobi|block|qr|qrblock|bidiag|gk|gk_share|cpu_vals|bidiag_vals|band_vals|band8_vals|band32_vals|gk_vals|gk_share_vals>[,...]\n"
                              "       %s --policy\n", argv[0], argv[0]);
         return 2;
     }
@@ -222,6 +226,8 @@ int main(int argc, char** argv) {
         else if (name == "cpu_vals")    solvers.push_back({name, vals_cpu, false});
         else if (name == "bidiag_vals") solvers.push_back({name, vals_bidiag, false});
         else if (name == "band_vals")   solvers.push_back({name, vals_band, false});
+        else if (name == "band8_vals")  solvers.push_back({name, vals_band8, false});
+        else if (name == "band32_vals") solvers.push_back({name, vals_band32, false});
         else if (name == "gk")          solvers.push_back({name, solve_gk});
         else if (name == "gk_vals")     solvers.push_back({name, vals_gk, false});
         else if (name == "gk_share")      solvers.push_back({name, solve_gk_share});
