@@ -115,31 +115,6 @@ $$A \leftarrow A - Y \bigl( T^T (Y^T A) \bigr)$$
 
 which maps directly onto the AMX matrix coprocessor's 8×8 `simdgroup_matrix` tiles.
 
-### Algorithm: `qr_unblocked` (single-kernel, block size $b = 16$)
-
-This kernel processes the entire matrix in one GPU dispatch. It operates on matrices stored in **column-major** format to align with AMX load/store strides, and pads dimensions to multiples of 32 (rows) and 16 (columns) to eliminate in-kernel boundary branching.
-
-For each block of $b = 16$ columns starting at column $s$:
-
-**Step 1 — Panel factorisation.** For each column $k = 0, \ldots, b-1$ within the block:
-
-1. All 1024 threads cooperatively compute $\|x_\text{tail}\|^2$ via a two-phase threadgroup reduction (intra-SIMD via `simd_sum`, then inter-SIMD via shared memory).
-2. Thread 0 computes $\mu$, $\tau$, and the scale $1/(\alpha - \mu)$ and broadcasts them through threadgroup memory.
-3. Each thread normalises its portion of the tail: $A[r, k] \leftarrow A[r, k] / (\alpha - \mu)$ for $r > k$.
-4. The reflector is applied to the remaining $b - k - 1$ columns of the panel: for each $j > k$, $a_j \leftarrow a_j - \tau (v_k^T a_j) v_k$, with the dot product accumulated via threadgroup reduction.
-
-**Step 2 — Form T.** The $b \times b$ upper triangular matrix $T$ is built in threadgroup memory using the recursive formula above.
-
-**Step 3 — Trailing matrix update.** Each SIMD group owns a set of 8-column tiles of the trailing submatrix $A[{:}, s+b{:}]$. Using AMX 8×8 tiles, it computes:
-
-$$Z = Y^T A_\text{trail}, \quad Z \leftarrow T Z, \quad A_\text{trail} \leftarrow A_\text{trail} - Y Z$$
-
-**Step 4 — Q accumulation.** The same WY update is applied to $Q$ (initialised to $I$):
-
-$$Q \leftarrow Q - Y \bigl( T (Y^T Q) \bigr)$$
-
-**Step 5 — Restore diagonal.** The stored $\mu$ values are written back to the diagonal of $A$ (overwriting the temporary $v_k = 1$ sentinel placed there during factorisation).
-
 ### Algorithm: `qr_streaming_amx` (multi-kernel, block size $b = 32$)
 
 For large matrices ($M$ or $N \geq 512$), a single-kernel dispatch causes Q-accumulation to bottleneck on a single shader multiprocessor. The streaming variant splits the computation across **four separate kernel dispatches** per block, allowing the GPU scheduler to assign the trailing update across all available cores in parallel.
@@ -203,42 +178,65 @@ or a little better (reconstruction and orthogonality 2.1e-6 at 4096 against
 2.4e-6). See [the proposal](proposals/qr-blocked.md#done-2026-10-07) for
 the measurements behind each choice.
 
-### Algorithm: `qr_householder` (since 2.16.0, small matrices)
+### Algorithm: `qr_householder` (since 2.16.0, small and mid-size matrices)
 
-`qr_unblocked`'s kernel (above) gives each matrix a threadgroup and works
-column by column through device memory, a barrier per phase of every
-column, one thread building T, the matrix padded to 32 rows; and around it
-the CPU scanned and copied the input and copied Q and R back, which for 4096
-matrices of 16×16 took as long as the CPU path's whole call. Since 2.16.0
-`qr_unblocked` hands small matrices to two kernels built as the SVD's
-`golub_kahan` and the eigensolver's `ql` are: LAPACK's `sgeqr2` (a
-Householder reflector a column, applied to the columns right of it) and
-`sorg2r` (Q accumulated in place from the reflectors, backward).
+The `unblocked` backend's first kernel gave each matrix a threadgroup and
+worked column by column through device memory, a barrier per phase of every
+column, one thread building T, the matrix padded to 32 rows and Q to a full
+square; around it the CPU scanned and copied the input and copied Q and R
+back. Since 2.16.0 the backend is two kernels built as the SVD's
+`golub_kahan` and the eigensolver's `ql` are, a matrix to a simdgroup or a
+threadgroup, LAPACK's methods; the first kernel is gone.
 
-**In registers, a simdgroup a matrix**, for $n \le 64$ with $m \le 64$ and
-$n \le 32$ with $m \le 128$: each lane holds its rows (row $s \cdot 32 +$
+**In registers, a simdgroup a matrix** (`qr_householder_simd`), up to 32
+columns and 128 rows: LAPACK's `sgeqr2` (a Householder reflector a column,
+applied to the columns right of it) and `sorg2r` (Q accumulated in place
+from the reflectors, backward). Each lane holds its rows (row $s \cdot 32 +$
 lane), as the band reduction's panels do. A column's norm is one
 `simd_sum`; the dot products of the columns right of it are `simd_sum`s too,
 four columns to one (on a `float4`); every update is the lane's own FMAs.
-No barrier, no threadgroup memory, several matrices to a threadgroup. A
-lane's row is only ever indexed by constants (the loops are expanded by the
+No barrier, no threadgroup memory, four matrices to a threadgroup. A lane's
+row is only ever indexed by constants (the loops are expanded by the
 preprocessor), so the current column is kept at index 0 by rotating the
 row, left a step while factoring and right a step while Q is formed.
 
-**In threadgroup memory, a threadgroup a matrix**, for narrow matrices
-beyond that ($n \le 32$, up to the threadgroup memory: 200×30, 1000×7): a
-thread a row, the matrix at an odd row stride, column sums by groups of
-lanes, three barriers a column, as `golub_kahan`.
+**Blocked, a threadgroup a matrix** (`qr_householder_wy`), up to 4096 rows:
+LAPACK's `sgeqrf` and `sorgqr` as they run on one core.
+
+1. Panels of 16 columns, R rows a thread (two; four for $n \le 32$), factored
+   as above, two barriers a column (the norm, then the dot products with the
+   panel's other columns: those right of the column update the panel, those
+   left of it give T's new column, slarft's recurrence).
+2. Blocks of 32 columns: each panel's $H = I - V T V^T$ applied to the rest
+   of its block, the block's T merged from its panels' (from $V^T V$), and
+   the block's $H^T$ applied to every column right of it,
+   $W = V^T C$, $C \mathrel{-}= V (T^T W)$, as 8×8 `simdgroup_matrix`
+   products, two column tiles a simdgroup (each tile of V serving two
+   products); the block's rows of R written once it is done.
+3. Q from $[I; 0]$ by the blocks backward, $C \mathrel{-}= V (T (V^T C))$, the
+   identity and the zeros of Q not yet written made in registers rather than
+   read, so that Q is written once (into the caller's Q where it has the
+   workspace's shape).
+
+The matrix, padded with zero rows and columns to multiples of 8 (and to K
+rounded up to 16), is in a device workspace. A simdgroup for every 64 rows
+(128 with four rows a thread), and for every 128 columns of a wide matrix,
+up to 8.
 
 Both read the caller's input row-major as it is, find each matrix's scale
-and non-finite entries on the GPU, and write Q and R straight out, into the
-caller's memory where it is page-aligned. On an M5 Pro, 4096 matrices, GPU
-time: 16×16 0.19 ms, 32×32 0.64, 64×64 4.6 (`qr_unblocked`'s kernel 1.07,
-2.6, 15.9; the CPU path's call about 1.0, 2.7 and 9-10 ms). Tried and
-slower: a column a lane, each lane's dot products its own and the
-reflector's vector shuffled across (2.2x at 32×32, 6x at 64×64:
-`simd_sum` is cheap on this GPU); rows staged through threadgroup memory
-for coalesced loads. See [the proposal](proposals/qr-small-kernel.md).
+and non-finite entries on the GPU, and write Q and R straight out. On an M5
+Pro, through MLX: 1024 of 128×128 in 6.4 ms (the blocked QR 17.8, the CPU
+25), 256 of 256×256 in 8.3 (17.8, 18.7), 4096 of 64×64 in 5.9 (16.1, 10.8),
+4096 of 32×32 in 1.4 (4.2, 2.9). The blocked kernel's time at 128×128 is
+half memory traffic (the input in, R out, the panels' loads and stores),
+the updates running at about 2.7 TFLOP/s. Tried and slower: a column a lane
+in the register kernel (2.2x at 32×32, 6x at 64×64: `simd_sum` is cheap on
+this GPU); register instances of 64 columns (the blocked kernel 1.2-1.4x
+faster there); the whole matrix in threadgroup memory, a thread a row (1.7x
+slower than the blocked kernel at 200×30, 4.6x at 80×80); blocks of 64
+columns (no faster than 32). See
+[qr-small-kernel.md](proposals/qr-small-kernel.md) and
+[qr-mid-size-kernel.md](proposals/qr-mid-size-kernel.md).
 
 ## How it works
 
@@ -246,7 +244,7 @@ Two Metal backends and a CPU path handle different regimes, with a dispatcher th
 
 **CPU (`qr_cpu`)** — LAPACK's `sgeqrf` and `sorgqr` (Accelerate), after transposing each matrix into the column-major layout LAPACK reads. A batch is spread over every CPU core (since 2.9.0), each core solving whole matrices with Accelerate's own threading off: on an M5 Pro that is 10-12x faster than one matrix at a time for batches of 16×16 to 64×64, and 6-8x for 512×512 and larger. A lone matrix keeps Accelerate's threading. `set_cpu_threads()` or `METAL_LINALG_CPU_THREADS` caps the cores used, for a program that runs several solves at once. A wide matrix (M < N) is factored by its leading M×M block, $A_1 = Q R_1$, and $R_2 = Q^T A_2$ by one matrix product: the same reflectors and the same R as `sgeqrf` on the whole matrix, which Accelerate ran 10-40x slower (since 2.11.0; on an M5 Pro one 64×2048 in 0.09 ms against 1.47, 16 of them in 0.33 ms against 4.2). Before, the GPU was 2-3x faster than this path for small batches of wide matrices, which a rule on k alone sent to the CPU.
 
-**`qr_unblocked`** — The GPU path for small matrices. Since 2.16.0 it hands them to the Householder kernels (`qr_householder`, above): in registers where they fit, in threadgroup memory for narrow ones (`QR_HOUSEHOLDER=0` turns that off). Its own kernel, kept for the rest: standard Householder QR in a single kernel dispatch, one threadgroup per matrix.
+**`qr_unblocked`** — The GPU path for small and mid-size matrices, a matrix to a simdgroup or a threadgroup: since 2.16.0 the Householder kernels (`qr_householder`, above), up to 4096 rows; beyond them the blocked QR. (Its own kernel, a threadgroup a matrix walking device memory, was retired in 2.16.0.)
 
 **`qr_streaming_amx_reduced`** — The GPU path for large matrices. Since 2.15.0 it hands every call it can to the blocked QR (`qr_blocked`, above; `QR_BLOCKED=0` turns that off), which beat its own kernels at every shape and batch measured (1.8-3.5x on an M5 Pro). Its own kernels, kept for matrices taller than $2^{22}$ rows: multi-pass panel factorisation with grid-parallel trailing matrix updates, column panels of width 32, the T-matrix for each WY representation, then a grid of threadgroups for the trailing update, Q accumulated at its economic width of `K = min(M, N)` columns by a backward pass.
 
@@ -263,7 +261,10 @@ threshold at its former 1e-7, every backend lost accuracy from entries around
 above 1e+18, and discarded any column tail shorter than 3e-4 of the matrix's
 scale, which is real data whenever columns are nearly dependent. All four are
 covered by regression tests now (`[ magnitude ]` and
-`[ nearly dependent columns ]` in `tests/test_qr.cpp`).
+`[ nearly dependent columns ]` in `tests/test_qr.cpp`). The blocked
+Householder kernel scales only a matrix whose largest entry is beyond
+2^20 or 2^-20 (its sums of squares are plain, without a threshold, and need
+no more), which saves it a pass over the matrix.
 
 ### Dispatch logic
 
@@ -321,18 +322,27 @@ the measured row is `k <= 128` with `batch * k >= 40960`, no lower bound. Then,
 on the GPU, which kernel:
 
 ```
-M >= m_crossover  ->  qr_streaming_amx_reduced      (384 on an M1; 512 on an M5 Pro, 128 since 2.15.0's blocked QR)
+k >= m_crossover  ->  qr_streaming_amx_reduced      (on an M5 Pro: 192 for batches below 8, 576 from 8)
 otherwise         ->  qr_unblocked
 ```
 
-The crossover is on `M` alone, and rows are **not** interchangeable with columns.
-`qr_unblocked` gives each matrix a single threadgroup, which must sweep `M` rows
-for every Householder reflection, so `M` is its serial depth; `N` parallelises
-across the threadgroup's threads. `qr_streaming_amx_reduced` spreads each matrix
-over a grid instead, paying roughly three kernel launches per 32-column panel.
+The crossover is on `k = min(M, N)` since 2.16.0, and on `M` before. The
+unblocked backend's kernels give a matrix a simdgroup or a threadgroup whose
+threads hold its rows: its depth is its `k` columns, a panel step a column,
+while its rows run in parallel. The blocked QR spreads a matrix over the
+whole GPU at several dispatches a panel, which a large matrix repays, or a
+small batch (one threadgroup a matrix leaves most of the GPU idle: one
+4096×256 takes 13 ms on the unblocked backend, 2.6 on the blocked QR). On
+the shapes the GPU takes in the M5 Pro's run of 2026-10-08, `k` fitted at
+1.040x regret, `M` at 1.129x; split by batch (the fields
+`m_crossover_small_batch`, `m_crossover_large_batch`, `batch_threshold`), at
+1.004x held out against 1.065x for one threshold. The split's field names
+are historical.
 
-That makes a tall matrix and its transpose want opposite backends despite sharing
-both `max(M, N)` and `K = min(M, N)` (measured on an M1, batch 16):
+Before 2.16.0 the `unblocked` backend's kernel swept a matrix's rows a
+column at a time, `M` was its depth, and a tall matrix and its transpose
+wanted opposite backends despite sharing both `max(M, N)` and `K = min(M, N)`
+(measured on an M1, batch 16, with that kernel):
 
 | shape | `K` | `qr_unblocked` | `qr_streaming_amx_reduced` | winner |
 |---|---|---|---|---|
@@ -344,17 +354,19 @@ both `max(M, N)` and `K = min(M, N)` (measured on an M1, batch 16):
 Full measurement study, including why two earlier cross-validated answers were
 wrong: [`studies/qr-routing-apple-m1.md`](studies/qr-routing-apple-m1.md).
 
-Batch does not enter the rule, and neither does `N`. Both were tried. A
-batch-dependent threshold and a narrow-`N` special case each scored well on the
-grid they were fitted to and then failed on held-out data -- the narrow-`N` term
-went from 1.007x on the training half to a *worse* worst case (1.48x vs 1.25x) on
-the held-out half. A cost model built from the actual thread count
-(`32 * min(ceil(N_pad/8), 32)`) did worse still, at 1.100x.
+On the M1, with that kernel, batch did not enter the rule, and neither did
+`N`. Both were tried. A batch-dependent threshold and a narrow-`N` special
+case each scored well on the grid they were fitted to and then failed on
+held-out data -- the narrow-`N` term went from 1.007x on the training half to
+a *worse* worst case (1.48x vs 1.25x) on the held-out half. A cost model built
+from the actual thread count (`32 * min(ceil(N_pad/8), 32)`) did worse still,
+at 1.100x. The batch split is tested on every run, and adopted where it
+survives held-out data (the M5 Pro, 2.16.0).
 
-`N` does affect the true crossover -- `qr_unblocked`'s threadgroup width scales
-with `N` and only saturates past `N ~ 256`, so thin matrices favour the
-grid-parallel backend from a lower `M` -- but no rule keyed on `N` beat a plain
-threshold once it was validated honestly.
+`N` does affect the true crossover -- the first `qr_unblocked` kernel's
+threadgroup width scaled with `N` and only saturated past `N ~ 256`, so thin
+matrices favoured the grid-parallel backend from a lower `M` -- but no rule
+keyed on `N` beat a plain threshold once it was validated honestly.
 
 `qr_streaming_amx_complete` is not dispatched to. It is within noise of
 `qr_streaming_amx_reduced` everywhere it was measured (best margin 5.6% against a
@@ -366,7 +378,8 @@ but unused.
 A QR factorisation is unique only up to the signs of R's diagonal (with the
 matching columns of Q), and the backends do not all choose the same ones. The
 CPU path, `qr_unblocked` and the blocked QR keep the Householder reflections'
-signs (the CPU path and `qr_unblocked` LAPACK's convention exactly), so about
+signs (the CPU path and `qr_unblocked` LAPACK's convention exactly, slarfg's
+beta = -sign(alpha) times the norm), so about
 half of R's diagonal is negative; the streaming kernels
 (`qr_streaming_amx_reduced` where it does not hand the call to the blocked
 QR: taller than $2^{22}$ rows, or `QR_BLOCKED=0`) make the diagonal
@@ -378,9 +391,10 @@ flip column `i` of Q and row `i` of R wherever `R[i][i] < 0`.
 ### Tuning
 
 **The crossover is hardware-specific.** `384` was measured on an 8-core Apple
-M1 over 421 shapes; on a 20-core M5 Pro it was `512`, and is `128` since the
-grid-parallel backend hands its calls to the blocked QR (2.15.0). None is a
-universal constant. The library ships a table of measured values rather than a formula,
+M1 over 421 shapes; on a 20-core M5 Pro it was `512`, then `128` once the
+grid-parallel backend handed its calls to the blocked QR (2.15.0), and since
+2.16.0's kernels it is on `k`: 192 for batches below 8, 576 from 8. None is
+a universal constant. The library ships a table of measured values rather than a formula,
 because the crossover depends on both core count and per-core throughput and the
 two push in opposite directions across GPU generations: more cores favour the
 grid-parallel backend, a faster core favours the single-threadgroup one, and on
@@ -389,19 +403,22 @@ the M5 Pro the second effect won.
 | GPU | cores | `m_crossover` | GPU or CPU | status |
 |---|---|---|---|---|
 | Apple M1 | 8 | — | — | measured before 2.9.0, out of date and no longer used since 2.14.0: estimated like any unmeasured Mac (the old row's study: [`studies/qr-routing-apple-m1.md`](studies/qr-routing-apple-m1.md)) |
-| Apple M5 Pro | 20 | 128 | GPU iff `16 <= k <= 256` and `batch * k >= 20480`, or `sqrt(M k) >= 512` and `batch <= 64`; shared with the CPU from batch 1024 | measured — run [`20261007-82345e`](results/apple-m5-pro-20gpu/20261007-82345e/qr/report.md) |
+| Apple M5 Pro | 20 | k: 192 below batch 8, 576 from 8 | GPU iff `k <= 320` and `batch * k >= 6144`, or `sqrt(M k) >= 362`; no batch shared with the CPU | measured — run [`20261007-8633ac`](results/apple-m5-pro-20gpu/20261007-8633ac/qr/report.md) |
 | anything else | — | estimated | estimated | **estimated** from the M5 Pro's timings ([how](tuning.md#macs-nobody-has-measured)) |
 
 The GPU-or-CPU boundary is measured by every run made since QR had a CPU path;
 a device's row sends every call to the GPU until such a run has been submitted
-for it (`python3 tuning/run.py --only qr` measures QR alone in about 4
-minutes). Against the best backend at each of the 207 shapes of its run
-(2.15.0, with the blocked QR), the M5 Pro row scores 1.0133 geometric-mean
-regret, worst 1.72x (4 of 2048×64, which the GPU takes in 1.0 ms and the
-rule sends to the CPU's 1.7), 1.0274 held out; always the CPU would score
-1.223, always the GPU 1.89. The CPU is the fastest at 131 of the 207 shapes:
-lone matrices up to about 384, batches of up to 64 of 128-256. Before the
-blocked QR, the 2.12 row scored 1.0013 on its own run's 185 shapes. The M5 Pro row of 2.9.0 was the first measured against the CPU path that
+for it (`python3 tuning/run.py --only qr` measures QR alone in about 5
+minutes). Against the best backend at each of the 221 shapes of its run
+(2.16.0), the M5 Pro row scores 1.0377 geometric-mean regret, worst 1.96x,
+1.0670 held out; always the CPU would score 1.316, always the GPU 1.73. The
+CPU is the fastest at 123 of the 221 shapes: lone matrices up to about 384
+and small batches. The run's first analysis, with the crossover on `M` and
+fitted on every shape (the CPU's included), scored 1.091 and sent 1024 of
+128×128 to the blocked QR (17.8 ms, against 6.4 on the unblocked backend):
+the crossover is now fitted where a GPU kernel beats the CPU. With the
+blocked QR (2.15.0) the row scored 1.0133 on its run's 207 shapes, and the
+2.12 row 1.0013 on its 185. The M5 Pro row of 2.9.0 was the first measured against the CPU path that
 spreads a batch over every core (2.9.0), and against it the CPU was fastest at
 151 of the 178 shapes measured. The GPU keeps one or a few large matrices
 (1.3x at 1536×1536, 1.9x at 2048×2048, 2.2x at 3072×3072, alone) and large
@@ -444,9 +461,11 @@ p.gpu_min_k = 0;
 metal_linalg::set_qr_policy(p);
 ```
 
-`./build/probe_occupancy` reports the threadgroup-memory limits that set how
-many matrices `qr_unblocked` keeps resident (6 per core: 48 on an 8-core M1,
-120 on a 20-core M5 Pro), which governs whether batch count can matter at all.
+`./build/probe_occupancy` reports the pipelines' threadgroup limits (the
+Householder kernels' and the streaming kernels'). The policy's
+`concurrent_matrices` is the residency of the `unblocked` backend's first
+kernel (threadgroups of 5 KB: 6 per core, 120 on a 20-core M5 Pro), kept as
+it was for comparison with earlier runs.
 
 ### Tests
 

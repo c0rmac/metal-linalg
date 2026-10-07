@@ -101,29 +101,30 @@ as well when their input requires grad, since the gradient needs them.
 ## Performance
 
 Against `torch.linalg` on an M5 Pro with PyTorch 2.13 (conda-forge's, its CPU
-LAPACK from Accelerate) and metal-linalg 2.15 (best of five,
+LAPACK from Accelerate) and metal-linalg 2.16 (best of five,
 [`benchmarks/benchmark_torch.py`](https://github.com/c0rmac/metal-linalg/blob/main/benchmarks/benchmark_torch.py);
 the same tensors on MPS for torch's MPS path and for this package, which uses
 them in place, see [MPS tensors](#mps-tensors)):
 
 | | torch, CPU | torch, MPS | metal-linalg-torch |
 |---|---|---|---|
-| QR, 1024 × 128×128 | 202 ms | 33 ms | 13 ms |
-| SVD, 256 × 128×64 | 69 ms | 70 ms | 5.5 ms |
-| SVD, 4096 × 32×32 | 215 ms | 217 ms | 7.7 ms |
-| eigh, 4096 × 16×16 | 34 ms | 36 ms | 2.1 ms |
-| eigh, one 2048×2048 | 250 ms | 255 ms | 55 ms |
-| SVD, one 4096×4096 | 3.56 s | 3.54 s | 343 ms |
-| eigvalsh, one 4096×4096 | 1.77 s | 1.79 s | 127 ms |
-| svdvals, one 4096×4096 | 1.96 s | 1.97 s | 194 ms |
+| QR, 1024 × 128×128 | 202 ms | 33 ms | 6.5 ms |
+| SVD, 256 × 128×64 | 69 ms | 72 ms | 5.3 ms |
+| SVD, 4096 × 32×32 | 222 ms | 233 ms | 6.2 ms |
+| eigh, 4096 × 16×16 | 33 ms | 35 ms | 1.9 ms |
+| eigh, one 2048×2048 | 255 ms | 261 ms | 57 ms |
+| SVD, one 4096×4096 | 3.68 s | 3.72 s | 356 ms |
+| eigvalsh, one 4096×4096 | 1.81 s | 1.83 s | 131 ms |
+| svdvals, one 4096×4096 | 2.01 s | 2.02 s | 196 ms |
 
 It is ahead on every row. Of these calls PyTorch 2.13 runs only QR on the GPU
-for MPS tensors, and this is 2.5x faster there; its SVD takes as long on MPS
+for MPS tensors, and this is 5x faster there (the QR batch runs on the
+library's Householder kernels); its SVD takes as long on MPS
 as on the CPU, and eigh, eigvalsh and svdvals have no MPS kernels and go
-through its CPU fallback. Against those, 12-28x for the other batches of
+through its CPU fallback. Against those, 13-36x for the other batches of
 small matrices (the SVD of 256 matrices of 128×64 runs on the library's CPU
-path, which spreads a batch over every core; the two batches of 4096, and the
-QR batch, run on the GPU and the CPU at once), 4.5x for eigh of one 2048×2048
+path, which spreads a batch over every core; the two batches of 4096 run on
+the GPU and the CPU at once), 4.5x for eigh of one 2048×2048
 and 10x for the SVD of one 4096×4096 with its vectors, and 10-14x for its
 eigenvalues or singular values alone (the last three by a two-stage
 reduction). Which

@@ -1,6 +1,8 @@
 # A QR kernel for batches of small matrices
 
-Status: proposal (2026-10-07).
+Status: **done** in 2.16.0 (2026-10-08), with a kernel in registers beside
+the one proposed, which a blocked kernel then replaced; see
+[Done](#done-2026-10-08).
 
 ## What
 
@@ -66,3 +68,30 @@ work).
 ## Where to start
 
 `svd_golub_kahan`'s steps 1, 2 (the left reflectors) and 4.
+
+## Done (2026-10-08)
+
+**Built as planned** (`qr_householder` in `shaders/QR_Householder.metal`,
+`src/qr_householder.mm`), and beside it a kernel with the matrix in one
+simdgroup's registers, as the band reduction's panels keep theirs: rows a
+lane, the current column kept at index 0 by rotating the row, a step's dot
+products four columns to a `simd_sum` on a float4, no barrier and no
+threadgroup memory, four matrices to a threadgroup. GPU time, 4096 matrices
+(M5 Pro):
+
+| shape | `unblocked`'s kernel | threadgroup memory | registers |
+|---|---|---|---|
+| 16 x 16 | 1.07 ms | 0.81 | 0.19 |
+| 32 x 32 | 2.6 | 1.41 | 0.64-0.82 |
+| 64 x 64 | 15.9 | 15.8 | 4.4 |
+
+A column a lane instead (each lane's dot products its own FMAs, the
+reflector's vector shuffled across) was 2.2x slower at 32 x 32 and 6x at
+64 x 64: `simd_sum` is cheap on this GPU.
+
+**Then** the blocked kernel for mid-size matrices
+([qr-mid-size-kernel.md](qr-mid-size-kernel.md)) beat both from 48 columns
+up: the register kernel keeps up to 32 columns and 128 rows, and the
+threadgroup-memory kernel, which no longer won anywhere (1024 of 200 x 30:
+2.2 ms against 1.3), was removed before release, as was `unblocked`'s own
+kernel.

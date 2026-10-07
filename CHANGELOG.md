@@ -2,20 +2,48 @@
 
 ## 2.16.0
 
-- **QR kernels for batches of small matrices** (`qr_householder`), to which
-  the `unblocked` backend hands them: LAPACK's method (`sgeqr2`, then `sorg2r`
-  forming Q in place) as the SVD's `golub_kahan` and the eigensolver's `ql`
-  are built. In a simdgroup's registers for n <= 64 with m <= 64 and n <= 32
-  with m <= 128 (rows a lane, a step's dot products four columns to a
-  `simd_sum`, no barrier and no threadgroup memory, several matrices to a
-  threadgroup); in threadgroup memory, a thread a row, for narrow matrices
-  beyond that. The input read row-major, scanned and scaled on the GPU, Q
-  and R written straight out: no CPU pass. On an M5 Pro, 4096 matrices, GPU
-  time: 16x16 0.19 ms, 32x32 0.64, 64x64 4.6, where `unblocked`'s own kernel
-  took 1.07, 2.6 and 15.9 and the CPU path's call takes about 1.0, 2.7 and
-  9-10. `QR_HOUSEHOLDER=0` keeps `unblocked`'s kernel.
-- Kernel epoch qr 6; `tune_qr.py`'s kernel crossover may go down to 64 rows
-  (its grid gains 80 x 80 and 96 x 96).
+- **QR kernels for batches of small and mid-size matrices**
+  (`qr_householder`), which are now the `unblocked` backend: LAPACK's
+  methods, a matrix to a simdgroup or a threadgroup, as the SVD's
+  `golub_kahan` and the eigensolver's `ql` are built. Up to 32 columns and
+  128 rows in a simdgroup's registers (`sgeqr2`, `sorg2r`: rows a lane, a
+  step's dot products four columns to a `simd_sum`, no barrier); up to 4096
+  rows blocked in a threadgroup (`sgeqrf`, `sorgqr`: panels of 16 columns in
+  registers, T built on the way, the updates by blocks of 32 columns as 8 x 8
+  simdgroup matrix products, Q's start and R folded into the passes). The
+  input read row-major, scanned and scaled on the GPU, Q and R written
+  straight out: no CPU pass. On an M5 Pro, through MLX: 1024 of 128 x 128 in
+  6.4 ms (the blocked QR 17.8, the CPU 25), 256 of 256 x 256 in 8.3 (17.8,
+  18.7), 4096 of 64 x 64 in 5.9 (16.1, 10.8), 4096 of 32 x 32 in 1.4 (4.2,
+  2.9), 64 of 4096 x 64 in 8.8 (13.5, 17.3). See
+  [qr-small-kernel.md](docs/proposals/qr-small-kernel.md) and
+  [qr-mid-size-kernel.md](docs/proposals/qr-mid-size-kernel.md).
+- `unblocked`'s own kernel (`QR_Unblocked.metal`), 2.5-6x slower wherever it
+  ran, is retired; beyond 4096 rows `unblocked` hands the call to the blocked
+  QR.
+- **MLX's buffers are no longer wrapped again**: through the MLX API, the
+  input's and outputs' own Metal buffers are used (`KnownBuffer`), rather
+  than new buffers over the same memory, whose pages the first command
+  buffer maps at about 1 ms a 64 MB. 10-25% off a call for large batches of
+  small matrices, for every decomposition's GPU backends
+  ([known-buffers.md](docs/proposals/known-buffers.md)).
+- **QR's routing re-measured** (kernel epoch qr 6, run
+  [`20261007-8633ac`](docs/results/apple-m5-pro-20gpu/20261007-8633ac/summary.md)),
+  and its kernel crossover now on k = min(M, N) rather than rows, split by
+  batch: the new kernels walk a matrix's columns with its rows in parallel,
+  and the blocked QR repays its dispatches on large matrices or small
+  batches. On the M5 Pro the blocked QR takes k >= 192 below 8 matrices,
+  k >= 576 from 8; the GPU takes k <= 320 with batch * k >= 6144, or
+  sqrt(M k) >= 362 at any batch; no batch is shared with the CPU. 1.038x
+  geometric-mean regret against the best backend at each of 221 shapes
+  (held out 1.067x). The fields keep their names (`m_crossover_*`).
+- `tune_qr.py`: the kernel crossover is fitted on k, on the shapes where a GPU
+  kernel beats the CPU (on every shape it sent 1024 of 128 x 128 to the
+  blocked QR, 2.8x slower), and its batch split is shipped where it survives
+  held-out data; the unblocked backend is timed on the tall large shapes
+  too; ties in the large-matrix clause's batch cap go to the GPU; the grid's
+  kernel crossover goes down to 64 (80 x 80 and 96 x 96) and its mid-size
+  batches up to 384.
 - README: QR in the table of large batches of small matrices.
 
 ## 2.15.0 (2026-10-07)
