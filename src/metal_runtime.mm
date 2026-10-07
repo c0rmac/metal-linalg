@@ -1,4 +1,5 @@
 #include "metal_runtime.h"
+#include "known_buffers.h"
 #include "shaders.h"
 
 #include <metal_linalg/device.h>
@@ -53,9 +54,53 @@ id<MTLBuffer> new_shared_buffer(id<MTLDevice> device, size_t bytes) {
     return b;
 }
 
+// The buffers KnownBuffer registers, any thread's (a batch's GPU share may
+// run on a thread of its own).
+struct Known {
+    const void* data;
+    void*       buffer;
+};
+std::mutex& known_mutex() {
+    static std::mutex m;
+    return m;
+}
+std::vector<Known>& known() {
+    static std::vector<Known> k;
+    return k;
+}
+
+// A registered buffer that starts at `data` and holds `bytes`, else nil.
+id<MTLBuffer> known_buffer(const void* data, size_t bytes) {
+    std::lock_guard<std::mutex> lock(known_mutex());
+    for (const Known& k : known()) {
+        if (k.data != data) continue;
+        id<MTLBuffer> b = (__bridge id<MTLBuffer>)k.buffer;
+        if (b.contents == data && b.length >= bytes) return b;
+    }
+    return nil;
+}
+
 } // namespace
 
+KnownBuffer::KnownBuffer(const void* data, void* buffer) : data_(data), buffer_(buffer) {
+    if (!data_ || !buffer_) return;
+    std::lock_guard<std::mutex> lock(known_mutex());
+    known().push_back({data_, buffer_});
+}
+
+KnownBuffer::~KnownBuffer() {
+    if (!data_ || !buffer_) return;
+    std::lock_guard<std::mutex> lock(known_mutex());
+    std::vector<Known>& k = known();
+    for (size_t i = k.size(); i-- > 0;)
+        if (k[i].data == data_ && k[i].buffer == buffer_) {
+            k.erase(k.begin() + (long)i);
+            break;
+        }
+}
+
 id<MTLBuffer> wrap_host(id<MTLDevice> device, float* data, size_t floats) {
+    if (id<MTLBuffer> b = known_buffer(data, floats * sizeof(float))) return b;
     id<MTLBuffer> b = [device newBufferWithBytesNoCopy:data
                                                 length:page_round(floats * sizeof(float))
                                                options:MTLResourceStorageModeShared
@@ -66,6 +111,8 @@ id<MTLBuffer> wrap_host(id<MTLDevice> device, float* data, size_t floats) {
 
 id<MTLBuffer> input_buffer(id<MTLDevice> device, const Matrices& a, bool transpose) {
     const size_t bytes = element_count(a) * sizeof(float);
+    if (!transpose)
+        if (id<MTLBuffer> b = known_buffer(a.data, bytes)) return b;
     if (transpose) {
         id<MTLBuffer> b = new_shared_buffer(device, bytes);
         transpose_out(a.data, static_cast<float*>([b contents]), a.batch, a.rows, a.cols);

@@ -7,12 +7,16 @@
 
 #include <mlx/mlx.h>
 
+#include "known_buffers.h"
+
 #include <algorithm>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace mx = mlx::core;
 
@@ -82,6 +86,29 @@ mx::array nothing() { return mx::zeros(mx::Shape{0}, mx::float32); }
 template <class T>
 T* memory(mx::array& x) { return x.size() ? x.data<T>() : nullptr; }
 
+// The Metal buffer behind an array's memory, for detail::KnownBuffer; nullptr
+// without Metal (the buffer is then not one) or for an empty array.
+void* metal_buffer(mx::array& x) {
+    static const bool metal = mx::metal::is_available();
+    return metal && x.size() ? x.buffer().ptr() : nullptr;
+}
+
+// The input's and the outputs' buffers, known to the core for the call.
+class Known {
+public:
+    explicit Known(Input& in) { add(in.array); }
+    Known& operator()(mx::array& x) {
+        add(x);
+        return *this;
+    }
+
+private:
+    std::vector<std::unique_ptr<detail::KnownBuffer>> known_;
+    void add(mx::array& x) {
+        if (x.size()) known_.push_back(std::make_unique<detail::KnownBuffer>(x.data<char>(), metal_buffer(x)));
+    }
+};
+
 bool parse_uplo(const std::string& uplo, const char* who) {
     if (uplo == "L" || uplo == "l") return true;
     if (uplo == "U" || uplo == "u") return false;
@@ -96,6 +123,8 @@ std::pair<mx::array, mx::array> run_qr(const mx::array& a, const char* who, Fn f
     const uint32_t M = in.matrices.rows, N = in.matrices.cols, K = std::min(M, N);
     mx::array q = output(shape_of(in.batch_shape, {M, K}));
     mx::array r = output(shape_of(in.batch_shape, {K, N}));
+    Known known(in);
+    known(q)(r);
     fn(in.matrices, memory<float>(q), memory<float>(r));
     return {q, r};
 }
@@ -112,6 +141,8 @@ EighResult run_eigh(const mx::array& a, bool vectors, const char* who, Fn fn) {
     mx::array w    = output(shape_of(in.batch_shape, {n}));
     mx::array v    = vectors ? output(shape_of(in.batch_shape, {n, n})) : nothing();
     mx::array info = output(in.batch_shape, mx::uint32);
+    Known known(in);
+    known(w)(v)(info);
     fn(in.matrices, memory<float>(w), vectors ? memory<float>(v) : nullptr, memory<uint32_t>(info));
     return {w, v, info};
 }
@@ -126,6 +157,8 @@ SvdResult run_svd(const mx::array& a, bool uv, const char* who, Fn fn) {
     mx::array s    = output(shape_of(in.batch_shape, {K}));
     mx::array vt   = uv ? output(shape_of(in.batch_shape, {K, N})) : nothing();
     mx::array info = output(in.batch_shape, mx::uint32);
+    Known known(in);
+    known(u)(s)(vt)(info);
     fn(in.matrices, uv ? memory<float>(u) : nullptr, memory<float>(s),
        uv ? memory<float>(vt) : nullptr, memory<uint32_t>(info));
     return {u, s, vt, info};
