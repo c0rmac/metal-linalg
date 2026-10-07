@@ -360,11 +360,16 @@ uint32_t band_blocks_symmetric(uint32_t n, uint32_t b);
 // each aggregate's I - Y Ta Y^T to the columns right of it. Kept: each
 // block's V (row-major, at k (ldv + 1) in v, k = j b, zeros above it in v),
 // T (ld 32, at j 1024 in t), and each aggregate's Ta (ld 128, 128^2 apart in
-// ta). g (128 x 128), z and z2 (128 x ldw, ldw >= max(n, K)) scratch.
+// ta). vt (the panels' V T, m x 32), g (128 x 128), z and z2 (128 x ldw,
+// ldw >= max(n, K)) and sc (the TSQR's) scratch. A batch of `batch`
+// matrices at once, each buffer's matrices its stride (in floats) apart.
 struct QrStore {
-    id<MTLBuffer> v, t, ta, g, z, z2;
-    uint32_t ldv, ldw;
+    id<MTLBuffer> v, vt, t, ta, g, z, z2, sc;
+    uint32_t ldv = 0, ldw = 0, batch = 1;
+    size_t sa = 0, sv = 0, svt = 0, st = 0, sta = 0, sg = 0, sz = 0, ssc = 0;
 };
+// The TSQR scratch a panel of m rows needs, in floats.
+size_t qr_scratch_floats(uint32_t m);
 // The panel width for m rows (the TSQR's 128 * 1024 / b rows at most), 0 if
 // none fits.
 uint32_t qr_block_width(uint32_t m);
@@ -376,14 +381,18 @@ uint32_t qr_blocks(id<MTLCommandBuffer> __strong& cb, id<MTLBuffer> A, uint32_t 
                    uint32_t b, const QrStore& st, std::vector<id<MTLCommandBuffer>>& committed);
 // Q (m x K row-major, ld ldq) <- H_0 ... H_{blocks - 1} Q, by aggregates,
 // aggregate a on Q's rows and columns from its first (the rest of those rows
-// zero in a Q formed from the identity).
+// zero in a Q formed from the identity). V may have more rows than Q, zero
+// past Q's (a factored matrix padded with zero rows): they are left out.
 void qr_blocks_apply(id<MTLCommandBuffer> cb, id<MTLBuffer> Q, uint32_t m, uint32_t K, uint32_t ldq, uint32_t b,
                      uint32_t blocks, const QrStore& st);
-// R (k x n row-major) = up times A's upper triangle (ld lda), zeros below.
+// Each R (k x n row-major, k n apart) = up[i] times A's upper triangle (ld
+// lda, sa apart), zeros below.
 void qr_r_out(id<MTLCommandBuffer> cb, id<MTLBuffer> A, id<MTLBuffer> R, uint32_t k, uint32_t n, uint32_t lda,
-              float up);
-// dst = scale src, n floats.
-void qr_scale_copy(id<MTLCommandBuffer> cb, id<MTLBuffer> src, id<MTLBuffer> dst, size_t n, float scale);
+              size_t sa, uint32_t batch, id<MTLBuffer> up);
+// Each dst (mp x np, row-major, sd apart) = scale[i] src (m x n, m n
+// apart), zeros around it.
+void qr_scale_copy(id<MTLCommandBuffer> cb, id<MTLBuffer> src, id<MTLBuffer> dst, uint32_t m, uint32_t n,
+                   uint32_t mp, uint32_t np, size_t sd, uint32_t batch, id<MTLBuffer> scale);
 id<MTLCommandQueue> qr_queue();
 id<MTLDevice> qr_device();
 

@@ -619,19 +619,19 @@ namespace metal_linalg {
 
             // Multi-pass streaming panel factorisation that accumulates Q
             // directly at its economic K-column width via a backward pass. The
-            // grid-parallel path for large matrices. One matrix, or a few
-            // large ones, go to qr_blocked instead (qr_blocked_preferred;
-            // QR_BLOCKED=0 keeps them here).
+            // grid-parallel path for large matrices. Everything qr_blocked
+            // takes goes there instead (qr_blocked_preferred; QR_BLOCKED=0
+            // keeps it here).
             void qr_streaming_amx_reduced(const Matrices& a, float* q, float* r);
 
-            // Large matrices one at a time by blocks of columns: the panels
-            // by the band reduction's kernels, the updates and Q's formation
-            // as MPS products, the last columns by LAPACK. For up to 16384
-            // rows (qr_blocked_fits; throws otherwise).
+            // By blocks of columns, a batch at once: the panels by the band
+            // reduction's kernels, the updates and Q's formation as MPS
+            // products. For up to 16384 rows (qr_blocked_fits; throws
+            // otherwise).
             void qr_blocked(const Matrices& a, float* q, float* r);
             bool qr_blocked_fits(uint32_t m, uint32_t n);
             // Whether qr_streaming_amx_reduced hands the call to qr_blocked:
-            // one matrix, or batch * 512 <= min(m, n), where it fits.
+            // wherever it fits, unless QR_BLOCKED=0.
             bool qr_blocked_preferred(uint32_t m, uint32_t n, uint32_t batch);
 
             // As above, but accumulates the full M x M orthogonal factor

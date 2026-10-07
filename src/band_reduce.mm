@@ -48,7 +48,7 @@ namespace {
 using L = __LAPACK_int;
 
 // Must match PanelParams and SmallParams in Svd_Bidiag.metal.
-struct PanelParams { uint32_t rows, cols, rs, cs, ldv, flags, shift, ldt, leaf, ldw, dup, ldk; };
+struct PanelParams { uint32_t rows, cols, rs, cs, ldv, flags, shift, ldt, leaf, ldw, dup, ldk, sa, sv, svt, st, ss; };
 struct SmallParams { uint32_t n, b, ldw, a0, b0, rb, ldc, m, per; };
 struct SyParams    { uint32_t n, lda, ldw, b; };
 
@@ -136,12 +136,28 @@ MPSMatrix* mps(id<MTLBuffer> b, size_t off, uint32_t rows, uint32_t cols, uint32
     return [[MPSMatrix alloc] initWithBuffer:b offset:off * 4 descriptor:d];
 }
 
+// `count` matrices, `stride` floats apart. MPS's batched products step from
+// one left or result matrix to the next by rows x rowBytes, whatever
+// matrixBytes says (macOS 27), so the descriptor is a whole stride tall
+// (stride a multiple of ld): the product's own sizes say what it reads. The
+// buffer needs a stride of slack past the batch's last matrix.
+MPSMatrix* mps(id<MTLBuffer> b, size_t off, uint32_t rows, uint32_t cols, uint32_t ld, uint32_t count,
+               size_t stride) {
+    if (count <= 1) return mps(b, off, rows, cols, ld);
+    if (stride % ld != 0 || stride / ld < rows) throw std::logic_error("[qr] a batched view's stride");
+    rows = (uint32_t)(stride / ld);
+    MPSMatrixDescriptor* d = [MPSMatrixDescriptor matrixDescriptorWithRows:rows columns:cols matrices:count
+                                                                  rowBytes:(size_t)ld * 4 matrixBytes:stride * 4
+                                                                  dataType:MPSDataTypeFloat32];
+    return [[MPSMatrix alloc] initWithBuffer:b offset:off * 4 descriptor:d];
+}
+
 // The products' kernels by shape, reused: making one costs more than
 // encoding it, and a reduction encodes hundreds to thousands, of shapes that
 // recur from call to call. A thread's own (MPS kernels are not thread-safe),
 // cleared when it grows large.
 void gemm(id<MTLDevice> dev, id<MTLCommandBuffer> cb, MPSMatrix* A, bool ta, MPSMatrix* B, bool tb, MPSMatrix* C,
-          uint32_t m, uint32_t n, uint32_t k, double alpha, double beta) {
+          uint32_t m, uint32_t n, uint32_t k, double alpha, double beta, uint32_t batch = 1) {
     using Key = std::tuple<uint32_t, uint32_t, uint32_t, int, double, double>;
     thread_local std::map<Key, MPSMatrixMultiplication*> kernels;
     const Key key{m, n, k, (ta ? 1 : 0) | (tb ? 2 : 0), alpha, beta};
@@ -152,6 +168,8 @@ void gemm(id<MTLDevice> dev, id<MTLCommandBuffer> cb, MPSMatrix* A, bool ta, MPS
             transposeRight:tb resultRows:m resultColumns:n interiorColumns:k alpha:alpha beta:beta];
         it = kernels.insert_or_assign(key, g).first;
     }
+    it->second.batchStart = 0;
+    it->second.batchSize = batch;
     [it->second encodeToCommandBuffer:cb leftMatrix:A rightMatrix:B resultMatrix:C];
 }
 
@@ -177,7 +195,8 @@ void small_partials(const Small& sk, const Buffers& w, id<MTLComputeCommandEncod
 // a row).
 void panel(const Panels& pk, const Buffers& w, id<MTLCommandBuffer> cb, id<MTLBuffer> A, size_t off, PanelParams pp,
            id<MTLBuffer> vout, size_t voff, id<MTLBuffer> tout, size_t toff = 0, id<MTLBuffer> vk = nil,
-           size_t vkoff = 0, uint32_t ldk = 0, id<MTLBuffer> vt = nil, size_t vtoff = 0) {
+           size_t vkoff = 0, uint32_t ldk = 0, id<MTLBuffer> vt = nil, size_t vtoff = 0, uint32_t batch = 1,
+           id<MTLBuffer> scratch = nil) {
     const uint32_t leaves = (pp.rows + kLeafRows - 1) / kLeafRows;
     pp.leaf = (pp.rows + leaves - 1) / leaves;
     pp.ldw = kLw;
@@ -185,6 +204,7 @@ void panel(const Panels& pk, const Buffers& w, id<MTLCommandBuffer> cb, id<MTLBu
     if (vk) pp.flags |= 16u;
     else vk = w.bv;   // bound, unused
     if (!vt) vt = w.bvt;   // V T's, ld 32
+    if (!scratch) scratch = w.bsc;   // the TSQR's
     id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
     if (leaves == 1) {
         [enc setComputePipelineState:pk.panel];
@@ -197,34 +217,34 @@ void panel(const Panels& pk, const Buffers& w, id<MTLCommandBuffer> cb, id<MTLBu
         [enc setBuffer:w.bl offset:0 atIndex:6];
         [enc setBuffer:w.bv offset:0 atIndex:7];
         [enc setBuffer:vk offset:vkoff * 4 atIndex:8];
-        [enc dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
+        [enc dispatchThreadgroups:MTLSizeMake(1, 1, batch) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
     } else {
         [enc setComputePipelineState:pk.leaf];
         [enc setBuffer:A offset:off * 4 atIndex:0];
-        [enc setBuffer:w.bsc offset:0 atIndex:1];
+        [enc setBuffer:scratch offset:0 atIndex:1];
         [enc setBytes:&pp length:sizeof pp atIndex:2];
         [enc setBuffer:w.bl offset:0 atIndex:3];
         [enc setBuffer:w.bv offset:0 atIndex:4];
-        [enc dispatchThreadgroups:MTLSizeMake(leaves, 1, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
+        [enc dispatchThreadgroups:MTLSizeMake(leaves, 1, batch) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
         // The top: a simdgroup for each pair of leaves' R's, as many as the
         // pipeline takes
         const uint32_t sgs = std::min<uint32_t>(std::max(1u, leaves / 2),
                                                 (uint32_t)pk.top.maxTotalThreadsPerThreadgroup / 32);
         [enc setComputePipelineState:pk.top];
         [enc setBuffer:A offset:off * 4 atIndex:0];
-        [enc setBuffer:w.bsc offset:0 atIndex:1];
+        [enc setBuffer:scratch offset:0 atIndex:1];
         [enc setBuffer:tout offset:toff * 4 atIndex:2];
         [enc setBytes:&pp length:sizeof pp atIndex:3];
-        [enc dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(32 * sgs, 1, 1)];
+        [enc dispatchThreadgroups:MTLSizeMake(1, 1, batch) threadsPerThreadgroup:MTLSizeMake(32 * sgs, 1, 1)];
         [enc setComputePipelineState:pk.rebuild];
-        [enc setBuffer:w.bsc offset:0 atIndex:0];
+        [enc setBuffer:scratch offset:0 atIndex:0];
         [enc setBuffer:vout offset:voff * 4 atIndex:1];
         [enc setBuffer:vt offset:vtoff * 4 atIndex:2];
         [enc setBuffer:w.br offset:0 atIndex:3];
         [enc setBuffer:tout offset:toff * 4 atIndex:4];
         [enc setBytes:&pp length:sizeof pp atIndex:5];
         [enc setBuffer:vk offset:vkoff * 4 atIndex:6];
-        [enc dispatchThreadgroups:MTLSizeMake(leaves, 1, 1)
+        [enc dispatchThreadgroups:MTLSizeMake(leaves, 1, batch)
             threadsPerThreadgroup:MTLSizeMake((pp.leaf + 31) / 32 * 32, 1, 1)];
     }
     [enc endEncoding];
@@ -284,6 +304,10 @@ uint32_t qr_block_width(uint32_t m) {
     return 0;
 }
 
+size_t qr_scratch_floats(uint32_t m) {
+    return (size_t)m * 32 + 3 * ((size_t)m / 32 + 2) * 32 * 32 + 2 * 32 * 32 + ((size_t)m / 32 + 2) * 33 * 32;
+}
+
 uint32_t qr_blocks_count(uint32_t m, uint32_t n, uint32_t b) {
     const uint32_t K = std::min(m, n);
     uint32_t j = 0;
@@ -291,18 +315,19 @@ uint32_t qr_blocks_count(uint32_t m, uint32_t n, uint32_t b) {
     return j;
 }
 
-// An aggregate's T from its panels' (bd_merge_t), into st.ta's slot a.
+// An aggregate's T from its panels' (bd_merge_t), into st.ta's slot a, a
+// threadgroup a matrix.
 void merge_t(State& s, id<MTLCommandBuffer> cb, const QrStore& st, uint32_t j0, uint32_t np, uint32_t b,
              uint32_t a) {
     if (!s.merge_t) s.merge_t = make_pipeline(s.rt.device, s.rt.library, @"bd_merge_t", nil);
-    const uint32_t p[2] = {np, b};
+    const uint32_t p[5] = {np, b, (uint32_t)st.sg, (uint32_t)st.st, (uint32_t)st.sta};
     id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
     [enc setComputePipelineState:s.merge_t];
     [enc setBuffer:st.g offset:0 atIndex:0];
     [enc setBuffer:st.t offset:(size_t)j0 * 1024 * 4 atIndex:1];
     [enc setBuffer:st.ta offset:(size_t)a * kQrAgg * kQrAgg * 4 atIndex:2];
     [enc setBytes:p length:sizeof p atIndex:3];
-    [enc dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(1024, 1, 1)];
+    [enc dispatchThreadgroups:MTLSizeMake(1, 1, st.batch) threadsPerThreadgroup:MTLSizeMake(1024, 1, 1)];
     [enc endEncoding];
 }
 
@@ -312,48 +337,58 @@ uint32_t qr_blocks(id<MTLCommandBuffer> __strong& cb, id<MTLBuffer> A, uint32_t 
     const Panels& pk = s.kernels(b);
     Buffers& w = s.buffers(m, n);
     id<MTLDevice> dev = s.rt.device;
-    const uint32_t blocks = qr_blocks_count(m, n, b), per = kQrAgg / b;
+    const uint32_t blocks = qr_blocks_count(m, n, b), per = kQrAgg / b, B = st.batch;
+    // A's, V's and the scratch's views, the batch's matrices their strides apart
+    auto Av = [&](size_t off, uint32_t r, uint32_t c) { return mps(A, off, r, c, lda, B, st.sa); };
+    auto Vv = [&](size_t off, uint32_t r, uint32_t c) { return mps(st.v, off, r, c, st.ldv, B, st.sv); };
+    auto Zv = [&](id<MTLBuffer> z, uint32_t r, uint32_t c) { return mps(z, 0, r, c, st.ldw, B, st.sz); };
     // Y = [V_j0 ...] an aggregate's: V's zeros above each panel's rows
     id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
     [blit fillBuffer:st.v range:NSMakeRange(0, st.v.length) value:0];
     [blit endEncoding];
     for (uint32_t j0 = 0, a = 0; j0 < blocks; j0 += per, ++a) {
-        // A command buffer for every aggregate or two, so that the GPU starts
-        // on the first while the CPU encodes the rest (at 4096, 1500 kernels
-        // and products: several ms)
-        if (a == 1 || (a > 1 && a % 2 == 0)) {
-            [cb commit];
-            committed.push_back(cb);
-            cb = [s.rt.queue commandBuffer];
-        }
         const uint32_t j1 = std::min(blocks, j0 + per), k0 = j0 * b, wa = (j1 - j0) * b, ma = m - k0;
         for (uint32_t j = j0; j < j1; ++j) {
+            // A command buffer after the first panel and then every
+            // aggregate, so that the GPU starts while the CPU encodes the
+            // rest (at 4096, 1500 kernels and products: several ms)
+            if (j == 1 || (j == j0 && a > 0)) {
+                [cb commit];
+                committed.push_back(cb);
+                cb = [s.rt.queue commandBuffer];
+            }
             const uint32_t k = j * b, m1 = m - k, nr = k0 + wa - k - b;
             const size_t akk = (size_t)k * lda + k;
             // R in place, rows read contiguously (rs = lda); V and T kept, V T
             // for the aggregate's columns right of the panel: C <- H^T C as
             // W = (V T)^T C, C -= V W
-            panel(pk, w, cb, A, akk, PanelParams{m1, b, lda, 1, st.ldv, 1u, 0, 0, 0, 0, 0}, st.v,
-                  (size_t)k * st.ldv + k, st.t, (size_t)j * 1024);
+            PanelParams pp{m1, b, lda, 1, st.ldv, 1u, 0, 0, 0, 0, 0};
+            pp.sa = (uint32_t)st.sa;
+            pp.sv = (uint32_t)st.sv;
+            pp.svt = (uint32_t)st.svt;
+            pp.st = (uint32_t)st.st;
+            pp.ss = (uint32_t)st.ssc;
+            panel(pk, w, cb, A, akk, pp, st.v, (size_t)k * st.ldv + k, st.t, (size_t)j * 1024, nil, 0, 0, st.vt, 0,
+                  B, st.sc);
             if (nr > 0) {
-                gemm(dev, cb, mps(w.bvt, 0, m1, b, 32), true, mps(A, akk + b, m1, nr, lda), false,
-                     mps(st.z, 0, b, nr, st.ldw), b, nr, m1, 1, 0);
-                gemm(dev, cb, mps(st.v, (size_t)k * st.ldv + k, m1, b, st.ldv), false, mps(st.z, 0, b, nr, st.ldw),
-                     false, mps(A, akk + b, m1, nr, lda), m1, nr, b, -1, 1);
+                gemm(dev, cb, mps(st.vt, 0, m1, b, 32, B, st.svt), true, Av(akk + b, m1, nr), false,
+                     Zv(st.z, b, nr), b, nr, m1, 1, 0, B);
+                gemm(dev, cb, Vv((size_t)k * st.ldv + k, m1, b), false, Zv(st.z, b, nr), false, Av(akk + b, m1, nr),
+                     m1, nr, b, -1, 1, B);
             }
         }
         // The aggregate's T, from G = Y^T Y
-        MPSMatrix* Y = mps(st.v, (size_t)k0 * st.ldv + k0, ma, wa, st.ldv);
-        gemm(dev, cb, Y, true, Y, false, mps(st.g, 0, wa, wa, kQrAgg), wa, wa, ma, 1, 0);
+        MPSMatrix* Y = Vv((size_t)k0 * st.ldv + k0, ma, wa);
+        gemm(dev, cb, Y, true, Y, false, mps(st.g, 0, wa, wa, kQrAgg, B, st.sg), wa, wa, ma, 1, 0, B);
         merge_t(s, cb, st, j0, j1 - j0, b, a);
         // The columns right of the aggregate: Z = Y^T C, W = Ta^T Z, C -= Y W
         const uint32_t n1 = n - k0 - wa;
         if (n1 > 0) {
             const size_t ac = (size_t)k0 * lda + k0 + wa;
-            gemm(dev, cb, Y, true, mps(A, ac, ma, n1, lda), false, mps(st.z, 0, wa, n1, st.ldw), wa, n1, ma, 1, 0);
-            gemm(dev, cb, mps(st.ta, (size_t)a * kQrAgg * kQrAgg, wa, wa, kQrAgg), true, mps(st.z, 0, wa, n1, st.ldw),
-                 false, mps(st.z2, 0, wa, n1, st.ldw), wa, n1, wa, 1, 0);
-            gemm(dev, cb, Y, false, mps(st.z2, 0, wa, n1, st.ldw), false, mps(A, ac, ma, n1, lda), ma, n1, wa, -1, 1);
+            gemm(dev, cb, Y, true, Av(ac, ma, n1), false, Zv(st.z, wa, n1), wa, n1, ma, 1, 0, B);
+            gemm(dev, cb, mps(st.ta, (size_t)a * kQrAgg * kQrAgg, wa, wa, kQrAgg, B, st.sta), true, Zv(st.z, wa, n1),
+                 false, Zv(st.z2, wa, n1), wa, n1, wa, 1, 0, B);
+            gemm(dev, cb, Y, false, Zv(st.z2, wa, n1), false, Av(ac, ma, n1), ma, n1, wa, -1, 1, B);
         }
     }
     return blocks * b;
@@ -362,45 +397,50 @@ uint32_t qr_blocks(id<MTLCommandBuffer> __strong& cb, id<MTLBuffer> A, uint32_t 
 void qr_blocks_apply(id<MTLCommandBuffer> cb, id<MTLBuffer> Q, uint32_t m, uint32_t K, uint32_t ldq, uint32_t b,
                      uint32_t blocks, const QrStore& st) {
     id<MTLDevice> dev = State::shared().rt.device;
-    const uint32_t per = kQrAgg / b, aggs = (blocks + per - 1) / per;
+    const uint32_t per = kQrAgg / b, aggs = (blocks + per - 1) / per, B = st.batch;
+    const size_t sq = (size_t)m * ldq;   // Q's matrices, m x ldq each
     for (uint32_t a = aggs; a-- > 0;) {
         // Q(k0:, k0:) <- (I - Y Ta Y^T) Q(k0:, k0:): X = Y^T Q, X <- Ta X, Q -= Y X
         const uint32_t j0 = a * per, j1 = std::min(blocks, j0 + per), k0 = j0 * b, wa = (j1 - j0) * b,
                        ma = m - k0, nc = K - k0;
         const size_t qkk = (size_t)k0 * ldq + k0;
-        MPSMatrix* Y = mps(st.v, (size_t)k0 * st.ldv + k0, ma, wa, st.ldv);
-        gemm(dev, cb, Y, true, mps(Q, qkk, ma, nc, ldq), false, mps(st.z, 0, wa, nc, st.ldw), wa, nc, ma, 1, 0);
-        gemm(dev, cb, mps(st.ta, (size_t)a * kQrAgg * kQrAgg, wa, wa, kQrAgg), false, mps(st.z, 0, wa, nc, st.ldw),
-             false, mps(st.z2, 0, wa, nc, st.ldw), wa, nc, wa, 1, 0);
-        gemm(dev, cb, Y, false, mps(st.z2, 0, wa, nc, st.ldw), false, mps(Q, qkk, ma, nc, ldq), ma, nc, wa, -1, 1);
+        MPSMatrix* Y = mps(st.v, (size_t)k0 * st.ldv + k0, ma, wa, st.ldv, B, st.sv);
+        MPSMatrix* Qv = mps(Q, qkk, ma, nc, ldq, B, sq);
+        gemm(dev, cb, Y, true, Qv, false, mps(st.z, 0, wa, nc, st.ldw, B, st.sz), wa, nc, ma, 1, 0, B);
+        gemm(dev, cb, mps(st.ta, (size_t)a * kQrAgg * kQrAgg, wa, wa, kQrAgg, B, st.sta), false,
+             mps(st.z, 0, wa, nc, st.ldw, B, st.sz), false, mps(st.z2, 0, wa, nc, st.ldw, B, st.sz), wa, nc, wa, 1, 0,
+             B);
+        gemm(dev, cb, Y, false, mps(st.z2, 0, wa, nc, st.ldw, B, st.sz), false, Qv, ma, nc, wa, -1, 1, B);
     }
 }
 
-void qr_scale_copy(id<MTLCommandBuffer> cb, id<MTLBuffer> src, id<MTLBuffer> dst, size_t n, float scale) {
+void qr_scale_copy(id<MTLCommandBuffer> cb, id<MTLBuffer> src, id<MTLBuffer> dst, uint32_t m, uint32_t n,
+                   uint32_t mp, uint32_t np, size_t sd, uint32_t batch, id<MTLBuffer> scale) {
     State& s = State::shared();
     if (!s.scale_copy) s.scale_copy = make_pipeline(s.rt.device, s.rt.library, @"bd_scale_copy", nil);
-    const uint32_t count = (uint32_t)n;
+    const uint32_t p[5] = {m, n, mp, np, (uint32_t)sd};
     id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
     [enc setComputePipelineState:s.scale_copy];
     [enc setBuffer:src offset:0 atIndex:0];
     [enc setBuffer:dst offset:0 atIndex:1];
-    [enc setBytes:&scale length:sizeof scale atIndex:2];
-    [enc setBytes:&count length:sizeof count atIndex:3];
-    [enc dispatchThreads:MTLSizeMake(n, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+    [enc setBytes:p length:sizeof p atIndex:2];
+    [enc setBuffer:scale offset:0 atIndex:3];
+    [enc dispatchThreads:MTLSizeMake(np, mp, batch) threadsPerThreadgroup:MTLSizeMake(32, 8, 1)];
     [enc endEncoding];
 }
 
 void qr_r_out(id<MTLCommandBuffer> cb, id<MTLBuffer> A, id<MTLBuffer> R, uint32_t k, uint32_t n, uint32_t lda,
-              float up) {
+              size_t sa, uint32_t batch, id<MTLBuffer> up) {
     State& s = State::shared();
     if (!s.r_out) s.r_out = make_pipeline(s.rt.device, s.rt.library, @"bd_qr_r", nil);
-    struct { uint32_t k, n, lda; float up; } p{k, n, lda, up};
+    const uint32_t p[5] = {k, n, lda, (uint32_t)sa, k * n};
     id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
     [enc setComputePipelineState:s.r_out];
     [enc setBuffer:A offset:0 atIndex:0];
     [enc setBuffer:R offset:0 atIndex:1];
-    [enc setBytes:&p length:sizeof p atIndex:2];
-    [enc dispatchThreads:MTLSizeMake(n, k, 1) threadsPerThreadgroup:MTLSizeMake(32, 8, 1)];
+    [enc setBytes:p length:sizeof p atIndex:2];
+    [enc setBuffer:up offset:0 atIndex:3];
+    [enc dispatchThreads:MTLSizeMake(n, k, batch) threadsPerThreadgroup:MTLSizeMake(32, 8, 1)];
     [enc endEncoding];
 }
 

@@ -1,5 +1,5 @@
-// QR of large matrices on the GPU by panels of b columns (16 up to 8192 rows,
-// 8 up to 16384), the work matrix products:
+// QR on the GPU by panels of b columns (16 up to 8192 rows, 8 up to 16384),
+// a batch at once, the work matrix products:
 //
 //   1. each panel factored by the band reduction's kernels (in one
 //      simdgroup, or by TSQR for a tall one; shaders/Svd_Bidiag.metal), its
@@ -8,23 +8,22 @@
 //   2. each aggregate's T merged from its panels' (bd_merge_t, from the Gram
 //      matrix Y^T Y), and I - Y Ta Y^T applied to the columns right of it as
 //      three: Z = Y^T C, W = Ta^T Z, C -= Y W;
-//   3. the last columns (fewer than b, or fewer than 2 b rows) by LAPACK on
-//      the CPU, sgeqrf and sorgqr;
-//   4. Q formed from [I 0; 0 Q_tail] by the aggregates backwards, Q <- (I -
-//      Y Ta Y^T) Q on Q's trailing rows and columns, three products each.
+//   3. Q formed from [I; 0] by the aggregates backwards, Q <- (I - Y Ta Y^T)
+//      Q on Q's trailing rows and columns, three products each.
 //
-// The matrix is factored row-major in place: the panels read each row's b
-// entries contiguously, the products take the row-major views as they are,
-// and neither the input nor Q is transposed. The forward pass is committed an
-// aggregate or two at a time, so that the GPU starts while the CPU encodes
-// the rest; step 4 is queued at once, behind an event the CPU signals after
-// step 3; Q's initial zeros are written while the GPU factors. Q and R go
-// straight to the caller's memory where it is page-aligned.
+// The matrices are padded with zero rows and columns to whole panels with
+// twice their width in rows (which changes neither R nor Q), so every column
+// is the GPU's. Each is factored row-major in place: the panels read a row's
+// b entries contiguously, the products take the row-major views as they
+// are, and neither the input nor Q is transposed. Every kernel takes the
+// batch as its grid's z and every product is one batched MPS product. The
+// forward pass is committed a panel, then an aggregate, at a time, so that
+// the GPU starts while the CPU encodes the rest; step 3 is queued at once,
+// behind an event the CPU signals once it has written Q's start. Q (one
+// matrix) and R go straight to the caller's memory where it is page-aligned.
 //
-// Where qr_streaming_amx_reduced's grid streams a 32-column tile of the
-// trailing matrix through a threadgroup for every panel, the products here
-// run at MPS's rate: on an M5 Pro one 4096 x 4096 in 63 ms against 231 (and
-// 634 on the CPU), 1024 x 1024 in 7 against 15.
+// On an M5 Pro one 4096 x 4096 in 62 ms against the streaming kernels' 231
+// (and 634 on the CPU), 16 x 1024 x 1024 in 25 against 52 (CPU 48).
 #ifndef ACCELERATE_NEW_LAPACK
 #define ACCELERATE_NEW_LAPACK
 #endif
@@ -49,20 +48,46 @@ using metal_linalg::detail::QrStore;
 namespace metal_linalg::core::detail {
 namespace {
 
-using L = __LAPACK_int;
+// The padded problem: panels of b columns over K rounded up to b (Kp), and
+// at least Kp + b rows, so that every panel has twice its width in rows (the
+// panel kernels' need); zero rows and columns, which change neither R nor Q.
+struct Shape {
+    uint32_t b = 0, Kp = 0, mp = 0, np = 0;
+};
 
-// The latest shape's buffers, a row of slack past the products' operands.
+Shape shape(uint32_t m, uint32_t n) {
+    const uint32_t K = std::min(m, n);
+    for (uint32_t b : {16u, 8u}) {
+        Shape s;
+        s.b = b;
+        s.Kp = (K + b - 1) / b * b;
+        s.mp = std::max(m, s.Kp + b);
+        s.np = std::max(n, s.Kp);
+        if (metal_linalg::detail::qr_block_width(s.mp) >= b) return s;
+    }
+    return Shape{};
+}
+
+// The latest shape's buffers, for up to `capacity` matrices, a row of slack
+// past the products' operands.
 struct Work {
-    uint32_t      m = 0, n = 0;
-    id<MTLBuffer> A, Q;   // shared: the CPU writes the tail and reads R
+    uint32_t      m = 0, n = 0, capacity = 0;
+    id<MTLBuffer> A, Q, scale, up;   // shared: the CPU writes Q's start and reads R when they are not the caller's
     QrStore       st{};
 };
 
-Work& workspace(uint32_t m, uint32_t n, uint32_t b) {
+// Floats a matrix of the batch takes in the workspace.
+size_t per_matrix(uint32_t m, uint32_t n, const Shape& sh) {
+    return (size_t)sh.mp * sh.np + (size_t)sh.mp * sh.Kp + (size_t)sh.mp * 32 + (size_t)m * std::min(m, n) +
+           2 * (size_t)128 * sh.np + metal_linalg::detail::qr_scratch_floats(sh.mp) + (size_t)sh.Kp * 1024 / sh.b +
+           ((size_t)sh.Kp / 128 + 1) * 128 * 128 + 128 * 128;
+}
+
+Work& workspace(uint32_t m, uint32_t n, const Shape& sh, uint32_t batch) {
     static Work w;
-    if (w.A && w.m == m && w.n == n && w.st.ldv % b == 0) return w;
+    if (w.A && w.m == m && w.n == n && w.capacity >= batch) return w;
     id<MTLDevice> dev = metal_linalg::detail::qr_device();
-    const uint32_t K = std::min(m, n), Kp = (K + b - 1) / b * b, blocks = Kp / b;
+    const uint32_t K = std::min(m, n), blocks = sh.Kp / sh.b;
     auto buffer = [&](size_t floats, MTLResourceOptions opt) {
         id<MTLBuffer> buf = [dev newBufferWithLength:std::max<size_t>(floats, 1) * 4 options:opt];
         if (!buf) throw std::runtime_error("[qr] blocked: could not allocate " + std::to_string(floats * 4) + " bytes");
@@ -71,16 +96,32 @@ Work& workspace(uint32_t m, uint32_t n, uint32_t b) {
     w = Work{};
     w.m = m;
     w.n = n;
-    w.A = buffer((size_t)m * n + n, MTLResourceStorageModeShared);
-    w.Q = buffer((size_t)m * K + K, MTLResourceStorageModeShared);
-    w.st.ldv = Kp;
-    w.st.ldw = std::max(n, K);
-    w.st.v = buffer((size_t)m * Kp + Kp, MTLResourceStorageModePrivate);
-    w.st.t = buffer((size_t)blocks * 1024, MTLResourceStorageModePrivate);
-    w.st.ta = buffer(((size_t)Kp / 128 + 1) * 128 * 128, MTLResourceStorageModePrivate);
-    w.st.g = buffer(128 * 128 + 128, MTLResourceStorageModePrivate);
-    w.st.z = buffer((size_t)128 * w.st.ldw + w.st.ldw, MTLResourceStorageModePrivate);
-    w.st.z2 = buffer((size_t)128 * w.st.ldw + w.st.ldw, MTLResourceStorageModePrivate);
+    w.capacity = batch;
+    QrStore& st = w.st;
+    st.ldv = sh.Kp;
+    st.ldw = sh.np;
+    st.sa = (size_t)sh.mp * sh.np;
+    st.sv = (size_t)sh.mp * sh.Kp;
+    st.svt = (size_t)sh.mp * 32;
+    st.st = (size_t)blocks * 1024;
+    st.sta = ((size_t)sh.Kp / 128 + 1) * 128 * 128;
+    st.sg = 128 * 128;
+    st.sz = (size_t)128 * st.ldw;
+    st.ssc = metal_linalg::detail::qr_scratch_floats(sh.mp);
+    const MTLResourceOptions priv = MTLResourceStorageModePrivate, shared = MTLResourceStorageModeShared;
+    // A stride of slack past the products' operands (mps()'s batched views)
+    w.A = buffer((batch + 1) * st.sa, shared);
+    w.Q = buffer((size_t)(batch + 1) * m * K, shared);
+    w.scale = buffer(batch, shared);
+    w.up = buffer(batch, shared);
+    st.v = buffer((batch + 1) * st.sv, priv);
+    st.vt = buffer((batch + 1) * st.svt, priv);
+    st.t = buffer(batch * st.st, priv);
+    st.ta = buffer((batch + 1) * st.sta, priv);
+    st.g = buffer((batch + 1) * st.sg, priv);
+    st.z = buffer((batch + 1) * st.sz, priv);
+    st.z2 = buffer((batch + 1) * st.sz, priv);
+    st.sc = buffer(batch * st.ssc, priv);
     return w;
 }
 
@@ -90,82 +131,66 @@ void check(id<MTLCommandBuffer> cb) {
         throw std::runtime_error(std::string("[qr] blocked: GPU error: ") + cb.error.localizedDescription.UTF8String);
 }
 
-// The columns from kt on, A(kt:, kt:), by LAPACK: R into A's rows, and Q's
-// block Q(kt:, kt:K) (ld ldq).
-void tail(float* A, uint32_t m, uint32_t n, uint32_t kt, float* Q, uint32_t ldq) {
+// `batch` matrices at once.
+void run(const float* a, uint32_t batch, uint32_t m, uint32_t n, float* q_out, float* r_out) {
     const uint32_t K = std::min(m, n);
-    if (kt >= K) return;
-    L mt = (L)(m - kt), nt = (L)(n - kt), kk = (L)(K - kt), info = 0, lwork = -1;
-    std::vector<float> c((size_t)mt * nt), tau(kk);
-    for (L i = 0; i < mt; ++i)
-        for (L j = 0; j < nt; ++j) c[i + (size_t)j * mt] = A[(size_t)(kt + i) * n + kt + j];
-    float q = 0.0f;
-    sgeqrf_(&mt, &nt, c.data(), &mt, tau.data(), &q, &lwork, &info);
-    float q2 = 0.0f;
-    sorgqr_(&mt, &kk, &kk, c.data(), &mt, tau.data(), &q2, &lwork, &info);
-    lwork = std::max<L>(1, (L)std::max(q, q2));
-    std::vector<float> work(lwork);
-    sgeqrf_(&mt, &nt, c.data(), &mt, tau.data(), work.data(), &lwork, &info);
-    if (info) throw std::runtime_error("[qr] blocked: LAPACK sgeqrf failed, info " + std::to_string((long long)info));
-    for (L i = 0; i < kk; ++i)
-        for (L j = i; j < nt; ++j) A[(size_t)(kt + i) * n + kt + j] = c[i + (size_t)j * mt];
-    sorgqr_(&mt, &kk, &kk, c.data(), &mt, tau.data(), work.data(), &lwork, &info);
-    if (info) throw std::runtime_error("[qr] blocked: LAPACK sorgqr failed, info " + std::to_string((long long)info));
-    for (L i = 0; i < mt; ++i)
-        for (L j = 0; j < kk; ++j) Q[(size_t)(kt + i) * ldq + kt + j] = c[i + (size_t)j * mt];
-}
-
-void one(const float* a, uint32_t m, uint32_t n, float* q_out, float* r_out) {
-    const uint32_t K = std::min(m, n), b = metal_linalg::detail::qr_block_width(m);
-    float amax = 0.0f;
-    char finite = 1;
-    const Matrices am{a, 1, m, n};
-    metal_linalg::detail::scan(am, Part::all, &amax, &finite);
-    if (!finite) {
-        std::fill(q_out, q_out + (size_t)m * K, NAN);
-        std::fill(r_out, r_out + (size_t)K * n, NAN);
-        return;
+    const Shape sh = shape(m, n);
+    const size_t per = (size_t)m * n;
+    std::vector<float> amax(batch);
+    std::vector<char> finite(batch);
+    metal_linalg::detail::scan(Matrices{a, batch, m, n}, Part::all, amax.data(), finite.data());
+    Work& w = workspace(m, n, sh, batch);
+    w.st.batch = batch;
+    // Each matrix scaled by a power of two into [0.5, 1), as the panel
+    // kernels' plain sums of squares need; R scaled back on the way out. A
+    // matrix holding a NaN or an infinity gives NaN, written at the end.
+    float* down = static_cast<float*>(w.scale.contents);
+    float* up = static_cast<float*>(w.up.contents);
+    for (uint32_t i = 0; i < batch; ++i) {
+        down[i] = up[i] = 1.0f;
+        if (finite[i] && amax[i] > 0.0f) {
+            int e = 0;
+            std::frexp(amax[i], &e);
+            down[i] = std::ldexp(1.0f, -e);
+            up[i] = std::ldexp(1.0f, e);
+        }
     }
-    // Scaled by a power of two into [0.5, 1), as the panel kernels' plain
-    // sums of squares need; R scaled back on the way out.
-    float down = 1.0f, up = 1.0f;
-    if (amax > 0.0f) {
-        int e = 0;
-        std::frexp(amax, &e);
-        down = std::ldexp(1.0f, -e);
-        up = std::ldexp(1.0f, e);
-    }
-    Work& w = workspace(m, n, b);
     id<MTLCommandQueue> queue = metal_linalg::detail::qr_queue();
     id<MTLDevice> dev = metal_linalg::detail::qr_device();
-    const size_t page = (size_t)getpagesize(), per = (size_t)m * n;
+    const size_t page = (size_t)getpagesize();
     float* A = static_cast<float*>(w.A.contents);
 
-    // Q formed in the caller's memory if it is page-aligned (R too, below)
+    // Q formed in the caller's memory if it is page-aligned and one matrix
+    // (a batch's views need the slack past it), R too below
     id<MTLBuffer> Q = w.Q;
-    if (reinterpret_cast<uintptr_t>(q_out) % page == 0)
-        Q = metal_linalg::detail::wrap_host(dev, q_out, (size_t)m * K);
+    if (reinterpret_cast<uintptr_t>(q_out) % page == 0 && batch == 1)
+        Q = metal_linalg::detail::wrap_host(dev, q_out, (size_t)batch * m * K);
     float* Qh = static_cast<float*>(Q.contents);
 
     @autoreleasepool {
         id<MTLCommandBuffer> cb = [queue commandBuffer];
         if (reinterpret_cast<uintptr_t>(a) % page == 0) {
-            id<MTLBuffer> in = [dev newBufferWithBytesNoCopy:(void*)a length:(per * 4 + page - 1) / page * page
+            id<MTLBuffer> in = [dev newBufferWithBytesNoCopy:(void*)a
+                                                      length:((size_t)batch * per * 4 + page - 1) / page * page
                                                      options:MTLResourceStorageModeShared deallocator:nil];
             if (!in) throw std::runtime_error("[qr] blocked: could not wrap the input");
-            metal_linalg::detail::qr_scale_copy(cb, in, w.A, per, down);
+            metal_linalg::detail::qr_scale_copy(cb, in, w.A, m, n, sh.mp, sh.np, w.st.sa, batch, w.scale);
         } else {
-            metal_linalg::detail::for_each_rows(1, m, n, [&](uint32_t, uint32_t r0, uint32_t r1) {
-                vDSP_vsmul(a + (size_t)r0 * n, 1, &down, A + (size_t)r0 * n, 1, (size_t)(r1 - r0) * n);
+            metal_linalg::detail::for_each_rows(batch, sh.mp, sh.np, [&](uint32_t i, uint32_t r0, uint32_t r1) {
+                for (uint32_t r = r0; r < r1; ++r) {
+                    float* ar = A + i * w.st.sa + (size_t)r * sh.np;
+                    if (r < m) vDSP_vsmul(a + i * per + (size_t)r * n, 1, &down[i], ar, 1, n);
+                    std::fill(ar + (r < m ? n : 0), ar + sh.np, 0.0f);
+                }
             });
         }
         std::vector<id<MTLCommandBuffer>> forward;
-        const uint32_t done = metal_linalg::detail::qr_blocks(cb, w.A, m, n, n, b, w.st, forward);
+        metal_linalg::detail::qr_blocks(cb, w.A, sh.mp, sh.np, sh.np, sh.b, w.st, forward);
         [cb commit];
         forward.push_back(cb);
         // R's copy and Q's formation queued behind an event that the CPU
-        // signals once it has done the last columns (whatever happens: a
-        // command buffer left waiting would hold the queue)
+        // signals once Q's start is written (whatever happens: a command
+        // buffer left waiting would hold the queue)
         id<MTLSharedEvent> ready = [dev newSharedEvent];
         struct Release {
             id<MTLSharedEvent> event;
@@ -175,48 +200,50 @@ void one(const float* a, uint32_t m, uint32_t n, float* q_out, float* r_out) {
         [back encodeWaitForEvent:ready value:1];
         const bool r_gpu = reinterpret_cast<uintptr_t>(r_out) % page == 0;
         if (r_gpu)
-            metal_linalg::detail::qr_r_out(back, w.A, metal_linalg::detail::wrap_host(dev, r_out, (size_t)K * n), K,
-                                           n, n, up);
-        metal_linalg::detail::qr_blocks_apply(back, Q, m, K, K, b, done / b, w.st);
+            metal_linalg::detail::qr_r_out(back, w.A,
+                                           metal_linalg::detail::wrap_host(dev, r_out, (size_t)batch * K * n), K, n,
+                                           sh.np, w.st.sa, batch, w.up);
+        metal_linalg::detail::qr_blocks_apply(back, Q, m, K, K, sh.b, sh.Kp / sh.b, w.st);
         [back commit];
-        // Q's start, [I 0; 0 *], while the GPU factors
-        metal_linalg::detail::for_each_rows(1, m, K, [&](uint32_t, uint32_t r0, uint32_t r1) {
-            std::memset(Qh + (size_t)r0 * K, 0, (size_t)(r1 - r0) * K * 4);
-            for (uint32_t i = r0; i < std::min(r1, done); ++i) Qh[(size_t)i * K + i] = 1.0f;
+        // Q's start, [I; 0], while the GPU factors
+        metal_linalg::detail::for_each_rows(batch, m, K, [&](uint32_t i, uint32_t r0, uint32_t r1) {
+            float* qi = Qh + (size_t)i * m * K;
+            std::memset(qi + (size_t)r0 * K, 0, (size_t)(r1 - r0) * K * 4);
+            for (uint32_t r = r0; r < std::min(r1, K); ++r) qi[(size_t)r * K + r] = 1.0f;
         });
-        for (id<MTLCommandBuffer> f : forward) check(f);
-        tail(A, m, n, done, Qh, K);
         ready.signaledValue = 1;
+        for (id<MTLCommandBuffer> f : forward) check(f);
         if (!r_gpu)   // R, unscaled, while the GPU forms Q
-            metal_linalg::detail::for_each_rows(1, K, n, [&](uint32_t, uint32_t r0, uint32_t r1) {
-                for (uint32_t i = r0; i < r1; ++i) {
-                    float* ri = r_out + (size_t)i * n;
-                    std::fill(ri, ri + i, 0.0f);
-                    vDSP_vsmul(A + (size_t)i * n + i, 1, &up, ri + i, 1, n - i);
+            metal_linalg::detail::for_each_rows(batch, K, n, [&](uint32_t i, uint32_t r0, uint32_t r1) {
+                for (uint32_t r = r0; r < r1; ++r) {
+                    float* rr = r_out + (size_t)i * K * n + (size_t)r * n;
+                    std::fill(rr, rr + r, 0.0f);
+                    vDSP_vsmul(A + i * w.st.sa + (size_t)r * sh.np + r, 1, &up[i], rr + r, 1, n - r);
                 }
             });
         check(back);
     }
     if (Qh != q_out)
-        metal_linalg::detail::for_each_rows(1, m, K, [&](uint32_t, uint32_t r0, uint32_t r1) {
-            std::memcpy(q_out + (size_t)r0 * K, Qh + (size_t)r0 * K, (size_t)(r1 - r0) * K * 4);
-        });
+        std::memcpy(q_out, Qh, (size_t)batch * m * K * 4);
+    for (uint32_t i = 0; i < batch; ++i)
+        if (!finite[i]) {
+            std::fill(q_out + (size_t)i * m * K, q_out + (size_t)(i + 1) * m * K, NAN);
+            std::fill(r_out + (size_t)i * K * n, r_out + (size_t)(i + 1) * K * n, NAN);
+        }
 }
 
 } // namespace
 
-bool qr_blocked_fits(uint32_t m, uint32_t n) {
-    const uint32_t b = metal_linalg::detail::qr_block_width(m);
-    return std::min(m, n) >= 1 && b != 0 && m >= 2 * b;
-}
+bool qr_blocked_fits(uint32_t m, uint32_t n) { return std::min(m, n) >= 1 && shape(m, n).b != 0; }
 
-// A matrix at a time, the blocked QR beats the streaming kernels, which take
-// a batch at once, for one matrix from 256 x 256 (on an M5 Pro 1.5 ms against
-// 2.7; 6.9 against 14.8 at 1024, 18.7 against 49 at 2048), two from 1024 and
-// four from 2048. QR_BLOCKED=0 turns it off.
+// A batch at once, the blocked QR beats the streaming kernels at every shape
+// and batch measured on an M5 Pro (1.8-3.5x: 16 x 1024 x 1024 in 25 ms
+// against 52, 1024 x 128 x 128 in 18 against 52), so they keep only what it
+// cannot take. QR_BLOCKED=0 turns it off.
 bool qr_blocked_preferred(uint32_t m, uint32_t n, uint32_t batch) {
     if (const char* e = std::getenv("QR_BLOCKED"); e && std::string(e) == "0") return false;
-    return qr_blocked_fits(m, n) && (batch == 1 || (size_t)batch * 512 <= std::min(m, n));
+    (void)batch;
+    return qr_blocked_fits(m, n);
 }
 
 void qr_blocked(const Matrices& a, float* q, float* r) {
@@ -224,8 +251,13 @@ void qr_blocked(const Matrices& a, float* q, float* r) {
     if (K == 0 || a.batch == 0) return;
     if (!qr_blocked_fits(M, N))
         throw std::invalid_argument("[qr] blocked: " + std::to_string(M) + " rows is more than its panels take");
-    for (uint32_t b = 0; b < a.batch; ++b)
-        one(a.data + (size_t)b * M * N, M, N, q + (size_t)b * M * K, r + (size_t)b * K * N);
+    // In chunks of at most about 1 GB of workspace
+    const size_t per = per_matrix(M, N, shape(M, N));
+    const uint32_t chunk = (uint32_t)std::clamp<size_t>(((size_t)1 << 28) / per, 1, a.batch);
+    for (uint32_t b0 = 0; b0 < a.batch; b0 += chunk) {
+        const uint32_t count = std::min(chunk, a.batch - b0);
+        run(a.data + (size_t)b0 * M * N, count, M, N, q + (size_t)b0 * M * K, r + (size_t)b0 * K * N);
+    }
 }
 
 } // namespace metal_linalg::core::detail

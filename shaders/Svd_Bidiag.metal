@@ -386,6 +386,9 @@ struct PanelParams {
     uint ldw;          // W's ld (flag 4)
     uint dup;          // flag 8: V again at Vout + dup
     uint ldk;          // flag 16: Vk's ld
+    // A batch (the blocked QR's), the grid's z the matrix: P, Vout, VT, Tout
+    // and the TSQR's scratch this many floats apart (0 for one matrix)
+    uint sa, sv, svt, st, ss;
 };
 
 // The panel kernels take the norms as plain sums of squares, not slarfg's
@@ -515,11 +518,16 @@ constant constexpr uint PANEL_R = 4;
 // A short panel (at most 32 * PANEL_R rows), one simdgroup: QR in registers;
 // R in place, H's V (and V T, V^T) and T out.
 template <uint B>
-kernel void bd_panel_qr(device float* P [[buffer(0)]], device float* Vout [[buffer(1)]],
-                        device float* VT [[buffer(2)]], device float* Vtr [[buffer(3)]],
-                        device float* Tout [[buffer(4)]], constant PanelParams& p [[buffer(5)]],
+kernel void bd_panel_qr(device float* P0 [[buffer(0)]], device float* Vout0 [[buffer(1)]],
+                        device float* VT0 [[buffer(2)]], device float* Vtr [[buffer(3)]],
+                        device float* Tout0 [[buffer(4)]], constant PanelParams& p [[buffer(5)]],
                         device const float* W [[buffer(6)]], device const float* V0 [[buffer(7)]],
-                        device float* Vk [[buffer(8)]], uint lane [[thread_index_in_simdgroup]]) {
+                        device float* Vk [[buffer(8)]], uint lane [[thread_index_in_simdgroup]],
+                        uint3 tg [[threadgroup_position_in_grid]]) {
+    device float* P = P0 + (ulong)tg.z * p.sa;
+    device float* Vout = Vout0 + (ulong)tg.z * p.sv;
+    device float* VT = VT0 + (ulong)tg.z * p.svt;
+    device float* Tout = Tout0 + (ulong)tg.z * p.st;
     threadgroup float Tm[32][32], D[32][32], taus[32];
     float x[PANEL_R][B];
     UNROLL(PANEL_R, s, {
@@ -564,10 +572,13 @@ static TsqrLayout tsqr_layout(constant PanelParams& p) {
 // One leaf of rows (at most 32 * PANEL_R) per simdgroup-sized threadgroup:
 // its QR; V_l, T_l and R_l to the scratch.
 template <uint B>
-kernel void bd_tsqr_leaf(device const float* P [[buffer(0)]], device float* S [[buffer(1)]],
+kernel void bd_tsqr_leaf(device const float* P0 [[buffer(0)]], device float* S0 [[buffer(1)]],
                          constant PanelParams& p [[buffer(2)]], device const float* W [[buffer(3)]],
                          device const float* V0 [[buffer(4)]],
-                         uint l [[threadgroup_position_in_grid]], uint lane [[thread_index_in_simdgroup]]) {
+                         uint3 tg [[threadgroup_position_in_grid]], uint lane [[thread_index_in_simdgroup]]) {
+    device const float* P = P0 + (ulong)tg.z * p.sa;
+    device float* S = S0 + (ulong)tg.z * p.ss;
+    const uint l = tg.x;
     threadgroup float Tm[32][32], D[32][32], taus[32];
     const TsqrLayout L = tsqr_layout(p);
     const uint r0 = l * p.leaf, rows = min(p.leaf, p.rows - r0);
@@ -660,10 +671,13 @@ __attribute__((always_inline)) static void pair_apply(thread float (&xt)[B], thr
 // matrix, a thread a row, took 57 of the kernel's 91 us on an M5 Pro: two
 // threadgroup barriers and a reduction a column, over 16 simdgroups.
 template <uint B>
-kernel void bd_tsqr_top(device float* P [[buffer(0)]], device float* S [[buffer(1)]],
-                        device float* Tout [[buffer(2)]], constant PanelParams& p [[buffer(3)]],
+kernel void bd_tsqr_top(device float* P0 [[buffer(0)]], device float* S0 [[buffer(1)]],
+                        device float* Tout0 [[buffer(2)]], constant PanelParams& p [[buffer(3)]],
                         uint nsg [[simdgroups_per_threadgroup]], uint sg [[simdgroup_index_in_threadgroup]],
-                        uint lane [[thread_index_in_simdgroup]]) {
+                        uint lane [[thread_index_in_simdgroup]], uint3 tg [[threadgroup_position_in_grid]]) {
+    device float* P = P0 + (ulong)tg.z * p.sa;
+    device float* S = S0 + (ulong)tg.z * p.ss;
+    device float* Tout = Tout0 + (ulong)tg.z * p.st;
     threadgroup float C[32][33];
     const TsqrLayout L = tsqr_layout(p);
     const uint b = B, nl = (p.rows + p.leaf - 1) / p.leaf;
@@ -783,12 +797,18 @@ kernel void bd_tsqr_top(device float* P [[buffer(0)]], device float* S [[buffer(
 // Q(i, :) = E_l(i, :) - V_l(i, :) T_l (V_l(0:b, :)^T E_l) the panel's Q;
 // V(i, :) = L1(i, :) for i < b, else Q(i, :) U^{-1}. One leaf a threadgroup.
 template <uint B>
-kernel void bd_tsqr_rebuild(device const float* S [[buffer(0)]], device float* Vout [[buffer(1)]],
-                            device float* VT [[buffer(2)]], device float* Vtr [[buffer(3)]],
-                            device const float* Tin [[buffer(4)]], constant PanelParams& p [[buffer(5)]],
+kernel void bd_tsqr_rebuild(device const float* S0 [[buffer(0)]], device float* Vout0 [[buffer(1)]],
+                            device float* VT0 [[buffer(2)]], device float* Vtr [[buffer(3)]],
+                            device const float* Tin0 [[buffer(4)]], constant PanelParams& p [[buffer(5)]],
                             device float* Vk [[buffer(6)]],
-                            uint l [[threadgroup_position_in_grid]], uint t [[thread_position_in_threadgroup]],
-                            uint nt [[threads_per_threadgroup]]) {
+                            uint3 tg [[threadgroup_position_in_grid]], uint3 t3 [[thread_position_in_threadgroup]],
+                            uint3 nt3 [[threads_per_threadgroup]]) {
+    const uint t = t3.x, nt = nt3.x;
+    device const float* S = S0 + (ulong)tg.z * p.ss;
+    device float* Vout = Vout0 + (ulong)tg.z * p.sv;
+    device float* VT = VT0 + (ulong)tg.z * p.svt;
+    device const float* Tin = Tin0 + (ulong)tg.z * p.st;
+    const uint l = tg.x;
     threadgroup float A[32][33], E[32][33], M[32][33], Tm[32][32], Ui[32][33], L1[32][33];
     const TsqrLayout L = tsqr_layout(p);
     const uint b = B, r0 = l * p.leaf, rows = min(p.leaf, p.rows - r0);
@@ -842,15 +862,15 @@ kernel void bd_tsqr_rebuild(device const float* S [[buffer(0)]], device float* V
 #define BD_PANEL_KERNELS(B)                                                                                     \
     template [[host_name("bd_panel_qr_" #B)]] kernel void bd_panel_qr<B>(                                       \
         device float*, device float*, device float*, device float*, device float*, constant PanelParams&,      \
-        device const float*, device const float*, device float*, uint);                                        \
+        device const float*, device const float*, device float*, uint, uint3);                                 \
     template [[host_name("bd_tsqr_leaf_" #B)]] kernel void bd_tsqr_leaf<B>(                                     \
         device const float*, device float*, constant PanelParams&, device const float*, device const float*,   \
-        uint, uint);                                                                                            \
+        uint3, uint);                                                                                           \
     template [[host_name("bd_tsqr_top_" #B)]] kernel void bd_tsqr_top<B>(                                       \
-        device float*, device float*, device float*, constant PanelParams&, uint, uint, uint);                 \
+        device float*, device float*, device float*, constant PanelParams&, uint, uint, uint, uint3);          \
     template [[host_name("bd_tsqr_rebuild_" #B)]] kernel void bd_tsqr_rebuild<B>(                               \
         device const float*, device float*, device float*, device float*, device const float*,                 \
-        constant PanelParams&, device float*, uint, uint, uint);
+        constant PanelParams&, device float*, uint3, uint3, uint3);
 BD_PANEL_KERNELS(8)
 BD_PANEL_KERNELS(16)
 BD_PANEL_KERNELS(32)
@@ -1096,12 +1116,19 @@ kernel void bd_restore(device float* Ak [[buffer(0)]], device const float* d [[b
 // The blocked QR's aggregates (qr_blocked.mm): the T of np consecutive
 // panels' reflectors, I - Y Ta Y^T = H_0 ... H_{np-1} with Y = [V_0 ...],
 // from the panels' T's (Tb, ld 32, 1024 apart) and G = Y^T Y (ld 128): block
-// column q of Ta is -Ta(0:c0, 0:c0) G(0:c0, q) T_q, c0 = q b. Ta ld 128.
-kernel void bd_merge_t(device const float* G [[buffer(0)]], device const float* Tb [[buffer(1)]],
-                       device float* Ta [[buffer(2)]], constant uint2& p [[buffer(3)]],
-                       uint t [[thread_position_in_threadgroup]], uint nt [[threads_per_threadgroup]]) {
+// column q of Ta is -Ta(0:c0, 0:c0) G(0:c0, q) T_q, c0 = q b. Ta ld 128. A
+// threadgroup a matrix (the grid's z), the strides apart.
+struct MergeParams { uint np, b, sg, stb, sta; };
+kernel void bd_merge_t(device const float* G0 [[buffer(0)]], device const float* Tb0 [[buffer(1)]],
+                       device float* Ta0 [[buffer(2)]], constant MergeParams& p [[buffer(3)]],
+                       uint3 t3 [[thread_position_in_threadgroup]], uint3 nt3 [[threads_per_threadgroup]],
+                       uint3 tg [[threadgroup_position_in_grid]]) {
+    const uint t = t3.x, nt = nt3.x;
+    device const float* G = G0 + (ulong)tg.z * p.sg;
+    device const float* Tb = Tb0 + (ulong)tg.z * p.stb;
+    device float* Ta = Ta0 + (ulong)tg.z * p.sta;
     threadgroup float X[128 * 32];
-    const uint np = p.x, b = p.y, w = np * b;
+    const uint np = p.np, b = p.b, w = np * b;
     for (uint e = t; e < w * w; e += nt) {
         const uint i = e / w, c = e % w;
         Ta[i * 128 + c] = i / b == c / b ? Tb[(i / b) * 1024 + (i % b) * 32 + c % b] : 0.0f;
@@ -1127,21 +1154,27 @@ kernel void bd_merge_t(device const float* G [[buffer(0)]], device const float* 
     }
 }
 
-// The blocked QR's output R (k x n, row-major) from A's upper triangle (ld
-// lda), scaled back by `up`.
-struct QrROut { uint k, n, lda; float up; };
+// The blocked QR's output R (k x n, row-major, sr apart) from A's upper
+// triangle (ld lda, sa apart), times the matrix's `up`, zeros below.
+struct QrROut { uint k, n, lda, sa, sr; };
 kernel void bd_qr_r(device const float* A [[buffer(0)]], device float* R [[buffer(1)]],
-                    constant QrROut& p [[buffer(2)]], uint2 g [[thread_position_in_grid]]) {
+                    constant QrROut& p [[buffer(2)]], device const float* up [[buffer(3)]],
+                    uint3 g [[thread_position_in_grid]]) {
     if (g.y >= p.k || g.x >= p.n) return;
-    R[(ulong)g.y * p.n + g.x] = g.x >= g.y ? p.up * A[(ulong)g.y * p.lda + g.x] : 0.0f;
+    R[(ulong)g.z * p.sr + (ulong)g.y * p.n + g.x] =
+        g.x >= g.y ? up[g.z] * A[(ulong)g.z * p.sa + (ulong)g.y * p.lda + g.x] : 0.0f;
 }
 
-// The blocked QR's input (qr_blocked.mm): dst = s src, n floats, s the power
-// of two that scales the matrix into [0.5, 1) for the panel kernels.
+// The blocked QR's input: each m x n src (row-major, m n apart) times its
+// matrix's s, the power of two that scales it into [0.5, 1) for the panel
+// kernels, into an mp x np dst (sd apart), zeros around it.
+struct QrIn { uint m, n, mp, np, sd; };
 kernel void bd_scale_copy(device const float* src [[buffer(0)]], device float* dst [[buffer(1)]],
-                          constant float& s [[buffer(2)]], constant uint& n [[buffer(3)]],
-                          uint i [[thread_position_in_grid]]) {
-    if (i < n) dst[i] = s * src[i];
+                          constant QrIn& p [[buffer(2)]], device const float* s [[buffer(3)]],
+                          uint3 g [[thread_position_in_grid]]) {
+    if (g.y >= p.mp || g.x >= p.np) return;
+    dst[(ulong)g.z * p.sd + (ulong)g.y * p.np + g.x] =
+        g.y < p.m && g.x < p.n ? s[g.z] * src[(ulong)g.z * p.m * p.n + (ulong)g.y * p.n + g.x] : 0.0f;
 }
 
 // =============================================================================
