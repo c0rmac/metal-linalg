@@ -41,26 +41,33 @@ namespace {
 
 using L = __LAPACK_int;
 
-// Must match PanelParams in Svd_Bidiag.metal.
+// Must match PanelParams and SmallParams in Svd_Bidiag.metal.
 struct PanelParams { uint32_t rows, cols, rs, cs, ldv, flags, shift, ldt, leaf, ldw, dup; };
+struct SmallParams { uint32_t n, b, ldw, a0, b0, rb, ldc, m, per; };
+
+constexpr uint32_t kPartialRows = 256;   // rows a partial of the small b x b products
+constexpr uint32_t kApplyPer    = 64;    // rows or columns a threadgroup of bd_*_apply
 
 constexpr uint32_t kBandMax  = 32;          // the panel kernels' widest instance
 constexpr uint32_t kLeafRows = 128;         // must match 32 * PANEL_R: a short panel's or a TSQR leaf's rows, at most
 constexpr uint32_t kLw       = 3 * kBandMax;   // the [V W/Y ...] buffer's ld
 
 struct Panels { id<MTLComputePipelineState> panel, leaf, top, rebuild; };
+struct Small { id<MTLComputePipelineState> partial, sy, ge; };
 
 // Buffers for one (m, n), only the latest kept: [W^T U] (general) or
 // [V Y V] (symmetric), n x kLw; [V_low^T; Y^T], 2b x ldr; V and V T, m x 32;
-// X^T, 32 x ldr; small b x b products; the TSQR's scratch.
+// X^T, 32 x ldr; the panels' T and S; the small products' partials; the
+// TSQR's scratch.
 struct Buffers {
     uint32_t      m = 0, n = 0, ldr = 0;
-    id<MTLBuffer> bl, br, bv, bvt, bxt, bwu, bt, bs, bsc;
+    id<MTLBuffer> bl, br, bv, bvt, bxt, bpart, bt, bs, bsc;
 };
 
 struct State {
     MetalRuntime& rt = MetalRuntime::shared(METAL_LINALG_SHADER(Svd_Bidiag), "svd_bidiag");
     Panels panels[3];
+    Small  small;
     bool   have = false;
     Buffers buf;
 
@@ -73,6 +80,8 @@ struct State {
                 };
                 panels[i] = {mk("bd_panel_qr"), mk("bd_tsqr_leaf"), mk("bd_tsqr_top"), mk("bd_tsqr_rebuild")};
             }
+            auto mk1 = [&](NSString* k) { return make_pipeline(rt.device, rt.library, k, nil); };
+            small = {mk1(@"bd_small_partial"), mk1(@"bd_sy_apply"), mk1(@"bd_ge_apply")};
             have = true;
         }
         return panels[b <= 8 ? 0 : b <= 16 ? 1 : 2];
@@ -92,7 +101,7 @@ struct State {
         w.bv  = priv((size_t)m * kBandMax);
         w.bvt = priv((size_t)m * kBandMax);
         w.bxt = priv((size_t)kBandMax * w.ldr);
-        w.bwu = priv(kBandMax * kBandMax);
+        w.bpart = priv(((size_t)std::max(m, n) / kPartialRows + 1) * 32 * 32);
         w.bt  = priv(kBandMax * kBandMax);
         w.bs  = priv(kBandMax * kBandMax);
         // bd_tsqr_*'s layout: V (m x 32), then per leaf (at least 32 rows each)
@@ -120,6 +129,19 @@ void gemm(id<MTLDevice> dev, id<MTLCommandBuffer> cb, MPSMatrix* A, bool ta, MPS
     MPSMatrixMultiplication* g = [[MPSMatrixMultiplication alloc] initWithDevice:dev transposeLeft:ta
         transposeRight:tb resultRows:m resultColumns:n interiorColumns:k alpha:alpha beta:beta];
     [g encodeToCommandBuffer:cb leftMatrix:A rightMatrix:B resultMatrix:C];
+}
+
+// The small products' first kernel: partials of A^T B over the n rows of
+// the kLw-wide buffer W, A and B its b columns from a0 and b0.
+void small_partials(const Small& sk, const Buffers& w, id<MTLComputeCommandEncoder> enc, uint32_t n, uint32_t b,
+                    uint32_t a0, uint32_t b0) {
+    const SmallParams q{n, b, kLw, a0, b0, kPartialRows, 0, 0, 0};
+    [enc setComputePipelineState:sk.partial];
+    [enc setBuffer:w.bl offset:0 atIndex:0];
+    [enc setBuffer:w.bpart offset:0 atIndex:1];
+    [enc setBytes:&q length:sizeof q atIndex:2];
+    [enc dispatchThreadgroups:MTLSizeMake((n + kPartialRows - 1) / kPartialRows, 1, 1)
+        threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
 }
 
 // The QR of panel P (at A's offset `off`): R in place; H = I - V T V^T as V
@@ -257,14 +279,21 @@ bool band_reduce_general(id<MTLBuffer> Abuf, uint32_t m, uint32_t n, uint32_t ld
         // X^T = U^T C_low^T
         gemm(dev, cb, mps(w.bl, b, n1, b, kLw), true, mps(Abuf, akb + b, n1, m2, lda), false,
              mps(w.bxt, 0, b, m2, ldr), b, m2, n1, 1, 0);
-        // W U, then X^T -= (W U)^T V_low^T
-        gemm(dev, cb, mps(w.bl, 0, n1, b, kLw), true, mps(w.bl, b, n1, b, kLw), false,
-             mps(w.bwu, 0, b, b, kBandMax), b, b, n1, 1, 0);
-        gemm(dev, cb, mps(w.bwu, 0, b, b, kBandMax), true, mps(w.br, 0, b, m2, ldr), false,
-             mps(w.bxt, 0, b, m2, ldr), b, m2, b, -1, 1);
-        // Y^T = S^T X^T, into [V_low^T; Y^T]
-        gemm(dev, cb, mps(w.bs, 0, b, b, kBandMax), true, mps(w.bxt, 0, b, m2, ldr), false,
-             mps(w.br, (size_t)b * ldr, b, m2, ldr), b, m2, b, 1, 0);
+        // W U, then Y^T = S^T (X^T - (W U)^T V_low^T) into [V_low^T; Y^T]
+        {
+            id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+            small_partials(st.small, w, enc, n1, b, 0, b);
+            const SmallParams q{n1, b, kLw, 0, b, kPartialRows, ldr, m2, kApplyPer};
+            [enc setComputePipelineState:st.small.ge];
+            [enc setBuffer:w.bxt offset:0 atIndex:0];
+            [enc setBuffer:w.br offset:0 atIndex:1];
+            [enc setBuffer:w.bpart offset:0 atIndex:2];
+            [enc setBuffer:w.bs offset:0 atIndex:3];
+            [enc setBytes:&q length:sizeof q atIndex:4];
+            [enc dispatchThreadgroups:MTLSizeMake((m2 + kApplyPer - 1) / kApplyPer, 1, 1)
+                threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+            [enc endEncoding];
+        }
         // C_low^T -= [W^T U] [V_low^T; Y^T]
         gemm(dev, cb, mps(w.bl, 0, n1, 2 * b, kLw), false, mps(w.br, 0, 2 * b, m2, ldr), false,
              mps(Abuf, akb + b, n1, m2, lda), n1, m2, 2 * b, -1, 1);
@@ -300,12 +329,19 @@ bool band_reduce_symmetric(id<MTLBuffer> Abuf, uint32_t n, uint32_t lda, uint32_
         gemm(dev, cb, mps(Abuf, a22, n1, n1, lda), false, mps(w.bvt, 0, n1, b, kBandMax), false,
              mps(w.bl, b, n1, b, kLw), n1, b, n1, 1, 0);
         // Z = V^T X, M = T^T Z / 2, Y = X - V M
-        gemm(dev, cb, mps(w.bl, 0, n1, b, kLw), true, mps(w.bl, b, n1, b, kLw), false,
-             mps(w.bwu, 0, b, b, kBandMax), b, b, n1, 1, 0);
-        gemm(dev, cb, mps(w.bt, 0, b, b, kBandMax), true, mps(w.bwu, 0, b, b, kBandMax), false,
-             mps(w.bs, 0, b, b, kBandMax), b, b, b, 0.5, 0);
-        gemm(dev, cb, mps(w.bl, 0, n1, b, kLw), false, mps(w.bs, 0, b, b, kBandMax), false,
-             mps(w.bl, b, n1, b, kLw), n1, b, b, -1, 1);
+        {
+            id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+            small_partials(st.small, w, enc, n1, b, 0, b);
+            const SmallParams q{n1, b, kLw, 0, b, kPartialRows, 0, 0, kApplyPer};
+            [enc setComputePipelineState:st.small.sy];
+            [enc setBuffer:w.bl offset:0 atIndex:0];
+            [enc setBuffer:w.bpart offset:0 atIndex:1];
+            [enc setBuffer:w.bt offset:0 atIndex:2];
+            [enc setBytes:&q length:sizeof q atIndex:3];
+            [enc dispatchThreadgroups:MTLSizeMake((n1 + kApplyPer - 1) / kApplyPer, 1, 1)
+                threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+            [enc endEncoding];
+        }
         // A22 -= [V Y] [Y V]^T
         gemm(dev, cb, mps(w.bl, 0, n1, 2 * b, kLw), false, mps(w.bl, b, n1, 2 * b, kLw), true,
              mps(Abuf, a22, n1, n1, lda), n1, n1, 2 * b, -1, 1);

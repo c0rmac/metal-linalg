@@ -856,6 +856,127 @@ BD_PANEL_KERNELS(8)
 BD_PANEL_KERNELS(16)
 BD_PANEL_KERNELS(32)
 
+// The band reductions' small products: per block a b x b product summed
+// over the trailing rows, and two b-wide ones, as two kernels instead of
+// three MPS products. MPS took 10-20 us for the b x b product summed over n
+// rows whatever n was, its launches the rest. Every sum is in a fixed order:
+// over a threadgroup's rows in order, then over the threadgroups' partials
+// in order.
+struct SmallParams {
+    uint n, b, ldw;   // W: n rows (row-major, ld ldw)
+    uint a0, b0;      // bd_small_partial: A = W[:, a0 : a0 + b], B = W[:, b0 : b0 + b]
+    uint rb;          // rows a partial
+    uint ldc, m;      // bd_ge_apply: X^T and [V_low^T; Y^T], b x m (ld ldc)
+    uint per;         // bd_*_apply: rows (sy) or columns (ge) a threadgroup
+};
+
+// The threadgroup's partial of A^T B over rows [g rb, (g + 1) rb), to P's
+// block g (32 x 32): the rows staged 64 at a time, an entry (or, for b =
+// 32, four) a thread, the rows summed in order.
+kernel void bd_small_partial(device const float* W [[buffer(0)]], device float* P [[buffer(1)]],
+                             constant SmallParams& q [[buffer(2)]], uint g [[threadgroup_position_in_grid]],
+                             uint t [[thread_position_in_threadgroup]], uint nt [[threads_per_threadgroup]]) {
+    threadgroup float As[64][33], Bs[64][33];
+    const uint i0 = g * q.rb, i1 = min(q.n, i0 + q.rb), b = q.b;
+    float acc[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    for (uint c0 = i0; c0 < i1; c0 += 64) {
+        const uint rows = min(64u, i1 - c0);
+        for (uint x = t; x < rows * b; x += nt) {
+            const uint i = x / b, k = x % b;
+            device const float* w = W + (ulong)(c0 + i) * q.ldw;
+            As[i][k] = w[q.a0 + k];
+            Bs[i][k] = w[q.b0 + k];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        for (uint e = t, u = 0; e < b * b; e += nt, ++u) {
+            const uint r = e / b, c = e % b;
+            float s = acc[u];
+            for (uint i = 0; i < rows; ++i) s = fma(As[i][r], Bs[i][c], s);
+            acc[u] = s;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    for (uint e = t, u = 0; e < b * b; e += nt, ++u) P[g * 1024 + (e / b) * 32 + e % b] = acc[u];
+}
+
+// The partials summed, in order, into Z; their loads issued four at a time.
+static void sum_partials(device const float* P, uint parts, uint b, threadgroup float (*Z)[33], uint t, uint nt) {
+    for (uint e = t; e < b * b; e += nt) {
+        const uint o = (e / b) * 32 + e % b;
+        float s = 0.0f;
+        uint g = 0;
+        for (; g + 4 <= parts; g += 4) {
+            const float p0 = P[g * 1024 + o], p1 = P[(g + 1) * 1024 + o], p2 = P[(g + 2) * 1024 + o],
+                        p3 = P[(g + 3) * 1024 + o];
+            s += p0;
+            s += p1;
+            s += p2;
+            s += p3;
+        }
+        for (; g < parts; ++g) s += P[g * 1024 + o];
+        Z[e / b][e % b] = s;
+    }
+}
+
+// The symmetric reduction: Z = V^T X from the partials, M = T^T Z / 2, and
+// Y = X - V M in X's place, V = W[:, 0:b], X = W[:, b:2b], T upper
+// triangular (ld 32); q.per rows a threadgroup, each finishing Z and M
+// itself.
+kernel void bd_sy_apply(device float* W [[buffer(0)]], device const float* P [[buffer(1)]],
+                        device const float* T [[buffer(2)]], constant SmallParams& q [[buffer(3)]],
+                        uint g [[threadgroup_position_in_grid]], uint t [[thread_position_in_threadgroup]],
+                        uint nt [[threads_per_threadgroup]]) {
+    threadgroup float Z[32][33], M[32][33], Ts[32][33];
+    const uint b = q.b;
+    sum_partials(P, (q.n + q.rb - 1) / q.rb, b, Z, t, nt);
+    for (uint e = t; e < b * b; e += nt) Ts[e / b][e % b] = T[(e / b) * 32 + e % b];
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint e = t; e < b * b; e += nt) {
+        const uint r = e / b, c = e % b;
+        float s = 0.0f;
+        for (uint k = 0; k <= r; ++k) s = fma(Ts[k][r], Z[k][c], s);
+        M[r][c] = 0.5f * s;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    const uint i0 = g * q.per, rows = min(q.n, i0 + q.per) - i0;
+    for (uint e = t; e < rows * b; e += nt) {
+        device float* w = W + (ulong)(i0 + e / b) * q.ldw;
+        const uint c = e % b;
+        float s = 0.0f;
+        for (uint k = 0; k < b; ++k) s = fma(w[k], M[k][c], s);
+        w[b + c] -= s;
+    }
+}
+
+// The general reduction: W U = (W^T)^T U from the partials, then
+// Y^T = S^T (X^T - (W U)^T V_low^T) into R's rows b..2b, V_low^T its rows
+// 0..b; S upper triangular (ld 32); q.per (at most 64) columns a
+// threadgroup.
+kernel void bd_ge_apply(device const float* X [[buffer(0)]], device float* R [[buffer(1)]],
+                        device const float* P [[buffer(2)]], device const float* S [[buffer(3)]],
+                        constant SmallParams& q [[buffer(4)]], uint g [[threadgroup_position_in_grid]],
+                        uint t [[thread_position_in_threadgroup]], uint nt [[threads_per_threadgroup]]) {
+    threadgroup float Z[32][33], Ss[32][33], xs[32][65];
+    const uint b = q.b;
+    sum_partials(P, (q.n + q.rb - 1) / q.rb, b, Z, t, nt);
+    for (uint e = t; e < b * b; e += nt) Ss[e / b][e % b] = S[(e / b) * 32 + e % b];
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    const uint j0 = g * q.per, cols = min(q.m, j0 + q.per) - j0;
+    for (uint e = t; e < b * cols; e += nt) {
+        const uint r = e / cols, jj = e % cols, j = j0 + jj;
+        float s = X[(ulong)r * q.ldc + j];
+        for (uint k = 0; k < b; ++k) s = fma(-Z[k][r], R[(ulong)k * q.ldc + j], s);
+        xs[r][jj] = s;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint e = t; e < b * cols; e += nt) {
+        const uint r = e / cols, jj = e % cols;
+        float s = 0.0f;
+        for (uint k = 0; k <= r; ++k) s = fma(Ss[k][r], xs[k][jj], s);
+        R[(ulong)(b + r) * q.ldc + j0 + jj] = s;
+    }
+}
+
 // After the panel's trailing update: Ak(j, j) = d, Ak(j, j+1) = e (the units
 // were only for the reflectors).
 struct RestoreParams { uint nb, lda, k; };
