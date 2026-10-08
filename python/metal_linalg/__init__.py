@@ -103,7 +103,7 @@ def qr(a, mode="reduced"):
 
     ``mode`` as :func:`numpy.linalg.qr`'s: ``"reduced"`` (the above),
     ``"r"`` (``R`` alone, returned on its own; ``Q`` is never formed:
-    1.3-2.6x faster) or ``"complete"`` (``Q`` ``[..., M, M]`` square, ``R``
+    up to 2.8x faster) or ``"complete"`` (``Q`` ``[..., M, M]`` square, ``R``
     ``[..., M, N]`` with zero rows below ``K``).
     """
     if mode not in ("reduced", "r", "complete"):

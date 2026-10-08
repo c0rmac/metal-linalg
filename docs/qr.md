@@ -64,7 +64,7 @@ Since 2.17.0 every API takes a `mode`, as `numpy.linalg.qr` and `torch.linalg.qr
 | mode | Q | R | |
 |---|---|---|---|
 | `"reduced"` (the default) | $M \times K$ | $K \times N$ | the thin factors, as above |
-| `"r"` | not formed | $K \times N$ | the same R, bit for bit; 1.3-1.7x faster on the GPU, 2.3-2.6x on the CPU ([below](#modes)) |
+| `"r"` | not formed | $K \times N$ | the same R, bit for bit; up to 1.8x faster on the GPU, 2.4-2.8x on the CPU ([below](#modes)) |
 | `"complete"` | $M \times M$, orthogonal | $M \times N$, zero below row $K$ | Q's first $K$ columns are the thin Q |
 
 In C++ and in Python with MLX `"r"` follows numpy: Python returns R alone, C++
@@ -288,22 +288,25 @@ the routed call, `./build/benchmark_qr --modes`):
 
 | batch × shape | backend | reduced | R alone | complete | R alone, faster by |
 |---|---|---|---|---|---|
-| 4096 × 32×32 | `unblocked` | 0.84 ms | 0.50 ms | 0.83 ms | 1.70x |
-| 4096 × 64×64 | `unblocked` | 3.80 ms | 2.69 ms | 3.81 ms | 1.41x |
-| 1024 × 128×128 | `unblocked` | 4.45 ms | 3.06 ms | 4.40 ms | 1.46x |
-| 256 × 256×256 | `unblocked` | 6.24 ms | 4.11 ms | 6.32 ms | 1.52x |
-| 16 × 1024×1024 | `streaming_reduced` | 21.0 ms | 15.0 ms | 21.1 ms | 1.39x |
-| one 4096×4096 | `streaming_reduced` | 60.6 ms | 45.1 ms | 60.7 ms | 1.34x |
-| one 8192×512 | `streaming_reduced` | 8.60 ms | 7.49 ms | 27.8 ms | 1.15x |
-| one 512×512 | `streaming_reduced` | 2.86 ms | 2.73 ms | 2.85 ms | 1.05x |
-| one 128×128 | `cpu` | 0.23 ms | 0.09 ms | 0.23 ms | 2.59x |
-| one 256×256 | `cpu` | 0.78 ms | 0.34 ms | 0.80 ms | 2.31x |
+| 4096 × 32×32 | `unblocked` | 0.90 ms | 0.51 ms | 0.86 ms | 1.77x |
+| 4096 × 64×64 | `unblocked` | 3.87 ms | 2.73 ms | 3.88 ms | 1.42x |
+| 1024 × 128×128 | `unblocked` | 4.48 ms | 3.05 ms | 4.44 ms | 1.47x |
+| 256 × 256×256 | `unblocked` | 6.52 ms | 4.18 ms | 6.42 ms | 1.56x |
+| 16 × 1024×1024 | `streaming_reduced` | 20.9 ms | 14.8 ms | 20.8 ms | 1.41x |
+| one 4096×4096 | `streaming_reduced` | 62.5 ms | 46.8 ms | 61.3 ms | 1.33x |
+| one 8192×512 | `streaming_reduced` | 8.78 ms | 7.72 ms | 28.4 ms | 1.14x |
+| one 512×512 | `streaming_reduced` | 2.90 ms | 2.82 ms | 2.91 ms | 1.03x |
+| one 128×128 | `cpu` | 0.21 ms | 0.07 ms | 0.21 ms | 2.76x |
+| one 256×256 | `cpu` | 0.81 ms | 0.34 ms | 0.82 ms | 2.40x |
 | one 64×2048 | `cpu` | 0.09 ms | 0.09 ms | 0.09 ms | none (wide: $R_2$ needs Q) |
 
-For square and wide matrices the complete Q is the reduced one. For tall ones
-it costs what its size does: $M^2$ floats a matrix written, and $M/K$ times
-the accumulation's work (one 8192×512: 3.2x the reduced call, for a Q 16x
-the size).
+One matrix up to about 1024×1024 gains little (0.96-1.05x at 512×512 over
+several runs): its time is the factorisation's chain of panels, and forming
+Q, a few matrix products at the end, is a small part of it. For square and
+wide matrices the complete Q is the reduced one. For tall ones it costs what
+its size does: $M^2$ floats a matrix written, and $M/K$ times the
+accumulation's work (one 8192×512: 3.2x the reduced call, for a Q 16x the
+size).
 
 ### Magnitude and nearly dependent columns
 

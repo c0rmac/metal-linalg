@@ -39,7 +39,7 @@ let values = try eigvalshAccelerated(sym, batch: 1000, n: 32, uplo: .upper)
 ```
 
 `QrMode` (since 2.17.0) is numpy's and torch's: `.reduced` (the default),
-`.r` (R alone, an empty Q: 1.3-1.7x faster on the GPU, 2.3-2.6x on the CPU) or `.complete` (a square Q, and
+`.r` (R alone, an empty Q: up to 1.8x faster on the GPU, 2.8x on the CPU) or `.complete` (a square Q, and
 R with zero rows below K).
 
 Every function throws `MetalLinalgError` (`.invalidArgument` for a count that

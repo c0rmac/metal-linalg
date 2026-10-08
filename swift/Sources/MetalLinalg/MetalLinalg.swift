@@ -62,7 +62,7 @@ func output(_ count: Int, _ body: (UnsafeMutablePointer<Float>?) throws -> Void)
 public enum QrMode: Sendable {
     /// Q [rows, K] with orthonormal columns, R [K, cols].
     case reduced
-    /// R [K, cols] alone; Q is empty and never formed (1.3-2.6x faster).
+    /// R [K, cols] alone; Q is empty and never formed (up to 2.8x faster).
     case r
     /// Q [rows, rows] square and orthogonal, R [rows, cols] with zero rows below K.
     case complete

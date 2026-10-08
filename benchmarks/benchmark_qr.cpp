@@ -279,9 +279,13 @@ static void run_modes() {
             auto [Q, R] = metal_linalg::qr_accelerated(A, mode);
             eval({Q, R});
         };
-        // Every mode warmed up before any is timed: the first mode timed would
-        // otherwise carry the shape's start-up (pipelines, MLX's first buffers).
-        for (const char* mode : modes) median_ms([&] { call(mode); }, 0, 3);
+        // Every mode warmed up before any is timed, for at least 200 ms: the
+        // first mode timed would otherwise carry the shape's start-up
+        // (pipelines, MLX's first buffers) and the GPU's clocks coming up.
+        const auto warm_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(200);
+        do {
+            for (const char* mode : modes) call(mode);
+        } while (std::chrono::steady_clock::now() < warm_until);
         double t[3];
         for (int i = 0; i < 3; ++i) t[i] = median_ms([&] { call(modes[i]); });
         std::ostringstream shape;

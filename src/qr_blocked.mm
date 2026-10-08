@@ -81,10 +81,12 @@ size_t per_matrix(uint32_t m, uint32_t n, uint32_t qc, const Shape& sh) {
            (size_t)sh.Kp * 1024 / sh.b + ((size_t)sh.Kp / 128 + 1) * 128 * 128 + 128 * 128;
 }
 
-// qc: Q's columns (K, M for Q square, 0 for R alone)
+// qc: Q's columns (K, M for Q square, 0 for R alone). A workspace for more
+// columns serves fewer (ldw is a minimum), so calls alternating modes on a
+// shape do not rebuild it each time.
 Work& workspace(uint32_t m, uint32_t n, uint32_t qc, const Shape& sh, uint32_t batch) {
     static Work w;
-    if (w.A && w.m == m && w.n == n && w.qc == qc && w.capacity >= batch) return w;
+    if (w.A && w.m == m && w.n == n && w.qc >= qc && w.capacity >= batch) return w;
     id<MTLDevice> dev = metal_linalg::detail::qr_device();
     const uint32_t K = std::min(m, n), blocks = sh.Kp / sh.b;
     auto buffer = [&](size_t floats, MTLResourceOptions opt) {

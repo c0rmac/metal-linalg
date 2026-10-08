@@ -89,7 +89,7 @@ def qr(A, mode="reduced"):
     orthonormal columns and ``R`` ``[..., K, N]`` upper triangular,
     ``K = min(M, N)``. ``mode`` as torch's: ``"reduced"`` (the default),
     ``"r"`` (``R`` alone, ``Q`` an empty tensor and never formed:
-    1.3-2.6x faster) or ``"complete"`` (``Q`` ``[..., M, M]`` square, ``R``
+    up to 2.8x faster) or ``"complete"`` (``Q`` ``[..., M, M]`` square, ``R``
     ``[..., M, N]`` with zero rows below ``K``).
 
     Unlike torch's, ``mode="r"`` is differentiable: when ``A`` requires
