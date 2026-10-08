@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <iostream>
 #include <iomanip>
 #include <sstream>
@@ -11,6 +12,7 @@
 #include <mlx/mlx.h>
 #include <mlx/linalg.h>
 
+#include <metal_linalg/c_api.h>   // metal_linalg_qr_backend, for the backend's name
 #include <metal_linalg/qr.h>
 
 using namespace mlx::core;
@@ -242,11 +244,61 @@ static void print_table(
 }
 
 // =============================================================================
+// Modes (--modes): R alone and the complete Q against the reduced factors
+// =============================================================================
+
+template<typename Fn>
+static double median_ms(Fn fn, int warmup = 3, int reps = 15) {
+    for (int i = 0; i < warmup; ++i) fn();
+    std::vector<double> t;
+    for (int i = 0; i < reps; ++i) {
+        auto t0 = std::chrono::high_resolution_clock::now();
+        fn();
+        t.push_back(std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - t0).count());
+    }
+    std::sort(t.begin(), t.end());
+    return t[t.size() / 2];
+}
+
+// The routed call in each mode, the shapes of docs/qr.md's table.
+static void run_modes() {
+    struct Shape { int batch, M, N; };
+    const std::vector<Shape> shapes = {
+        {4096, 32, 32}, {4096, 64, 64}, {1024, 128, 128}, {256, 256, 256}, {16, 1024, 1024},
+        {1, 4096, 4096}, {1, 8192, 512}, {1, 512, 512}, {1, 128, 128}, {1, 256, 256}, {1, 64, 2048},
+    };
+    const char* modes[] = {"reduced", "r", "complete"};
+    std::cout << "\n[ Modes: the routed call, median of 15 (3 warm-up discarded) ]\n\n"
+              << pad("batch x M x N", 20, true) << pad("backend", 19, true)
+              << pad("reduced", 12) << pad("r", 12) << pad("complete", 12) << pad("r faster by", 13) << "\n";
+    set_default_device(Device::gpu);
+    for (const Shape& s : shapes) {
+        array A = random_matrix(s.batch, s.M, s.N);
+        eval({A});
+        double t[3];
+        for (int i = 0; i < 3; ++i)
+            t[i] = median_ms([&] {
+                auto [Q, R] = metal_linalg::qr_accelerated(A, modes[i]);
+                eval({Q, R});
+            });
+        std::ostringstream shape;
+        shape << s.batch << " x " << s.M << " x " << s.N;
+        std::cout << pad(shape.str(), 20, true) << pad(metal_linalg_qr_backend(s.M, s.N, s.batch), 19, true)
+                  << pad(format_ms(t[0]), 12) << pad(format_ms(t[1]), 12) << pad(format_ms(t[2]), 12)
+                  << pad(format_speedup(t[0] / t[1]), 13) << "\n";
+        mlx::core::clear_cache();
+    }
+    std::cout << "\n";
+}
+
+// =============================================================================
 // main
 // =============================================================================
 
 static void print_usage(const char* prog) {
-    std::cerr << "Usage: " << prog << "\n\n"
+    std::cerr << "Usage: " << prog << " [--modes]\n\n"
+              << "  --modes  time R alone and the complete Q against the reduced factors\n"
+              << "           (the routed call; docs/qr.md's table), instead of the tables below\n\n"
               << "  Per-config batch limits are set in SMALL_CONFIGS / LARGE_CONFIGS\n"
               << "  at the top of benchmark_qr.cpp via the max_batch field.\n"
               << "  Set max_batch = 0 on any config to run it at all batch sizes.\n";
@@ -256,6 +308,9 @@ int main(int argc, char* argv[]) {
     for (int i = 1; i < argc; ++i) {
         if (std::string(argv[i]) == "--help" || std::string(argv[i]) == "-h") {
             print_usage(argv[0]);
+            return 0;
+        } else if (std::string(argv[i]) == "--modes") {
+            run_modes();
             return 0;
         } else {
             std::cerr << "Unknown argument: " << argv[i] << "\n";

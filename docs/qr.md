@@ -284,7 +284,8 @@ matrix to its blocked kernel; the grid-parallel kernels kept for more than
 $2^{22}$ rows accumulate $K$ columns alone, and refuse `"complete"` there.
 
 R alone against the reduced factors on an M5 Pro (2.17.0, the MLX API,
-median of the routed call):
+median of the routed call; `./build/benchmark_qr --modes` times these, the
+complete Q too):
 
 | batch × shape | R alone, faster by |
 |---|---|
