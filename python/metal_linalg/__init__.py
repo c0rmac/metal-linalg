@@ -102,8 +102,8 @@ def qr(a, mode="reduced"):
     for a GPU launch, as this Mac was measured (see :func:`qr_backend`).
 
     ``mode`` as :func:`numpy.linalg.qr`'s: ``"reduced"`` (the above),
-    ``"r"`` (``R`` alone, returned on its own; ``Q`` is never formed, up to
-    twice as fast) or ``"complete"`` (``Q`` ``[..., M, M]`` square, ``R``
+    ``"r"`` (``R`` alone, returned on its own; ``Q`` is never formed:
+    1.3-2.6x faster) or ``"complete"`` (``Q`` ``[..., M, M]`` square, ``R``
     ``[..., M, N]`` with zero rows below ``K``).
     """
     if mode not in ("reduced", "r", "complete"):

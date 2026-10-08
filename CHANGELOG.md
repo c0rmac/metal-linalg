@@ -6,10 +6,10 @@
   API: `"reduced"` (the default, as before), `"r"` (R alone: Q is never
   formed) and `"complete"` (a square M x M Q, and R [M, N] with zero rows
   below K). Every backend takes the mode and the routing is unchanged. R
-  alone is bit-for-bit the reduced R and, on an M5 Pro, 1.4-1.7x faster for
-  batches on the GPU (4096 of 32 x 32: 0.51 ms against 0.85; one
-  4096 x 4096: 44 ms against 62) and 2-2.3x for a lone 128 x 128 or
-  256 x 256 on the CPU. The complete Q's first K columns are the reduced Q's.
+  alone is bit-for-bit the reduced R and, on an M5 Pro, 1.3-1.7x faster on
+  the GPU (4096 of 32 x 32: 0.50 ms against 0.84; one 4096 x 4096: 45 ms
+  against 61) and 2.3-2.6x for a lone 128 x 128 or 256 x 256 on the CPU
+  (`benchmark_qr --modes`). The complete Q's first K columns are the reduced Q's.
   - C++: `qr_accelerated(a, mode)` and `core::qr(a, q, r, QrMode)`; the
     three-argument forms remain (and remain exported).
   - C: `metal_linalg_qr_with_mode(a, batch, rows, cols, mode, q, r)` with
@@ -21,6 +21,12 @@
     mode="reduced")`.
   - Swift: `qrAccelerated(..., mode: .r)` and `.complete`, on `[Float]` and
     on `MLXArray`.
+- `benchmark_qr --modes` times the three modes against each other.
+- **README**: the introduction states the measured gains (one large matrix
+  1.6-10x against LAPACK on every CPU core, 11.1x at 8192; batches of
+  thousands of small matrices 1.6-5.6x; 4.9-32x against `torch.linalg`), and
+  its performance tables are re-measured on 2.17.0 (on battery, in High
+  Power mode).
 
 ## 2.16.0
 

@@ -275,12 +275,15 @@ static void run_modes() {
     for (const Shape& s : shapes) {
         array A = random_matrix(s.batch, s.M, s.N);
         eval({A});
+        auto call = [&](const char* mode) {
+            auto [Q, R] = metal_linalg::qr_accelerated(A, mode);
+            eval({Q, R});
+        };
+        // Every mode warmed up before any is timed: the first mode timed would
+        // otherwise carry the shape's start-up (pipelines, MLX's first buffers).
+        for (const char* mode : modes) median_ms([&] { call(mode); }, 0, 3);
         double t[3];
-        for (int i = 0; i < 3; ++i)
-            t[i] = median_ms([&] {
-                auto [Q, R] = metal_linalg::qr_accelerated(A, modes[i]);
-                eval({Q, R});
-            });
+        for (int i = 0; i < 3; ++i) t[i] = median_ms([&] { call(modes[i]); });
         std::ostringstream shape;
         shape << s.batch << " x " << s.M << " x " << s.N;
         std::cout << pad(shape.str(), 20, true) << pad(metal_linalg_qr_backend(s.M, s.N, s.batch), 19, true)

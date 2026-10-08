@@ -1,7 +1,7 @@
 # metal-linalg for PyTorch
 
 QR, symmetric eigendecomposition and SVD for batches of matrices on Apple
-GPUs, on [PyTorch](https://pytorch.org) tensors: on an M5 Pro, **4.7-35x
+GPUs, on [PyTorch](https://pytorch.org) tensors: on an M5 Pro, **4.9-32x
 faster than `torch.linalg`** for the same calls, against whichever of its CPU
 and MPS paths is quicker ([the measurements](https://github.com/c0rmac/metal-linalg/blob/main/python-torch/README.md#performance)).
 
@@ -105,30 +105,30 @@ as well when their input requires grad, since the gradient needs them.
 ## Performance
 
 Against `torch.linalg` on an M5 Pro with PyTorch 2.13 (conda-forge's, its CPU
-LAPACK from Accelerate) and metal-linalg 2.16 (best of five,
-[`benchmarks/benchmark_torch.py`](https://github.com/c0rmac/metal-linalg/blob/main/benchmarks/benchmark_torch.py);
+LAPACK from Accelerate) and metal-linalg 2.17 (each cell the best of ten
+calls, two runs of [`benchmarks/benchmark_torch.py`](https://github.com/c0rmac/metal-linalg/blob/main/benchmarks/benchmark_torch.py);
 the same tensors on MPS for torch's MPS path and for this package, which uses
 them in place, see [MPS tensors](#mps-tensors)):
 
 | | torch, CPU | torch, MPS | metal-linalg-torch |
 |---|---|---|---|
-| QR, 1024 × 128×128 | 202 ms | 32 ms | 4.4 ms |
-| SVD, 256 × 128×64 | 69 ms | 71 ms | 5.1 ms |
-| SVD, 4096 × 32×32 | 223 ms | 232 ms | 6.3 ms |
-| eigh, 4096 × 16×16 | 33 ms | 35 ms | 2.0 ms |
-| eigh, one 2048×2048 | 263 ms | 272 ms | 56 ms |
-| SVD, one 4096×4096 | 3.60 s | 3.64 s | 339 ms |
-| eigvalsh, one 4096×4096 | 1.78 s | 1.80 s | 125 ms |
-| svdvals, one 4096×4096 | 1.95 s | 1.99 s | 193 ms |
+| QR, 1024 × 128×128 | 202 ms | 34 ms | 4.3 ms |
+| SVD, 256 × 128×64 | 66 ms | 70 ms | 5.3 ms |
+| SVD, 4096 × 32×32 | 205 ms | 209 ms | 6.4 ms |
+| eigh, 4096 × 16×16 | 34 ms | 35 ms | 2.0 ms |
+| eigh, one 2048×2048 | 259 ms | 265 ms | 53 ms |
+| SVD, one 4096×4096 | 3.55 s | 3.59 s | 350 ms |
+| eigvalsh, one 4096×4096 | 1.77 s | 1.81 s | 127 ms |
+| svdvals, one 4096×4096 | 1.94 s | 1.97 s | 194 ms |
 
 It is ahead on every row. Of these calls PyTorch 2.13 runs only QR on the GPU
-for MPS tensors, and this is 7x faster there (the QR batch runs on the
+for MPS tensors, and this is 8x faster there (the QR batch runs on the
 library's Householder kernels); its SVD takes as long on MPS
 as on the CPU, and eigh, eigvalsh and svdvals have no MPS kernels and go
-through its CPU fallback. Against those, 13-35x for the other batches of
+through its CPU fallback. Against those, 12-33x for the other batches of
 small matrices (the SVD of 256 matrices of 128×64 is a QR and then
 `golub_kahan` on the GPU; the two batches of 4096 run on the GPU and the CPU
-at once), 4.7x for eigh of one 2048×2048
+at once), 4.9x for eigh of one 2048×2048
 and 10x for the SVD of one 4096×4096 with its vectors, and 10-14x for its
 eigenvalues or singular values alone (the last three by a two-stage
 reduction). Which
