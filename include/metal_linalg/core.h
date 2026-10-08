@@ -59,9 +59,11 @@ namespace metal_linalg {
         unsigned batch_threshold         = 16;
 
         // --- GPU or CPU ---
-        // GPU iff gpu_min_k <= k <= gpu_max_k, batch * k >=
-        // gpu_min_batch_times_k and batch >= gpu_min_batch, with k = min(M, N)
-        // (or by the large-matrix clause below). gpu_max_k = 0 means
+        // GPU iff gpu_min_k <= w <= gpu_max_k, batch * w >=
+        // gpu_min_batch_times_k and batch >= gpu_min_batch, with w =
+        // floor(sqrt(M k)) and k = min(M, N): k for a square or wide matrix,
+        // more for a tall one (or by the large-matrix clause below). w since
+        // 2.16.0, k before; the fields keep their names. gpu_max_k = 0 means
         // never, kQrNoLimit no cap; gpu_min_batch_times_k = 0 with
         // gpu_min_batch = 1 means always the GPU, which is what a device
         // measured before QR had a CPU path gets. The defaults, for a device
@@ -71,7 +73,7 @@ namespace metal_linalg {
         unsigned gpu_max_k             = kQrNoLimit;
         unsigned gpu_min_batch_times_k = 1024;
         unsigned gpu_min_batch         = 1;
-        // ... and k at least this (0: no lower bound). Since the CPU path
+        // ... and w at least this (0: no lower bound). Since the CPU path
         // spreads a batch over every core, it wins the smallest matrices at
         // any batch, while a large batch of mid-size ones can still be the
         // GPU's: on an M5 Pro 10000 of 16x16 take 2.1 ms on the CPU and 3.7

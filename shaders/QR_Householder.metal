@@ -308,8 +308,9 @@ QH_SIMD(32, 4)
 // it are V^T v, the new column of T (lane i of every simdgroup holding T's
 // row i).
 //
-//   1. copy the input zero-padded into the workspace and scan it; scaled by a
-//      power of two only if its largest entry is beyond 2^20 or 2^-20
+//   1. scan the input; copy it zero-padded into the workspace, scaled by a
+//      power of two if its largest entry is beyond 2^20 or 2^-20, unless it
+//      needs neither (block 0 then reads the input itself)
 //   2. per block: per panel, factor, T into the block's T, the panel's two
 //      unit lower diagonal tiles of V into threadgroup memory, T merged, the
 //      rest of the block updated; then the columns right of the block, and
@@ -386,7 +387,8 @@ inline void wy_c(thread simdgroup_float8x8& c, device const float* p, uint ldc, 
 }
 
 template <uint NT, uint CT, bool TRANS>
-inline void wy_apply(device float* C, uint ldc, device const float* V, uint ldv, uint k, uint mp, uint c0, uint c1,
+inline void wy_apply(device float* C, device const float* Cin, uint ldc, device const float* V, uint ldv, uint k,
+                     uint mp, uint c0, uint c1,
                      threadgroup const float* vd, device const float* tp, threadgroup float* wpart, uint wcap,
                      threadgroup const float* eye, uint sg, uint S) {
     const uint ntiles = (c1 - c0) / 8, nrb = (mp - k) / 8, ngroups = (ntiles + CT - 1) / CT;
@@ -401,13 +403,14 @@ inline void wy_apply(device float* C, uint ldc, device const float* V, uint ldv,
         const uint r0 = part * nrb / G, r1 = (part + 1) * nrb / G;
         const uint nc = min(CT, ntiles - min(ntiles, cg * CT));   // this unit's column tiles
         device float* Ct = C + (ulong)k * ldc + c0 + 8 * CT * cg;
+        device const float* Cti = Cin + (ulong)k * ldc + c0 + 8 * CT * cg;   // read from, Ct written
         simdgroup_float8x8 w[NT][CT];
         QW_FOR(i, NT) QW_FOR(j, CT) w[i][j] = make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
         if (have) {
             // The diagonal row blocks: tiles right of the diagonal are zero
             for (uint r = r0; r < min(r1, NT); ++r) {
                 simdgroup_float8x8 c[CT];
-                QW_FOR(j, CT) if (j < nc) wy_c<TRANS>(c[j], Ct + (ulong)(8 * r) * ldc + 8 * j, ldc, r, CT * cg + j, NT, eye);
+                QW_FOR(j, CT) if (j < nc) wy_c<TRANS>(c[j], Cti + (ulong)(8 * r) * ldc + 8 * j, ldc, r, CT * cg + j, NT, eye);
                 QW_FOR(i, NT) {
                     if (i <= r) {
                         simdgroup_float8x8 v;
@@ -417,7 +420,7 @@ inline void wy_apply(device float* C, uint ldc, device const float* V, uint ldv,
                 }
             }
             device const float* vr = V + (ulong)(k + 8 * max(r0, NT)) * ldv + k;
-            device const float* cr = Ct + (ulong)(8 * max(r0, NT)) * ldc;
+            device const float* cr = Cti + (ulong)(8 * max(r0, NT)) * ldc;
             for (uint r = max(r0, NT); r < r1; ++r, vr += 8 * ldv, cr += 8 * ldc) {
                 simdgroup_float8x8 c[CT];
                 QW_FOR(j, CT) if (j < nc) wy_c<TRANS>(c[j], cr + 8 * j, ldc, r, CT * cg + j, NT, eye);
@@ -454,7 +457,8 @@ inline void wy_apply(device float* C, uint ldc, device const float* V, uint ldv,
             for (uint r = r0; r < min(r1, NT); ++r) {
                 simdgroup_float8x8 c[CT];
                 device float* p = Ct + (ulong)(8 * r) * ldc;
-                QW_FOR(j, CT) if (j < nc) wy_c<TRANS>(c[j], p + 8 * j, ldc, r, CT * cg + j, NT, eye);
+                device const float* pi = Cti + (ulong)(8 * r) * ldc;
+                QW_FOR(j, CT) if (j < nc) wy_c<TRANS>(c[j], pi + 8 * j, ldc, r, CT * cg + j, NT, eye);
                 QW_FOR(i, NT) {
                     if (i <= r) {
                         simdgroup_float8x8 v;
@@ -466,9 +470,10 @@ inline void wy_apply(device float* C, uint ldc, device const float* V, uint ldv,
             }
             device const float* vr = V + (ulong)(k + 8 * max(r0, NT)) * ldv + k;
             device float* cr = Ct + (ulong)(8 * max(r0, NT)) * ldc;
-            for (uint r = max(r0, NT); r < r1; ++r, vr += 8 * ldv, cr += 8 * ldc) {
+            device const float* cri = Cti + (ulong)(8 * max(r0, NT)) * ldc;
+            for (uint r = max(r0, NT); r < r1; ++r, vr += 8 * ldv, cr += 8 * ldc, cri += 8 * ldc) {
                 simdgroup_float8x8 c[CT];
-                QW_FOR(j, CT) if (j < nc) wy_c<TRANS>(c[j], cr + 8 * j, ldc, r, CT * cg + j, NT, eye);
+                QW_FOR(j, CT) if (j < nc) wy_c<TRANS>(c[j], cri + 8 * j, ldc, r, CT * cg + j, NT, eye);
                 QW_FOR(i, NT) {
                     simdgroup_float8x8 v;
                     simdgroup_load(v, vr + 8 * i, ldv);
@@ -483,14 +488,14 @@ inline void wy_apply(device float* C, uint ldc, device const float* V, uint ldv,
 
 // wy_apply for a block of nt column tiles (2, 4, 6 or 8).
 template <bool TRANS>
-inline void wy_apply_n(uint nt, device float* C, uint ldc, device const float* V, uint ldv, uint k, uint mp, uint c0,
+inline void wy_apply_n(uint nt, device float* C, device const float* Cin, uint ldc, device const float* V, uint ldv, uint k, uint mp, uint c0,
                        uint c1, threadgroup const float* vd, device const float* tp, threadgroup float* wpart,
                        uint wcap, threadgroup const float* eye, uint sg, uint S) {
     switch (nt) {   // uniform
-        case 2: wy_apply<2, QW_CT, TRANS>(C, ldc, V, ldv, k, mp, c0, c1, vd, tp, wpart, wcap, eye, sg, S); break;
-        case 4: wy_apply<4, QW_CT, TRANS>(C, ldc, V, ldv, k, mp, c0, c1, vd, tp, wpart, wcap, eye, sg, S); break;
-        case 6: wy_apply<6, QW_CT, TRANS>(C, ldc, V, ldv, k, mp, c0, c1, vd, tp, wpart, wcap, eye, sg, S); break;
-        default: wy_apply<8, QW_CT, TRANS>(C, ldc, V, ldv, k, mp, c0, c1, vd, tp, wpart, wcap, eye, sg, S); break;
+        case 2: wy_apply<2, QW_CT, TRANS>(C, Cin, ldc, V, ldv, k, mp, c0, c1, vd, tp, wpart, wcap, eye, sg, S); break;
+        case 4: wy_apply<4, QW_CT, TRANS>(C, Cin, ldc, V, ldv, k, mp, c0, c1, vd, tp, wpart, wcap, eye, sg, S); break;
+        case 6: wy_apply<6, QW_CT, TRANS>(C, Cin, ldc, V, ldv, k, mp, c0, c1, vd, tp, wpart, wcap, eye, sg, S); break;
+        default: wy_apply<8, QW_CT, TRANS>(C, Cin, ldc, V, ldv, k, mp, c0, c1, vd, tp, wpart, wcap, eye, sg, S); break;
     }
 }
 
@@ -646,15 +651,26 @@ kernel void qr_householder_wy(
     device float* Qw = prm.q_direct ? out_q : QW + (ulong)mat * mp * Kp;
     device float* Tw = TW + (ulong)mat * ((Kp + 63) / 64) * 64 * 64;   // a block's T at Tw + k0 64, ld 64
 
-    // 1. Copy zero-padded and scan; scaled by a power of two only if the
-    // largest entry is far from 1 (the sums of squares need no more)
+    // 1. Scan. A matrix that needs neither padding nor scaling (its largest
+    // entry within 2^-20 .. 2^20; the sums of squares need no more) is read
+    // straight from the input by block 0, which writes the workspace; any
+    // other is copied into it zero-padded, scaled by a power of two if need be.
+    const bool aligned = mp == m && np == n;
     float amax = 0.0f, bad = 0.0f;
-    for (uint idx = t; idx < mp * np; idx += T) {
-        const uint r = idx / np, c = idx - r * np;
-        const float v = r < m && c < n ? src[r * n + c] : 0.0f;
-        A[idx] = v;
-        amax = fmax(amax, fabs(v));   // fmax skips NaN, hence the separate flag
-        if (non_finite(v)) bad = 1.0f;
+    if (aligned) {
+        for (uint idx = t; idx < m * n; idx += T) {
+            const float v = src[idx];
+            amax = fmax(amax, fabs(v));   // fmax skips NaN, hence the separate flag
+            if (non_finite(v)) bad = 1.0f;
+        }
+    } else {
+        for (uint idx = t; idx < mp * np; idx += T) {
+            const uint r = idx / np, c = idx - r * np;
+            const float v = r < m && c < n ? src[r * n + c] : 0.0f;
+            A[idx] = v;
+            amax = fmax(amax, fabs(v));
+            if (non_finite(v)) bad = 1.0f;
+        }
     }
     for (uint idx = t; idx < 64; idx += T) eye[idx] = idx % 9 == 0 ? 1.0f : 0.0f;
     amax = group_max(amax, red, sg, lane, S);
@@ -667,13 +683,18 @@ kernel void qr_householder_wy(
     }
     int expo = 0;
     if (amax > 0.0f) frexp(amax, expo);
-    if (expo >= -20 && expo <= 20) {
-        expo = 0;
-    } else {
+    const bool scale = expo < -20 || expo > 20;
+    if (!scale) expo = 0;
+    const bool direct = aligned && !scale;   // uniform
+    if (aligned && scale) {
+        for (uint idx = t; idx < m * n; idx += T) A[idx] = ldexp(src[idx], -expo);
+    } else if (scale) {
         threadgroup_barrier(mem_flags::mem_device);
         for (uint idx = t; idx < mp * np; idx += T) A[idx] = ldexp(A[idx], -expo);
     }
     threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
+    // Where block 0 reads from: the input, read directly, or the workspace
+    device const float* A0 = direct ? src : A;
 
     // 2. Blocks of QW_NB columns, panels of QW_B
     for (uint k0 = 0; k0 < Kp; k0 += QW_NB) {
@@ -685,7 +706,7 @@ kernel void qr_householder_wy(
             QH_UNROLL(R, s, {
                 const uint row = t + T * s;
                 if (row >= k && row < mp) {
-                    device const float4* q4 = (device const float4*)(A + (ulong)row * np + k);
+                    device const float4* q4 = (device const float4*)((k == 0 ? A0 : A) + (ulong)row * np + k);
                     QH_UNROLL(4, f, { const float4 g4 = q4[f]; QH_UNROLL(4, e, { x[s][4 * f + e] = g4[e]; }); });
                 } else {
                     QH_UNROLL(QW_B, q, { x[s][q] = 0.0f; });
@@ -732,13 +753,13 @@ kernel void qr_householder_wy(
             threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
             if (p > 0) wy_merge(tb, A, np, k0, mp, p, vd, sc, sg, S);
             // The rest of the block
-            wy_apply<2, QW_CT, true>(A, np, A, np, k, mp, k + QW_B, k0 + nb, vd + 128 * p,
+            wy_apply<2, QW_CT, true>(A, k == 0 ? A0 : A, np, A, np, k, mp, k + QW_B, k0 + nb, vd + 128 * p,
                                      tb + (QW_B * p) * 64 + QW_B * p, sc, prm.sc, eye, sg, S);
             threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
         }
         // The columns right of the block; then the block's rows of R are
         // final
-        wy_apply_n<true>(nb / 8, A, np, A, np, k0, mp, k0 + nb, np, vd, tb, sc, prm.sc, eye, sg, S);
+        wy_apply_n<true>(nb / 8, A, k0 == 0 ? A0 : A, np, A, np, k0, mp, k0 + nb, np, vd, tb, sc, prm.sc, eye, sg, S);
         threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
         const uint r1 = min(k0 + nb, K);
         for (uint idx = t + k0 * n; idx < r1 * n; idx += T) {
@@ -756,7 +777,7 @@ kernel void qr_householder_wy(
             vd[idx] = c < r ? A[(ulong)(k0 + 8 * i + r) * np + k0 + 8 * i + c] : (c == r ? 1.0f : 0.0f);
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
-        wy_apply_n<false>(nb / 8, Qw, Kp, A, np, k0, mp, k0, Kp, vd, Tw + k0 * 64, sc, prm.sc, eye, sg, S);
+        wy_apply_n<false>(nb / 8, Qw, Qw, Kp, A, np, k0, mp, k0, Kp, vd, Tw + k0 * 64, sc, prm.sc, eye, sg, S);
         threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
     }
 

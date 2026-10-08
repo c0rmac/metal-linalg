@@ -91,19 +91,32 @@ SimdShape simd_shape(uint32_t m, uint32_t n) {
 // halved its speed at 8 columns, two to sixteen were alike (M5 Pro).
 constexpr uint32_t kSimdPerGroup = 4;
 
-// The blocked kernel's shape for m x n: the matrix padded to mp x np
-// (multiples of 8, at least Kp = K rounded up to the panel width 16), R rows a
-// thread and S simdgroups (at least enough for the rows). Two rows a thread, four for narrow matrices (n <=
-// 32, where the panels are most of the work) or where two would take more
-// simdgroups than a threadgroup has; one was 1.1-1.2x slower at 96-512, four
-// 1.1-1.4x slower there and 1.4x faster at 1000 x 20 (M5 Pro).
+// The blocked kernel's shape for a batch of m x n: the matrix padded to mp x
+// np (multiples of 8, at least Kp = K rounded up to the panel width 16), R
+// rows a thread and S simdgroups (at least enough for the rows). Two rows a
+// thread, four for narrow matrices (n <= 32, where the panels are most of the
+// work) or where two would take more simdgroups than a threadgroup has; one
+// was 1.1-1.2x slower at 96-512 in large batches, four 1.1-1.4x slower there
+// and 1.4x faster at 1000 x 20 (M5 Pro). But a small batch leaves the GPU
+// short of simdgroups, and each matrix's panels are a latency-bound chain:
+// there a matrix gets more of them, one row a thread, so that the batch has
+// about 12 a GPU core, up to 16 a matrix (one 384 x 384 in 2.0 ms against 3.0,
+// 16 of 256 x 256 in 1.2 against 1.7, 32 of them 1.7 against 2.1).
 constexpr uint32_t kWyPanel = 16;   // QW_B
 constexpr uint32_t kWyBlock = 32;   // QW_NB
+constexpr uint32_t kWySmallBatchSimdgroups = 12;   // a GPU core, for a small batch
 struct WyShape {
     uint32_t mp = 0, np = 0, Kp = 0, r = 0, s = 0, sc = 0;
 };
 
-WyShape wy_shape(uint32_t m, uint32_t n, uint32_t max_simdgroups) {
+uint32_t pow2_at_least(uint32_t x) {
+    uint32_t p = 1;
+    while (p < x) p *= 2;
+    return p;
+}
+
+WyShape wy_shape(uint32_t m, uint32_t n, uint32_t max_simdgroups, uint32_t batch = 0xFFFFFFFFu,
+                 uint32_t cores = 0) {
     WyShape w;
     const uint32_t K = std::min(m, n);
     w.Kp = round_up(K, kWyPanel);
@@ -116,6 +129,19 @@ WyShape wy_shape(uint32_t m, uint32_t n, uint32_t max_simdgroups) {
         w.s = (w.mp + 127) / 128;
     }
     if (w.s > max_simdgroups) return WyShape{};
+    // A small batch: more simdgroups a matrix, the fewest rows a thread that
+    // the 16 cover
+    const uint32_t want = kWySmallBatchSimdgroups * std::max(cores, 1u);
+    if (cores && (uint64_t)batch * w.s < want) {
+        const uint32_t s = std::min({16u, max_simdgroups, pow2_at_least((want + batch - 1) / batch)});
+        for (uint32_t r : {1u, 2u, 4u}) {
+            if (s > w.s && 32 * r * s >= w.mp) {
+                w.r = r;
+                w.s = s;
+                break;
+            }
+        }
+    }
     // A wide matrix's updates are its work: a simdgroup for every 128 columns
     // too, up to 8 (64 of 64 x 1024 in 1.3 ms against 2.7 with the one its
     // rows ask for)
@@ -288,10 +314,13 @@ void qr_householder(const Matrices& a, float* q_out, float* r_out) {
     const double budget = (double)env_uint("QR_CHUNK_MS", (unsigned)kChunkBudgetMs);
     uint32_t chunk = (uint32_t)std::min<double>(batch, std::max<double>(cores, std::floor(budget * cores / per_matrix)));
     const SimdShape sh = kind == Kind::simd ? simd_shape(M, N) : SimdShape{};
-    const WyShape wy = kind == Kind::wy ? wy_shape(M, N, cache.wy_max_simdgroups()) : WyShape{};
+    const WyShape wy = kind == Kind::wy ? wy_shape(M, N, cache.wy_max_simdgroups(), batch, cores) : WyShape{};
     WyWork* ww = nullptr;
     if (kind == Kind::wy) {
-        const size_t fa = (size_t)wy.mp * wy.np, fq = (size_t)wy.mp * wy.Kp, ft = (size_t)round_up(wy.Kp, 64) * 64;
+        // Q's workspace only where Q is not formed in place in the output
+        const bool q_in_place = wy.mp == M && wy.Kp == K;
+        const size_t fa = (size_t)wy.mp * wy.np, fq = q_in_place ? 0 : (size_t)wy.mp * wy.Kp,
+                     ft = (size_t)round_up(wy.Kp, 64) * 64;
         chunk = (uint32_t)std::clamp<size_t>(((size_t)1 << 26) / (fa + fq + ft), 1, chunk);
         ww = &cache.wy_work(fa * chunk, fq * chunk, ft * chunk);
     }

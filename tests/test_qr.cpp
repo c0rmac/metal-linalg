@@ -419,6 +419,7 @@ int main() {
             scaled(std::string("householder 200x30 ") + tag, detail::qr_householder, 2, 200, 30, sc, 58);
             scaled(std::string("householder 20x16 ") + tag, detail::qr_householder, 3, 20, 16, sc, 59);
             scaled(std::string("householder 150x100 ") + tag, detail::qr_householder, 2, 150, 100, sc, 60);
+            scaled(std::string("householder 128x64 ") + tag, detail::qr_householder, 2, 128, 64, sc, 61);
             scaled(std::string("complete 8x8 ") + tag,     detail::qr_streaming_amx_complete, 1, 8, 8, sc, 52);
             scaled(std::string("cpu 64x64 ") + tag,        detail::qr_cpu, 1, 64, 64, sc, 55);
         }
@@ -558,13 +559,15 @@ int main() {
         forced.gpu_min_k = 128;
         set_qr_policy(forced);
         {
-            // The smallest matrices stay on the CPU at any batch.
-            const bool ok = qr_backend(16, 16, 100000) == QrBackend::cpu && qr_backend(4096, 64, 1000) == QrBackend::cpu &&
-                            qr_backend(128, 128, 1024) != QrBackend::cpu && qr_backend(512, 128, 16) != QrBackend::cpu;
+            // The smallest matrices stay on the CPU at any batch; their size
+            // is w = floor(sqrt(M k)), so a tall one counts by its rows too.
+            const bool ok = qr_backend(16, 16, 100000) == QrBackend::cpu && qr_backend(128, 16, 1000) == QrBackend::cpu &&
+                            qr_backend(4096, 64, 1000) != QrBackend::cpu && qr_backend(128, 128, 1024) != QrBackend::cpu &&
+                            qr_backend(512, 128, 16) != QrBackend::cpu && qr_backend(127, 127, 1024) == QrBackend::cpu;
             ++g_checks;
             if (!ok) fail("qr_backend", "gpu_min_k not applied");
-            else std::printf("  ok    qr_backend: gpu_min_k 128 -> CPU at 100000 x 16x16 and 1000 x 4096x64, "
-                             "GPU at 1024 x 128x128\n");
+            else std::printf("  ok    qr_backend: gpu_min_k 128 on sqrt(M k) -> CPU at 100000 x 16x16, 1000 x 128x16 "
+                             "and 1024 x 127^2, GPU at 1000 x 4096x64 and 1024 x 128x128\n");
         }
         run("gpu_min_k -> cpu    16x16 b64", qr_accelerated, random_matrix(64, 16, 16, 47));
 

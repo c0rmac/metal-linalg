@@ -7,6 +7,7 @@
 #include <metal_linalg/device.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <string>
 
@@ -234,6 +235,18 @@ QrBackend qr_gpu_backend(unsigned m, unsigned n, unsigned batch) {
     return std::min(m, n) >= crossover ? QrBackend::streaming_reduced : QrBackend::unblocked;
 }
 
+namespace {
+// floor(sqrt(m k)), exactly: a matrix's size for the GPU-or-CPU rule, rows and
+// k both (k for a square or wide matrix, more for a tall one).
+unsigned qr_work_side(unsigned m, unsigned k) {
+    const unsigned long long p = (unsigned long long)m * k;
+    unsigned long long w = (unsigned long long)std::sqrt((double)p);
+    while (w * w > p) --w;
+    while ((w + 1) * (w + 1) <= p) ++w;
+    return (unsigned)w;
+}
+} // namespace
+
 // GPU or CPU, as for eigh and the SVD: the GPU needs enough work to pay for a
 // launch, and a lone or small-batch call is quicker in LAPACK. Large matrices
 // in small batches have a clause of their own (see QrPolicy).
@@ -254,8 +267,12 @@ bool qr_uses_gpu(unsigned m, unsigned n, unsigned batch) {
         (p.gpu_large_max_batch == 0 || batch <= p.gpu_large_max_batch)) {
         return true;
     }
-    return k >= p.gpu_min_k && k <= p.gpu_max_k &&
-           (unsigned long long)batch * k >= p.gpu_min_batch_times_k && batch >= p.gpu_min_batch;
+    // The rule on sqrt(M k) too, since 2.16.0 (k before): the unblocked
+    // backend's kernels take a tall narrow batch in parallel by its rows, and
+    // a rule on k sent 16 of 1024 x 64 to the CPU at 1.9x the GPU's time
+    const unsigned w = qr_work_side(m, k);
+    return w >= p.gpu_min_k && w <= p.gpu_max_k &&
+           (unsigned long long)batch * w >= p.gpu_min_batch_times_k && batch >= p.gpu_min_batch;
 }
 
 QrBackend qr_backend(unsigned m, unsigned n, unsigned batch) {

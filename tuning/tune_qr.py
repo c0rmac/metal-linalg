@@ -358,8 +358,12 @@ def for_crossover(key):
 # sqrt(M k) 1.0133x (1.0274x): the CPU path's wide matrices (a square block
 # and a product) are cheaper than their work says, its tall ones dearer.
 def work_side(M, N):
-    """sqrt(M k), rounded."""
-    return round((M * min(M, N)) ** 0.5)
+    """floor(sqrt(M k)), exactly, as qr.mm computes it (qr_work_side). Since
+    2.16.0 the product rule is on it too (k before): the unblocked backend
+    takes a tall narrow batch in parallel by its rows, and on the run of
+    2026-10-08 the rule on k sent 16 of 1024 x 64 to the CPU at 1.9x the
+    GPU's time; refitted on sqrt(M k), 1.037x regret went to 1.024x."""
+    return math.isqrt(M * min(M, N))
 
 
 def large_enough(M, N, lk):
@@ -381,10 +385,10 @@ def routed(params, chosen, large=(0, 0)):
         return "share" if SHARE and b >= SHARE and (b, M, N) in SHARED_PTS else base(b, M, N)
 
     def rule(b, M, N):
-        k = min(M, N)
+        w = work_side(M, N)
         if lk and large_enough(M, N, lk) and (not lcap or b <= lcap):
             return kernel(b, M, N)
-        if k < mk or k > gm or b * k < mb or b < mbatch:
+        if w < mk or w > gm or b * w < mb or b < mbatch:
             return "cpu"
         return kernel(b, M, N)
     return rule
@@ -418,8 +422,8 @@ def fit_cpu_routing(best, chosen, tol=0.005):
     pts = {k: v for k, v in best.items() if "cpu" in v}
     if not pts:
         return None
-    ks = sorted({min(M, N) for (_, M, N) in pts})
-    bks = sorted({b * min(M, N) for (b, M, N) in pts})
+    ks = sorted({work_side(M, N) for (_, M, N) in pts})       # the rule's size, sqrt(M k)
+    bks = sorted({b * work_side(M, N) for (b, M, N) in pts})
     batches = sorted({b for (b, _, _) in pts})
     # A limit at the largest k measured fits the data exactly as well as no
     # limit, but says nothing about larger k, where the GPU may win (for QR it
@@ -892,8 +896,8 @@ def write_report(res, path):
                  (f" and batch <= {rt['gpu_large_max_batch']}" if rt.get("gpu_large_max_batch") else "")
                  + "   (large matrices, by rows and k)") if lk else ""
         mk = rt.get("gpu_min_k", 0)
-        A(f"```\nGPU iff {str(mk) + ' <= ' if mk else ''}k <= {gm}, batch * k >= {rt['gpu_min_batch_times_k']} "
-          f"and batch >= {rt['gpu_min_batch']}   (k = min(M, N)){large}\notherwise LAPACK on the CPU\n```")
+        A(f"```\nGPU iff {str(mk) + ' <= ' if mk else ''}w <= {gm}, batch * w >= {rt['gpu_min_batch_times_k']} "
+          f"and batch >= {rt['gpu_min_batch']}   (w = floor(sqrt(M k)), k = min(M, N)){large}\notherwise LAPACK on the CPU\n```")
         A("")
         sh = rt.get("share_min_batch", 0)
         A("On the GPU, " + (f"from a batch of {sh} the batch is shared with the CPU path (the GPU and the CPU "
@@ -1126,7 +1130,7 @@ def main():
     if rt:
         gm = "no limit" if rt["gpu_max_k"] >= NO_LIMIT else rt["gpu_max_k"]
         lk = rt.get("gpu_large_min_k", 0)
-        print(f"  CPU routing: GPU iff {rt.get('gpu_min_k', 0)} <= k <= {gm}, batch*k >= {rt['gpu_min_batch_times_k']}, "
+        print(f"  CPU routing: GPU iff {rt.get('gpu_min_k', 0)} <= w <= {gm}, batch*w >= {rt['gpu_min_batch_times_k']}, "
               f"batch >= {rt['gpu_min_batch']}" +
               (f", or sqrt(M k) >= {lk} and batch <= {rt['gpu_large_max_batch'] or 'any'}" if lk else "") +
               (f"; shared with the CPU from batch {rt['share_min_batch']}" if rt.get("share_min_batch") else "") +
