@@ -1,8 +1,44 @@
 # eigh and the SVD for batches of mid-size matrices
 
-Status: **analysed, not built** (2026-10-08). The CPU path is 2-10x ahead
-of every GPU backend here, and what a GPU kernel could reach is about level
-with it, not ahead; see [Why not now](#why-not-now).
+Status: **analysed, not built** (2026-10-08) as a kernel a matrix; **done
+another way for eigh** (2.17.0): the `tridiag_batch` backend reduces a whole
+batch together on the GPU, a threadgroup a matrix and panel, and leaves the
+tridiagonal problems (the part this page found the GPU cannot do well, the
+QL rotations on the vectors) to the CPU's cores, pipelined under the GPU's
+stages: 1.3-1.5x the CPU at 256-1024 matrices of 96-256 on an M5 Pro
+([eigh.md, backend 6](../eigh.md#backend-6-a-batch-reduced-together-tridiag_batch)).
+The SVD's counterpart is built too (2.17.0, `bidiag_batch`, [svd.md](../svd.md#an-eighth-backend-for-batches-of-mid-size-matrices-bidiag_batch)):
+1.4-1.65x the CPU at 256-1024 matrices of 128-256. The analysis of a kernel a
+matrix below stands: the CPU path is 2-10x ahead of every one-matrix GPU
+backend here, and what such a kernel could reach is about level with it; see
+[Why not now](#why-not-now).
+
+## Where the time goes
+
+Timed stage by stage (the GPU's reduction, the CPU's solve, the GPU's
+back-transformation, under the pipeline), both batch backends are bound by
+the reduction from 256, and the reduction by memory: about 170-190 GB/s.
+Reading the lower triangle alone (eigh) and the trailing block once a step
+(the SVD) took 1.2-1.9x off it. At 128 the CPU's solve is as long as the
+GPU's work.
+
+## Tried: the panel's own columns in registers
+
+Each panel step also reads the panel's own columns, $V$ and $W$ (the SVD: $V$
+and $X$), three times: for the column's update, for the corrections' dot
+products and in the corrections themselves; by estimate as much as the
+trailing product at $N = 256$. On eigh's panel (2026-10-08), a thread a row,
+its row of $V$ and $W$ kept in registers as the steps formed them, so that
+no step read them: the update and the corrections register-local, the dot
+products summed across the lanes (five shuffle stages) and then the
+simdgroups (a partial-sums array; then compare-and-swap into the result);
+and, third, the dot products left in memory. Every variant was 10-17% slower
+at 128-512 (256 × 256²: 37.5-38.9 ms against 32.3-33.2). The 64 floats a
+thread holds cost occupancy, fewer simdgroups a core to hide memory latency
+in a kernel bound by memory, and the reads they saved were mostly cache hits
+(the panel's columns are 64 KB a matrix at 256, read again within a step).
+The SVD's panel, which already holds a column in registers for its fused
+pass, was not tried.
 
 ## What
 

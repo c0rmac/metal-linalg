@@ -123,9 +123,9 @@ uint32_t metal_linalg_cpu_threads(void);
 
 /* The backend a call of that shape uses under the policy in effect, by name:
  *   QR    "cpu", "unblocked", "streaming_reduced"
- *   eigh  "cpu", "simd", "threadgroup", "block", "tridiag", "ql", and for eigenvalues alone "band"
+ *   eigh  "cpu", "simd", "threadgroup", "block", "tridiag", "ql", "band", "tridiag_batch"
  *   SVD   "cpu", "jacobi", "block_jacobi", "qr_jacobi", "qr_block_jacobi", "bidiag",
- *         "golub_kahan", "qr_golub_kahan", and for singular values alone "band"
+ *         "golub_kahan", "qr_golub_kahan", "band", "bidiag_batch"
  * The strings are static. */
 const char* metal_linalg_qr_backend(uint32_t rows, uint32_t cols, uint32_t batch);
 const char* metal_linalg_eigh_backend(uint32_t n, uint32_t batch);
@@ -178,6 +178,13 @@ typedef struct metal_linalg_eigh_policy {
     uint32_t gpu_big_batch_min;      /* gpu_big_batch_min (0: never) */
     uint32_t values_band_min_n;      /* eigenvalues alone: the band backend from this N (0: never) */
     uint32_t values_band_width;      /* ... its band's width, 8, 16 or 32 (0: 16) */
+    uint32_t band_min_n;             /* with eigenvectors: the band backend from this N (0: never) */
+    uint32_t tridiag_batch_min_n;    /* the tridiag_batch backend instead of the CPU for N in */
+    uint32_t tridiag_batch_max_n;    /* [min_n, max_n] (max_n 0: never) in a batch of at least */
+    uint32_t tridiag_batch_min_batch;            /* min_batch; since 2.17.0 */
+    uint32_t values_tridiag_batch_min_n;         /* the same for eigenvalues alone */
+    uint32_t values_tridiag_batch_max_n;
+    uint32_t values_tridiag_batch_min_batch;
 } metal_linalg_eigh_policy;
 
 typedef struct metal_linalg_svd_policy {
@@ -207,6 +214,14 @@ typedef struct metal_linalg_svd_policy {
     uint32_t values_band_min_k;     /* singular values alone: the band backend from this k (0: never) */
     uint32_t values_band_width;     /* ... its band's width, 8, 16 or 32 (0: 16) */
     uint32_t band_min_k;            /* with vectors: the band backend from this k (0: never) */
+    uint32_t bidiag_batch_min_k;    /* the bidiag_batch backend instead of the CPU for k in */
+    uint32_t bidiag_batch_max_k;    /* [min_k, max_k] (max_k 0: never) and max(M, N) up to */
+    uint32_t bidiag_batch_min_batch;        /* max_l in a batch of at least min_batch; */
+    uint32_t bidiag_batch_max_l;            /* since 2.17.0 */
+    uint32_t values_bidiag_batch_min_k;     /* the same for singular values alone */
+    uint32_t values_bidiag_batch_max_k;
+    uint32_t values_bidiag_batch_min_batch;
+    uint32_t values_bidiag_batch_max_l;
 } metal_linalg_svd_policy;
 
 metal_linalg_qr_policy   metal_linalg_qr_policy_get(void);

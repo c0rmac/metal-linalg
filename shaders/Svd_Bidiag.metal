@@ -1398,3 +1398,510 @@ kernel void bd_chase_apply(device float* X [[buffer(0)]], device const float* Bk
         device float*, device const float*, constant ChaseParams&, uint, uint, uint);
 BD_CHASE_APPLY(2, 8)
 BD_CHASE_APPLY(4, 4)
+
+// =============================================================================
+// The bidiagonalization of a batch of mid-size matrices, a threadgroup a
+// matrix and panel (bd_panel, since 2.17.0): the SVD's `bidiag_batch` backend
+// (src/svd_bidiag_batch.mm), as Eigh_Tridiag.metal's td_panel is the
+// eigensolver's `tridiag_batch`.
+// =============================================================================
+//
+// The four kernels above spread one large matrix's column over the GPU, a
+// dispatch for each step that needs a whole vector before the next. For a
+// batch of matrices of a few hundred their dispatches are mostly fixed cost;
+// here one threadgroup takes a matrix's whole panel, slabrd's steps column by
+// column with barriers between them (the same formulation as bd_col ..
+// bd_gemv_n), and the trailing update is two batched MPS products. The last
+// columns are a final panel of their own (nb = nn), with no trailing update.
+//
+// Per column i, in threadgroup memory: vv, the column (then its reflector v,
+// rows i ..); uu, the row (then u, columns i + 1 ..), from Ak(i:, i+1:)^T v,
+// a simdgroup a column (coalesced down the columns); qv = Ak(i+1:, i+1:) u,
+// summed over the same columns as they pass (see bd_panel); and the
+// corrections' dot products t1 .. t4. A column's or a row's device entries
+// are written by one thread each, the one that owns them in every loop that
+// writes them, so no two threads write one address.
+
+struct BpParams {
+    uint mm, nn;            // the trailing block (mm >= nn)
+    uint lda, ldx, ldy;
+    uint k;                 // the panel's first column, for d, e, tauq, taup
+    uint nb;                // the panel's columns (the last panel: nn)
+    uint sa, sx, sy, sv;    // per-matrix strides, in floats: A, X, Y, d e tauq taup
+};
+
+constant constexpr uint BP_T = 34;   // each of t1 .. t4's slots (a panel of up to 33 columns)
+
+static float bp_sum(float x, threadgroup float* part, uint sg, uint lane, uint nsg) {
+    x = simd_sum(x);
+    if (lane == 0) part[sg] = x;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    float s = 0.0f;
+    for (uint u = 0; u < nsg; ++u) s += part[u];
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    return s;
+}
+
+static float bp_max(float x, threadgroup float* part, uint sg, uint lane, uint nsg) {
+    x = simd_max(x);
+    if (lane == 0) part[sg] = x;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    float s = 0.0f;
+    for (uint u = 0; u < nsg; ++u) s = max(s, part[u]);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    return s;
+}
+
+// The reflector annihilating x[lo + 1 .. hi) given alpha = x[lo] (read by
+// the caller before any barrier that could let x[lo] be overwritten), as
+// slarfg, the norm scaled by the largest magnitude; the same in every thread.
+static void bp_reflector(threadgroup const float* x, uint lo, uint hi, float alpha, uint t, uint nt,
+                         threadgroup float* part, uint sg, uint lane, uint nsg,
+                         thread float& beta, thread float& tau, thread float& scale) {
+    float m = 0.0f;
+    for (uint r = lo + 1 + t; r < hi; r += nt) m = max(m, fabs(x[r]));
+    const float amax = bp_max(m, part, sg, lane, nsg);
+    float ss = 0.0f;
+    if (amax > 0.0f) {
+        const float inv = div1(1.0f, amax);
+        for (uint r = lo + 1 + t; r < hi; r += nt) {
+            const float z = x[r] * inv;
+            ss = fma(z, z, ss);
+        }
+    }
+    ss = bp_sum(ss, part, sg, lane, nsg);
+    householder(alpha, amax * sqrt1(ss), beta, tau, scale);
+}
+
+// Constant-indexed loops over a lane's rows of a column, rows lane + 32 q, so
+// that a column stays in registers.
+#define BP_U32(...) { { constexpr uint q = 0; __VA_ARGS__ } { constexpr uint q = 1; __VA_ARGS__ } { constexpr uint q = 2; __VA_ARGS__ } { constexpr uint q = 3; __VA_ARGS__ } { constexpr uint q = 4; __VA_ARGS__ } { constexpr uint q = 5; __VA_ARGS__ } { constexpr uint q = 6; __VA_ARGS__ } { constexpr uint q = 7; __VA_ARGS__ } { constexpr uint q = 8; __VA_ARGS__ } { constexpr uint q = 9; __VA_ARGS__ } { constexpr uint q = 10; __VA_ARGS__ } { constexpr uint q = 11; __VA_ARGS__ } { constexpr uint q = 12; __VA_ARGS__ } { constexpr uint q = 13; __VA_ARGS__ } { constexpr uint q = 14; __VA_ARGS__ } { constexpr uint q = 15; __VA_ARGS__ } { constexpr uint q = 16; __VA_ARGS__ } { constexpr uint q = 17; __VA_ARGS__ } { constexpr uint q = 18; __VA_ARGS__ } { constexpr uint q = 19; __VA_ARGS__ } { constexpr uint q = 20; __VA_ARGS__ } { constexpr uint q = 21; __VA_ARGS__ } { constexpr uint q = 22; __VA_ARGS__ } { constexpr uint q = 23; __VA_ARGS__ } { constexpr uint q = 24; __VA_ARGS__ } { constexpr uint q = 25; __VA_ARGS__ } { constexpr uint q = 26; __VA_ARGS__ } { constexpr uint q = 27; __VA_ARGS__ } { constexpr uint q = 28; __VA_ARGS__ } { constexpr uint q = 29; __VA_ARGS__ } { constexpr uint q = 30; __VA_ARGS__ } { constexpr uint q = 31; __VA_ARGS__ } }
+#define BP_UQ(Q, ...) BP_U32(if (q < Q) __VA_ARGS__)
+
+// *p += v for a float in threadgroup memory: Metal has no float atomics there,
+// so a compare-and-swap on its bits (a simdgroup's lanes add to distinct rows).
+inline void bp_atomic_add(threadgroup atomic_uint* p, float v) {
+    uint old = atomic_load_explicit(p, memory_order_relaxed);
+    while (!atomic_compare_exchange_weak_explicit(p, &old, as_type<uint>(as_type<float>(old) + v),
+                                                  memory_order_relaxed, memory_order_relaxed)) {}
+}
+
+// Threadgroup memory: vv and qv (mm floats each) and uu (nn), sized by the
+// host. Q: a lane's rows of a column, mm <= 32 Q.
+//
+// Each step reads the trailing block once: a simdgroup takes a column into
+// registers, its product with v (Ak^T v), from that its entry of the row
+// reflector's unscaled vector (uu, an affine function of the product), and
+// at once its share of Ak uu (sum over the columns, into qv by threadgroup
+// atomics); the reflector's scale applies after. slabrd reads the block
+// twice, Ak^T v and then Ak u, which bounded this kernel by memory.
+template <uint Q>
+kernel void bd_panel(device float* A [[buffer(0)]], device float* X [[buffer(1)]], device float* Y [[buffer(2)]],
+                     device float* d [[buffer(3)]], device float* e [[buffer(4)]],
+                     device float* tauq [[buffer(5)]], device float* taup [[buffer(6)]],
+                     constant BpParams& p [[buffer(7)]], threadgroup float* shm [[threadgroup(0)]],
+                     uint mat [[threadgroup_position_in_grid]], uint t [[thread_index_in_threadgroup]],
+                     uint nt [[threads_per_threadgroup]], uint sg [[simdgroup_index_in_threadgroup]],
+                     uint lane [[thread_index_in_simdgroup]], uint nsg [[simdgroups_per_threadgroup]]) {
+    const ulong mt = mat;
+    A += mt * p.sa; X += mt * p.sx; Y += mt * p.sy;
+    d += mt * p.sv; e += mt * p.sv; tauq += mt * p.sv; taup += mt * p.sv;
+    const uint mm = p.mm, nn = p.nn, lda = p.lda, ldx = p.ldx, ldy = p.ldy;
+    threadgroup float* vv = shm;
+    threadgroup float* qv = shm + mm;
+    threadgroup float* uu = qv + mm;
+    threadgroup atomic_uint* qacc = reinterpret_cast<threadgroup atomic_uint*>(qv);
+    threadgroup float tt[4 * BP_T], part[32];
+    threadgroup float* t1 = tt;
+    threadgroup float* t2 = tt + BP_T;
+    threadgroup float* t3 = tt + 2 * BP_T;
+    threadgroup float* t4 = tt + 3 * BP_T;
+    float tp_prev = 0.0f;   // taup of column i - 1
+
+    for (uint i = 0; i <= p.nb; ++i) {
+        // X(r, i-1) = taup_{i-1} (qv[r] - Ak(r, 0:i) t3 - X(r, 0:i-1) t4), r >= i
+        if (i > 0 && tp_prev != 0.0f) {
+            const uint c = i - 1;
+            for (uint r = i + t; r < mm; r += nt) {
+                float acc = qv[r];
+                for (uint j = 0; j <= c; ++j) acc = fma(-A[r + j * lda], t3[j], acc);
+                for (uint j = 0; j < c; ++j) acc = fma(-X[r + j * ldx], t4[j], acc);
+                X[r + c * ldx] = tp_prev * acc;
+            }
+        } else if (i > 0) {
+            for (uint r = i + t; r < mm; r += nt) X[r + (i - 1) * ldx] = 0.0f;
+        }
+        if (i == p.nb) break;   // the panel's last X column, for the trailing update
+        threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
+
+        // Ak(r, i) -= Ak(r, 0:i) Y(i, 0:i)^T + X(r, 0:i) Ak(0:i, i), r >= i,
+        // into vv (Ak(j, i), j < i, are the earlier rows' u, their unit 1)
+        for (uint r = i + t; r < mm; r += nt) {
+            float x = A[r + i * lda];
+            for (uint j = 0; j < i; ++j) x -= A[r + j * lda] * Y[i + j * ldy] + X[r + j * ldx] * A[j + i * lda];
+            vv[r] = x;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        // The column reflector: d(i), tauq(i), v = [1; sc vv[i+1:]] into vv
+        // and Ak(i:, i)
+        float beta, tq, sc;
+        {
+            const float alpha = vv[i];
+            bp_reflector(vv, i, mm, alpha, t, nt, part, sg, lane, nsg, beta, tq, sc);
+        }
+        if (t == 0) {
+            d[p.k + i] = beta;
+            tauq[p.k + i] = tq;
+        }
+        for (uint r = i + t; r < mm; r += nt) {
+            const float v = r == i ? 1.0f : sc * vv[r];
+            vv[r] = v;
+            A[r + i * lda] = v;
+        }
+        // t1 = Ak(i:, 0:i)^T v, t2 = X(i:, 0:i)^T v, a simdgroup each (once v
+        // is in vv); qv zeroed for the sums below
+        threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
+        for (uint q = sg; q < 2 * i; q += nsg) {
+            device const float* col = q < i ? A + (ulong)q * lda : X + (ulong)(q - i) * ldx;
+            float s = 0.0f;
+            for (uint r = i + lane; r < mm; r += 32) s = fma(col[r], vv[r], s);
+            s = simd_sum(s);
+            if (lane == 0) {
+                if (q < i) t1[q] = s;
+                else       t2[q - i] = s;
+            }
+        }
+        for (uint r = i + 1 + t; r < mm; r += nt) qv[r] = 0.0f;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        // A column c > i a simdgroup, in registers: pv = Ak(i:, c)^T v;
+        // Y(c, i) = tauq (pv - Y(c, 0:i) t1 - Ak(0:i, c)^T t2); the row's
+        // updated entry uu[c] = Ak(i, c) - Y(c, 0:i+1) Ak(i, 0:i+1)^T -
+        // Ak(0:i, c)^T X(i, 0:i)^T (Ak(i, i) = v(0) = 1); and, from c = i + 2,
+        // Ak(r, c) uu[c] summed over the columns, r > i (the row reflector's
+        // u is uu scaled, its unit at i + 1 added after)
+        {
+            float acc[Q];
+            BP_UQ(Q, { acc[q] = 0.0f; })
+            bool any = false;
+            for (uint c = i + 1 + sg; c < nn; c += nsg) {
+                device const float* colp = A + (ulong)c * lda;
+                float cr[Q];
+                float s1 = 0.0f;
+                BP_UQ(Q, {
+                    const uint r = i + lane + 32 * q;
+                    const float a = r < mm ? colp[r] : 0.0f;
+                    cr[q] = a;
+                    s1 = fma(a, r < mm ? vv[r] : 0.0f, s1);
+                })
+                float s23 = 0.0f, s45 = 0.0f;
+                if (lane < i) {   // i < 33: a lane a term
+                    const float ycj = Y[c + lane * ldy], ajc = A[lane + c * lda];
+                    s23 = fma(ycj, t1[lane], ajc * t2[lane]);
+                    s45 = fma(ycj, A[i + lane * lda], ajc * X[i + lane * ldx]);
+                }
+                const float y = tq * simd_sum(s1 - s23);
+                const float uc = simd_shuffle(cr[0], 0) - y - simd_sum(s45);   // cr[0] of lane 0: Ak(i, c)
+                if (lane == 0) {
+                    Y[c + i * ldy] = y;
+                    uu[c] = uc;
+                }
+                if (c >= i + 2) {   // uniform
+                    any = true;
+                    BP_UQ(Q, { acc[q] = fma(cr[q], uc, acc[q]); })
+                }
+            }
+            if (any)
+                BP_UQ(Q, {
+                    const uint r = i + lane + 32 * q;
+                    if (r > i && r < mm) bp_atomic_add(&qacc[r], acc[q]);
+                })
+        }
+        threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
+        // The row reflector: e(i), taup(i), u = [1; sc uu[i+2:]] into uu and
+        // Ak(i, i+1:); none for the last column
+        if (i + 1 >= nn) {
+            if (t == 0) taup[p.k + i] = 0.0f;
+            tp_prev = 0.0f;
+            continue;
+        }
+        float beta2, tp, sc2;
+        {
+            const float alpha = uu[i + 1];
+            bp_reflector(uu, i + 1, nn, alpha, t, nt, part, sg, lane, nsg, beta2, tp, sc2);
+        }
+        if (t == 0) {
+            e[p.k + i] = beta2;
+            taup[p.k + i] = tp;
+        }
+        for (uint c = i + 1 + t; c < nn; c += nt) {
+            const float u = c == i + 1 ? 1.0f : sc2 * uu[c];
+            uu[c] = u;
+            A[i + c * lda] = u;
+        }
+        threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
+        tp_prev = tp;
+        if (tp == 0.0f) continue;   // uniform: X(:, i) = 0, written at the next column
+        // qv[r] = Ak(r, i+1:) u = Ak(r, i+1) + sc Ak(r, i+2:) uu, r > i;
+        // t3 = Y(i+1:, 0:i+1)^T u, t4 = Ak(0:i, i+1:) u, a simdgroup each
+        for (uint r = i + 1 + t; r < mm; r += nt) qv[r] = fma(sc2, qv[r], A[r + (ulong)(i + 1) * lda]);
+        for (uint q = sg; q < 2 * i + 1; q += nsg) {
+            float s = 0.0f;
+            if (q <= i) {
+                device const float* col = Y + (ulong)q * ldy;
+                for (uint c = i + 1 + lane; c < nn; c += 32) s = fma(col[c], uu[c], s);
+            } else {
+                device const float* row = A + (q - i - 1);
+                for (uint c = i + 1 + lane; c < nn; c += 32) s = fma(row[(ulong)c * lda], uu[c], s);
+            }
+            s = simd_sum(s);
+            if (lane == 0) {
+                if (q <= i) t3[q] = s;
+                else        t4[q - i - 1] = s;
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+}
+
+#define BP_INSTANCE(Q)                                                                                    \
+    template [[host_name("bd_panel_" #Q)]] kernel void bd_panel<Q>(                                       \
+        device float*, device float*, device float*, device float*, device float*, device float*,          \
+        device float*, constant BpParams&, threadgroup float*, uint, uint, uint, uint, uint, uint);
+BP_INSTANCE(4)
+BP_INSTANCE(8)
+BP_INSTANCE(16)
+BP_INSTANCE(32)
+
+// The batch's matrices into the workspace: matrix index[c0 + j] of src
+// (row-major, rows x cols) as matrix j of A, column-major m x n (ld lda),
+// scaled by scale[c0 + j]: A itself when rows >= cols, else its transpose
+// (row-major A is its transpose column-major: a plain copy). Tiles of 32,
+// threadgroups of 32 x 8.
+struct BlParams { uint rows, cols, m, n, lda, sa, c0; };
+
+kernel void bd_load(device const float* src [[buffer(0)]], device float* A [[buffer(1)]],
+                    device const uint* index [[buffer(2)]], device const float* scale [[buffer(3)]],
+                    constant BlParams& p [[buffer(4)]], uint3 g [[threadgroup_position_in_grid]],
+                    uint3 l [[thread_position_in_threadgroup]]) {
+    threadgroup float tile[32][33];
+    const uint j = g.z;
+    const ulong b = index[p.c0 + j];
+    device const float* s = src + b * p.rows * p.cols;
+    device float* Aj = A + (ulong)j * p.sa;
+    const float sc = scale[p.c0 + j];
+    const uint r0 = g.x * 32, c0 = g.y * 32;   // a tile of A (m x n)
+    if (p.rows < p.cols) {
+        // A = src^T: A(r, c) = src(c, r), src row-major is A column-major
+        for (uint q = l.y; q < 32; q += 8) {
+            const uint r = r0 + l.x, c = c0 + q;
+            if (r < p.m && c < p.n) Aj[(ulong)c * p.lda + r] = s[(ulong)c * p.cols + r] * sc;
+        }
+        return;
+    }
+    // A = src: read src(r0 + q, c0 + x) along src's rows, write down A's columns
+    for (uint q = l.y; q < 32; q += 8) {
+        const uint r = r0 + q, c = c0 + l.x;
+        tile[q][l.x] = r < p.m && c < p.n ? s[(ulong)r * p.cols + c] : 0.0f;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint q = l.y; q < 32; q += 8) {
+        const uint r = r0 + l.x, c = c0 + q;
+        if (r < p.m && c < p.n) Aj[(ulong)c * p.lda + r] = tile[l.x][q] * sc;
+    }
+}
+
+// Matrix j of Z (column-major, rows x cols, ld rows) into matrix index[c0 + j]
+// of out, row-major rows x cols: the tall case's U and V^T. Tiles of 32,
+// threadgroups of 32 x 8.
+struct BsParams { uint rows, cols, c0; };
+
+kernel void bd_store(device const float* Z [[buffer(0)]], device float* out [[buffer(1)]],
+                     device const uint* index [[buffer(2)]], constant BsParams& p [[buffer(3)]],
+                     uint3 g [[threadgroup_position_in_grid]], uint3 l [[thread_position_in_threadgroup]]) {
+    threadgroup float tile[32][33];
+    const ulong j = g.z, b = index[p.c0 + j], per = (ulong)p.rows * p.cols;
+    device const float* Zj = Z + j * per;
+    device float* o = out + b * per;
+    const uint i0 = g.x * 32, j0 = g.y * 32;   // rows i0.., columns j0.. of Z
+    for (uint q = l.y; q < 32; q += 8) {
+        const uint row = i0 + l.x, col = j0 + q;
+        tile[q][l.x] = row < p.rows && col < p.cols ? Zj[(ulong)col * p.rows + row] : 0.0f;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint q = l.y; q < 32; q += 8) {
+        const uint row = i0 + q, col = j0 + l.x;
+        if (row < p.rows && col < p.cols) o[(ulong)row * p.cols + col] = tile[l.x][q];
+    }
+}
+
+// The wide case's: column-major Z is already the row-major output's layout
+// (U' column-major is V^T row-major, V'^T column-major is U row-major), so a
+// copy, matrix j to matrix index[c0 + j], `per` floats each.
+struct BcParams { uint per, c0; };
+
+kernel void bd_copy(device const float* Z [[buffer(0)]], device float* out [[buffer(1)]],
+                    device const uint* index [[buffer(2)]], constant BcParams& p [[buffer(3)]],
+                    uint2 id [[thread_position_in_grid]]) {
+    if (id.x >= p.per) return;
+    const ulong j = id.y, b = index[p.c0 + j];
+    out[b * p.per + id.x] = Z[j * p.per + id.x];
+}
+
+// The back-transformations' blocks: V (len x bb, row-major, columns from kb
+// on zero) of Q's reflectors k0 .. k0 + kb - 1 (left: column j below the
+// diagonal, len = m - k0) or P's (row j right of the superdiagonal,
+// len = n - k0 - 1), read from A; T from G = V^T V and tau as Eigh_Tridiag's
+// td_make_t builds it.
+struct BwParams { uint len, kb, bb, k0, lda, left, sa, sv, svb, stb; };
+
+kernel void bd_make_v(device const float* A [[buffer(0)]], device float* V [[buffer(1)]],
+                      constant BwParams& p [[buffer(2)]], uint3 id [[thread_position_in_grid]]) {
+    const uint j = id.x, r = id.y;
+    if (j >= p.bb || r >= p.len) return;
+    const ulong mat = id.z;
+    device const float* Am = A + mat * p.sa;
+    float v = 0.0f;
+    if (j < p.kb && r >= j)
+        v = r == j ? 1.0f
+                   : p.left ? Am[(ulong)(p.k0 + j) * p.lda + p.k0 + r]          // column k0 + j, row k0 + r
+                            : Am[(ulong)(p.k0 + 1 + r) * p.lda + p.k0 + j];     // row k0 + j, column k0 + 1 + r
+    V[mat * p.svb + (ulong)r * p.bb + j] = v;
+}
+
+constant constexpr uint BW_MAX = 64;
+
+kernel void bd_make_t(device const float* G [[buffer(0)]], device const float* tau [[buffer(1)]],
+                      device float* T [[buffer(2)]], constant BwParams& p [[buffer(3)]],
+                      uint mat [[threadgroup_position_in_grid]], uint i [[thread_index_in_threadgroup]]) {
+    threadgroup float Ts[BW_MAX][BW_MAX + 1], gj[BW_MAX], tj[1];
+    const ulong mt = mat;
+    G += mt * p.stb; T += mt * p.stb; tau += mt * p.sv + p.k0;
+    const uint bb = p.bb, kb = p.kb;
+    for (uint j = 0; j < bb; ++j) {
+        if (i < bb) gj[i] = i < j ? G[i * bb + j] : 0.0f;
+        if (i == 0) tj[0] = j < kb ? tau[j] : 0.0f;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if (i < bb) {
+            float v = 0.0f;
+            if (i < j) {
+                float s = 0.0f;
+                for (uint k = i; k < j; ++k) s = fma(Ts[i][k], gj[k], s);
+                v = -tj[0] * s;
+            } else if (i == j) {
+                v = tj[0];
+            }
+            Ts[i][j] = v;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    for (uint r = 0; r < bb; ++r)
+        if (i < bb) T[r * bb + i] = Ts[r][i];
+}
+
+// =============================================================================
+// A batch reduced to bands: the panels' QR (bb_panel, since 2.17.0)
+// =============================================================================
+//
+// The batch backend's first stage for singular values alone (svd_bidiag_batch.mm):
+// every matrix to an upper band of width 16 by blocks of 16 columns, as
+// band_reduce.mm reduces one matrix, the work batched products, then the bands
+// to bidiagonal on the CPU's cores. bb_panel factors one panel of every
+// matrix: p x nb (nb <= 16, p <= 1024), element (r, c) at r * rs + c * cs
+// from the buffer's offset, matrix j at j * sa; R in place, zeros below it;
+// V (p x nb, row-major, its unit diagonal explicit) to V + j * sv; T (nb x
+// nb, row-major, H(0) ... H(nb-1) = I - V T V^T) to T + j * st. A threadgroup
+// a matrix and a thread a row, its nb entries in registers; per column, the
+// reflector's norm (one sum of squares) and then 32 sums at once, the remaining columns' products with v and the products of
+// the earlier v's with it (for T), across the lanes by five shuffle stages.
+// The strides let a row panel be factored through its transpose.
+struct BqParams { uint p, nb, rs, cs, sa, sv, st; };
+
+#define BQ_U16(...) { { constexpr uint c = 0; __VA_ARGS__ } { constexpr uint c = 1; __VA_ARGS__ } { constexpr uint c = 2; __VA_ARGS__ } { constexpr uint c = 3; __VA_ARGS__ } { constexpr uint c = 4; __VA_ARGS__ } { constexpr uint c = 5; __VA_ARGS__ } { constexpr uint c = 6; __VA_ARGS__ } { constexpr uint c = 7; __VA_ARGS__ } { constexpr uint c = 8; __VA_ARGS__ } { constexpr uint c = 9; __VA_ARGS__ } { constexpr uint c = 10; __VA_ARGS__ } { constexpr uint c = 11; __VA_ARGS__ } { constexpr uint c = 12; __VA_ARGS__ } { constexpr uint c = 13; __VA_ARGS__ } { constexpr uint c = 14; __VA_ARGS__ } { constexpr uint c = 15; __VA_ARGS__ } }
+#define BQ_U32(...) { { constexpr uint c = 0; __VA_ARGS__ } { constexpr uint c = 1; __VA_ARGS__ } { constexpr uint c = 2; __VA_ARGS__ } { constexpr uint c = 3; __VA_ARGS__ } { constexpr uint c = 4; __VA_ARGS__ } { constexpr uint c = 5; __VA_ARGS__ } { constexpr uint c = 6; __VA_ARGS__ } { constexpr uint c = 7; __VA_ARGS__ } { constexpr uint c = 8; __VA_ARGS__ } { constexpr uint c = 9; __VA_ARGS__ } { constexpr uint c = 10; __VA_ARGS__ } { constexpr uint c = 11; __VA_ARGS__ } { constexpr uint c = 12; __VA_ARGS__ } { constexpr uint c = 13; __VA_ARGS__ } { constexpr uint c = 14; __VA_ARGS__ } { constexpr uint c = 15; __VA_ARGS__ } { constexpr uint c = 16; __VA_ARGS__ } { constexpr uint c = 17; __VA_ARGS__ } { constexpr uint c = 18; __VA_ARGS__ } { constexpr uint c = 19; __VA_ARGS__ } { constexpr uint c = 20; __VA_ARGS__ } { constexpr uint c = 21; __VA_ARGS__ } { constexpr uint c = 22; __VA_ARGS__ } { constexpr uint c = 23; __VA_ARGS__ } { constexpr uint c = 24; __VA_ARGS__ } { constexpr uint c = 25; __VA_ARGS__ } { constexpr uint c = 26; __VA_ARGS__ } { constexpr uint c = 27; __VA_ARGS__ } { constexpr uint c = 28; __VA_ARGS__ } { constexpr uint c = 29; __VA_ARGS__ } { constexpr uint c = 30; __VA_ARGS__ } { constexpr uint c = 31; __VA_ARGS__ } }
+#define BQ_J16(...) { { constexpr uint j = 0; __VA_ARGS__ } { constexpr uint j = 1; __VA_ARGS__ } { constexpr uint j = 2; __VA_ARGS__ } { constexpr uint j = 3; __VA_ARGS__ } { constexpr uint j = 4; __VA_ARGS__ } { constexpr uint j = 5; __VA_ARGS__ } { constexpr uint j = 6; __VA_ARGS__ } { constexpr uint j = 7; __VA_ARGS__ } { constexpr uint j = 8; __VA_ARGS__ } { constexpr uint j = 9; __VA_ARGS__ } { constexpr uint j = 10; __VA_ARGS__ } { constexpr uint j = 11; __VA_ARGS__ } { constexpr uint j = 12; __VA_ARGS__ } { constexpr uint j = 13; __VA_ARGS__ } { constexpr uint j = 14; __VA_ARGS__ } { constexpr uint j = 15; __VA_ARGS__ } }
+#define BQ_J8(...) { { constexpr uint j = 0; __VA_ARGS__ } { constexpr uint j = 1; __VA_ARGS__ } { constexpr uint j = 2; __VA_ARGS__ } { constexpr uint j = 3; __VA_ARGS__ } { constexpr uint j = 4; __VA_ARGS__ } { constexpr uint j = 5; __VA_ARGS__ } { constexpr uint j = 6; __VA_ARGS__ } { constexpr uint j = 7; __VA_ARGS__ } }
+#define BQ_J4(...) { { constexpr uint j = 0; __VA_ARGS__ } { constexpr uint j = 1; __VA_ARGS__ } { constexpr uint j = 2; __VA_ARGS__ } { constexpr uint j = 3; __VA_ARGS__ } }
+#define BQ_J2(...) { { constexpr uint j = 0; __VA_ARGS__ } { constexpr uint j = 1; __VA_ARGS__ } }
+
+#define BQ_TR_STAGE(U, H)                                                        \
+    {                                                                            \
+        const bool up = (lane & H) != 0;                                         \
+        U({ const float send = up ? w[j] : w[j + H], keep = up ? w[j + H] : w[j]; \
+            w[j] = keep + simd_shuffle_xor(send, (ushort)H); })                  \
+    }
+#define BQ_TRANSPOSE_SUM                                                         \
+    BQ_TR_STAGE(BQ_J16, 16) BQ_TR_STAGE(BQ_J8, 8) BQ_TR_STAGE(BQ_J4, 4)           \
+    BQ_TR_STAGE(BQ_J2, 2) { const bool up = (lane & 1) != 0;                     \
+        const float send = up ? w[0] : w[1], keep = up ? w[1] : w[0];           \
+        w[0] = keep + simd_shuffle_xor(send, (ushort)1); }
+
+kernel void bb_panel(device float* A [[buffer(0)]], device float* V [[buffer(1)]], device float* T [[buffer(2)]],
+                     constant BqParams& q [[buffer(3)]], uint mat [[threadgroup_position_in_grid]],
+                     uint t [[thread_index_in_threadgroup]], uint sg [[simdgroup_index_in_threadgroup]],
+                     uint lane [[thread_index_in_simdgroup]], uint nsg [[simdgroups_per_threadgroup]]) {
+    threadgroup float part[32 * 32];   // a simdgroup's sums
+    threadgroup float tot[36];         // the threadgroup's; [33]: alpha
+    threadgroup float Ts[16][17];
+    device float* Am = A + (ulong)mat * q.sa;
+    const uint p = q.p, nb = q.nb, r = t;
+    const bool row = r < p;
+    float x[16], v[16];
+    BQ_U16({
+        x[c] = row && c < nb ? Am[(ulong)r * q.rs + (ulong)c * q.cs] : 0.0f;
+        v[c] = 0.0f;
+    })
+    for (uint j = 0; j < nb; ++j) {
+        float xj = 0.0f;
+        BQ_U16({ if (c == j) xj = x[c]; })
+        if (r == j) tot[33] = xj;
+        // The sum of squares below row j, unscaled: the matrices were scaled
+        // to a largest entry in [0.5, 1), so only entries below 1e-19 could
+        // underflow, a perturbation far below rounding
+        const float z = simd_sum(row && r > j ? xj * xj : 0.0f);
+        if (lane == 0) part[sg] = z;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        float ss = 0.0f;
+        for (uint g = 0; g < nsg; ++g) ss += part[g];
+        const float alpha = tot[33];
+        float beta, tau, sc;
+        householder(alpha, sqrt1(ss), beta, tau, sc);
+        const float vr = row && r > j ? xj * sc : (r == j ? 1.0f : 0.0f);
+        BQ_U16({ if (c == j) { v[c] = vr; if (r >= j) x[c] = r == j ? beta : 0.0f; } })
+        // w[c] = v^T x(:, c), c > j; w[16 + c] = v^T v(:, c), c < j
+        float w[32];
+        BQ_U16({
+            w[c] = c > j && c < nb ? vr * x[c] : 0.0f;
+            w[16 + c] = c < j ? vr * v[c] : 0.0f;
+        })
+        BQ_TRANSPOSE_SUM
+        threadgroup_barrier(mem_flags::mem_threadgroup);   // part read above
+        part[sg * 32 + lane] = w[0];
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if (t < 32) {
+            float a = 0.0f;
+            for (uint g = 0; g < nsg; ++g) a += part[g * 32 + t];
+            tot[t] = a;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if (tau != 0.0f) {   // uniform
+            const float f = -tau * vr;
+            BQ_U16({ if (c > j && c < nb) x[c] = fma(f, tot[c], x[c]); })
+        }
+        // T(0:j, j) = -tau T(0:j, 0:j) (V(:, 0:j)^T v), T(j, j) = tau
+        if (t <= j) {
+            float a = 0.0f;
+            for (uint k = t; k < j; ++k) a = fma(Ts[t][k], tot[16 + k], a);
+            Ts[t][j] = t == j ? tau : -tau * a;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (row) {
+        BQ_U16({ if (c < nb) Am[(ulong)r * q.rs + (ulong)c * q.cs] = x[c]; })
+        device float* vm = V + (ulong)mat * q.sv + (ulong)r * nb;
+        BQ_U16({ if (c < nb) vm[c] = v[c]; })
+    }
+    if (t < nb) {
+        device float* tm = T + (ulong)mat * q.st + (ulong)t * nb;
+        for (uint c = 0; c < nb; ++c) tm[c] = c >= t ? Ts[t][c] : 0.0f;
+    }
+}

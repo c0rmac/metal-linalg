@@ -48,7 +48,9 @@ void band_to_bidiagonal(uint32_t n, uint32_t nb, float* W, size_t ld, size_t ku,
 // and e (n - 1), likewise. W holds the lower half column-major, A(r, c) for
 // r >= c at W[c * ld + r - c], with room for the bulges: ld >= 2 kd + 1, all
 // of it zero outside the band.
-// With `rec`, only its ready_rows is used.
+// With `rec`, its reflectors are kept in its L and Ltau (kd = 16; as the
+// bidiagonal chase's left ones: Q2 is their product in the order applied),
+// and its progress as rec says.
 void band_to_tridiagonal(uint32_t n, uint32_t kd, float* W, size_t ld, float* d, float* e, unsigned threads,
                          const ChaseReflectors* rec = nullptr);
 

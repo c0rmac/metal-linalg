@@ -175,6 +175,29 @@ int main(void) {
         CHECK(metal_linalg_eigh_policy_get().values_band_width == 32, "eigh values_band_width not set");
         p.values_band_width = 0;
         metal_linalg_eigh_policy_set(&p);
+        /* With eigenvectors, the band backend from band_min_n (within tridiag_max_batch), and
+           tridiag_batch inside its window. */
+        {
+            metal_linalg_eigh_policy q = measured;
+            q.gpu_max_n = 0;
+            q.tridiag_min_n = 1024;
+            q.tridiag_max_batch = 4;
+            q.band_min_n = 3072;
+            q.tridiag_batch_min_n = 96;
+            q.tridiag_batch_max_n = 512;
+            q.tridiag_batch_min_batch = 64;
+            metal_linalg_eigh_policy_set(&q);
+            CHECK(metal_linalg_eigh_policy_get().band_min_n == 3072, "band_min_n not set");
+            CHECK(strcmp(metal_linalg_eigh_backend(4096, 1), "band") == 0, "band_min_n = 3072: N=4096 routes to %s",
+                  metal_linalg_eigh_backend(4096, 1));
+            CHECK(strcmp(metal_linalg_eigh_backend(2048, 1), "tridiag") == 0, "below band_min_n: N=2048 routes to %s",
+                  metal_linalg_eigh_backend(2048, 1));
+            CHECK(strcmp(metal_linalg_eigh_backend(256, 64), "tridiag_batch") == 0,
+                  "tridiag_batch window: 64 x 256 routes to %s", metal_linalg_eigh_backend(256, 64));
+            CHECK(strcmp(metal_linalg_eigvalsh_backend(256, 64), "tridiag_batch") != 0,
+                  "the values window unset still routes eigvalsh to tridiag_batch");
+            metal_linalg_eigh_policy_set(&p);
+        }
         /* Eigenvalues alone: values_gpu_min_batch = 0 follows eigh; set, it decides apart. */
         p.values_gpu_min_batch = 0;
         metal_linalg_eigh_policy_set(&p);
@@ -239,6 +262,25 @@ int main(void) {
               metal_linalg_svd_backend(1200, 1200, 1));
         sp.band_min_k = 0;
         metal_linalg_svd_policy_set(&sp);
+        /* bidiag_batch inside its window, k in [64, 256] and l up to 512, from batch 32. */
+        {
+            metal_linalg_svd_policy q = sp;
+            q.gpu_max_k = 0;
+            q.gpu_big_batch_max_k = 0;
+            q.bidiag_batch_min_k = 64;
+            q.bidiag_batch_max_k = 256;
+            q.bidiag_batch_min_batch = 32;
+            q.bidiag_batch_max_l = 512;
+            metal_linalg_svd_policy_set(&q);
+            CHECK(metal_linalg_svd_policy_get().bidiag_batch_max_l == 512, "bidiag_batch_max_l not set");
+            CHECK(strcmp(metal_linalg_svd_backend(256, 128, 32), "bidiag_batch") == 0,
+                  "bidiag_batch window: 32 x 256x128 routes to %s", metal_linalg_svd_backend(256, 128, 32));
+            CHECK(strcmp(metal_linalg_svd_backend(600, 128, 32), "bidiag_batch") != 0,
+                  "above bidiag_batch_max_l still routes 600x128 to bidiag_batch");
+            CHECK(strcmp(metal_linalg_svdvals_backend(256, 128, 32), "bidiag_batch") != 0,
+                  "the values window unset still routes svdvals to bidiag_batch");
+            metal_linalg_svd_policy_set(&sp);
+        }
         CHECK(strcmp(metal_linalg_svd_backend(40, 24, 16), "golub_kahan") == 0, "gk window: 40x24 routes to %s",
               metal_linalg_svd_backend(40, 24, 16));
         CHECK(strcmp(metal_linalg_svd_backend(4000, 16, 16), "qr_golub_kahan") == 0, "gk window: 4000x16 routes to %s",

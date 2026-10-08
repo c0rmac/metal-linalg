@@ -616,7 +616,7 @@ uint32_t chase_chunk_groups(uint32_t groups) { return std::max(32u, (groups / 2 
 // groups, each waiting for `ready` to reach its index + 1 (the CPU signals
 // as the chase finishes the chunk's groups and their T is built); queued.
 // Returns the last.
-id<MTLCommandBuffer> apply_chase(Cache& c, BandVectors& bv, id<MTLSharedEvent> ready) {
+id<MTLCommandBuffer> apply_chase(Cache& c, BandVectors& bv, id<MTLSharedEvent> ready, bool left_only = false) {
     const uint32_t n = bv.n;
     if (n < 3) {
         id<MTLCommandBuffer> cb = [c.rt.queue commandBuffer];
@@ -632,7 +632,7 @@ id<MTLCommandBuffer> apply_chase(Cache& c, BandVectors& bv, id<MTLSharedEvent> r
         // One after the other: run concurrently, the two took 177 ms at
         // 4096 against 132 (their strips competing for the caches).
         id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
-        for (int side = 0; side < 2; ++side) {
+        for (int side = 0; side < (left_only ? 1 : 2); ++side) {
             const bool left = side == 0;
             const uint32_t ld = left ? bv.ldq : bv.ldp;   // X = M^T: ncols = ld (padded), rows n
             const bool wide = ld / 32 >= 64;
@@ -649,6 +649,131 @@ id<MTLCommandBuffer> apply_chase(Cache& c, BandVectors& bv, id<MTLSharedEvent> r
         [cb commit];
     }
     return cb;
+}
+
+// --- eigh with vectors in two stages (since 2.17.0) ---------------------------
+//
+// The eigensolver's `band` backend with eigenvectors, the SVD's band backend
+// with vectors for one side: A = Q1 Q2 T Q2^T Q1^T, Q1 the symmetric band
+// reduction's block reflectors (its BandKeep), Q2 the chase's (kept as the
+// bidiagonal chase's left ones); V = (Q1 Q2) Z for T = Z diag(w) Z^T:
+//   1. the band reduction, keeping its reflectors; on the CPU meanwhile, the
+//      aggregated T of every kAgg panels as their command buffers complete;
+//   2. Q = Q1 explicit: the LAPACK tail's reflectors (ssytrd_sy2sb's) on the
+//      CPU, then the aggregated blocks on the GPU, last first; the CPU
+//      meanwhile chases the band to tridiagonal, keeping its reflectors;
+//   3. Q <- Q Q2 on the GPU (bd_chase_apply) as the chase finishes each
+//      chunk of sweeps; the CPU meanwhile solves T (divide and conquer);
+//   4. V = Q Z, one MPS product.
+// Where the one-stage reduction reads the trailing matrix once a column
+// (bound by memory bandwidth), the band reduction's work is products; the
+// price is Q2's application, which overlaps the CPU's chase and solve.
+
+// BandVectors for the symmetric case, only its Q side: block k's V on rows
+// (k + 1) b .. n - 1, aggregate a's from r0 = a kAgg b + b.
+BandVectors& sym_band_vectors(Cache& c, uint32_t n) {
+    static BandVectors bv;
+    if (bv.Q && bv.m == n && bv.n == n) return bv;
+    constexpr uint32_t b = 16;
+    bv = BandVectors{};
+    bv.m = n;
+    bv.n = n;
+    bv.ldq = bv.ldp = (n + 31) / 32 * 32;
+    const uint32_t blocks = metal_linalg::detail::band_blocks_symmetric(n, b);
+    bv.blocks = blocks;
+    bv.aggs = (blocks + kAgg - 1) / kAgg;
+    bv.qaoff.assign(bv.aggs + 1, 0);
+    auto& keep = bv.keep;
+    keep.qoff.resize(blocks);
+    keep.qld.resize(blocks);
+    for (uint32_t a = 0; a < bv.aggs; ++a) {
+        const uint32_t kb = std::min(kAgg, blocks - a * kAgg) * b, r0 = a * kAgg * b + b;
+        bv.qaoff[a + 1] = bv.qaoff[a] + (size_t)(n - r0) * kb;
+        for (uint32_t t = 0; t < kb / b; ++t) {   // panel a kAgg + t at row and column t b
+            const uint32_t k = a * kAgg + t;
+            keep.qoff[k] = bv.qaoff[a] + (size_t)t * b * kb + t * b;
+            keep.qld[k] = kb;
+        }
+    }
+    auto shared = [&](size_t f) {
+        return [c.rt.device newBufferWithLength:std::max<size_t>(f, 4) * 4 options:MTLResourceStorageModeShared];
+    };
+    auto priv = [&](size_t f) {
+        return [c.rt.device newBufferWithLength:std::max<size_t>(f, 4) * 4 options:MTLResourceStorageModePrivate];
+    };
+    const size_t kmax = kAgg * b;
+    bv.Q = shared((size_t)bv.ldq * n);
+    bv.qagg = shared(bv.qaoff[bv.aggs]);
+    bv.qtagg = shared((size_t)std::max(bv.aggs, 1u) * kmax * kmax);
+    keep.qv = bv.qagg;
+    keep.qt = shared((size_t)std::max(blocks, 1u) * 1024);
+    bv.ub = shared((size_t)n * n);   // Z
+    bv.vb = shared((size_t)n * n);   // V, row-major, when the output cannot be used in place
+    bv.Z = priv((size_t)n * kmax);
+    bv.Z2 = priv((size_t)n * kmax);
+    const size_t pmax = n >= 2 ? (n - 2) / 16 : 0;
+    bv.nblocks = (pmax + 1) * (pmax + 2) / 2;
+    bv.ltau.resize(bv.nblocks * 16);
+    bv.lv = shared(bv.nblocks * metal_linalg::detail::kChaseBlockFloats);
+    bv.apply_wide = make_pipeline(c.rt.device, c.rt.library, @"bd_chase_apply_4_4", nil);
+    bv.apply_narrow = make_pipeline(c.rt.device, c.rt.library, @"bd_chase_apply_2_8", nil);
+    return bv;
+}
+
+void build_aggregate_sym(BandVectors& bv, uint32_t a) {
+    constexpr uint32_t b = 16;
+    const uint32_t k0 = a * kAgg, p = std::min(kAgg, bv.blocks - k0), r0 = k0 * b + b, len = bv.n - r0;
+    const float* V = static_cast<const float*>(bv.qagg.contents) + bv.qaoff[a];
+    const float* Ts = static_cast<const float*>(bv.keep.qt.contents) + (size_t)k0 * 1024;
+    float* T = static_cast<float*>(bv.qtagg.contents) + (size_t)a * (kAgg * b) * (kAgg * b);
+    merge_t(len, p, b, V, Ts, T);
+}
+
+// Q1's GPU blocks, last first (after the tail, on the CPU), queued to start
+// once `ready` reaches 1. As queue_q1_p1's left side, Q square.
+id<MTLCommandBuffer> queue_q1_sym(Cache& c, BandVectors& bv, id<MTLSharedEvent> ready) {
+    constexpr uint32_t b = 16;
+    const uint32_t n = bv.n, ldq = bv.ldq;
+    id<MTLDevice> dev = c.rt.device;
+    id<MTLCommandBuffer> cb = [c.rt.queue commandBuffer];
+    [cb encodeWaitForEvent:ready value:1];
+    const uint32_t kmax = kAgg * b;
+    for (int a = (int)bv.aggs - 1; a >= 0; --a) {
+        const uint32_t kb = std::min(kAgg, bv.blocks - (uint32_t)a * kAgg) * b;
+        const uint32_t r0 = (uint32_t)a * kAgg * b + b, len = n - r0, cols = n - r0;
+        MPSMatrix* Zm = mps(bv.Q, (size_t)r0 * ldq + r0, cols, len, ldq);
+        MPSMatrix* Vm = mps(bv.qagg, bv.qaoff[a], len, kb, kb);
+        MPSMatrix* Tm = mps(bv.qtagg, (size_t)a * kmax * kmax, kb, kb, kb);
+        MPSMatrix* W = mps(bv.Z, 0, cols, kb, kb);
+        MPSMatrix* W2 = mps(bv.Z2, 0, cols, kb, kb);
+        gemm(dev, cb, Zm, false, Vm, false, W, cols, kb, len, 1, 0);
+        gemm(dev, cb, W, false, Tm, true, W2, cols, kb, kb, 1, 0);
+        gemm(dev, cb, W2, false, Vm, true, Zm, cols, len, kb, -1, 1);
+    }
+    [cb commit];
+    return cb;
+}
+
+// Q(tail:, tail:) <- H_tail, ssytrd_sy2sb's panels from A (lda), last first,
+// on Q = I there.
+void tail_q1_sym(BandVectors& bv, const float* A, uint32_t lda) {
+    const auto& keep = bv.keep;
+    const uint32_t n = bv.n, k = keep.tail, nt = n - k, kd = keep.sy2sb_kd, ldq = bv.ldq;
+    if (nt < 2 || kd == 0) return;
+    float* Q = static_cast<float*>(bv.Q.contents);
+    std::vector<float> work((size_t)nt * 64 + 64);
+    L lw = (L)work.size(), info = 0, LDA = lda, LDQ = ldq;
+    // LAPACK's loop: I = 1, 1 + KD, ... while I <= N - KD (1-based)
+    std::vector<uint32_t> panels;
+    for (uint32_t i = 0; i + kd < nt; i += kd) panels.push_back(i);
+    for (auto it = panels.rbegin(); it != panels.rend(); ++it) {
+        const uint32_t i = *it;
+        L M = nt - i - kd, N = nt, K = std::min<L>(M, kd);
+        sormqr_("L", "N", &M, &N, &K, const_cast<float*>(A) + (size_t)(k + i) * lda + k + i + kd, &LDA,
+                const_cast<float*>(keep.sy2sb_tau.data()) + i, Q + (size_t)k * ldq + k + i + kd, &LDQ, work.data(),
+                &lw, &info);
+        if (info != 0) throw std::runtime_error("[eigh] band: LAPACK sormqr failed, info " + std::to_string((long long)info));
+    }
 }
 
 // Both backends: `band` (> 0, singular values alone) the two-stage reduction's
@@ -1049,6 +1174,173 @@ void svd_band_vectors(const Matrices& a, float* u, float* s, float* vt, uint32_t
     const uint32_t M = a.rows, N = a.cols, K = std::min(M, N), l = std::max(M, N);
     const uint32_t rows = l >= 2 * K && K >= kQrFirstMinK ? K : l;
     bidiag_impl(a, u, s, vt, info, metal_linalg::detail::band_fit(rows, 16) == 16 ? 16u : 0u);
+}
+
+// See the comment above sym_band_vectors. One matrix at a time, each
+// overlapped within itself; n from 48 (three blocks of 16) up to what the
+// panel kernels take at width 16.
+void eigh_band_vectors(const Matrices& a, bool lower, float* w_out, float* v_out, uint32_t* info_out) {
+    const uint32_t n = a.cols, batch = a.batch;
+    if (a.rows != n) throw std::invalid_argument("[eigh] Input matrices must be square.");
+    if (n == 0 || batch == 0) {
+        if (info_out) std::fill(info_out, info_out + batch, 0u);
+        return;
+    }
+    constexpr uint32_t b = 16;
+    if (n < 3 * b || metal_linalg::detail::band_fit(n, b) != b) {
+        eigh_tridiag(a, lower, w_out, v_out, info_out);
+        return;
+    }
+    AutoreleasePool pool;
+    static Cache cache;
+    id<MTLDevice> dev = cache.rt.device;
+    BandVectors& bv = sym_band_vectors(cache, n);
+    const size_t per = (size_t)n * n, lda = (n + 7) / 8 * 8;
+    static id<MTLBuffer> Abuf = nil;
+    static uint32_t Abuf_n = 0;
+    if (!Abuf || Abuf_n != n) {
+        Abuf = [dev newBufferWithLength:lda * n * 4 options:MTLResourceStorageModeShared];
+        Abuf_n = n;
+    }
+    std::vector<float> amax(batch);
+    std::vector<char>  finite(batch);
+    scan(a, lower ? Part::lower : Part::upper, amax.data(), finite.data());
+    const size_t ld = 2 * (size_t)b + 1;
+    std::vector<float> ab(ld * n), d(n), e(n);
+    const unsigned threads = metal_linalg::detail::cpu_threads_beside_gpu();
+
+    for (uint32_t m = 0; m < batch; ++m) {
+        float* wm = w_out + (size_t)m * n;
+        float* vm = v_out + m * per;
+        if (!finite[m]) {
+            std::fill(wm, wm + n, NAN);
+            std::fill(vm, vm + per, NAN);
+            if (info_out) info_out[m] = 1u << 17;
+            continue;
+        }
+        int ex = 0;
+        if (amax[m] > 0.0f) std::frexp(amax[m], &ex);
+        const float scale = std::ldexp(1.0f, -ex);
+        const float* src = a.data + m * per;
+        float* A = static_cast<float*>(Abuf.contents);
+        // The given triangle as the column-major lower one, then mirrored
+        if (lower) {
+            transpose_scaled(src, n, A, lda, n, n, scale);
+        } else {
+            metal_linalg::detail::parallel_for(n, [&](size_t i) {
+                const float* row = src + i * n;
+                float* col = A + i * lda;
+                for (uint32_t j = (uint32_t)i; j < n; ++j) col[j] = row[j] * scale;
+            });
+        }
+        metal_linalg::detail::parallel_for((n + 31) / 32, [&](size_t jb) {
+            const uint32_t c0 = (uint32_t)jb * 32, c1 = std::min(n, c0 + 32);
+            for (uint32_t c = c0; c < c1; ++c)
+                for (uint32_t r = c + 1; r < n; ++r) A[(size_t)r * lda + c] = A[(size_t)c * lda + r];
+        });
+
+        // 1-2. The band reduction keeping Q1; meanwhile Q's start, its GPU
+        // work queued (released once the tail is applied), the aggregates' T
+        id<MTLCommandBuffer> pending = nil;
+        {
+            struct Release {
+                id<MTLSharedEvent> event;
+                ~Release() { if (event) event.signaledValue = 1; }
+            } q1_ready{[dev newSharedEvent]};
+            bv.keep.while_gpu = [&](metal_linalg::detail::BandWatch& kp) {
+                float* Q = static_cast<float*>(bv.Q.contents);
+                metal_linalg::detail::parallel_for(n, [&](size_t j) {
+                    std::fill(Q + j * bv.ldq, Q + (j + 1) * bv.ldq, 0.0f);
+                    Q[j * bv.ldq + j] = 1.0f;
+                });
+                pending = queue_q1_sym(cache, bv, q1_ready.event);
+                for (uint32_t ag = 0; ag < bv.aggs; ++ag) {
+                    [kp.done[std::min((ag + 1) * kAgg, bv.blocks) - 1] waitUntilCompleted];
+                    build_aggregate_sym(bv, ag);
+                }
+            };
+            const bool banded = metal_linalg::detail::band_reduce_symmetric(Abuf, n, (uint32_t)lda, b, nullptr, &bv.keep);
+            bv.keep.while_gpu = nullptr;
+            if (!banded) throw std::logic_error("[eigh] band: band_fit and band_reduce_symmetric disagree.");
+            std::fill(ab.begin(), ab.end(), 0.0f);
+            for (uint32_t c = 0; c < n; ++c)
+                for (uint32_t r = c; r < n && r <= c + b; ++r) ab[(size_t)c * ld + r - c] = A[(size_t)c * lda + r];
+            tail_q1_sym(bv, A, (uint32_t)lda);
+            q1_ready.event.signaledValue = 1;
+        }
+
+        // 3. The chase keeping its reflectors, each chunk of Q <- Q Q2
+        // released to the GPU as it is chased; then the divide and conquer
+        std::atomic<long> frontier{0};
+        std::atomic<bool> chased{false};
+        metal_linalg::detail::ChaseReflectors rec;
+        rec.L = static_cast<float*>(bv.lv.contents);
+        rec.Ltau = bv.ltau.data();
+        rec.pmax = (n - 2) / 16;
+        rec.frontier = &frontier;
+        id<MTLSharedEvent> ready = [dev newSharedEvent];
+        pending = apply_chase(cache, bv, ready, true);
+        {
+            struct Release {
+                id<MTLSharedEvent> event;
+                ~Release() { event.signaledValue = 1ull << 40; }
+            } release{ready};
+            const long groups = (long)(n - 2) / 16 + 1, chunk = chase_chunk_groups((uint32_t)groups);
+            std::exception_ptr failed;
+            std::thread chase([&] {
+                try {
+                    metal_linalg::detail::band_to_tridiagonal(n, b, ab.data(), ld, d.data(), e.data(), threads, &rec);
+                } catch (...) {
+                    failed = std::current_exception();
+                }
+                chased.store(true, std::memory_order_release);
+            });
+            long built = 0;
+            uint64_t released = 0;
+            for (;;) {
+                const bool over = chased.load(std::memory_order_acquire);
+                const long f = frontier.load(std::memory_order_acquire);
+                const long g = over || f >= (long)n - 1 ? groups : std::min(groups, f / 16);
+                if (g > built) {
+                    chase_blocks(bv, true, built, g);
+                    built = g;
+                    const uint64_t can = built >= groups ? (uint64_t)((groups + chunk - 1) / chunk) : (uint64_t)(built / chunk);
+                    if (can > released) ready.signaledValue = released = can;
+                } else if (over) {
+                    break;
+                } else {
+                    std::this_thread::sleep_for(std::chrono::microseconds(200));
+                }
+            }
+            chase.join();
+            if (failed) std::rethrow_exception(failed);
+        }
+        // Its largest products on the GPU once Q2 is applied
+        metal_linalg::detail::MpsGemm gpu(dev, cache.rt.queue, pending);
+        gpu.add_buffer(bv.ub);
+        const long info = metal_linalg::detail::tridiagonal_eigensystem(n, d.data(), e.data(),
+                                                                         static_cast<float*>(bv.ub.contents), n, threads,
+                                                                         &gpu);
+        if (info != 0)
+            throw std::runtime_error("[eigh] band: sstedc failed on matrix " + std::to_string(m) + ", info " +
+                                     std::to_string(info));
+        // 4. V = Q Z, row-major (on the row-major views: Q^T and Z^T)
+        [pending waitUntilCompleted];
+        check(pending);
+        id<MTLBuffer> out = nil;
+        if (reinterpret_cast<uintptr_t>(vm) % (uintptr_t)getpagesize() == 0) {
+            try { out = metal_linalg::detail::wrap_host(dev, vm, per); } catch (...) { out = nil; }
+        }
+        if (!out) out = bv.vb;
+        id<MTLCommandBuffer> cv = [cache.rt.queue commandBuffer];
+        gemm(dev, cv, mps(bv.Q, 0, n, n, bv.ldq), true, mps(bv.ub, 0, n, n, n), true, mps(out, 0, n, n, n), n, n, n, 1, 0);
+        [cv commit];
+        for (uint32_t i = 0; i < n; ++i) wm[i] = d[i] / scale;   // ascending
+        [cv waitUntilCompleted];
+        check(cv);
+        if (out.contents != (void*)vm) std::memcpy(vm, out.contents, per * sizeof(float));
+        if (info_out) info_out[m] = 1u | (1u << 16);
+    }
 }
 
 void svd_band(const Matrices& a, float* s, uint32_t* info, uint32_t width) {

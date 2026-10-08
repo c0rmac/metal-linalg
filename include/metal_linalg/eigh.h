@@ -54,9 +54,13 @@ namespace metal_linalg {
         EighResult eigh_cpu(const mlx::core::array& a, bool compute_vectors, bool lower);
 
         EighResult eigh_tridiag(const mlx::core::array& a, bool compute_vectors, bool lower);
+        // The tridiag backend's batched form: a batch's reductions together.
+        EighResult eigh_tridiag_batch(const mlx::core::array& a, bool compute_vectors, bool lower);
         // Eigenvalues alone by the two-stage reduction; `width` the band's,
         // 8, 16 or 32 (0: the default).
         EighResult eigh_band(const mlx::core::array& a, bool lower = true, uint32_t width = 0);
+        // Eigenvalues and eigenvectors by the two-stage reduction (width 16).
+        EighResult eigh_band_vectors(const mlx::core::array& a, bool lower = true);
 
         // N <= metal_linalg::detail::eigh_ql_max_n(); `info` counts QL iterations.
         EighResult eigh_ql(const mlx::core::array& a, bool compute_vectors, bool lower);

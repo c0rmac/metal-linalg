@@ -24,6 +24,86 @@
     mode="reduced")`.
   - Swift: `qrAccelerated(..., mode: .r)` and `.complete`, on `[Float]` and
     on `MLXArray`.
+- **eigh for batches of mid-size matrices: the `tridiag_batch` backend**,
+  where every GPU backend had lost to the CPU: the `tridiag` method for a
+  whole batch at once, the reduction of every matrix by the same dispatches
+  (a threadgroup a matrix and panel, `td_panel`), the tridiagonal problems on
+  the CPU's cores, the back-transformation as batched products (blocks of 64,
+  T built on the GPU), pipelined over chunks so that the GPU's stages run
+  under the CPU's. The panel kernel is bound by memory and reads only the
+  lower triangle for its symmetric products (32 x 32 tiles, a tile's column
+  terms summed across a simdgroup by shuffles): 1.5x the whole-matrix read at
+  16 x 1024^2. On an M5 Pro 1.46x the CPU at 1024 x 128^2, 1.36x at
+  1024 x 96^2, 1.28x at 256 x 256^2, 1.55x at 16 x 1024^2 with eigenvectors;
+  eigenvalues alone 1.2-1.35x at 1024 x 96-128^2. Routed by a window of N and
+  batch per device (`tridiag_batch_min_n`, `_max_n`, `_min_batch`, and
+  `values_` ones).
+- **eigh with eigenvectors in two stages: the `band` backend with
+  eigenvectors**, as the SVD's: the band reduction's and the chase's
+  reflectors kept and applied to the eigenvectors on the GPU while the CPU
+  chases and solves. 1.12x `tridiag` at 3072, 1.36x at 4096, 1.59x at 8192
+  (1.31 s against 2.09; 13.9x the CPU). Routed from `band_min_n`.
+- **The `ql` backend in registers up to N = 32** (`eigh_ql_simd`): the matrix
+  a row a lane, under 1 KB of threadgroup memory each instead of 4 KB, four
+  matrices a simdgroup up to N = 8 and two up to 16, their QL iterations side
+  by side. 1.1-1.5x with eigenvectors at 17-32, 1.25x at 12-16 and 2x up to 8;
+  eigenvalues alone by bisection, a lane an eigenvalue, 1.4-3x at every N.
+  `EIGH_QL_SIMD=0` turns it off.
+- The eigensolver's policy gains seven fields (`band_min_n` and the
+  `tridiag_batch` windows), with their `EIGH_*` variables, in the C API's
+  `metal_linalg_eigh_policy` (appended, as before: C code built against an
+  older header needs rebuilding before it calls `metal_linalg_eigh_policy_set`),
+  Python, PyTorch and Swift; `EIGH_DEVICE=band` now means `band` with
+  eigenvectors too (before, `tridiag`), and `EIGH_DEVICE=tridiag_batch`
+  forces the new backend. Sweep backends `tridiag_batch`, `tridiag_batch_vals`
+  and `band`, and stages 4c and 5 of `tuning/tune_eigh.py`, fit them; the
+  eigh kernel version is 8, and the M5 Pro is re-measured. A Mac measured
+  before keeps the new fields at 0 (never) until it is measured again.
+- **SVD for batches of mid-size matrices: the `bidiag_batch` backend**, the
+  SVD's counterpart of `tridiag_batch`: every matrix bidiagonalized by the same
+  dispatches (`bd_panel`, a threadgroup a matrix and panel), the bidiagonal
+  problems on the CPU's cores, both back-transformations as batched products,
+  pipelined over chunks. Each panel step reads the trailing block once, where
+  `slabrd` reads it twice (a column in registers gives both its product with
+  v and its share of A u): 1.3-1.9x from 256 x 256. A matrix at least twice
+  as tall or as wide as k goes through this library's QR first, as on the
+  CPU, and only R is bidiagonalized (2.4-2.5x at 256 x 1024x128 and
+  128x1024; `SVD_BIDIAG_BATCH_QR=0` turns it off). Singular values alone
+  from k = 160 go in two stages, a band on the GPU (blocks of batched
+  products, `bb_panel` for the panels), then bidiagonal on the CPU's cores:
+  1.5x the direct reduction at 512 and 2-2.3x at 1024, 3.3x the CPU at
+  16 x 1024^2 (`SVD_BIDIAG_BATCH_BAND=0` turns it off). On an M5 Pro 1.65x the CPU at 1024 x 128^2, 1.42x at
+  256 x 256^2, 1.12x at 64 x 512^2, 1.68-1.77x at 256 x 512-1024x128 with
+  vectors; singular values alone 2.3x at 1024 x 128^2. Up to 1024 rows and
+  columns, any rows when twice as tall as wide. Routed by a window of k, l and
+  batch per device
+  (`bidiag_batch_min_k`, `_max_k`, `_min_batch`, `_max_l`, and `values_`
+  ones).
+- **The `golub_kahan` SVD backend in registers up to 32 x 32**
+  (`svd_gk_simd`): the matrix, U and V a row a lane, four matrices a
+  simdgroup up to 8 rows and two up to 16, their QR iterations side by side;
+  from 17 rows with vectors, a runner simdgroup runs 8 matrices' QR
+  iterations while their simdgroups apply the last step (1.1-1.35x;
+  `SVD_GK_RUN=0`). 1.6-2.1x with vectors up to 16 x 16, 1.3-1.6x at 17-32;
+  singular values alone by bisection on the Golub-Kahan tridiagonal, a lane a
+  value, 1.6-2.7x. `SVD_GK_SIMD=0` turns it off.
+- The SVD's policy gains eight fields (the `bidiag_batch` windows), with their
+  `SVD_*` variables, in the C API's `metal_linalg_svd_policy` (appended:
+  rebuild C code before it calls `metal_linalg_svd_policy_set`), Python,
+  PyTorch and Swift; `SVD_DEVICE=bidiag_batch` forces the new backend. Sweep
+  backends `bidiag_batch` and `bidiag_batch_vals` and stage 4 of
+  `tuning/tune_svd.py` fit them; the SVD kernel version is 10, and the M5 Pro
+  is re-measured.
+- **QR's register kernel packs small matrices**: up to 8 rows four a
+  simdgroup, up to 16 two (`QR_SIMD_PACK=0` turns it off): 2.5x at 4 x 4,
+  1.7-2.5x at 8 x 8, 1.3-1.7x at 16 x 16 for large batches.
+- **The measurement takes half the time** (eigh and SVD about 40 minutes
+  instead of 75 on an M5 Pro): the Jacobi kernels are timed only up to
+  N = 96 and k = 128, where they can win, with a canary beyond that warns if
+  they ever do (`--full-grid` times them everywhere); a second pass repeats
+  only the points whose choice the first left open (`--full-passes` repeats
+  all); a call of 20 ms or more gets one warm-up instead of two. Re-analysed
+  on the earlier runs, the routing is the full grid's.
 - `benchmark_qr --modes` times the three modes against each other.
 - **README**: the introduction states the measured gains (one large matrix
   1.6-10x against LAPACK on every CPU core, 11.7x at 8192; batches of

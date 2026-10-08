@@ -11,7 +11,6 @@ Apple M5 Pro's (20 GPU cores, 18 CPU cores).
 |---|---|---|---|---|
 | [The blocked QR's fixed costs and panels](qr-fixed-costs.md#done-2026-10-07) (what is left) | QR, one matrix of 512-4096 | the TSQR's leaves, top and rebuild about 3.8 of 6.6 ms at 1024; updates inside aggregates 12% | 1-2 days | a few % each: the leaves and top as one dispatch, the in-aggregate updates as kernels of their own |
 | [The CPU path's divide and conquer](cpu-path-divide-and-conquer.md) | eigh and SVD with vectors on the CPU, one matrix | `sstedc` 43 of 239 ms, `sbdsdc` 133 of 439 at 2048 | about 2 days | eigh 1.15-1.25x, SVD ~1.34x at 1024-2048 (estimate) |
-| [eigh and the SVD for batches of mid-size matrices](eigh-svd-mid-size.md) (analysed, not built) | eigh and the SVD, batches of 88-128 with vectors | the CPU 2-10x ahead of every GPU backend at 96-512 (1024 of 96 x 96 eigh: 22.5 ms against 75) | 3-5 days | at best 1.2-1.5x the CPU at 88-128, with the vectors in registers |
 
 The CPU path's divide and conquer matters less on the M5 Pro since 2.15.0,
 where the GPU takes single matrices from about 512, but more on Macs whose
@@ -24,6 +23,23 @@ GPU is weaker against their CPU.
   Mac to run `python3 tuning/run.py` on an idle machine.
 
 ## Done
+
+In 2.17.0 (2026-10-09), eigh and the SVD:
+
+| work | outcome |
+|---|---|
+| [eigh for batches of mid-size matrices](eigh-svd-mid-size.md) | `tridiag_batch`: a batch reduced together (a threadgroup a matrix and panel), the tridiagonal problems on the CPU's cores under the GPU's stages: 1.3-1.5x the CPU at 256-1024 matrices of 96-256; its symmetric products from the lower triangle alone, 1.5x at 1024 |
+| [the SVD for batches of mid-size matrices](eigh-svd-mid-size.md) | `bidiag_batch`, the same for the SVD, each panel step reading the trailing block once (`slabrd` reads it twice): 1.4-1.65x the CPU at 256-1024 matrices of 128-256 |
+| eigh with eigenvectors in two stages | `band` with eigenvectors, as the SVD's: 1.36x `tridiag` at 4096, 1.59x at 8192 |
+| ql in registers | up to N = 32 a simdgroup a matrix: 1.1-1.5x; eigenvalues alone by bisection, 2-3x |
+| golub_kahan in registers | up to 32 x 32 in a simdgroup's registers, four or two matrices a simdgroup up to 8 or 16 rows: 1.6-2.1x with vectors to 16 x 16; singular values alone by bisection on the Golub-Kahan tridiagonal, 1.6-2.7x; `ql`'s registers packed the same way, 2x up to N = 8 |
+| `bidiag_batch` for tall and wide matrices | R of this library's QR first, as on the CPU: 256 x 1024x128 2.5x (1.77x the CPU, from 0.71x), 256 x 128x1024 2.4x (1.96x) |
+| singular values alone of batches in two stages | from k = 160: a band on the GPU (batched panels and products), bidiagonal on the CPU's cores: 1.5x at 512, 2-2.3x at 1024 (3.3x the CPU at 16 x 1024^2). The eigensolver's counterpart not built: its CPU path is LAPACK's own two-stage driver, whose band chase alone is two-thirds of its time (64 x 512^2: 15.8 of 23.2 ms), so a GPU first stage could reach about 1.3x |
+| a runner simdgroup for the register kernels' QR iterations (17-32 rows) | the SVD's: 1.1-1.35x; eigh's `ql`: 0.8-1.1x, not kept (its sweeps are cheap against a threadgroup barrier a sweep) |
+| one trailing product a SVD panel; the batch back-transformations | not built: removing a whole product saved 3-6%, the whole back-transformation 6-14% of the wall time (it overlaps the CPU's solve); what a rework would recover is a few % |
+| the batch backends at 1024 | the SVD's panel with 1024 threads, 1.1x. With vectors, 8 matrices of 768-1024 still go to the CPU (1.3-1.5x ahead): a threadgroup a matrix leaves 12 of 20 cores idle. Singular values alone are solved by the two stages above (their products use every core); with vectors the same would need the band backend's transformations batched, a project of days |
+| a GPU solve for the batch backends; two matrices a threadgroup | not built: timed stage by stage, the batch backends were bound by the GPU's reduction (its memory traffic), not the CPU's solve, from 256; at 128 the two balance. Two matrices a threadgroup helps a latency-bound kernel, which these are not |
+| [the batch panels' own columns in registers](eigh-svd-mid-size.md#tried-the-panels-own-columns-in-registers) | tried on eigh's panel, three ways, and reverted: 10-17% slower at 128-512. The 64 registers a thread costs fewer simdgroups a core in a kernel bound by memory, and the reads it saved were mostly cache hits |
 
 In 2.16.0 (2026-10-08):
 

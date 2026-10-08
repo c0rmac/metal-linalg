@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <random>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include <mlx/mlx.h>
@@ -275,6 +276,42 @@ int main() {
             if (!ok) fail(label, "not isolated");
             else std::printf("  ok    %-46s\n", label.c_str());
             unsetenv("QR_HOUSEHOLDER_SIMD");
+        }
+        // Up to 16 rows the register kernel packs four or two matrices into a
+        // simdgroup: the same factors as one a simdgroup (QR_SIMD_PACK=0), to
+        // rounding (a group's sums add in another order than simd_sum), and a
+        // non-finite matrix leaves its neighbours alone
+        for (auto [B, M, N] : std::vector<std::tuple<int, int, int>>{{37, 5, 5}, {23, 12, 9}, {19, 6, 10}, {9, 16, 16},
+                                                                     {11, 3, 30}}) {
+            array A = random_matrix(B, M, N, 670 + M * 3 + N);
+            auto [Qp, Rp] = detail::qr_householder(A);
+            setenv("QR_SIMD_PACK", "0", 1);
+            auto [Qu, Ru] = detail::qr_householder(A);
+            unsetenv("QR_SIMD_PACK");
+            eval({Qp, Rp, Qu, Ru});
+            ++g_checks;
+            const float d = std::max(max_abs(subtract(Qp, Qu)), max_abs(subtract(Rp, Ru)));
+            const std::string label = "packed == one a simdgroup, batch " + std::to_string(B) + " x " + std::to_string(M) + "x" +
+                                      std::to_string(N);
+            if (!(d < 1e-5f)) fail(label, "differ by " + std::to_string(d));
+            else std::printf("  ok    %-46s\n", label.c_str());
+        }
+        for (auto [M, N] : std::vector<std::pair<int, int>>{{6, 5}, {13, 9}}) {
+            ++g_checks;
+            const int B = 9, K = std::min(M, N);
+            array A = random_matrix(B, M, N, 680 + M);
+            eval({A});
+            std::vector<float> v(A.data<float>(), A.data<float>() + B * M * N);
+            v[(size_t)5 * M * N + 2] = NAN;
+            auto [Q, R] = detail::qr_householder(from_values(v, {B, M, N}));
+            eval({Q, R});
+            const float* q = Q.data<float>();
+            bool ok = true;
+            for (int b = 0; b < B; ++b)
+                for (int i = 0; i < M * K; ++i) ok &= (b == 5) == std::isnan(q[b * M * K + i]);
+            const std::string label = "non-finite in one of 9 packed " + std::to_string(M) + "x" + std::to_string(N);
+            if (!ok) fail(label, "not isolated");
+            else std::printf("  ok    %-46s\n", label.c_str());
         }
         ++g_checks;
         if (!core::detail::qr_householder_preferred(64, 64) || !core::detail::qr_householder_preferred(128, 32) ||

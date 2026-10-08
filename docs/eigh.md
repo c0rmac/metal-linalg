@@ -321,7 +321,33 @@ backends: across $N = 1 \ldots 87$, residual and orthogonality at most
 $1.5 \times 10^{-6}$ relative to $\|A\|_F$ and eigenvalues within
 $8 \times 10^{-7}$ of LAPACK's.
 
-## Backend 5: eigenvalues alone in two stages (`band`)
+**In registers, up to N = 32** (since 2.17.0). Up to $N = 32$ a matrix and
+then its eigenvectors fit in a simdgroup's registers, a row a lane, as QR's
+register kernel keeps its matrix (`eigh_ql_simd`, instances for 8, 16 and 32;
+`EIGH_QL_SIMD=0` turns it off). A matrix then needs under 1 KB of threadgroup
+memory ($d$, $e$, $\tau$ and a sweep's rotations) instead of 4 KB at 32,
+several share a threadgroup, and nothing waits on a threadgroup barrier. Up
+to $N = 8$ four matrices share a simdgroup, 8 lanes each, and up to 16 two:
+every lane has a row, and the matrices' QL iterations, one lane's chain each,
+run side by side (every cross-lane step stays inside a matrix's lanes; the
+iteration's loop ends once every matrix's has). That doubled the kernel at
+$N \le 8$ (16384 matrices: 0.29 ms against 0.57 at 4, 0.70 against 1.38 at
+8) and made it 1.25x at 12-16. The tridiagonalization's column is picked out of the
+lanes' registers by constant-indexed selects, $p = \tau A_{22} v$ and the
+rank-2 update gather $v$ and $w$ a lane at a time (`simd_shuffle`), $Q$ is
+formed forward ($Z \leftarrow Z H_k$, row-local), and lane 0 runs the QL
+iteration while every lane applies its rotations to its row in an unrolled
+loop. With eigenvectors that is 1.1-1.5x the threadgroup kernel on an M5 Pro
+(4096 matrices: 3.98 ms against 4.71 at $N = 32$, 0.38 against 0.55 at 5): the
+QL iteration, one lane's chain of dependent work, is most of the time either
+way. **Eigenvalues alone** skip the iteration: bisection on the
+tridiagonal, lane $k$ finding the $k$-th smallest eigenvalue by Sturm counts
+on Gershgorin's interval until float32 can halve it no more, every lane at
+once: 1.4-3x (4096 matrices: 1.02 ms against 3.10 at 32, 0.51 against 1.01 at
+16; 16384: 0.47 against 1.20 at 8). Results match the threadgroup kernel's
+to rounding.
+
+## Backend 5: two stages (`band`), eigenvalues alone and with eigenvectors
 
 For eigenvalues alone the `tridiag` backend's reduction is held to the speed
 of memory: a symmetric matrix-vector product a column, reading the whole
@@ -409,6 +435,80 @@ inside the fit's 0.5% tolerance on the geometric mean, whose tie-break takes
 the higher threshold. How the stages were built and measured is in [the
 two-stage study](studies/two-stage-apple-m5-pro.md).
 
+**With eigenvectors** (since 2.17.0). The SVD's `band` backend has taken its
+vectors through two stages since 2.15.0; the eigensolver's now does the same
+on one side (`eigh_band_vectors`, in `src/svd_bidiag.mm` beside the SVD's).
+$A = Q_1 Q_2 T Q_2^T Q_1^T$, $Q_1$ the band reduction's block reflectors and
+$Q_2$ the chase's, and the eigenvectors are $V = Q_1 Q_2 Z$ for $T = Z\Lambda
+Z^T$:
+
+1. the band reduction (width 16) keeps each block's $V$ and $T$, and the
+   LAPACK tail's reflectors (`ssytrd_sy2sb`'s, below the band); meanwhile
+   the CPU builds the aggregated $T$ of every eight blocks as they complete;
+2. $Q = Q_1$ explicitly: the tail's panels on the CPU (`sormqr`), then the
+   aggregates on the GPU, last first, three MPS products each; meanwhile
+   the CPU chases the band to tridiagonal, keeping its reflectors: sweep
+   $s$'s step-$j$ reflector, on rows $s + 1 + 16j$ on, falls where the
+   bidiagonal chase's left ones do, so they go into the same blocks;
+3. $Q \leftarrow Q Q_2$ on the GPU (`bd_chase_apply`, its left side only) as
+   the chase finishes each chunk of sweeps; meanwhile the CPU solves the
+   tridiagonal problem (divide and conquer, its top products on the GPU
+   once $Q_2$ is applied);
+4. $V = Q Z$, one MPS product.
+
+The one-stage reduction reads the trailing matrix once a column, bound by
+memory bandwidth; here the reduction's work is products, and the price, $Q_2$'s
+application (about $2N^3$ flops), overlaps the CPU's chase and solve. On an M5
+Pro, one matrix against `tridiag`: level up to 2048 (52.2 ms both), 1.12x at
+3072 (110 ms against 123), 1.36x at 4096 (222 against 301) and 1.59x at 8192
+(1.31 s against 2.09); residual and orthogonality about $4 \times 10^{-6}$ at
+2048 and $8 \times 10^{-6}$ at 8192, `tridiag`'s $3$-$5 \times 10^{-6}$. The
+routing sweep fits `band_min_n`, from which $N$ it is used (stage 4c of
+`tuning/tune_eigh.py`).
+
+## Backend 6: a batch reduced together (`tridiag_batch`)
+
+For batches of mid-size matrices, about 96 to 512, every GPU backend above
+loses to the CPU path, which spreads a batch over every core: the Jacobi
+backends do several times LAPACK's flops, `ql`'s matrix no longer fits in
+threadgroup memory from $N = 88$, and `tridiag` solves a batch one matrix at a
+time, each of its reductions some 1,500 dispatches at 512 whose fixed cost is
+most of their time (16 of 512×512: 89 ms against the CPU's 16). `tridiag_batch`
+(since 2.17.0) runs `tridiag`'s method on a whole batch at once:
+
+1. **The reduction of every matrix by the same dispatches**: per panel of 32
+   columns, `td_panel`, a threadgroup a matrix, runs `slatrd`'s steps for the
+   panel's columns with barriers between them, and writes the panel's
+   $[V\ W]$ and $[W\ V]$; the trailing update is one batched MPS product; the
+   last columns are one final panel. The matrices are loaded, scaled and
+   symmetrised on the GPU too (`td_load`), so the host only encodes. The
+   kernel is bound by memory: each step's symmetric product reads the
+   trailing matrix, and it reads the lower triangle alone, in 32 × 32 tiles,
+   a simdgroup a tile and a lane a row: a tile below the diagonal gives its
+   rows' terms and, summed across the lanes in five shuffle stages, its
+   columns'; the partial sums meet in threadgroup memory by compare-and-swap
+   (Metal has no float atomics there). Against reading both triangles a
+   thread a row: 1.5x at $16 \times 1024^2$ (85 ms against 131), 1.46x at
+   $32 \times 768^2$, 1.19x at $64 \times 512^2$.
+2. **The tridiagonal problems on the CPU's cores**, a matrix a core
+   (`sstedc`'s divide and conquer, or `ssterf` for eigenvalues alone).
+3. **The back-transformation as batched products**, blocks of 64 reflectors:
+   $V$ copied out by a kernel, $V^T V$ by an MPS product, $T$ from it in
+   threadgroup memory (`td_make_t`, a thread a row; with $T$ in device memory
+   each column's barrier had to go through memory, 6 ms of a 1024 × 128^2
+   batch), then the three products; the eigenvectors transposed out by a
+   tiled kernel (`td_store`) straight into the output.
+
+The batch goes through in chunks (four, each at least 8 MB of matrices),
+pipelined over two workspace slots so that the GPU reduces chunk $k+1$ and
+back-transforms $k-1$ while the CPU solves chunk $k$; the GPU is kept a chunk
+ahead and the host does nothing else. On an M5 Pro, against the CPU path:
+with eigenvectors 1.46x at 1024 × 128^2 (30 ms against 44), 1.36x at
+1024 × 96^2, 1.28x at 256 × 256^2, 1.06x at 64 × 256^2, level at 16 × 512^2;
+eigenvalues alone 1.23x at 1024 × 128^2 and 1.35x at 1024 × 96^2, behind it
+from 256. Up to $N = 1024$ (the panel kernel's threadgroup memory). The
+routing sweep fits its windows (stage 5 of `tuning/tune_eigh.py`).
+
 ## Dispatch
 
 On the GPU, by the policy for this device (`metal_linalg::eigh_policy()`); on an M1:
@@ -447,9 +547,11 @@ Where the GPU/CPU rule (below) says CPU, one large matrix or a few still go to
 the GPU's LAPACK-style backends:
 
 ```
-up to tridiag_max_batch matrices (eigvalsh: values_tridiag_max_batch; 0 = any):
-  eigvalsh: band     iff  N >= values_band_min_n      (0 = never)
-  tridiag            iff  N >= tridiag_min_n          (eigvalsh: values_tridiag_min_n; 0 = never)
+tridiag_batch  iff  tridiag_batch_min_n <= N <= tridiag_batch_max_n and batch >= tridiag_batch_min_batch
+                    (eigvalsh: the values_ fields; max_n 0 = never)
+otherwise, up to tridiag_max_batch matrices (eigvalsh: values_tridiag_max_batch; 0 = any):
+  band           iff  N >= band_min_n             (eigvalsh: values_band_min_n; 0 = never)
+  tridiag        iff  N >= tridiag_min_n          (eigvalsh: values_tridiag_min_n; 0 = never)
 otherwise the CPU path
 ```
 
@@ -738,9 +840,12 @@ To probe another GPU without a rebuild:
 | `EIGH_VALUES_BAND_MIN_N` | the band backend for eigenvalues alone from this N, within the same batch cap (0: never) |
 | `EIGH_VALUES_BAND_WIDTH` | the band backend's band width as a policy field (`values_band_width`: 8, 16 or 32; 0 is 16) |
 | `EIGH_BAND_WIDTH=8` / `16` / `32` | the band backend's band width where the policy leaves it 0 (default 16) |
+| `EIGH_BAND_MIN_N` | the band backend with eigenvectors from this N, within the same batch cap (0: never) |
+| `EIGH_TRIDIAG_BATCH_MIN_N`, `EIGH_TRIDIAG_BATCH_MAX_N`, `EIGH_TRIDIAG_BATCH_MIN_BATCH` | the tridiag_batch backend instead of the CPU for N in this window from this batch (`..._MAX_N=0`: never); `EIGH_VALUES_TRIDIAG_BATCH_*` the same for eigenvalues alone |
+| `EIGH_QL_SIMD=0` | the ql backend in threadgroup memory at every N (off: up to 32 in registers) |
 | `EIGH_QL_MIN_N`, `EIGH_QL_MAX_N` | the ql backend on the GPU for N in this window (`EIGH_QL_MAX_N=0`: never) |
 | `METAL_LINALG_CPU_THREADS=<n>` | CPU threads a batch is spread over (default: every core; all three decompositions) |
-| `EIGH_DEVICE=gpu` / `cpu` / `tridiag` / `band` | bypass the GPU/CPU boundary; `tridiag` forces that backend, `band` that backend for eigenvalues alone (`tridiag` with eigenvectors) |
+| `EIGH_DEVICE=gpu` / `cpu` / `tridiag` / `band` / `tridiag_batch` | bypass the GPU/CPU boundary; `tridiag`, `band` and `tridiag_batch` force that backend |
 | `EIGH_MODE=simd` / `threadgroup` | force the execution mode of backend 1 |
 | `EIGH_INNER_SWEEPS=<k>` | scalar sweeps per block subproblem |
 | `EIGH_CHUNK_MS=<ms>` | wall-time budget per command buffer |

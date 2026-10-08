@@ -22,6 +22,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <tuple>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -43,6 +44,21 @@ struct QlParams {
     uint32_t lower;
     uint32_t max_iter;
 };
+
+// Must match `QlsParams` in Eigh_QL.metal (eigh_ql_simd, in registers).
+struct QlsParams {
+    uint32_t n;
+    uint32_t lower;
+    uint32_t max_iter;
+    uint32_t batch;
+};
+constexpr uint32_t kSimdMaxN = 32;          // eigh_ql_simd's largest instance
+constexpr uint32_t kSimdFloats = 200;       // its threadgroup memory a matrix (kQlsFloats)
+constexpr uint32_t kSimdPerGroup = 4;       // simdgroups a threadgroup (1 to 8 measured the same)
+
+// The register kernel's instance for order n: 8, 16 or 32, which packs four,
+// two or one matrices into a simdgroup.
+uint32_t simd_instance(uint32_t n) { return n <= 8 ? 8 : n <= 16 ? 16 : 32; }
 
 constexpr uint32_t kChaserThreads = 32;   // simdgroup 0 in overlap mode; kChaser in the shader
 constexpr uint32_t kMaxRowThreads = 96;   // with the chaser, at most four simdgroups
@@ -74,6 +90,18 @@ struct Workspace {
 struct Cache {
     MetalRuntime& rt = MetalRuntime::shared(METAL_LINALG_SHADER(Eigh_QL), "eigh_ql");
     std::map<std::pair<bool, bool>, id<MTLComputePipelineState>> pipelines;  // (vectors, overlap)
+    std::map<std::pair<bool, uint32_t>, id<MTLComputePipelineState>> simd;  // (vectors, instance)
+
+    id<MTLComputePipelineState> simd_pipeline(bool vectors, uint32_t instance) {
+        const auto key = std::make_pair(vectors, instance);
+        if (auto it = simd.find(key); it != simd.end()) return it->second;
+        MTLFunctionConstantValues* cv = [[MTLFunctionConstantValues alloc] init];
+        const bool overlap = false;
+        [cv setConstantValue:&vectors type:MTLDataTypeBool atIndex:0];
+        [cv setConstantValue:&overlap type:MTLDataTypeBool atIndex:1];
+        NSString* name = [NSString stringWithFormat:@"eigh_ql_simd_%u", instance];
+        return simd[key] = make_pipeline(rt.device, rt.library, name, cv);
+    }
     std::map<uint32_t, Workspace>                             workspaces;   // by n
 
     id<MTLComputePipelineState> pipeline(bool vectors, bool overlap) {
@@ -156,9 +184,16 @@ void eigh_ql(const Matrices& a, bool lower, float* w_out, float* v_out, uint32_t
     AutoreleasePool pool;
     Cache& cache = Cache::shared();
     const bool vectors = v_out != nullptr;
-    const bool overlap = n >= kOverlapMinN;
-    id<MTLComputePipelineState> pso = cache.pipeline(vectors, overlap);
-    const uint32_t threads = (overlap ? kChaserThreads : 0) + pad_up(n, 32);
+    // In registers up to N = 32, four matrices a simdgroup up to 8 and two up
+    // to 16, eigenvalues alone by bisection (EIGH_QL_SIMD=0: the
+    // threadgroup-memory kernel throughout). On an M5 Pro, with eigenvectors
+    // 1.2-2.5x the threadgroup kernel, eigenvalues alone 1.4-2.5x.
+    const char* simd_env = std::getenv("EIGH_QL_SIMD");
+    const bool in_registers = n <= kSimdMaxN && !(simd_env && std::string(simd_env) == "0");
+    const bool overlap = !in_registers && n >= kOverlapMinN;
+    id<MTLComputePipelineState> pso = in_registers ? cache.simd_pipeline(vectors, simd_instance(n))
+                                                   : cache.pipeline(vectors, overlap);
+    const uint32_t threads = in_registers ? 32 * kSimdPerGroup : (overlap ? kChaserThreads : 0) + pad_up(n, 32);
     if (threads > pso.maxTotalThreadsPerThreadgroup) {
         throw std::runtime_error("[eigh] The ql pipeline allows " +
                                  std::to_string((unsigned)pso.maxTotalThreadsPerThreadgroup) +
@@ -181,7 +216,9 @@ void eigh_ql(const Matrices& a, bool lower, float* w_out, float* v_out, uint32_t
 
     QlParams prm{n, lower ? 1u : 0u, 30u * std::max(n, 1u)};   // LAPACK ssteqr's budget
     const size_t mat_bytes = (size_t)n * n * sizeof(float);
-    const size_t tgm = tg_bytes(n);
+    // The register kernel packs 32 / instance matrices into a simdgroup
+    const uint32_t per_sg = in_registers ? 32 / simd_instance(n) : 1, per_tg = kSimdPerGroup * per_sg;
+    const size_t tgm = in_registers ? (size_t)per_tg * kSimdFloats * sizeof(float) : tg_bytes(n);
     for (uint32_t b0 = 0; b0 < batch; b0 += chunk) {
         const uint32_t bc = std::min(chunk, batch - b0);
         id<MTLCommandBuffer> cmd = [cache.rt.queue commandBuffer];
@@ -191,9 +228,16 @@ void eigh_ql(const Matrices& a, bool lower, float* w_out, float* v_out, uint32_t
         [enc setBuffer:ws.vals offset:(size_t)b0 * n * sizeof(float) atIndex:1];
         [enc setBuffer:ws.vecs offset:b0 * mat_bytes atIndex:2];
         [enc setBuffer:ws.info offset:(size_t)b0 * sizeof(uint32_t) atIndex:3];
-        [enc setBytes:&prm length:sizeof prm atIndex:4];
         [enc setThreadgroupMemoryLength:tgm atIndex:0];
-        [enc dispatchThreadgroups:MTLSizeMake(bc, 1, 1) threadsPerThreadgroup:MTLSizeMake(threads, 1, 1)];
+        if (in_registers) {
+            const QlsParams q{n, prm.lower, prm.max_iter, bc};
+            [enc setBytes:&q length:sizeof q atIndex:4];
+            [enc dispatchThreadgroups:MTLSizeMake((bc + per_tg - 1) / per_tg, 1, 1)
+                threadsPerThreadgroup:MTLSizeMake(threads, 1, 1)];
+        } else {
+            [enc setBytes:&prm length:sizeof prm atIndex:4];
+            [enc dispatchThreadgroups:MTLSizeMake(bc, 1, 1) threadsPerThreadgroup:MTLSizeMake(threads, 1, 1)];
+        }
         [enc endEncoding];
         [cmd commit];
         [cmd waitUntilCompleted];

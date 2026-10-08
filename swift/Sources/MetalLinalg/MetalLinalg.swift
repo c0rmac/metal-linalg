@@ -195,7 +195,10 @@ public func qrBackend(rows: Int, cols: Int, batch: Int = 1) -> String {
     String(cString: metal_linalg_qr_backend(UInt32(clamping: rows), UInt32(clamping: cols), UInt32(clamping: batch)))
 }
 
-/// "cpu", "simd", "threadgroup", "block", "tridiag" or "ql".
+/// "cpu", "simd", "threadgroup", "block", "tridiag", "ql", "band" (the
+/// two-stage reduction, from the policy's `band_min_n`) or "tridiag_batch" (a
+/// batch of mid-size matrices at once, inside the policy's `tridiag_batch_*`
+/// window).
 public func eighBackend(n: Int, batch: Int = 1) -> String {
     String(cString: metal_linalg_eigh_backend(UInt32(clamping: n), UInt32(clamping: batch)))
 }
@@ -209,7 +212,8 @@ public func eigvalshBackend(n: Int, batch: Int = 1) -> String {
 
 /// "cpu", "jacobi", "block_jacobi", "qr_jacobi", "qr_block_jacobi", "bidiag",
 /// "band" (the two-stage reduction, from the policy's `band_min_k`),
-/// "golub_kahan" or "qr_golub_kahan".
+/// "golub_kahan", "qr_golub_kahan" or "bidiag_batch" (a batch of mid-size
+/// matrices at once, inside the policy's `bidiag_batch_*` window).
 public func svdBackend(rows: Int, cols: Int, batch: Int = 1) -> String {
     String(cString: metal_linalg_svd_backend(UInt32(clamping: rows), UInt32(clamping: cols), UInt32(clamping: batch)))
 }

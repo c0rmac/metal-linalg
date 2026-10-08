@@ -298,6 +298,10 @@ void general_tail(float* A, uint32_t m, uint32_t n, uint32_t lda, uint32_t b, ui
 
 } // namespace
 
+void band_general_tail(float* A, uint32_t m, uint32_t n, uint32_t lda, uint32_t b, uint32_t k) {
+    general_tail(A, m, n, lda, b, k, nullptr);
+}
+
 // 16: 32 took 1.4-1.5x its time at 512-2048 (its panels), the same at 4096.
 // The TSQR's top is a tree of up to 2^15 leaves of kLeafRows rows.
 uint32_t qr_block_width(uint32_t m) {
@@ -548,8 +552,13 @@ bool band_reduce_general(id<MTLBuffer> Abuf, uint32_t m, uint32_t n, uint32_t ld
 
 uint32_t band_blocks_symmetric(uint32_t n, uint32_t b) { return n >= 3 * b ? (n - 3 * b) / b + 1 : 0; }
 
-bool band_reduce_symmetric(id<MTLBuffer> Abuf, uint32_t n, uint32_t lda, uint32_t b, BandWatch* watch) {
+bool band_reduce_symmetric(id<MTLBuffer> Abuf, uint32_t n, uint32_t lda, uint32_t b, BandWatch* watch,
+                           BandKeep* keep) {
     if ((size_t)n * b > (size_t)kLeafRows * 1024) return false;
+    if (keep) {
+        if (keep->qoff.size() < band_blocks_symmetric(n, b)) throw std::logic_error("[band] BandKeep's layout");
+        if (!watch) watch = keep;
+    }
     if (watch) watch->done.assign(band_blocks_symmetric(n, b), nil);
     State& st = State::shared();
     const Panels& pk = st.kernels(b);
@@ -568,8 +577,16 @@ bool band_reduce_symmetric(id<MTLBuffer> Abuf, uint32_t n, uint32_t lda, uint32_
         const uint32_t n1 = n - k - b, nb = (n1 + 63) / 64;
         const size_t akp = (size_t)k * lda + k + b, a22 = (size_t)(k + b) * lda + k + b;
         id<MTLCommandBuffer> cb = [st.rt.queue commandBufferWithUnretainedReferences];
-        // The panel: R in place; V into [V Y V] twice (flag 8), V T.
-        panel(pk, w, cb, Abuf, akp, PanelParams{n1, b, 1, lda, kLw, 1u | 8u, 0, 0, 0, 0, 2 * b}, w.bl, 0, w.bt);
+        // The panel: R in place; V into [V Y V] twice (flag 8), V T; with
+        // keep, V and T kept there too.
+        const uint32_t bi = k / b;
+        id<MTLBuffer> tbuf = keep ? keep->qt : w.bt;
+        const size_t toff = keep ? (size_t)bi * 1024 : 0;
+        if (keep)
+            panel(pk, w, cb, Abuf, akp, PanelParams{n1, b, 1, lda, kLw, 1u | 8u, 0, 0, 0, 0, 2 * b}, w.bl, 0, tbuf,
+                  toff, keep->qv, keep->qoff[bi], keep->qld[bi]);
+        else
+            panel(pk, w, cb, Abuf, akp, PanelParams{n1, b, 1, lda, kLw, 1u | 8u, 0, 0, 0, 0, 2 * b}, w.bl, 0, w.bt);
         // X = A22 (V T), into Y's place
         gemm(dev, cb, mps(Abuf, a22, n1, n1, lda), false, mps(w.bvt, 0, n1, b, kBandMax), false,
              mps(w.bl, b, n1, b, kLw), n1, b, n1, 1, 0);
@@ -580,7 +597,7 @@ bool band_reduce_symmetric(id<MTLBuffer> Abuf, uint32_t n, uint32_t lda, uint32_
         [enc setComputePipelineState:st.small.sy];
         [enc setBuffer:w.bl offset:0 atIndex:0];
         [enc setBuffer:w.bpart offset:0 atIndex:1];
-        [enc setBuffer:w.bt offset:0 atIndex:2];
+        [enc setBuffer:tbuf offset:toff * 4 atIndex:2];
         [enc setBytes:&q length:sizeof q atIndex:3];
         [enc dispatchThreadgroups:MTLSizeMake((n1 + kApplyPer - 1) / kApplyPer, 1, 1)
             threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
@@ -609,6 +626,11 @@ bool band_reduce_symmetric(id<MTLBuffer> Abuf, uint32_t n, uint32_t lda, uint32_
     // The trailing block A(k:, k:), fewer than 3b columns: LAPACK's
     // ssytrd_sy2sb, its band copied back into A's lower band.
     const uint32_t nt = n - k;
+    if (keep) {
+        keep->tail = k;
+        keep->sy2sb_kd = 0;
+        keep->sy2sb_tau.clear();
+    }
     if (nt > 1) {
         float* A = static_cast<float*>(Abuf.contents);
         L N = nt, KD = std::min(b, nt - 1), LDA = lda, LDAB = KD + 1, lw = -1, info = 0;
@@ -620,6 +642,10 @@ bool band_reduce_symmetric(id<MTLBuffer> Abuf, uint32_t n, uint32_t lda, uint32_
         ssytrd_sy2sb_("L", &N, &KD, A + (size_t)k * lda + k, &LDA, ab.data(), &LDAB, tau.data(), work.data(), &lw,
                       &info);
         if (info != 0) throw std::runtime_error("[band] LAPACK ssytrd_sy2sb failed, info " + std::to_string((long long)info));
+        if (keep) {
+            keep->sy2sb_kd = (uint32_t)KD;
+            keep->sy2sb_tau = tau;
+        }
         for (uint32_t c = 0; c < nt; ++c)
             for (uint32_t r = c; r < nt && r <= c + (uint32_t)KD; ++r)
                 A[(size_t)(k + c) * lda + k + r] = ab[(size_t)c * LDAB + r - c];

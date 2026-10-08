@@ -182,7 +182,10 @@ def qr_backend(m, n, batch=1):
 
 def eigh_backend(n, batch=1):
     """Which backend :func:`eigh` uses: ``"cpu"``, ``"simd"``,
-    ``"threadgroup"``, ``"block"``, ``"tridiag"`` or ``"ql"``."""
+    ``"threadgroup"``, ``"block"``, ``"tridiag"``, ``"ql"``, ``"band"`` (the
+    two-stage reduction, from the policy's ``band_min_n``) or
+    ``"tridiag_batch"`` (a batch of mid-size matrices at once, inside the
+    policy's ``tridiag_batch_*`` window)."""
     return _core.eigh_backend(n, batch)
 
 
@@ -197,7 +200,9 @@ def svd_backend(m, n, batch=1):
     """Which backend :func:`svd` uses: ``"cpu"``, ``"jacobi"``,
     ``"block_jacobi"``, ``"qr_jacobi"``, ``"qr_block_jacobi"``, ``"bidiag"``,
     ``"band"`` (the two-stage reduction, from the policy's ``band_min_k``),
-    ``"golub_kahan"`` or ``"qr_golub_kahan"``."""
+    ``"golub_kahan"``, ``"qr_golub_kahan"`` or ``"bidiag_batch"`` (a batch of
+    mid-size matrices at once, inside the policy's ``bidiag_batch_*``
+    window)."""
     return _core.svd_backend(m, n, batch)
 
 

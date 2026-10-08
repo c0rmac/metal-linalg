@@ -154,6 +154,8 @@ void for_each_rows(uint32_t batch, uint32_t rows, uint32_t cols, const F& f) {
 // An exception from f is rethrown on the calling thread once every chunk has
 // stopped; chunks not yet started are skipped.
 void lapack_batches(uint32_t batch, size_t per, const std::function<void(uint32_t, uint32_t)>& f);
+// The same on at most `threads` threads (beside the GPU's host work, say).
+void lapack_batches(uint32_t batch, size_t per, unsigned threads, const std::function<void(uint32_t, uint32_t)>& f);
 
 // A batch on the GPU and the CPU at once. gpu(b0, count) solves matrices
 // [b0, b0 + count) with a GPU backend, cpu(b0, count) with the CPU path. The
@@ -338,17 +340,30 @@ struct BandKeep : BandWatch {
         std::vector<float> tq, tp, lq;
     };
     std::vector<Step> steps;
+    // The symmetric reduction's (since 2.17.0): Q1 = H_0 H_1 ... H_tail, GPU
+    // block k's H_k = I - V T V^T, V on rows (k + 1) b .. n - 1, written as
+    // qv, qoff, qld and qt say (pv, pt unused); the trailing block from
+    // `tail` on is LAPACK's ssytrd_sy2sb's, its reflectors below the band in
+    // A (kd wide panels, sy2sb_tau their taus, its order n - tail).
+    uint32_t sy2sb_kd = 0;
+    std::vector<float> sy2sb_tau;
 };
 
 // A (m x n column-major, m >= n, in shared storage) to an upper band of width
 // b, A = Q B P^T: the band in A's upper band, the rest of A scratch (with
 // `keep`, Q's and P's reflectors as above; `watch`, if not keep itself, its
 // progress). False if m is too tall for the panel kernels (m b > 128 * 1024).
+// The general reduction's last columns from column k on, with LAPACK on the
+// CPU (A column-major m x n, ld lda): the same block steps, so that A ends an
+// upper band of width b; the batch backend's tail (svd_bidiag_batch.mm).
+void band_general_tail(float* A, uint32_t m, uint32_t n, uint32_t lda, uint32_t b, uint32_t k);
+
 bool band_reduce_general(id<MTLBuffer> A, uint32_t m, uint32_t n, uint32_t lda, uint32_t b,
                          BandKeep* keep = nullptr, BandWatch* watch = nullptr);
 // A symmetric A (n x n, both triangles, in shared storage) to a band of width
 // b, Q^T A Q: the band in A's lower band. Likewise false if n is too large.
-bool band_reduce_symmetric(id<MTLBuffer> A, uint32_t n, uint32_t lda, uint32_t b, BandWatch* watch = nullptr);
+bool band_reduce_symmetric(id<MTLBuffer> A, uint32_t n, uint32_t lda, uint32_t b, BandWatch* watch = nullptr,
+                           BandKeep* keep = nullptr);
 // The GPU's blocks in the symmetric reduction of order n.
 uint32_t band_blocks_symmetric(uint32_t n, uint32_t b);
 

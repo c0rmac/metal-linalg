@@ -397,9 +397,10 @@ heuristic the crossover replaced, overall and per kind of shape.
 
 ## Noise floor
 
-Every point is measured in two or more passes, in a different random order
-each time so that thermal drift during the run is not mistaken for an effect
-of size. For each backend at each point the **pass-to-pass ratio** is its
+Every point is measured in a first pass, and the points without a clear
+winner (no backend 1.3x ahead of the next) in a second and any later ones
+(every point with `--full-passes`), in a different random order each time so
+that thermal drift during the run is not mistaken for an effect of size. For each backend at each point the **pass-to-pass ratio** is its
 slowest pass divided by its fastest. The report gives the median, 90th
 percentile and maximum of that ratio overall and by how long the call takes.
 

@@ -32,6 +32,7 @@ let coreSources = [
     "src/svd.mm",
     "src/svd_block_jacobi.mm",
     "src/svd_bidiag.mm",
+    "src/svd_bidiag_batch.mm",
     "src/svd_golub_kahan.mm",
     "src/c_api.cpp",
     "src/c_api_metal.mm",

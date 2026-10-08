@@ -709,6 +709,185 @@ int main() {
         else std::printf("  ok    %-44s\n", "band with vectors NaN in one matrix of a batch");
     }
 
+    // bidiag_batch: a batch bidiagonalized together (bd_panel, a threadgroup
+    // a matrix and panel; the last columns a final panel), the bidiagonal
+    // problems on the CPU's cores, both back-transformations in blocks of 64
+    // as batched products, chunks pipelined over two slots. Shapes straddle
+    // the panels (32) and blocks (64), tall and wide; batches of one chunk and
+    // several.
+    std::printf("\n[ backend: bidiag_batch ]\n");
+    {
+        auto bb = [](const array& A, bool uv) {
+            SvdResult r = detail::svd_bidiag_batch(A, uv);
+            eval({r.U, r.S, r.Vt, r.info});
+            return r;
+        };
+        for (auto [M, N] : std::vector<std::pair<int, int>>{{1, 1}, {2, 2}, {3, 3}, {31, 31}, {33, 33}, {34, 34},
+                                                            {35, 35}, {65, 64}, {64, 65}, {97, 100}, {129, 130},
+                                                            {200, 200}, {300, 100}, {100, 300}, {257, 256},
+                                                            {513, 500}, {40, 7}, {7, 40}})
+        {
+            const int b = std::max(M, N) <= 100 ? 24 : std::max(M, N) <= 300 ? 6 : 2;
+            array A = random_matrix(b, M, N, 6000 + M * 3 + N);
+            check("bidiag_batch " + dims(b, M, N), A, bb(A, true));
+        }
+        for (auto [b, M, N] : std::vector<std::tuple<int, int, int>>{{2100, 64, 64}, {2500, 50, 40}, {2500, 40, 50}}) {
+            array A = random_matrix(b, M, N, 6100 + M + N);
+            check("bidiag_batch " + dims(b, M, N) + " (chunks)", A, bb(A, true));
+        }
+        {   // singular values alone == with vectors
+            array A = random_matrix(10, 150, 120, 6200);
+            SvdResult rv = bb(A, false), rw = bb(A, true);
+            const float d = max_abs(subtract(rv.S, rw.S)) / std::max(max_abs(rw.S), 1e-30f);
+            ++g_checks;
+            if (d > 1e-5f) fail("bidiag_batch values-only == with vectors", "differ by " + std::to_string(d));
+            else std::printf("  ok    %-44s |ds|=%.1e\n", "bidiag_batch values-only == with vectors", d);
+        }
+        for (float sc : {1e-30f, 1e30f}) {
+            char label[64];
+            std::snprintf(label, sizeof label, "bidiag_batch scaled by %.0e 6 x 120x100", sc);
+            array A = multiply(random_matrix(6, 120, 100, 6300), array(sc / 5.0f));
+            check(label, A, bb(A, true));
+        }
+        check("bidiag_batch zero 3 x 90x80", zeros({3, 90, 80}), bb(zeros({3, 90, 80}), true));
+        {
+            array I = broadcast_to(eye(100), {3, 100, 100});
+            check("bidiag_batch identity 3 x 100x100", I, bb(I, true));
+            array R1 = matmul(random_matrix(4, 140, 1, 6400), random_matrix(4, 1, 120, 6401));
+            check("bidiag_batch rank one 4 x 140x120", R1, bb(R1, true));
+            std::vector<float> spec(120);
+            for (int i = 0; i < 120; ++i) spec[i] = i < 60 ? 3.0f : 1e-3f * (float)(120 - i);
+            array R = with_singular_values(150, 120, spec);
+            check("bidiag_batch repeated and tiny values 150x120", R, bb(R, true));
+        }
+        {   // a NaN in one matrix of a batch
+            const int M = 90, N = 70;
+            array A = random_matrix(4, M, N, 6500);
+            eval({A});
+            std::vector<float> data(A.data<float>(), A.data<float>() + 4 * M * N);
+            data[(size_t)2 * M * N + 11] = NAN;
+            SvdResult r = bb(from_values(data, {4, M, N}), true);
+            array info = reshape(r.info, {-1});
+            array s2 = slice(r.S, {2, 0}, {3, N});
+            array rest = concatenate({slice(r.S, {0, 0}, {2, N}), slice(r.S, {3, 0}, {4, N})});
+            eval({info, s2, rest});
+            ++g_checks;
+            const uint32_t* iw = info.data<uint32_t>();
+            const bool ok = all(isnan(s2)).item<bool>() && !has_non_finite(rest) && !detail::svd_converged(iw[2]) &&
+                            detail::svd_converged(iw[0]) && detail::svd_converged(iw[3]);
+            if (!ok) fail("bidiag_batch NaN in one matrix of a batch", "not isolated");
+            else std::printf("  ok    %-44s\n", "bidiag_batch NaN in one matrix of a batch");
+        }
+        {   // through the float API with outputs that are not page-aligned
+            const int b = 5, M = 80, N = 60;
+            array A = random_matrix(b, M, N, 6600);
+            eval({A});
+            std::vector<float> u((size_t)b * M * N + 1), s((size_t)b * N + 1), vt((size_t)b * N * N + 1);
+            std::vector<uint32_t> info(b);
+            core::detail::svd_bidiag_batch(core::Matrices{A.data<float>(), (uint32_t)b, (uint32_t)M, (uint32_t)N},
+                                           u.data() + 1, s.data() + 1, vt.data() + 1, info.data());
+            SvdResult r{from_values(std::vector<float>(u.begin() + 1, u.end()), {b, M, N}),
+                        from_values(std::vector<float>(s.begin() + 1, s.end()), {b, N}),
+                        from_values(std::vector<float>(vt.begin() + 1, vt.end()), {b, N, N}),
+                        array(info.data(), {b}, uint32)};
+            check("bidiag_batch, unaligned outputs " + dims(b, M, N), A, r);
+        }
+        // At least twice as tall as wide: R of the library's QR first, U = Q U_R;
+        // the same results as bidiagonalizing the matrix itself
+        // (SVD_BIDIAG_BATCH_QR=0), to rounding
+        for (auto [b, M, N] : std::vector<std::tuple<int, int, int>>{{40, 64, 32}, {12, 300, 100}, {5, 700, 64},
+                                                                     {3, 1000, 500}, {30, 70, 5}, {40, 32, 64},
+                                                                     {12, 100, 300}, {3, 500, 1000}, {30, 5, 70}}) {
+            array A = random_matrix(b, M, N, 6800 + M + N);
+            SvdResult q = bb(A, true), qv = bb(A, false);
+            check("bidiag_batch QR first " + dims(b, M, N), A, q);
+            setenv("SVD_BIDIAG_BATCH_QR", "0", 1);
+            SvdResult d = bb(A, true), dv = bb(A, false);
+            unsetenv("SVD_BIDIAG_BATCH_QR");
+            const float nA = std::max(frobenius(A) / std::sqrt((float)b), 1e-30f);
+            const float ds = max_abs(subtract(q.S, d.S)) / nA, dv2 = max_abs(subtract(qv.S, dv.S)) / nA;
+            ++g_checks;
+            const std::string label = "bidiag_batch QR first == direct " + dims(b, M, N);
+            if (!(ds < 2e-6f && dv2 < 2e-6f)) fail(label, "differ by " + std::to_string(std::max(ds, dv2)));
+            else std::printf("  ok    %-44s |ds|=%.1e |ds vals|=%.1e\n", label.c_str(), ds, dv2);
+        }
+        for (float sc : {1e-30f, 1e30f}) {
+            char label[64];
+            std::snprintf(label, sizeof label, "bidiag_batch QR first, scaled by %.0e 6 x 300x100", sc);
+            array A = multiply(random_matrix(6, 300, 100, 6900), array(sc / 5.0f));
+            check(label, A, bb(A, true));
+        }
+        {   // a NaN in one tall matrix of a batch: through the QR, still that matrix alone
+            const int M = 120, N = 40;
+            array A = random_matrix(4, M, N, 6950);
+            eval({A});
+            std::vector<float> data(A.data<float>(), A.data<float>() + 4 * M * N);
+            data[(size_t)M * N + 7] = NAN;
+            SvdResult r = bb(from_values(data, {4, M, N}), true);
+            array info = reshape(r.info, {-1});
+            array s1 = slice(r.S, {1, 0}, {2, N});
+            array rest = concatenate({slice(r.S, {0, 0}, {1, N}), slice(r.S, {2, 0}, {4, N})});
+            array u1 = slice(r.U, {1, 0, 0}, {2, M, N});
+            eval({info, s1, rest, u1});
+            ++g_checks;
+            const uint32_t* iw = info.data<uint32_t>();
+            const bool ok = all(isnan(s1)).item<bool>() && all(isnan(u1)).item<bool>() && !has_non_finite(rest) &&
+                            !detail::svd_converged(iw[1]) && detail::svd_converged(iw[0]) && detail::svd_converged(iw[3]);
+            if (!ok) fail("bidiag_batch QR first, NaN in one matrix", "not isolated");
+            else std::printf("  ok    %-44s\n", "bidiag_batch QR first, NaN in one matrix");
+        }
+        // Singular values alone from k = 160 in two stages (a band on the GPU,
+        // bidiagonal on the CPU): the direct reduction's values
+        // (SVD_BIDIAG_BATCH_BAND=0), to rounding
+        for (auto [b, M, N, sc] : std::vector<std::tuple<int, int, int, float>>{{9, 200, 180, 1.0f}, {5, 300, 300, 1.0f},
+                                                                               {7, 180, 300, 1.0f}, {3, 513, 500, 1.0f},
+                                                                               {4, 200, 200, 1e-30f}, {4, 200, 200, 1e30f}}) {
+            array A = multiply(random_matrix(b, M, N, 7000 + M + N), array(sc / 5.0f));
+            SvdResult two = bb(A, false);
+            setenv("SVD_BIDIAG_BATCH_BAND", "0", 1);
+            SvdResult one = bb(A, false);
+            unsetenv("SVD_BIDIAG_BATCH_BAND");
+            const float nA = max_abs(one.S);   // (the Frobenius norm would under- or overflow at the scales)
+            const float ds = max_abs(subtract(two.S, one.S)) / nA;
+            char label[96];
+            std::snprintf(label, sizeof label, "bidiag_batch values in two stages %s x %.0e", dims(b, M, N).c_str(), sc);
+            ++g_checks;
+            if (!(ds < 2e-6f) || has_non_finite(two.S)) fail(label, "differ by " + std::to_string(ds));
+            else std::printf("  ok    %-44s |ds|=%.1e\n", label, ds);
+        }
+        {
+            SvdResult z = bb(zeros({3, 200, 170}), false);
+            ++g_checks;
+            if (max_abs(z.S) != 0.0f) fail("bidiag_batch values in two stages, zero", std::to_string(max_abs(z.S)));
+            else std::printf("  ok    %-44s\n", "bidiag_batch values in two stages, zero");
+            const int M = 200, N = 180;
+            array A = random_matrix(5, M, N, 7100);
+            eval({A});
+            std::vector<float> data(A.data<float>(), A.data<float>() + 5 * M * N);
+            data[(size_t)3 * M * N + 17] = NAN;
+            SvdResult r = bb(from_values(data, {5, M, N}), false);
+            array s3 = slice(r.S, {3, 0}, {4, N});
+            array rest = concatenate({slice(r.S, {0, 0}, {3, N}), slice(r.S, {4, 0}, {5, N})});
+            eval({s3, rest});
+            ++g_checks;
+            if (!all(isnan(s3)).item<bool>() || has_non_finite(rest)) fail("bidiag_batch values in two stages, NaN", "not isolated");
+            else std::printf("  ok    %-44s\n", "bidiag_batch values in two stages, NaN");
+        }
+        {   // beyond 1024 rows or columns: only R is bidiagonalized
+            array A = random_matrix(2, 1100, 40, 6960);
+            check("bidiag_batch QR first " + dims(2, 1100, 40), A, bb(A, true));
+            array B = random_matrix(2, 40, 1100, 6961);
+            check("bidiag_batch QR first " + dims(2, 40, 1100), B, bb(B, true));
+        }
+        ++g_checks;
+        try {   // bidiagonalized as it is: at most 1024 rows and columns
+            detail::svd_bidiag_batch(random_matrix(1, 1025, 600, 6700), true);
+            fail("bidiag_batch beyond 1024 rows", "did not throw");
+        } catch (const std::invalid_argument&) {
+            std::printf("  ok    %-44s\n", "bidiag_batch 1025x600 throws invalid_argument");
+        }
+    }
+
     // The golub_kahan backend keeps the matrix in threadgroup memory, so it
     // takes squares up to svd_gk_max_k() (longer matrices when tall); a wide
     // matrix is decomposed as its transpose, and through the QR first
@@ -771,6 +950,124 @@ int main() {
                 ++g_checks;
                 if (!detail::svd_rank_deficient(r.info.item<uint32_t>()))
                     fail("golub_kahan rank " + std::to_string(rank) + " of " + dims(1, M, N), "not flagged rank-deficient");
+            }
+        }
+        // Up to 32 rows and columns in registers (svd_gk_simd), singular values
+        // alone there by bisection: the same results as the threadgroup kernel's
+        // (SVD_GK_SIMD=0), to rounding; batches not a multiple of a threadgroup's 4.
+        for (auto [b, M, N] : std::vector<std::tuple<int, int, int>>{{50, 5, 5}, {7, 9, 9}, {33, 12, 9},
+                                                                     {33, 9, 12}, {50, 17, 17}, {5, 32, 8},
+                                                                     {5, 8, 32}, {50, 32, 31}, {50, 31, 32},
+                                                                     {50, 32, 32}, {3, 32, 1}, {3, 1, 32}}) {
+            array A = random_matrix(b, M, N, 2250 + M * 3 + N);
+            SvdResult reg = detail::svd_golub_kahan(A, true), regv = detail::svd_golub_kahan(A, false);
+            eval({reg.U, reg.S, reg.Vt, reg.info, regv.S, regv.info});
+            check("golub_kahan in registers " + dims(b, M, N), A, reg);
+            setenv("SVD_GK_SIMD", "0", 1);
+            SvdResult tgm = detail::svd_golub_kahan(A, true), tgv = detail::svd_golub_kahan(A, false);
+            eval({tgm.S, tgv.S});
+            unsetenv("SVD_GK_SIMD");
+            const float nA = std::max(frobenius(A) / std::sqrt((float)b), 1e-30f);   // a matrix's norm
+            const float ds = max_abs(subtract(reg.S, tgm.S)) / nA, dv = max_abs(subtract(regv.S, tgv.S)) / nA;
+            ++g_checks;
+            const std::string label = "gk in registers == in threadgroup memory " + dims(b, M, N);
+            if (!(ds < 2e-6f && dv < 2e-6f)) fail(label, "differ by " + std::to_string(std::max(ds, dv)));
+            else std::printf("  ok    %-44s |ds|=%.1e |ds vals|=%.1e\n", label.c_str(), ds, dv);
+        }
+        // From 17 rows with vectors a runner simdgroup runs the QR iterations
+        // of a threadgroup's matrices: the same results as without it
+        // (SVD_GK_RUN=0), to rounding; batches not a multiple of a
+        // threadgroup's, and a NaN among them
+        for (auto [b, M, N] : std::vector<std::tuple<int, int, int>>{{37, 20, 20}, {37, 32, 32}, {13, 32, 16},
+                                                                     {21, 24, 30}, {9, 32, 8}}) {
+            array A = random_matrix(b, M, N, 2280 + M * 3 + N);
+            SvdResult run = detail::svd_golub_kahan(A, true);
+            eval({run.U, run.S, run.Vt, run.info});
+            check("gk with a runner " + dims(b, M, N), A, run);
+            setenv("SVD_GK_RUN", "0", 1);
+            SvdResult one = detail::svd_golub_kahan(A, true);
+            eval({one.S});
+            unsetenv("SVD_GK_RUN");
+            const float nA = std::max(frobenius(A) / std::sqrt((float)b), 1e-30f);
+            const float ds = max_abs(subtract(run.S, one.S)) / nA;
+            ++g_checks;
+            const std::string label = "gk runner == without " + dims(b, M, N);
+            if (!(ds < 2e-6f)) fail(label, "differ by " + std::to_string(ds));
+            else std::printf("  ok    %-44s |ds|=%.1e\n", label.c_str(), ds);
+        }
+        {
+            const int b = 11, M = 24, N = 20;
+            array A = random_matrix(b, M, N, 2290);
+            eval({A});
+            std::vector<float> data(A.data<float>(), A.data<float>() + (size_t)b * M * N);
+            data[(size_t)5 * M * N + 3] = NAN;
+            SvdResult r = detail::svd_golub_kahan(from_values(data, {b, M, N}), true);
+            array info = reshape(r.info, {-1});
+            array s5 = slice(r.S, {5, 0}, {6, N});
+            array rest = concatenate({slice(r.S, {0, 0}, {5, N}), slice(r.S, {6, 0}, {b, N})});
+            eval({info, s5, rest});
+            const uint32_t* iw = info.data<uint32_t>();
+            bool ok = all(isnan(s5)).item<bool>() && !has_non_finite(rest) && detail::svd_nonfinite(iw[5]);
+            for (int k = 0; k < b; ++k) if (k != 5) ok = ok && detail::svd_converged(iw[k]);
+            ++g_checks;
+            if (!ok) fail("gk with a runner, NaN among 11 x 24x20", "not isolated");
+            else std::printf("  ok    %-44s\n", "gk with a runner, NaN among 11 x 24x20");
+        }
+        // Up to 16 rows, several matrices share a simdgroup: a non-finite one
+        // writes NaN and leaves its neighbours alone
+        for (auto [M, N] : std::vector<std::pair<int, int>>{{6, 5}, {13, 9}}) {
+            for (bool uv : {true, false}) {
+                const int b = 9;
+                array A = random_matrix(b, M, N, 2270 + M);
+                eval({A});
+                std::vector<float> data(A.data<float>(), A.data<float>() + (size_t)b * M * N);
+                data[(size_t)2 * M * N + 1] = NAN;
+                SvdResult r = detail::svd_golub_kahan(from_values(data, {b, M, N}), uv);
+                array info = reshape(r.info, {-1});
+                array s2 = slice(r.S, {2, 0}, {3, N});
+                array rest = concatenate({slice(r.S, {0, 0}, {2, N}), slice(r.S, {3, 0}, {b, N})});
+                eval({info, s2, rest});
+                const uint32_t* iw = info.data<uint32_t>();
+                bool ok = all(isnan(s2)).item<bool>() && !has_non_finite(rest) && detail::svd_nonfinite(iw[2]);
+                for (int k = 0; k < b; ++k) if (k != 2) ok = ok && detail::svd_converged(iw[k]);
+                ++g_checks;
+                const std::string label = "gk in registers, NaN among " + dims(b, M, N) + (uv ? "" : ", values");
+                if (!ok) fail(label, "not isolated");
+                else std::printf("  ok    %-44s\n", label.c_str());
+            }
+        }
+        {
+            std::vector<float> graded(32), rep(30), cluster(28);
+            for (int i = 0; i < 32; ++i) graded[i] = std::pow(10.0f, 4.0f - 8.0f * (float)i / 31.0f);
+            for (int i = 0; i < 30; ++i) rep[i] = i < 20 ? 3.0f : 1.0f;
+            for (int i = 0; i < 28; ++i) cluster[i] = 1.0f + 1e-6f * (float)i;
+            for (auto [name, spec] : {std::pair{"graded 1e+4 .. 1e-4", graded}, std::pair{"repeated", rep},
+                                      std::pair{"clustered", cluster}}) {
+                const int n = (int)spec.size();
+                array A = with_singular_values(32, n, spec);
+                run_gk(std::string("golub_kahan in registers, ") + name + " " + dims(1, 32, n), A);
+                SvdResult rv = detail::svd_golub_kahan(A, false), rw = detail::svd_golub_kahan(A, true);
+                eval({rv.S, rw.S});
+                ++g_checks;
+                const float d = max_abs(subtract(rv.S, rw.S)) / std::max(max_abs(rw.S), 1e-30f);
+                const std::string label = std::string("gk values by bisection, ") + name;
+                if (d > 2e-6f) fail(label, "differ by " + std::to_string(d));
+                else std::printf("  ok    %-44s |ds|=%.1e\n", label.c_str(), d);
+            }
+            SvdResult z = detail::svd_golub_kahan(zeros({4, 20, 20}), false);
+            eval({z.S});
+            ++g_checks;
+            if (max_abs(z.S) != 0.0f) fail("gk values by bisection, zero 4 x 20x20", std::to_string(max_abs(z.S)));
+            else std::printf("  ok    %-44s\n", "gk values by bisection, zero 4 x 20x20");
+            for (bool uv : {true, false}) {   // flagged rank-deficient, with vectors and without
+                array L = random_matrix(1, 32, 4, 2260), R = random_matrix(1, 4, 28, 2261);
+                SvdResult r = detail::svd_golub_kahan(matmul(L, R), uv);
+                eval({r.S, r.info});
+                ++g_checks;
+                const std::string label = std::string("gk in registers rank 4 of 32x28 flagged") + (uv ? "" : ", values");
+                if (!detail::svd_rank_deficient(r.info.item<uint32_t>()) || !detail::svd_converged(r.info.item<uint32_t>()))
+                    fail(label, "info " + std::to_string(r.info.item<uint32_t>()));
+                else std::printf("  ok    %-44s\n", label.c_str());
             }
         }
         {   // singular values alone == with vectors
@@ -1098,9 +1395,54 @@ int main() {
             set_svd_policy(c);
             expect("band_min_k = 0: never", svd_backend(4096, 4096, 1) == SvdBackend::bidiag);
         }
+        {   // bidiag_batch for batches of mid-size matrices, ahead of bidiag's cap
+            const SvdPolicy before = svd_policy();
+            SvdPolicy c = before;
+            c.gpu_max_k = 0;   // no GPU kernels: the CPU's region
+            c.gpu_big_batch_max_k = 0;
+            c.bidiag_min_k = 128;
+            c.bidiag_max_batch = 4;
+            c.bidiag_batch_min_k = 64;
+            c.bidiag_batch_max_k = 256;
+            c.bidiag_batch_min_batch = 32;
+            c.bidiag_batch_max_l = 512;
+            set_svd_policy(c);
+            const SvdBackend bb = SvdBackend::bidiag_batch;
+            expect("bidiag_batch window k [64, 256], l <= 512, from batch 32; not k=63, k=257, l=513, b31",
+                   svd_backend(128, 128, 32) == bb && svd_backend(512, 256, 32) == bb &&
+                   svd_backend(256, 512, 32) == bb && svd_backend(63, 63, 32) != bb &&
+                   svd_backend(257, 257, 32) != bb && svd_backend(513, 128, 32) != bb &&
+                   svd_backend(128, 128, 31) != bb && svdvals_backend(128, 128, 32) != bb);
+            expect("outside the window bidiag's cap applies: 300x300 b32 cpu, b4 bidiag",
+                   svd_backend(300, 300, 32) == SvdBackend::cpu && svd_backend(300, 300, 4) == SvdBackend::bidiag);
+            c.bidiag_batch_max_k = 4096;
+            c.bidiag_batch_max_l = kSvdNoLimit;
+            set_svd_policy(c);
+            expect("bidiag_batch only up to 1024 rows and columns, whatever the window, unless twice as tall as wide",
+                   svd_backend(1024, 1024, 32) == bb && svd_backend(1025, 1000, 32) != bb &&
+                   svd_backend(1000, 1025, 32) != bb && svd_backend(2100, 1000, 32) == bb &&
+                   svd_backend(1000, 2100, 32) == bb);
+            c.values_bidiag_batch_min_k = 32;
+            c.values_bidiag_batch_max_k = 128;
+            c.values_bidiag_batch_min_batch = 256;
+            set_svd_policy(c);
+            expect("values window k [32, 128] from 256: svdvals 100x100 b256, not b255",
+                   svdvals_backend(100, 100, 256) == bb && svdvals_backend(100, 100, 255) != bb);
+            {
+                array A = random_matrix(40, 160, 120, 1720);
+                auto [U, S, Vt] = svd_accelerated(A);
+                eval({U, S, Vt});
+                check("svd routed to bidiag_batch (40 x 160x120)", A,
+                      SvdResult{U, S, Vt, full({40}, (uint32_t)(1u | (1u << 16)))});
+            }
+            set_svd_policy(before);
+        }
         setenv("SVD_DEVICE", "band", 1);
         expect("SVD_DEVICE=band: svdvals and svd band",
                svdvals_backend(8, 8, 1) == SvdBackend::band && svd_backend(8, 8, 1) == SvdBackend::band);
+        setenv("SVD_DEVICE", "bidiag_batch", 1);
+        expect("SVD_DEVICE=bidiag_batch forces it", svd_backend(300, 200, 64) == SvdBackend::bidiag_batch &&
+                                                    svdvals_backend(8, 8, 1) == SvdBackend::bidiag_batch);
         setenv("SVD_DEVICE", "cpu", 1);
         expect("SVD_DEVICE=cpu keeps the CPU over bidiag", svd_backend(4096, 4096, 1) == SvdBackend::cpu);
         setenv("SVD_DEVICE", "bidiag", 1);
@@ -1144,7 +1486,8 @@ int main() {
             check("routed to golub_kahan (256 x 24x24)", A, SvdResult{U, S, Vt, full({256}, (uint32_t)(1u | (1u << 16)))});
             ++g_checks;
             const float d = max_abs(subtract(S, S2)) / std::max(max_abs(S), 1e-30f);
-            if (d > 1e-6f) fail("routed svdvals == svd (golub_kahan)", "differ by " + std::to_string(d));
+            // (values alone by bisection in the register kernel, by QR with vectors)
+            if (d > 2e-6f) fail("routed svdvals == svd (golub_kahan)", "differ by " + std::to_string(d));
             else std::printf("  ok    %-44s |dS|=%.1e\n", "routed svdvals == svd (golub_kahan)", d);
             array B = random_matrix(64, 4000, 16, 2601);
             auto [U2, S3, Vt2] = svd_accelerated(B);

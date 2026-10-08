@@ -235,8 +235,23 @@ struct SymSweep {
     bool  done;
     float tau = 0.0f;
     std::vector<float> u, w;
+    const ChaseReflectors* rec;
 
-    SymSweep(long kd, const ChaseReflectors*) : u(kd + 1), w(kd + 1) {}
+    SymSweep(long kd, const ChaseReflectors* r) : u(kd + 1), w(kd + 1), rec(r) {}
+
+    // Keeps reflector (s, j), on rows s + 1 + kd j .., in the bidiagonal
+    // chase's left layout (kd = 16): Q2 = the reflectors' product in the
+    // order applied, as for the SVD's left side.
+    void keep(long j, const float* x, long len, float t) const {
+        if (!rec || !rec->L || len < 2) return;
+        const size_t G = (size_t)s / 16, c = (size_t)s % 16, pm = rec->pmax;
+        const size_t b = G * (pm + 1) - G * (G - 1) / 2 + (size_t)j;
+        const size_t ct = c / 8, r0 = 8 * ct;
+        float* blk = rec->L + b * kChaseBlockFloats + ct * 3 * 64 + c % 8;
+        for (size_t r = r0; r < r0 + 24; ++r)
+            blk[(r - r0) / 8 * 64 + (r % 8) * 8] = r >= c && r < c + (size_t)len ? x[r - c] : 0.0f;
+        rec->Ltau[b * 16 + c] = t;
+    }
 
     void start(long sweep, long n, long kd) {
         s = sweep;
@@ -250,6 +265,7 @@ struct SymSweep {
         if (done) return false;
         if (task == 0) {
             tau = reflector(ed - st + 1, A.at(st, s), 1, u.data());
+            keep(0, u.data(), ed - st + 1, tau);
             two_sided(A, st, ed, u.data(), tau, w.data());
         } else if (task % 2 == 1) {
             const long j1 = ed + 1, j2 = std::min(ed + kd, n - 1);
@@ -271,6 +287,7 @@ struct SymSweep {
                 }
             }
             tau = reflector(m, A.at(j1, st), 1, u.data());
+            keep((task + 1) / 2, u.data(), m, tau);
             for (long j = st + 1; j <= ed; ++j) {   // the rest of the block from the left
                 if (tau == 0.0f) break;
                 float* p = A.at(j1, j);

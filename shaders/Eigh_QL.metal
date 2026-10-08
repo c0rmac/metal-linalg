@@ -475,3 +475,293 @@ kernel void eigh_ql(
         info[mat] = min(st.total, 0xFFFFu) | (st.failed ? 0u : kInfoConverged);
     }
 }
+
+// =============================================================================
+// In registers: a simdgroup a matrix (eigh_ql_simd, since 2.17.0)
+// =============================================================================
+//
+// For N <= 32 the matrix and then Z fit in a simdgroup's registers, a row a
+// lane, as qr_householder_simd keeps QR's. The kernel above holds the matrix
+// in threadgroup memory, 4 KB at N = 32, which is what bounds how many
+// matrices share a core, and the QL iteration, a chain of dependent scalar
+// work on one thread, is latency-bound: more matrices a core is more
+// throughput. Here a matrix needs well under 1 KB of threadgroup memory (d,
+// e, tau and a sweep's rotations), several matrices share a threadgroup, a
+// simdgroup each, and nothing waits on a threadgroup barrier.
+//
+//   1. lane i loads row i, the requested triangle mirrored; scan, scale
+//   2. tridiagonalize (ssytd2, lower): column k's entries picked out of the
+//      lanes' registers by constant-indexed selects, its reflector from a
+//      simd_sum, p = tau A22 v and the rank-2 update with v and w gathered
+//      a lane at a time (simd_shuffle); v kept in column k for step 3
+//   3. Q = H(0) ... H(n-3), forward: Z <- Z H(k), row-local
+//   4. implicit QL: lane 0 runs ql_sweep, then every lane applies the sweep's
+//      rotations to its row of Z, an unrolled loop over the columns
+//   5. rank sort; eigenvalues ascending, eigenvectors as columns
+//
+// A row is indexed by constants only, so that it stays in registers: the
+// loops over a row are expanded by the preprocessor (EQ_UNROLL), as in
+// QR_Householder.metal.
+#define EQ_UNROLL_c(...) { { constexpr uint c = 0; __VA_ARGS__ } { constexpr uint c = 1; __VA_ARGS__ } { constexpr uint c = 2; __VA_ARGS__ } { constexpr uint c = 3; __VA_ARGS__ } { constexpr uint c = 4; __VA_ARGS__ } { constexpr uint c = 5; __VA_ARGS__ } { constexpr uint c = 6; __VA_ARGS__ } { constexpr uint c = 7; __VA_ARGS__ } { constexpr uint c = 8; __VA_ARGS__ } { constexpr uint c = 9; __VA_ARGS__ } { constexpr uint c = 10; __VA_ARGS__ } { constexpr uint c = 11; __VA_ARGS__ } { constexpr uint c = 12; __VA_ARGS__ } { constexpr uint c = 13; __VA_ARGS__ } { constexpr uint c = 14; __VA_ARGS__ } { constexpr uint c = 15; __VA_ARGS__ } { constexpr uint c = 16; __VA_ARGS__ } { constexpr uint c = 17; __VA_ARGS__ } { constexpr uint c = 18; __VA_ARGS__ } { constexpr uint c = 19; __VA_ARGS__ } { constexpr uint c = 20; __VA_ARGS__ } { constexpr uint c = 21; __VA_ARGS__ } { constexpr uint c = 22; __VA_ARGS__ } { constexpr uint c = 23; __VA_ARGS__ } { constexpr uint c = 24; __VA_ARGS__ } { constexpr uint c = 25; __VA_ARGS__ } { constexpr uint c = 26; __VA_ARGS__ } { constexpr uint c = 27; __VA_ARGS__ } { constexpr uint c = 28; __VA_ARGS__ } { constexpr uint c = 29; __VA_ARGS__ } { constexpr uint c = 30; __VA_ARGS__ } { constexpr uint c = 31; __VA_ARGS__ } }
+#define EQ_UNROLL_cd(...) { { constexpr uint c = 31; __VA_ARGS__ } { constexpr uint c = 30; __VA_ARGS__ } { constexpr uint c = 29; __VA_ARGS__ } { constexpr uint c = 28; __VA_ARGS__ } { constexpr uint c = 27; __VA_ARGS__ } { constexpr uint c = 26; __VA_ARGS__ } { constexpr uint c = 25; __VA_ARGS__ } { constexpr uint c = 24; __VA_ARGS__ } { constexpr uint c = 23; __VA_ARGS__ } { constexpr uint c = 22; __VA_ARGS__ } { constexpr uint c = 21; __VA_ARGS__ } { constexpr uint c = 20; __VA_ARGS__ } { constexpr uint c = 19; __VA_ARGS__ } { constexpr uint c = 18; __VA_ARGS__ } { constexpr uint c = 17; __VA_ARGS__ } { constexpr uint c = 16; __VA_ARGS__ } { constexpr uint c = 15; __VA_ARGS__ } { constexpr uint c = 14; __VA_ARGS__ } { constexpr uint c = 13; __VA_ARGS__ } { constexpr uint c = 12; __VA_ARGS__ } { constexpr uint c = 11; __VA_ARGS__ } { constexpr uint c = 10; __VA_ARGS__ } { constexpr uint c = 9; __VA_ARGS__ } { constexpr uint c = 8; __VA_ARGS__ } { constexpr uint c = 7; __VA_ARGS__ } { constexpr uint c = 6; __VA_ARGS__ } { constexpr uint c = 5; __VA_ARGS__ } { constexpr uint c = 4; __VA_ARGS__ } { constexpr uint c = 3; __VA_ARGS__ } { constexpr uint c = 2; __VA_ARGS__ } { constexpr uint c = 1; __VA_ARGS__ } { constexpr uint c = 0; __VA_ARGS__ } }
+#define EQ_UNROLL(N, v, ...) EQ_UNROLL_##v(if (v < N) __VA_ARGS__)
+
+// Must match `QlsParams` in eigh_ql.mm.
+struct QlsParams {
+    uint n;          // matrix order, at most the instance's N
+    uint lower;
+    uint max_iter;
+    uint batch;      // matrices in this dispatch
+};
+
+constant uint kQlsFloats = 200;   // threadgroup memory a matrix: d, e, tau, c, s, pos (32 each), ctl (8)
+
+// Sums, maxima and minima over a group of G lanes (G = 8, 16 or 32, aligned),
+// on every lane of it: a simdgroup holds 32 / G matrices, a group each.
+template <uint G> inline float group_sum(float x) {
+    if (G == 32) return simd_sum(x);
+    for (ushort off = G / 2; off > 0; off >>= 1) x += simd_shuffle_xor(x, off);
+    return x;
+}
+template <uint G> inline float group_max(float x) {
+    if (G == 32) return simd_max(x);
+    for (ushort off = G / 2; off > 0; off >>= 1) x = fmax(x, simd_shuffle_xor(x, off));
+    return x;
+}
+template <uint G> inline float group_min(float x) {
+    if (G == 32) return simd_min(x);
+    for (ushort off = G / 2; off > 0; off >>= 1) x = fmin(x, simd_shuffle_xor(x, off));
+    return x;
+}
+
+// N = 8 and 16 pack four and two matrices into a simdgroup, a group of N
+// lanes each (a matrix of at most 16 left half the lanes idle, and its QL
+// iteration one lane's work while 31 waited): each group's first lane runs
+// its matrix's iteration alongside the others'. Every cross-lane step stays
+// inside a group, and a group's branches are its own; the iteration's loop
+// ends once every group's has.
+template <uint N, uint G>
+kernel void eigh_ql_simd(
+    device const float* A_in [[buffer(0)]],
+    device float*       vals [[buffer(1)]],
+    device float*       vecs [[buffer(2)]],
+    device uint*        info [[buffer(3)]],
+    constant QlsParams& prm  [[buffer(4)]],
+    threadgroup float*  tg   [[threadgroup(0)]],
+    uint tgi  [[threadgroup_position_in_grid]],
+    uint sg   [[simdgroup_index_in_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint nsg  [[simdgroups_per_threadgroup]])
+{
+    constexpr uint P = 32 / G;                         // matrices a simdgroup, a group of G lanes each
+    const uint i = lane % G, gb = lane - i, slot = lane / G;
+    const uint mat = (tgi * nsg + sg) * P + slot;
+    if ((tgi * nsg + sg) * P >= prm.batch) return;     // the whole simdgroup; nothing below waits on other simdgroups
+    const uint n = prm.n;
+    const bool active = mat < prm.batch;
+    threadgroup float* d   = tg + (sg * P + slot) * kQlsFloats;
+    threadgroup float* e   = d + 32;
+    threadgroup float* tau = d + 64;
+    threadgroup float* cb  = d + 96;
+    threadgroup float* sb  = d + 128;
+    threadgroup uint*  pos = reinterpret_cast<threadgroup uint*>(d + 160);
+    threadgroup uint*  ctl = reinterpret_cast<threadgroup uint*>(d + 192);
+
+    // 1. Load row i, mirrored; scan; scale
+    device const float* src = A_in + (ulong)mat * n * n;
+    float r[N];
+    float amax = 0.0f, bad = 0.0f;
+    EQ_UNROLL(N, c, {
+        float v = 0.0f;
+        if (active && i < n && c < n) {
+            const bool mine = prm.lower ? (c <= i) : (c >= i);
+            v = mine ? src[i * n + c] : src[c * n + i];
+        }
+        r[c] = v;
+        amax = fmax(amax, fabs(v));
+        if (non_finite(v)) bad = 1.0f;
+    })
+    amax = group_max<G>(amax);
+    device float* out_vals = vals + (ulong)mat * n;
+    device float* out_vecs = vecs + (ulong)mat * n * n;
+    // A group with a non-finite matrix writes NaN and carries on with zeros,
+    // so that the other groups' steps stay in step
+    const bool live = active && group_max<G>(bad) == 0.0f;
+    if (active && !live) {
+        const float qnan = as_type<float>(0x7FC00000u);
+        if (i < n) {
+            out_vals[i] = qnan;
+            if (kComputeVectors) for (uint k = 0; k < n; ++k) out_vecs[i * n + k] = qnan;
+        }
+        if (i == 0) info[mat] = kInfoNonFinite;
+    }
+    const bool row = live && i < n;
+    int expo = 0;
+    if (live && amax > 0.0f) frexp(amax, expo);
+    EQ_UNROLL(N, c, { r[c] = live ? ldexp(r[c], -expo) : 0.0f; })
+
+    // 2. Tridiagonalize: H(n-3) ... H(0) A H(0) ... H(n-3) = T
+    for (uint k = 0; k + 2 < n; ++k) {
+        float x = 0.0f;   // A(i, k)
+        EQ_UNROLL(N, c, { if (c == k) x = r[c]; })
+        const float sumsq = group_sum<G>(row && i >= k + 2 ? x * x : 0.0f);
+        const float alpha = simd_shuffle(x, (ushort)(gb + k + 1));
+        const float dk = simd_shuffle(x, (ushort)(gb + k));   // A(k, k)
+        float tv = 0.0f, beta = alpha, v = 0.0f;
+        if (sumsq > 0.0f) {
+            beta = -copysign(sqrt_nr(alpha * alpha + sumsq), alpha);
+            tv = div_nr(beta - alpha, beta);
+            if (row && i >= k + 2) v = x * div_nr(1.0f, alpha - beta);
+        }
+        if (i == k + 1) v = 1.0f;
+        if (row && i >= k + 2) EQ_UNROLL(N, c, { if (c == k) r[c] = v; })   // kept for step 3
+        if (i == 0) {
+            d[k] = dk;
+            e[k] = beta;
+            tau[k] = tv;
+        }
+        if (tv == 0.0f) continue;   // uniform in the group: H = I
+        // p = tau A22 v, w = p - (tau/2)(p . v) v (rows k+1 ..); v is zero
+        // on the lanes before k + 1, so the gathered vk[c] is too, and the
+        // products need no masks
+        float vk[N];
+        EQ_UNROLL(N, c, { vk[c] = simd_shuffle(v, (ushort)(gb + c)); })
+        const bool act = row && i >= k + 1;
+        float p = 0.0f;
+        EQ_UNROLL(N, c, { p = fma(r[c], vk[c], p); })
+        p = act ? p * tv : 0.0f;
+        const float vi = act ? v : 0.0f;
+        const float pv = group_sum<G>(p * vi);
+        const float w = p - 0.5f * tv * pv * vi;
+        float wk[N];
+        EQ_UNROLL(N, c, { wk[c] = simd_shuffle(w, (ushort)(gb + c)); })
+        // A22 -= v w^T + w v^T (zero outside rows and columns k+1 ..)
+        if (act) EQ_UNROLL(N, c, { r[c] -= vi * wk[c] + w * vk[c]; })
+    }
+    {
+        // The last 2 x 2: d[n-2], e[n-2], d[n-1]
+        float y2 = 0.0f, y1 = 0.0f;   // A(i, n-2), A(i, n-1)
+        EQ_UNROLL(N, c, { if (c + 2 == n) y2 = r[c]; if (c + 1 == n) y1 = r[c]; })
+        const float a22 = n >= 2 ? simd_shuffle(y2, (ushort)(gb + n - 2)) : 0.0f;
+        const float a32 = n >= 2 ? simd_shuffle(y2, (ushort)(gb + n - 1)) : 0.0f;
+        const float a33 = simd_shuffle(y1, (ushort)(gb + n - 1));
+        if (i == 0) {
+            if (n >= 2) {
+                d[n - 2] = a22;
+                e[n - 2] = a32;
+            }
+            d[n - 1] = a33;
+            e[n - 1] = 0.0f;
+            ctl[2] = live ? 0u : 1u;   // step 4's: a group with nothing to do is done
+        }
+    }
+    simdgroup_barrier(mem_flags::mem_threadgroup);
+
+    // 3. Q = H(0) H(1) ... H(n-3), forward: Z <- Z H(k), a row a lane
+    float z[N];
+    EQ_UNROLL(N, c, { z[c] = c == i ? 1.0f : 0.0f; })
+    if (kComputeVectors) {
+        for (uint k = 0; k + 2 < n; ++k) {
+            const float tk = tau[k];
+            if (tk == 0.0f) continue;   // uniform in the group
+            float v = 0.0f;
+            if (i == k + 1) v = 1.0f;
+            else if (row && i >= k + 2) EQ_UNROLL(N, c, { if (c == k) v = r[c]; })
+            float vk[N];
+            EQ_UNROLL(N, c, { vk[c] = simd_shuffle(v, (ushort)(gb + c)); })
+            float dot = 0.0f;
+            EQ_UNROLL(N, c, { dot = fma(z[c], vk[c], dot); })
+            dot *= tk;
+            EQ_UNROLL(N, c, { z[c] = fma(-dot, vk[c], z[c]); })
+        }
+    }
+
+    // 4. Implicit QL on (d, e); each sweep's rotations applied to the rows of Z
+    QlState st{0u, 0u, false};
+    if (kComputeVectors) {
+        while (true) {
+            if (i == 0 && ctl[2] == 0) ql_sweep(d, e, cb, sb, ctl, st, n, prm.max_iter, true);
+            simdgroup_barrier(mem_flags::mem_threadgroup);
+            const bool done = ctl[2] != 0;
+            if (simd_all(done)) break;
+            const uint lo = ctl[0], cnt = ctl[1];
+            // Rotation t on columns (lo - t, lo - t + 1), t = 0 .. cnt - 1, in
+            // that order: columns c from lo down to lo - cnt + 1
+            if (!done && row && cnt)
+                EQ_UNROLL_cd(if (c < N) {
+                    if (c + 1 < N && c <= lo && c + cnt > lo) {
+                        const uint t = lo - c;
+                        const float cr = cb[t], sr = sb[t], t0 = z[c], t1 = z[c + 1];
+                        z[c + 1] = fma(sr, t0, cr * t1);
+                        z[c] = fma(cr, t0, -sr * t1);
+                    }
+                })
+            simdgroup_barrier(mem_flags::mem_threadgroup);
+        }
+    } else {
+        // Eigenvalues alone: by bisection, lane k the k-th smallest, every
+        // lane at once (the QL iteration is one lane's serial chain): the
+        // count of eigenvalues below x is the count of negative pivots of
+        // T - x I = L D L^T (Sturm), on Gershgorin's interval, halved until
+        // float32 can halve it no more.
+        float lo = 0.0f, hi = 0.0f;
+        {
+            float a = INFINITY, b = -INFINITY;
+            if (row) {
+                const float r0 = i > 0 ? fabs(e[i - 1]) : 0.0f, r1 = i + 1 < n ? fabs(e[i]) : 0.0f;
+                a = d[i] - (r0 + r1);
+                b = d[i] + (r0 + r1);
+            }
+            lo = group_min<G>(a);
+            hi = group_max<G>(b);
+            const float pad = 2.0f * FLT_EPSILON * fmax(fabs(lo), fabs(hi)) + FLT_MIN;
+            lo -= pad;
+            hi += pad;
+        }
+        float tnorm = fmax(fabs(lo), fabs(hi));
+        const float pivmin = FLT_MIN * fmax(1.0f, tnorm * tnorm);
+        if (row) {
+            for (uint pass = 0; pass < 64; ++pass) {
+                const float mid = 0.5f * (lo + hi);
+                if (mid <= lo || mid >= hi) break;   // float32 can halve it no more
+                uint below = 0;
+                float q = 1.0f;
+                for (uint k = 0; k < n; ++k) {
+                    const float ek = k > 0 ? e[k - 1] : 0.0f;
+                    float v = d[k] - mid - div_nr(ek * ek, q);
+                    if (fabs(v) < pivmin) v = -pivmin;
+                    q = v;
+                    below += v < 0.0f ? 1u : 0u;
+                }
+                if (below > i) hi = mid;
+                else           lo = mid;
+            }
+        }
+        if (row) out_vals[i] = ldexp(0.5f * (lo + hi), expo);
+        if (live && i == 0) info[mat] = 1u | kInfoConverged;
+        return;
+    }
+
+    // 5. Sort ascending (pos[c]: where eigenvalue c goes); write
+    if (row) {
+        const float di = d[i];
+        uint rk = 0;
+        for (uint k = 0; k < n; ++k) rk += (d[k] < di || (d[k] == di && k < i)) ? 1u : 0u;
+        pos[i] = rk;
+    }
+    simdgroup_barrier(mem_flags::mem_threadgroup);
+    if (row) {
+        out_vals[pos[i]] = ldexp(d[i], expo);
+        if (kComputeVectors) EQ_UNROLL(N, c, { if (c < n) out_vecs[i * n + pos[c]] = z[c]; })
+    }
+    if (live && i == 0) info[mat] = min(st.total, 0xFFFFu) | (st.failed ? 0u : kInfoConverged);
+}
+
+#define EQ_SIMD_INSTANCE(NAME, N, G)                                                                 \
+    template [[host_name(NAME)]] kernel void eigh_ql_simd<N, G>(                                     \
+        device const float*, device float*, device float*, device uint*, constant QlsParams&,       \
+        threadgroup float*, uint, uint, uint, uint);
+EQ_SIMD_INSTANCE("eigh_ql_simd_8", 8, 8)
+EQ_SIMD_INSTANCE("eigh_ql_simd_16", 16, 16)
+EQ_SIMD_INSTANCE("eigh_ql_simd_32", 32, 32)
+

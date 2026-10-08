@@ -789,3 +789,441 @@ kernel void svd_golub_kahan(
                   | (deficient ? kInfoRankDeficient : 0u);
     }
 }
+
+// =============================================================================
+// In registers: a simdgroup a matrix (svd_gk_simd, since 2.17.0)
+// =============================================================================
+//
+// For max(M, N) <= 32 the matrix, U and V fit in a simdgroup's registers, a
+// row a lane, as Eigh_QL.metal's eigh_ql_simd keeps the eigensolver's. The
+// kernel above holds B in threadgroup memory, a threadgroup a matrix sized for
+// it, and its QR iteration is one thread's chain of dependent rotations: few
+// matrices share a core to hide it. Here a matrix needs 1.3 KB of threadgroup
+// memory (d, e, the reflectors' scalars, a step's rotations), several share a
+// threadgroup, a simdgroup each, and nothing waits on a threadgroup barrier.
+//
+//   1. lane i loads row i of B (A, or A^T if wide); scan, scale
+//   2. bidiagonalize (sgebd2, upper): column k's reflector from a simd_sum,
+//      the columns right of it updated by a simd_sum each; row k's reflector
+//      from lane k's registers, gathered by shuffles and formed on every lane
+//      alike, the rows below updated row-locally. v kept in column k, u in
+//      row k, for steps 3 and 4
+//   3. with vectors, V = G(0) ... G(n-3), forward, a row a lane: row-local
+//   4. with vectors, U = H(0) ... H(n-1) [I; 0], backward (sorg2r), a row a
+//      lane: a simd_sum per column
+//   5. with vectors, implicit QR: lane 0 runs gk_step, then every lane applies
+//      its rotations to its rows of U and V; singular values alone by
+//      bisection on the Golub-Kahan tridiagonal (zero diagonal, off-diagonal
+//      d0, e0, d1, ..., d_{n-1}; its eigenvalues are +-s), a lane a value
+//   6. with vectors, non-negative, rank sort descending, write
+//
+// A row is indexed by constants only, so that it stays in registers: the
+// loops over a row are expanded by the preprocessor (GS_UNROLL).
+#define GS_UNROLL_c(...) { { constexpr uint c = 0; __VA_ARGS__ } { constexpr uint c = 1; __VA_ARGS__ } { constexpr uint c = 2; __VA_ARGS__ } { constexpr uint c = 3; __VA_ARGS__ } { constexpr uint c = 4; __VA_ARGS__ } { constexpr uint c = 5; __VA_ARGS__ } { constexpr uint c = 6; __VA_ARGS__ } { constexpr uint c = 7; __VA_ARGS__ } { constexpr uint c = 8; __VA_ARGS__ } { constexpr uint c = 9; __VA_ARGS__ } { constexpr uint c = 10; __VA_ARGS__ } { constexpr uint c = 11; __VA_ARGS__ } { constexpr uint c = 12; __VA_ARGS__ } { constexpr uint c = 13; __VA_ARGS__ } { constexpr uint c = 14; __VA_ARGS__ } { constexpr uint c = 15; __VA_ARGS__ } { constexpr uint c = 16; __VA_ARGS__ } { constexpr uint c = 17; __VA_ARGS__ } { constexpr uint c = 18; __VA_ARGS__ } { constexpr uint c = 19; __VA_ARGS__ } { constexpr uint c = 20; __VA_ARGS__ } { constexpr uint c = 21; __VA_ARGS__ } { constexpr uint c = 22; __VA_ARGS__ } { constexpr uint c = 23; __VA_ARGS__ } { constexpr uint c = 24; __VA_ARGS__ } { constexpr uint c = 25; __VA_ARGS__ } { constexpr uint c = 26; __VA_ARGS__ } { constexpr uint c = 27; __VA_ARGS__ } { constexpr uint c = 28; __VA_ARGS__ } { constexpr uint c = 29; __VA_ARGS__ } { constexpr uint c = 30; __VA_ARGS__ } { constexpr uint c = 31; __VA_ARGS__ } }
+#define GS_UNROLL_cd(...) { { constexpr uint c = 31; __VA_ARGS__ } { constexpr uint c = 30; __VA_ARGS__ } { constexpr uint c = 29; __VA_ARGS__ } { constexpr uint c = 28; __VA_ARGS__ } { constexpr uint c = 27; __VA_ARGS__ } { constexpr uint c = 26; __VA_ARGS__ } { constexpr uint c = 25; __VA_ARGS__ } { constexpr uint c = 24; __VA_ARGS__ } { constexpr uint c = 23; __VA_ARGS__ } { constexpr uint c = 22; __VA_ARGS__ } { constexpr uint c = 21; __VA_ARGS__ } { constexpr uint c = 20; __VA_ARGS__ } { constexpr uint c = 19; __VA_ARGS__ } { constexpr uint c = 18; __VA_ARGS__ } { constexpr uint c = 17; __VA_ARGS__ } { constexpr uint c = 16; __VA_ARGS__ } { constexpr uint c = 15; __VA_ARGS__ } { constexpr uint c = 14; __VA_ARGS__ } { constexpr uint c = 13; __VA_ARGS__ } { constexpr uint c = 12; __VA_ARGS__ } { constexpr uint c = 11; __VA_ARGS__ } { constexpr uint c = 10; __VA_ARGS__ } { constexpr uint c = 9; __VA_ARGS__ } { constexpr uint c = 8; __VA_ARGS__ } { constexpr uint c = 7; __VA_ARGS__ } { constexpr uint c = 6; __VA_ARGS__ } { constexpr uint c = 5; __VA_ARGS__ } { constexpr uint c = 4; __VA_ARGS__ } { constexpr uint c = 3; __VA_ARGS__ } { constexpr uint c = 2; __VA_ARGS__ } { constexpr uint c = 1; __VA_ARGS__ } { constexpr uint c = 0; __VA_ARGS__ } }
+#define GS_UNROLL(N, v, ...) GS_UNROLL_##v(if (v < N) __VA_ARGS__)
+
+// The rotations of one recorded list (see gk_step) applied to the row z, held
+// in registers: as apply_rotations, every index a constant.
+#define GS_APPLY(N, z, list, cb, sb)                                                                \
+    {                                                                                               \
+        const uint kind = (list)[0], a0 = (list)[1], cnt = (list)[2], fb = (list)[3];               \
+        if (cnt != 0 && kind == 0) {                                                                \
+            GS_UNROLL_c(if (c + 1 < N && c >= a0 && c < a0 + cnt) {                                 \
+                const float cr = (cb)[c - a0], sr = (sb)[c - a0], t0 = z[c], t1 = z[c + 1];         \
+                z[c] = fma(cr, t0, sr * t1);                                                        \
+                z[c + 1] = fma(cr, t1, -sr * t0);                                                   \
+            })                                                                                      \
+        } else if (cnt != 0) {                                                                      \
+            float carry = 0.0f;                                                                     \
+            GS_UNROLL(N, c, { if (c == fb) carry = z[c]; })                                         \
+            if (kind == 1) {                                                                        \
+                GS_UNROLL_c(if (c < N && c >= a0 && c < a0 + cnt) {                                 \
+                    const float cr = (cb)[c - a0], sr = (sb)[c - a0], t0 = z[c];                    \
+                    z[c] = fma(cr, t0, sr * carry);                                                 \
+                    carry = fma(cr, carry, -sr * t0);                                               \
+                })                                                                                  \
+            } else {                                                                                \
+                GS_UNROLL_cd(if (c < N && c <= a0 && c + cnt > a0) {                                \
+                    const float cr = (cb)[a0 - c], sr = (sb)[a0 - c], t0 = z[c];                    \
+                    z[c] = fma(cr, t0, sr * carry);                                                 \
+                    carry = fma(cr, carry, -sr * t0);                                               \
+                })                                                                                  \
+            }                                                                                       \
+            GS_UNROLL(N, c, { if (c == fb) z[c] = carry; })                                         \
+        }                                                                                           \
+    }
+
+// Must match `GksParams` in svd_golub_kahan.mm.
+struct GksParams {
+    uint m;           // rows of B, m >= n, at most 32
+    uint n;           // columns of B: min(M, N), at most the instance's N
+    uint transpose;   // 1: B = A^T (A is wide), 0: B = A
+    uint max_rots;    // rotations allowed per matrix in total (LAPACK: 6 n^2)
+    uint batch;       // matrices in this dispatch
+};
+
+// Threadgroup memory a simdgroup, in floats: d, e, tq, tp, then a step's
+// rotations (uc, us, vc, vs), 32 each; meta (16 uints), pos and rank (32 each).
+constant uint kGksFloats = 336;
+// RUN: d, e, tq, tp, two rotation buffers (128 each), their metas (16 uints
+// each), pos, rank, and the runner's count of steps and failure
+constant uint kGksFloatsRun = 488;
+
+// Sums and maxima over a group of G lanes (G = 8, 16 or 32, aligned), on
+// every lane of it: a simdgroup holds 32 / G matrices, a group each.
+template <uint G> inline float lanes_sum(float x) {
+    if (G == 32) return simd_sum(x);
+    for (ushort off = G / 2; off > 0; off >>= 1) x += simd_shuffle_xor(x, off);
+    return x;
+}
+template <uint G> inline float lanes_max(float x) {
+    if (G == 32) return simd_max(x);
+    for (ushort off = G / 2; off > 0; off >>= 1) x = fmax(x, simd_shuffle_xor(x, off));
+    return x;
+}
+
+// G (the lanes a matrix takes, at least its rows) of 8 and 16 pack four and
+// two matrices into a simdgroup, as Eigh_QL.metal's eigh_ql_simd does: each
+// group's first lane runs its matrix's QR iteration alongside the others',
+// every cross-lane step stays inside a group, and the iteration's loop ends
+// once every group's has.
+// RUN (G = 32, with vectors, since 2.17.0): from 17 rows a matrix fills a
+// simdgroup, and its QR iteration, one lane's chain of dependent work, is
+// most of the kernel while 31 lanes wait. Here the threadgroup's last
+// simdgroup is a runner: lane j runs matrix j's iteration, the matrices side
+// by side, and computes step t + 1 into a second buffer while the other
+// simdgroups, a matrix each, apply step t; a threadgroup barrier a step.
+template <uint N, uint G, bool RUN>
+kernel void svd_gk_simd(
+    device const float* A_in [[buffer(0)]],   // [batch, M, N] input (row-major)
+    device float*       S    [[buffer(1)]],   // [batch, n] singular values, descending
+    device float*       U    [[buffer(2)]],   // [batch, M, n] (kComputeVectors)
+    device float*       Vt   [[buffer(3)]],   // [batch, n, N] (kComputeVectors)
+    device uint*        info [[buffer(4)]],   // [batch] steps | flags
+    constant GksParams& prm  [[buffer(5)]],
+    threadgroup float*  tg   [[threadgroup(0)]],
+    uint tgi  [[threadgroup_position_in_grid]],
+    uint sg   [[simdgroup_index_in_threadgroup]],
+    uint lane [[thread_index_in_simdgroup]],
+    uint nsg  [[simdgroups_per_threadgroup]])
+{
+    constexpr uint P = 32 / G;                         // matrices a simdgroup, a group of G lanes each
+    constexpr uint F = RUN ? kGksFloatsRun : kGksFloats;
+    const uint i = lane % G, gb = lane - i, slot = lane / G;
+    const bool runner = RUN && sg + 1 == nsg;          // RUN: the last simdgroup runs the QR iterations
+    const uint per_tg = RUN ? nsg - 1 : nsg * P;       // matrices a threadgroup
+    const uint mloc = RUN ? (runner ? 0u : sg) : sg * P + slot;
+    const uint mat = tgi * per_tg + mloc;
+    if (!RUN && (tgi * nsg + sg) * P >= prm.batch) return;   // the whole simdgroup; nothing below waits on other simdgroups
+    const uint m = prm.m, n = prm.n;
+    const uint nl = runner ? 0u : n;                   // the runner takes no part in steps 1-4
+    const bool active = !runner && mat < prm.batch;
+    threadgroup float* d   = tg + mloc * F;
+    threadgroup float* e   = d + 32;
+    threadgroup float* tq  = d + 64;
+    threadgroup float* tp  = d + 96;
+    threadgroup float* rb  = d + 128;
+    threadgroup uint*  ctl = reinterpret_cast<threadgroup uint*>(d + (RUN ? 384 : 256));
+    threadgroup uint*  pos = reinterpret_cast<threadgroup uint*>(d + (RUN ? 416 : 272));
+    threadgroup uint*  rank = reinterpret_cast<threadgroup uint*>(d + (RUN ? 448 : 304));
+
+    const uint M = prm.transpose ? n : m, NC = prm.transpose ? m : n;
+    device const float* src = A_in + (ulong)mat * m * n;
+    device float* out_s  = S + (ulong)mat * n;
+    device float* out_u  = U + (ulong)mat * M * n;
+    device float* out_vt = Vt + (ulong)mat * n * NC;
+
+    // 1. Load row i of B, scan, scale
+    float b[N];
+    float amax = 0.0f, bad = 0.0f;
+    GS_UNROLL(N, c, {
+        float v = 0.0f;
+        if (active && i < m && c < n) v = prm.transpose ? src[c * m + i] : src[i * n + c];
+        b[c] = v;
+        amax = fmax(amax, fabs(v));   // fmax skips NaN, hence the separate flag
+        if (non_finite(v)) bad = 1.0f;
+    })
+    amax = lanes_max<G>(amax);
+    // A group with a non-finite matrix writes NaN and carries on with zeros,
+    // so that the other groups' steps stay in step
+    const bool live = active && lanes_max<G>(bad) == 0.0f;
+    if (active && !live) {
+        const float qnan = as_type<float>(0x7FC00000u);
+        if (i < n) out_s[i] = qnan;
+        if (kComputeVectors) {
+            for (uint k = i; k < M * n; k += G) out_u[k] = qnan;
+            for (uint k = i; k < n * NC; k += G) out_vt[k] = qnan;
+        }
+        if (i == 0) info[mat] = kInfoNonFinite;
+    }
+    const bool wrow = live && i < m;   // a row of B, then of U
+    const bool vrow = live && i < n;   // a row of V
+    int expo = 0;
+    if (live && amax > 0.0f) frexp(amax, expo);
+    GS_UNROLL(N, c, { b[c] = live ? ldexp(b[c], -expo) : 0.0f; })
+
+    // 2. Bidiagonalize: B = Q Bd P^T
+    for (uint k = 0; k < nl; ++k) {
+        // Left: H(k) zeroes column k below the diagonal
+        float x = 0.0f;   // B(i, k)
+        GS_UNROLL(N, c, { if (c == k) x = b[c]; })
+        const bool below = wrow && i > k;
+        const float sumsq = lanes_sum<G>(below ? x * x : 0.0f);
+        const float alpha = simd_shuffle(x, (ushort)(gb + k));
+        float tv = 0.0f, beta = alpha, v = i == k ? 1.0f : 0.0f;
+        if (sumsq > 0.0f) {
+            beta = -copysign(sqrt_nr(alpha * alpha + sumsq), alpha);
+            tv = div_nr(beta - alpha, beta);
+            if (below) v = x * div_nr(1.0f, alpha - beta);
+        }
+        if (below) GS_UNROLL(N, c, { if (c == k) b[c] = v; })   // kept for step 4
+        if (i == 0) {
+            d[k] = beta;
+            tq[k] = tv;
+        }
+        if (k + 1 >= n) break;
+        if (tv != 0.0f) {   // uniform
+            // B(k:, c) -= tv v (v^T B(k:, c)), c > k: a simd_sum a column
+            const float va = wrow && i >= k ? v : 0.0f;
+            GS_UNROLL(N, c, {
+                if (c > k && c < n) {
+                    const float s = lanes_sum<G>(va * b[c]);
+                    b[c] = fma(-tv * s, va, b[c]);
+                }
+            })
+        }
+        // Right: G(k) zeroes row k right of the superdiagonal; row k gathered
+        // from lane k, the reflector formed on every lane alike
+        float uk[N];
+        GS_UNROLL(N, c, { uk[c] = simd_shuffle(b[c], (ushort)(gb + k)); })
+        float alpha_r = 0.0f, ss = 0.0f;
+        GS_UNROLL(N, c, {
+            if (c == k + 1) alpha_r = uk[c];
+            if (c >= k + 2 && c < n) ss = fma(uk[c], uk[c], ss);
+        })
+        float tu = 0.0f, beta_r = alpha_r, scal = 0.0f;
+        if (ss > 0.0f) {
+            beta_r = -copysign(sqrt_nr(alpha_r * alpha_r + ss), alpha_r);
+            tu = div_nr(beta_r - alpha_r, beta_r);
+            scal = div_nr(1.0f, alpha_r - beta_r);
+        }
+        GS_UNROLL(N, c, { uk[c] = c == k + 1 ? 1.0f : (c >= k + 2 && c < n ? uk[c] * scal : 0.0f); })
+        if (i == k) GS_UNROLL(N, c, { if (c >= k + 2) b[c] = uk[c]; })   // kept for step 3
+        if (i == 0) {
+            e[k] = beta_r;
+            tp[k] = tu;
+        }
+        if (tu != 0.0f && wrow && i > k) {
+            float s = 0.0f;
+            GS_UNROLL(N, c, { s = fma(b[c], uk[c], s); })
+            s *= tu;
+            GS_UNROLL(N, c, { b[c] = fma(-s, uk[c], b[c]); })
+        }
+    }
+    if (i == 0 && !runner) e[n - 1] = 0.0f;
+    simdgroup_barrier(mem_flags::mem_threadgroup);
+
+    if (!kComputeVectors) {
+        // 5. By bisection, lane i the i-th largest: the count of the Golub-Kahan
+        // tridiagonal's eigenvalues below x > 0 is n plus the count of singular
+        // values below it (Sturm, its pivots L D L^T), on [0, Gershgorin's
+        // bound], halved until float32 can halve it no more.
+        float g = 0.0f;
+        if (vrow) g = fabs(d[i]) + fmax(fabs(e[i]), i > 0 ? fabs(e[i - 1]) : 0.0f);
+        float lo = 0.0f, hi = lanes_max<G>(g);
+        hi += 2.0f * FLT_EPSILON * hi + FLT_MIN;
+        const float pivmin = FLT_MIN * fmax(1.0f, hi * hi);
+        float s = 0.0f;
+        if (vrow) {
+            const uint target = n - 1 - i;   // the i-th largest is the target-th smallest
+            for (uint pass = 0; pass < 64; ++pass) {
+                const float mid = 0.5f * (lo + hi);
+                if (mid <= lo || mid >= hi) break;   // float32 can halve it no more
+                float q = -mid;
+                if (fabs(q) < pivmin) q = -pivmin;
+                uint neg = q < 0.0f ? 1u : 0u;
+                for (uint k = 0; k < n; ++k) {
+                    const float dk = d[k];
+                    float t = -mid - div_nr(dk * dk, q);
+                    if (fabs(t) < pivmin) t = -pivmin;
+                    q = t;
+                    neg += t < 0.0f ? 1u : 0u;
+                    if (k + 1 < n) {
+                        const float ek = e[k];
+                        t = -mid - div_nr(ek * ek, q);
+                        if (fabs(t) < pivmin) t = -pivmin;
+                        q = t;
+                        neg += t < 0.0f ? 1u : 0u;
+                    }
+                }
+                if ((int)neg - (int)n > (int)target) hi = mid;
+                else                  lo = mid;
+            }
+            s = lo == 0.0f ? 0.0f : 0.5f * (lo + hi);
+            out_s[i] = ldexp(s, expo);
+        }
+        const float smax = simd_shuffle(s, (ushort)gb), smin = simd_shuffle(s, (ushort)(gb + n - 1));
+        if (live && i == 0) {
+            const bool deficient = !(smin > kNullEps * FLT_EPSILON * smax);
+            info[mat] = 1u | kInfoConverged | (deficient ? kInfoRankDeficient : 0u);
+        }
+        return;
+    }
+
+    // 3. V = G(0) G(1) ... G(n-3), forward: Z <- Z G(k), a row a lane, u
+    // gathered from row k (lane k)
+    float z[N];
+    GS_UNROLL(N, c, { z[c] = c == i ? 1.0f : 0.0f; })
+    for (uint k = 0; k + 2 < nl; ++k) {
+        const float tk = tp[k];
+        if (tk == 0.0f) continue;   // uniform
+        float uk[N];
+        GS_UNROLL(N, c, {
+            const float y = simd_shuffle(b[c], (ushort)(gb + k));
+            uk[c] = c == k + 1 ? 1.0f : (c >= k + 2 ? y : 0.0f);
+        })
+        float dot = 0.0f;
+        GS_UNROLL(N, c, { dot = fma(z[c], uk[c], dot); })
+        dot *= tk;
+        GS_UNROLL(N, c, { z[c] = fma(-dot, uk[c], z[c]); })
+    }
+
+    // 4. U = H(0) H(1) ... H(n-1) [I; 0], backward (sorg2r): before step k
+    // the columns before k are still the identity's, which H(k) leaves alone
+    float x[N];
+    GS_UNROLL(N, c, { x[c] = wrow && c == i ? 1.0f : 0.0f; })
+    for (uint k = nl; k-- > 0;) {
+        const float tk = tq[k];
+        if (tk == 0.0f) continue;   // uniform
+        float v = i == k ? 1.0f : 0.0f;
+        if (wrow && i > k) GS_UNROLL(N, c, { if (c == k) v = b[c]; })
+        GS_UNROLL(N, c, {
+            if (c >= k && c < n) {
+                const float s = lanes_sum<G>(v * x[c]);
+                x[c] = fma(-tk * s, v, x[c]);
+            }
+        })
+    }
+
+    // 5. Implicit QR on (d, e): lane 0 runs a step and records its rotations,
+    // then every lane applies them to its rows of U and V
+    GkState st{n - 1, 0u, 0u, false, 0.0f};
+    if (!RUN) {
+        if (i == 0) {
+            float bnorm = 0.0f;
+            for (uint k = 0; k < n; ++k) bnorm = fmax(bnorm, fabs(d[k]) + fabs(e[k]));
+            st.dtol = FLT_EPSILON * bnorm;
+        }
+        threadgroup float* uc = rb;
+        threadgroup float* us = rb + 32;
+        threadgroup float* vc = rb + 64;
+        threadgroup float* vs = rb + 96;
+        if (i == 0) ctl[0] = live ? 0u : 1u;   // a group with nothing to do is done
+        while (true) {
+            if (i == 0 && ctl[0] == 0) gk_step(d, e, uc, us, vc, vs, ctl, st, prm.max_rots, true);
+            simdgroup_barrier(mem_flags::mem_threadgroup);
+            const bool done = ctl[0] != 0;
+            if (simd_all(done)) break;
+            if (!done) {
+                GS_APPLY(N, x, ctl + kMetaU, uc, us)
+                GS_APPLY(N, z, ctl + kMetaV, vc, vs)
+            }
+            simdgroup_barrier(mem_flags::mem_threadgroup);
+        }
+    } else {
+        // Matrix j's two rotation buffers at rb + 128 s and their metas at
+        // ctl + 16 s (s = 0, 1); the runner's lane j works on matrix j
+        if (!runner && i == 0) ctl[0] = live ? 0u : 1u;   // a matrix with nothing to do is done
+        threadgroup_barrier(mem_flags::mem_threadgroup);   // every matrix's d, e and start
+        const uint nm = per_tg;
+        const bool runs = runner && lane < nm;
+        threadgroup float* dr = tg + min(lane, nm - 1) * F;
+        threadgroup uint*  cr = reinterpret_cast<threadgroup uint*>(dr + 384);
+        if (runs) {
+            float bnorm = 0.0f;
+            for (uint k = 0; k < n; ++k) bnorm = fmax(bnorm, fabs(dr[k]) + fabs(dr[32 + k]));
+            st.dtol = FLT_EPSILON * bnorm;
+            if (cr[0] == 0) gk_step(dr, dr + 32, dr + 128, dr + 160, dr + 192, dr + 224, cr, st, prm.max_rots, true);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        uint sl = 0;
+        while (true) {
+            bool all = true;   // the same in every thread
+            for (uint j = 0; j < nm; ++j)
+                all = all && reinterpret_cast<threadgroup uint*>(tg + j * F + 384 + 16 * sl)[0] != 0;
+            if (all) break;
+            if (runs) {
+                threadgroup uint* nxt = cr + 16 * (sl ^ 1u);
+                threadgroup float* nb = dr + 128 + 128 * (sl ^ 1u);
+                if (cr[16 * sl] == 0) gk_step(dr, dr + 32, nb, nb + 32, nb + 64, nb + 96, nxt, st, prm.max_rots, true);
+                else nxt[0] = 1u;
+            } else if (!runner) {
+                threadgroup uint* cur = ctl + 16 * sl;
+                if (cur[0] == 0) {
+                    threadgroup float* cb = rb + 128 * sl;
+                    GS_APPLY(N, x, cur + kMetaU, cb, cb + 32)
+                    GS_APPLY(N, z, cur + kMetaV, cb + 64, cb + 96)
+                }
+            }
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+            sl ^= 1u;
+        }
+        if (runs) {
+            threadgroup uint* stat = reinterpret_cast<threadgroup uint*>(dr + 480);
+            stat[0] = st.steps;
+            stat[1] = st.failed ? 1u : 0u;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if (!runner) {   // the info word's: the runner's state
+            threadgroup uint* stat = reinterpret_cast<threadgroup uint*>(d + 480);
+            st.steps = stat[0];
+            st.failed = stat[1] != 0;
+        }
+    }
+
+    // 6. Non-negative (a negative d[c] flips column c of V), sorted
+    // descending (pos[c]: where column c goes; rank[k]: which column is k-th);
+    // write
+    GS_UNROLL(N, c, { if (c < n && d[c] < 0.0f) z[c] = -z[c]; })
+    if (vrow) {
+        const float di = fabs(d[i]);
+        uint rk = 0;
+        for (uint k = 0; k < n; ++k) {
+            const float dk = fabs(d[k]);
+            rk += (dk > di || (dk == di && k < i)) ? 1u : 0u;
+        }
+        pos[i] = rk;
+        rank[rk] = i;
+    }
+    simdgroup_barrier(mem_flags::mem_threadgroup);
+    if (vrow) out_s[i] = ldexp(fabs(d[rank[i]]), expo);
+    // B = U_B diag(s) V^T: A = B, or A = B^T = V diag(s) U_B^T if wide
+    if (!prm.transpose) {
+        if (wrow) GS_UNROLL(N, c, { if (c < n) out_u[i * n + pos[c]] = x[c]; })
+        if (vrow) GS_UNROLL(N, c, { if (c < n) out_vt[pos[c] * n + i] = z[c]; })
+    } else {
+        if (vrow) GS_UNROLL(N, c, { if (c < n) out_u[i * n + pos[c]] = z[c]; })
+        if (wrow) GS_UNROLL(N, c, { if (c < n) out_vt[pos[c] * m + i] = x[c]; })
+    }
+    if (live && i == 0) {   // the chaser, whose state this is
+        const float smax = fabs(d[rank[0]]), smin = fabs(d[rank[n - 1]]);
+        const bool deficient = !(smin > kNullEps * FLT_EPSILON * smax);
+        info[mat] = min(st.steps, 0xFFFFu) | (st.failed ? 0u : kInfoConverged)
+                  | (deficient ? kInfoRankDeficient : 0u);
+    }
+}
+
+#define GS_INSTANCE(N, G, RUN, NAME)                                                                 \
+    template [[host_name(NAME)]] kernel void svd_gk_simd<N, G, RUN>(                                 \
+        device const float*, device float*, device float*, device float*, device uint*,             \
+        constant GksParams&, threadgroup float*, uint, uint, uint, uint);
+GS_INSTANCE(8, 8, false, "svd_gk_simd_8_8")
+GS_INSTANCE(8, 16, false, "svd_gk_simd_8_16")
+GS_INSTANCE(8, 32, false, "svd_gk_simd_8_32")
+GS_INSTANCE(16, 16, false, "svd_gk_simd_16_16")
+GS_INSTANCE(16, 32, false, "svd_gk_simd_16_32")
+GS_INSTANCE(32, 32, false, "svd_gk_simd_32_32")
+GS_INSTANCE(8, 32, true, "svd_gk_simd_8_32_run")
+GS_INSTANCE(16, 32, true, "svd_gk_simd_16_32_run")
+GS_INSTANCE(32, 32, true, "svd_gk_simd_32_32_run")

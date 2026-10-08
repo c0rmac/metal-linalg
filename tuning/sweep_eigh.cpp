@@ -5,9 +5,11 @@
 //             tg (whole-matrix kernel in each execution mode), block (block Jacobi), tridiag
 //             (the hybrid backend, eigh_tridiag.mm), ql (tridiagonalization and QL, one
 //             threadgroup per matrix, eigh_ql.mm; N up to its device limit), ql_share (ql and the
-//             CPU path sharing the batch, share_min_batch); each also as <name>_vals,
+//             CPU path sharing the batch, share_min_batch), tridiag_batch (a batch reduced at
+//             once, eigh_tridiag.mm; N up to 1024); each also as <name>_vals,
 //             eigenvalues alone (eigvalsh: the CPU path is then LAPACK ssyevd_2stage
-//             from N = 128), which has its own GPU-or-CPU boundary; band_vals, eigenvalues alone
+//             from N = 128), which has its own GPU-or-CPU boundary; band, the two-stage
+//             reduction with eigenvectors (svd_bidiag.mm), band_vals, eigenvalues alone
 //             by the two-stage reduction (eigh_band.mm), its band 16 wide, and band8_vals,
 //             band32_vals the same 8 and 32 wide
 //   out:   batch,N,backend,ok,ms,p25,p75,reps   (one row per backend)
@@ -114,6 +116,17 @@ std::pair<array, array> solve_tridiag(const array& A) {
 std::pair<array, array> vals_tridiag(const array& A) {
     array w = detail::eigh_tridiag(A, false, true).eigenvalues; return {w, w};
 }
+std::pair<array, array> solve_tridiag_batch(const array& A) {
+    EighResult r = detail::eigh_tridiag_batch(A, true, true);
+    return {r.eigenvalues, r.eigenvectors};
+}
+std::pair<array, array> vals_tridiag_batch(const array& A) {
+    array w = detail::eigh_tridiag_batch(A, false, true).eigenvalues; return {w, w};
+}
+std::pair<array, array> solve_band(const array& A) {
+    EighResult r = detail::eigh_band_vectors(A, true);
+    return {r.eigenvalues, r.eigenvectors};
+}
 std::pair<array, array> vals_band(const array& A) {
     array w = detail::eigh_band(A, true, 16).eigenvalues; return {w, w};
 }
@@ -197,9 +210,13 @@ double quantile(const std::vector<double>& sorted, double q) {
 // Adaptive timing: at least `min_reps`, then until `budget_ms` is spent or
 // `max_reps` reached. Slow points settle for the minimum.
 Timing time_ms(const Solver& s, const array& A, double budget_ms = 150.0, int max_reps = 25) {
-    for (int i = 0; i < 2; ++i) {   // warmup: pipeline compile + workspace alloc
+    // Warm-up after the correctness run (which compiled the pipelines and made
+    // the workspaces): two calls, or one where a call takes 20 ms or more
+    for (int i = 0; i < 2; ++i) {
+        const auto w0 = std::chrono::high_resolution_clock::now();
         auto [w, V] = s.fn(A);
         eval({w, V});
+        if (std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - w0).count() >= 20.0) break;
     }
     std::vector<double> samples;
     double total = 0.0;
@@ -242,7 +259,10 @@ int main(int argc, char** argv) {
                     "\"ql_min_n\": %u, \"ql_max_n\": %u, \"ql_limit\": %u, \"cpu_threads\": %u, "
                     "\"tridiag_max_batch\": %u, \"values_tridiag_max_batch\": %u, \"share_min_batch\": %u, "
                     "\"gpu_big_batch_max_n\": %u, \"gpu_big_batch_min\": %u, \"values_band_min_n\": %u, "
-                    "\"values_band_width\": %u}\n",
+                    "\"values_band_width\": %u, \"band_min_n\": %u, \"tridiag_batch_min_n\": %u, "
+                    "\"tridiag_batch_max_n\": %u, \"tridiag_batch_min_batch\": %u, "
+                    "\"values_tridiag_batch_min_n\": %u, \"values_tridiag_batch_max_n\": %u, "
+                    "\"values_tridiag_batch_min_batch\": %u}\n",
                     device_name(), p.gpu_cores, eigh_policy_source(),
                     p.simd_max_n, p.block_min_n, p.block_min_n_batched, p.block_min_batch,
                     p.gpu_max_n, p.gpu_min_batch_times_n, p.gpu_min_batch,
@@ -250,11 +270,13 @@ int main(int argc, char** argv) {
                     p.tridiag_min_n, p.values_tridiag_min_n, p.ql_min_n, p.ql_max_n,
                     metal_linalg::detail::eigh_ql_max_n(), cpu_threads(),
                     p.tridiag_max_batch, p.values_tridiag_max_batch, p.share_min_batch,
-                    p.gpu_big_batch_max_n, p.gpu_big_batch_min, p.values_band_min_n, p.values_band_width);
+                    p.gpu_big_batch_max_n, p.gpu_big_batch_min, p.values_band_min_n, p.values_band_width,
+                    p.band_min_n, p.tridiag_batch_min_n, p.tridiag_batch_max_n, p.tridiag_batch_min_batch,
+                    p.values_tridiag_batch_min_n, p.values_tridiag_batch_max_n, p.values_tridiag_batch_min_batch);
         return 0;
     }
     if (argc != 4) {
-        std::fprintf(stderr, "usage: %s <batch> <N> <cpu|simd|tg|block|tridiag|ql|ql_share>[_vals]|band_vals|band8_vals|band32_vals[,...]\n"
+        std::fprintf(stderr, "usage: %s <batch> <N> <cpu|simd|tg|block|tridiag|tridiag_batch|ql|ql_share>[_vals]|band|band_vals|band8_vals|band32_vals[,...]\n"
                              "       %s --policy\n", argv[0], argv[0]);
         return 2;
     }
@@ -277,7 +299,10 @@ int main(int argc, char** argv) {
         else if (name == "block_vals") solvers.push_back({name, vals_block, false});
         else if (name == "tridiag")      solvers.push_back({name, solve_tridiag});
         else if (name == "tridiag_vals") solvers.push_back({name, vals_tridiag, false});
+        else if (name == "tridiag_batch")      solvers.push_back({name, solve_tridiag_batch});
+        else if (name == "tridiag_batch_vals") solvers.push_back({name, vals_tridiag_batch, false});
         else if (name == "band_vals")    solvers.push_back({name, vals_band, false});
+        else if (name == "band")         solvers.push_back({name, solve_band});
         else if (name == "band8_vals")   solvers.push_back({name, vals_band8, false});
         else if (name == "band32_vals")  solvers.push_back({name, vals_band32, false});
         else if (name == "ql")           solvers.push_back({name, solve_ql});

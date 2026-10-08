@@ -185,6 +185,14 @@ struct TunedEntry {
     unsigned    gpu_big_batch_min;
     unsigned    values_band_min_n;   // 0 = never, which rows from before 2.13.0 leave
     unsigned    values_band_width;   // 0 = 16, which rows from before 2.15.0 leave
+    // Rows from before 2.17.0 leave these 0: never.
+    unsigned    band_min_n;
+    unsigned    tridiag_batch_min_n;
+    unsigned    tridiag_batch_max_n;
+    unsigned    tridiag_batch_min_batch;
+    unsigned    values_tridiag_batch_min_n;
+    unsigned    values_tridiag_batch_max_n;
+    unsigned    values_tridiag_batch_min_batch;
     unsigned    calibration;   // kCalibration* (calibration.h); rows without it are current
 };
 
@@ -194,7 +202,7 @@ struct TunedEntry {
 // docs/studies/. The last row keeps the array non-empty and matches nothing.
 constexpr TunedEntry kTuned[] = {
 #include "tuned/eigh.inc"
-    {"", 0,   0, 0, 0, 0,   0, 0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0, 0,   0, 0,   0},
+    {"", 0,   0, 0, 0, 0,   0, 0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0, 0,   0, 0,   0,   0, 0, 0,   0, 0, 0,   0},
 };
 
 // The estimated rows, for every slowdown pair on tuning/estimate.py's ladder
@@ -207,7 +215,7 @@ struct EstimatedEntry {
 };
 constexpr EstimatedEntry kEstimated[] = {
 #include "tuned/eigh_estimated.inc"
-    {0, 0, 0, {"", 0,   0, 0, 0, 0,   0, 0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0, 0,   0,   0}},
+    {0, 0, 0, {"", 0,   0, 0, 0, 0,   0, 0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0, 0,   0, 0,   0,   0, 0, 0,   0, 0, 0,   0}},
 };
 
 void apply(const TunedEntry& e, EighPolicy& p) {
@@ -232,6 +240,13 @@ void apply(const TunedEntry& e, EighPolicy& p) {
     p.gpu_big_batch_min            = e.gpu_big_batch_min;
     p.values_band_min_n            = e.values_band_min_n;
     p.values_band_width            = e.values_band_width;
+    p.band_min_n                     = e.band_min_n;
+    p.tridiag_batch_min_n            = e.tridiag_batch_min_n;
+    p.tridiag_batch_max_n            = e.tridiag_batch_max_n;
+    p.tridiag_batch_min_batch        = e.tridiag_batch_min_batch;
+    p.values_tridiag_batch_min_n     = e.values_tridiag_batch_min_n;
+    p.values_tridiag_batch_max_n     = e.values_tridiag_batch_max_n;
+    p.values_tridiag_batch_min_batch = e.values_tridiag_batch_min_batch;
 }
 
 struct ResolvedPolicy {
@@ -312,6 +327,13 @@ ResolvedPolicy resolve_policy() {
     over("EIGH_GPU_BIG_BATCH_MIN",            r.policy.gpu_big_batch_min);
     over("EIGH_VALUES_BAND_MIN_N",            r.policy.values_band_min_n);
     over("EIGH_VALUES_BAND_WIDTH",            r.policy.values_band_width);
+    over("EIGH_BAND_MIN_N",                   r.policy.band_min_n);
+    over("EIGH_TRIDIAG_BATCH_MIN_N",          r.policy.tridiag_batch_min_n);
+    over("EIGH_TRIDIAG_BATCH_MAX_N",          r.policy.tridiag_batch_max_n);
+    over("EIGH_TRIDIAG_BATCH_MIN_BATCH",      r.policy.tridiag_batch_min_batch);
+    over("EIGH_VALUES_TRIDIAG_BATCH_MIN_N",     r.policy.values_tridiag_batch_min_n);
+    over("EIGH_VALUES_TRIDIAG_BATCH_MAX_N",     r.policy.values_tridiag_batch_max_n);
+    over("EIGH_VALUES_TRIDIAG_BATCH_MIN_BATCH", r.policy.values_tridiag_batch_min_batch);
     if (!env.empty()) r.source = "env:" + env;
     return r;
 }
@@ -700,11 +722,12 @@ bool eigvalsh_uses_gpu(unsigned n, unsigned batch) {
 
 namespace {
 
-// Where the rules send a call to the CPU: for eigenvalues alone the band
-// backend from its threshold, then the tridiag backend from its own (0 =
-// never), both up to the batch cap (0 = none). EIGH_DEVICE=cpu keeps the CPU;
-// EIGH_DEVICE=tridiag forces that backend for every call, EIGH_DEVICE=band
-// the band backend for eigenvalues alone (tridiag with eigenvectors).
+// Where the rules send a call to the CPU: a batch of mid-size matrices to
+// the tridiag_batch backend inside its window; otherwise the band backend
+// from its threshold, then the tridiag backend from its own (0 = never), both
+// up to the batch cap (0 = none). EIGH_DEVICE=cpu keeps the CPU;
+// EIGH_DEVICE=tridiag, =band or =tridiag_batch forces that backend for every
+// call.
 EighBackend cpu_side(unsigned n, unsigned batch, bool vectors) {
     if (const char* e = std::getenv("EIGH_DEVICE")) {
         const std::string s = e;
@@ -712,9 +735,16 @@ EighBackend cpu_side(unsigned n, unsigned batch, bool vectors) {
         if (s == "tridiag") return EighBackend::tridiag;
     }
     const EighPolicy& p = policy_state().policy;
+    const unsigned bmin = vectors ? p.tridiag_batch_min_n : p.values_tridiag_batch_min_n;
+    const unsigned bmax = vectors ? p.tridiag_batch_max_n : p.values_tridiag_batch_max_n;
+    const unsigned bbat = vectors ? p.tridiag_batch_min_batch : p.values_tridiag_batch_min_batch;
+    // (the backend takes N up to 1024, its panel kernel's threadgroup memory)
+    if (bmax != 0 && n >= bmin && n <= std::min(bmax, 1024u) && batch >= std::max(bbat, 1u))
+        return EighBackend::tridiag_batch;
     const unsigned cap = vectors ? p.tridiag_max_batch : p.values_tridiag_max_batch;
     if (cap != 0 && batch > cap) return EighBackend::cpu;
     if (!vectors && p.values_band_min_n != 0 && n >= p.values_band_min_n) return EighBackend::band;
+    if (vectors && p.band_min_n != 0 && n >= p.band_min_n) return EighBackend::band;
     const unsigned from = vectors ? p.tridiag_min_n : p.values_tridiag_min_n;
     return from != 0 && n >= from ? EighBackend::tridiag : EighBackend::cpu;
 }
@@ -729,9 +759,15 @@ bool forced_band() {
     return e && std::string(e) == "band";
 }
 
+bool forced_tridiag_batch() {
+    const char* e = std::getenv("EIGH_DEVICE");
+    return e && std::string(e) == "tridiag_batch";
+}
+
 EighBackend route(unsigned n, unsigned batch, bool vectors) {
     if (forced_tridiag()) return EighBackend::tridiag;
-    if (forced_band()) return vectors ? EighBackend::tridiag : EighBackend::band;
+    if (forced_band()) return EighBackend::band;
+    if (forced_tridiag_batch()) return EighBackend::tridiag_batch;
     const bool gpu = vectors ? eigh_uses_gpu(n, batch) : eigvalsh_uses_gpu(n, batch);
     return gpu ? eigh_gpu_backend(n, batch) : cpu_side(n, batch, vectors);
 }
@@ -794,8 +830,13 @@ void core::eigh(const Matrices& a, bool lower, float* w, float* v, uint32_t* inf
         core::detail::eigh_tridiag(a, lower, w, v, info);
         return;
     }
-    if (backend == EighBackend::band) {   // eigenvalues alone
-        core::detail::eigh_band(a, lower, w, info, policy_state().policy.values_band_width);
+    if (backend == EighBackend::band) {
+        if (v) core::detail::eigh_band_vectors(a, lower, w, v, info);
+        else   core::detail::eigh_band(a, lower, w, info, policy_state().policy.values_band_width);
+        return;
+    }
+    if (backend == EighBackend::tridiag_batch) {
+        core::detail::eigh_tridiag_batch(a, lower, w, v, info);
         return;
     }
     if (backend == EighBackend::ql) {

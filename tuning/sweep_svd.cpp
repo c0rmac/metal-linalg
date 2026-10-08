@@ -8,12 +8,15 @@
 //             qrblock  this library's QR, then the block kernel on R
 //             bidiag   GPU bidiagonalization, LAPACK's bidiagonal SVD (svd_bidiag.mm)
 //             band     the two-stage reduction with vectors (svd_bidiag.mm), its band 16 wide
+//             bidiag_batch  a batch bidiagonalized at once (svd_bidiag_batch.mm), rows and
+//                      columns up to 1024
 //             gk       Householder bidiagonalization and implicit QR, one
 //                      threadgroup per matrix (svd_golub_kahan.mm): on the
 //                      matrix itself where it fits, else on R after this
 //                      library's QR, as svd.mm routes it; k up to its device limit
 //             gk_share golub_kahan and the CPU path sharing the batch (share_min_batch)
-//             cpu_vals, bidiag_vals, gk_vals, gk_share_vals   the same for singular values alone
+//             cpu_vals, bidiag_vals, bidiag_batch_vals, gk_vals, gk_share_vals   the same for
+//                      singular values alone
 //             band_vals  singular values alone by the two-stage reduction (svd_bidiag.mm), its band
 //                        16 wide; band8_vals, band32_vals the same 8 and 32 wide
 //   out:   batch,M,N,backend,ok,ms,p25,p75,reps   (one row per backend)
@@ -83,6 +86,8 @@ SvdResult vals_cpu(const array& A)      { return detail::svd_cpu(A, false); }
 SvdResult vals_bidiag(const array& A)   { return detail::svd_bidiag(A, false); }
 SvdResult vals_band(const array& A)     { return detail::svd_band(A, 16); }
 SvdResult solve_band(const array& A)    { return detail::svd_band_vectors(A); }
+SvdResult solve_bidiag_batch(const array& A) { return detail::svd_bidiag_batch(A, true); }
+SvdResult vals_bidiag_batch(const array& A)  { return detail::svd_bidiag_batch(A, false); }
 SvdResult vals_band8(const array& A)    { return detail::svd_band(A, 8); }
 SvdResult vals_band32(const array& A)   { return detail::svd_band(A, 32); }
 // golub_kahan as svd.mm routes it inside its window.
@@ -150,7 +155,16 @@ Timing time_ms(const Solver& s, const array& A, double budget_ms = 150.0, int ma
         SvdResult r = s.fn(A);
         if (s.vectors) eval({r.U, r.S, r.Vt}); else eval({r.S});
     };
-    for (int i = 0; i < 2; ++i) run();
+    // Warm-up after the correctness run (which compiled the pipelines and made
+    // the workspaces): two calls, or one where a call takes 20 ms or more,
+    // whose own length settles the GPU's clocks (2.17.0: a third of a sweep
+    // was its untimed calls)
+    {
+        const auto w0 = std::chrono::high_resolution_clock::now();
+        run();
+        if (std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - w0).count() < 20.0)
+            run();
+    }
     std::vector<double> samples;
     double total = 0.0;
     int min_reps = 5;
@@ -192,7 +206,10 @@ int main(int argc, char** argv) {
                     "\"values_gpu_max_k\": %u, \"values_gpu_min_batch_times_k\": %u, "
                     "\"values_gpu_min_batch\": %u, \"values_gpu_max_l\": %u, \"share_min_batch\": %u, "
                     "\"gpu_big_batch_max_k\": %u, \"gpu_big_batch_min\": %u, \"values_band_min_k\": %u, "
-                    "\"values_band_width\": %u, \"band_min_k\": %u}\n",
+                    "\"values_band_width\": %u, \"band_min_k\": %u, \"bidiag_batch_min_k\": %u, "
+                    "\"bidiag_batch_max_k\": %u, \"bidiag_batch_min_batch\": %u, \"bidiag_batch_max_l\": %u, "
+                    "\"values_bidiag_batch_min_k\": %u, \"values_bidiag_batch_max_k\": %u, "
+                    "\"values_bidiag_batch_min_batch\": %u, \"values_bidiag_batch_max_l\": %u}\n",
                     device_name(), p.gpu_cores, svd_policy_source(),
                     p.qr_min_rows, p.qr_min_k,
                     p.block_min_k, p.block_min_k_batched, p.block_min_batch,
@@ -201,11 +218,14 @@ int main(int argc, char** argv) {
                     p.gk_min_k, p.gk_max_k, metal_linalg::detail::svd_gk_max_k(),
                     p.values_gpu_max_k, p.values_gpu_min_batch_times_k, p.values_gpu_min_batch,
                     p.values_gpu_max_l, p.share_min_batch, p.gpu_big_batch_max_k, p.gpu_big_batch_min,
-                    p.values_band_min_k, p.values_band_width, p.band_min_k);
+                    p.values_band_min_k, p.values_band_width, p.band_min_k, p.bidiag_batch_min_k,
+                    p.bidiag_batch_max_k, p.bidiag_batch_min_batch, p.bidiag_batch_max_l,
+                    p.values_bidiag_batch_min_k, p.values_bidiag_batch_max_k, p.values_bidiag_batch_min_batch,
+                    p.values_bidiag_batch_max_l);
         return 0;
     }
     if (argc != 5) {
-        std::fprintf(stderr, "usage: %s <batch> <M> <N> <cpu|jacobi|block|qr|qrblock|bidiag|band|gk|gk_share|cpu_vals|bidiag_vals|band_vals|band8_vals|band32_vals|gk_vals|gk_share_vals>[,...]\n"
+        std::fprintf(stderr, "usage: %s <batch> <M> <N> <cpu|jacobi|block|qr|qrblock|bidiag|bidiag_batch|band|gk|gk_share|cpu_vals|bidiag_vals|bidiag_batch_vals|band_vals|band8_vals|band32_vals|gk_vals|gk_share_vals>[,...]\n"
                              "       %s --policy\n", argv[0], argv[0]);
         return 2;
     }
@@ -225,6 +245,8 @@ int main(int argc, char** argv) {
         else if (name == "qr")      solvers.push_back({name, solve_qr});
         else if (name == "qrblock") solvers.push_back({name, solve_qr_block});
         else if (name == "bidiag")      solvers.push_back({name, solve_bidiag});
+        else if (name == "bidiag_batch")      solvers.push_back({name, solve_bidiag_batch});
+        else if (name == "bidiag_batch_vals") solvers.push_back({name, vals_bidiag_batch, false});
         else if (name == "band")        solvers.push_back({name, solve_band});
         else if (name == "cpu_vals")    solvers.push_back({name, vals_cpu, false});
         else if (name == "bidiag_vals") solvers.push_back({name, vals_bidiag, false});

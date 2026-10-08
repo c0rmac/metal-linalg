@@ -78,7 +78,7 @@ inline bool non_finite(float v) {
 }
 
 // =============================================================================
-// In registers: a simdgroup a matrix (qr_householder_simd)
+// In registers: a simdgroup a matrix, or several (qr_householder_simd)
 // =============================================================================
 //
 // For n <= 32 and m <= 128, a matrix fits in one simdgroup's registers -- R rows a lane (row s * 32 + lane in x[s]), B
@@ -136,6 +136,19 @@ inline void reflector(float alpha, float sumsq, thread float& beta, thread float
 #define QH_ROTATE_LEFT  QH_UNROLL(R, s, { const float x0 = x[s][0]; QH_UNROLL(B, c, { if (c + 1 < B) x[s][c] = x[s][c + 1]; }); x[s][B - 1] = x0; })
 #define QH_ROTATE_RIGHT QH_UNROLL(R, s, { const float xl = x[s][B - 1]; QH_UNROLL(B, c, { if (c + 1 < B) x[s][B - 1 - c] = x[s][B - 2 - c]; }); x[s][0] = xl; })
 
+// Sums and maxima over a group of G lanes (8, 16 or 32, aligned), on every
+// lane of it.
+template <uint G, typename T> inline T qh_sum(T x) {
+    if (G == 32) return simd_sum(x);
+    for (ushort off = G / 2; off > 0; off >>= 1) x += simd_shuffle_xor(x, off);
+    return x;
+}
+template <uint G> inline float qh_max(float x) {
+    if (G == 32) return simd_max(x);
+    for (ushort off = G / 2; off > 0; off >>= 1) x = fmax(x, simd_shuffle_xor(x, off));
+    return x;
+}
+
 // x[s][k] -= coef(k) v[s] for k = 1 .. B-1 with j + k < lim, coef(k) = t times
 // the column's dot product with v (plus x(j, k) itself if `head`): the dot
 // products four columns to a simd_sum.
@@ -148,12 +161,12 @@ inline void reflector(float alpha, float sumsq, thread float& beta, thread float
                     QH_UNROLL(R, s, { loc[e] = fma(v[s], x[s][4 * q + e], loc[e]); });                      \
                 }                                                                                           \
             });                                                                                             \
-            const float4 dd = t * simd_sum(loc);                                                            \
+            const float4 dd = t * qh_sum<G>(loc);                                                           \
             QH_UNROLL(4, e, {                                                                               \
                 if (4 * q + e > 0 && 4 * q + e < B && j + 4 * q + e < lim) {                                \
                     QH_UNROLL(R, s, {                                                                       \
                         if (head) {                                                                         \
-                            const uint row = s * 32 + lane;                                                 \
+                            const uint row = s * 32 + i;                                                    \
                             if (row == j) x[s][4 * q + e] = -dd[e];                                         \
                             else if (row > j) x[s][4 * q + e] = fma(-dd[e], v[s], x[s][4 * q + e]);         \
                         } else {                                                                            \
@@ -165,7 +178,7 @@ inline void reflector(float alpha, float sumsq, thread float& beta, thread float
         }                                                                                                   \
     })
 
-template <uint B, uint R>
+template <uint B, uint R, uint G>
 kernel void qr_householder_simd(
     device const float* A_in [[buffer(0)]],   // [batch, m, n] input, row-major
     device float*       Q    [[buffer(1)]],   // [batch, m, K], unless R alone
@@ -176,8 +189,12 @@ kernel void qr_householder_simd(
     uint nsg  [[simdgroups_per_threadgroup]],
     uint lane [[thread_index_in_simdgroup]])
 {
-    const uint mat = tgi * nsg + sg;
-    if (mat >= prm.batch) return;   // a whole simdgroup: nothing below waits on the others
+    // G < 32 (R = 1, rows at most G): 32 / G matrices a simdgroup, a group of
+    // G lanes each, every cross-lane step inside the group; a group returns
+    // alone, since nothing waits on another
+    const uint i = lane % G, gb = lane - i;
+    const uint mat = (tgi * nsg + sg) * (32 / G) + lane / G;
+    if (mat >= prm.batch) return;
     const uint m = prm.m, n = prm.n, K = min(m, n), QC = prm.q_cols;
     device const float* src = A_in + (ulong)mat * m * n;
     device float* out_q = Q + (ulong)mat * m * QC;
@@ -187,7 +204,7 @@ kernel void qr_householder_simd(
     float x[R][B];
     float amax = 0.0f, bad = 0.0f;
     QH_UNROLL(R, s, {
-        const uint row = s * 32 + lane;
+        const uint row = s * 32 + i;
         QH_UNROLL(B, c, {
             float v = 0.0f;
             if (row < m && c < n) {
@@ -198,11 +215,11 @@ kernel void qr_householder_simd(
             x[s][c] = v;
         });
     });
-    amax = simd_max(amax);
-    if (simd_max(bad) > 0.0f) {
+    amax = qh_max<G>(amax);
+    if (qh_max<G>(bad) > 0.0f) {
         const float qnan = as_type<float>(0x7FC00000u);
-        for (uint idx = lane; idx < m * QC; idx += 32) out_q[idx] = qnan;
-        for (uint idx = lane; idx < K * n; idx += 32) out_r[idx] = qnan;
+        for (uint idx = i; idx < m * QC; idx += G) out_q[idx] = qnan;
+        for (uint idx = i; idx < K * n; idx += G) out_r[idx] = qnan;
         return;
     }
     int expo = 0;
@@ -214,21 +231,21 @@ kernel void qr_householder_simd(
     for (uint j = 0; j < K; ++j) {
         float ss = 0.0f, alpha = 0.0f;
         QH_UNROLL(R, s, {
-            const uint row = s * 32 + lane;
+            const uint row = s * 32 + i;
             const float y = row > j && row < m ? x[s][0] : 0.0f;
             ss = fma(y, y, ss);
-            if (s == j / 32) alpha = simd_shuffle(x[s][0], (ushort)(j % 32));
+            if (s == j / 32) alpha = simd_shuffle(x[s][0], (ushort)(gb + j % 32));
         });
         float beta, t, scale;
-        reflector(alpha, simd_sum(ss), beta, t, scale);
+        reflector(alpha, qh_sum<G>(ss), beta, t, scale);
         float v[R];
         QH_UNROLL(R, s, {
-            const uint row = s * 32 + lane;
+            const uint row = s * 32 + i;
             v[s] = 0.0f;
             if (row == j) { x[s][0] = beta; v[s] = 1.0f; }
             else if (row > j && row < m) { x[s][0] *= scale; v[s] = x[s][0]; }
         });
-        if (lane == j % 32) { if (j < 32) tau_lo = t; else tau_hi = t; }
+        if (i == j % 32) { if (j < 32) tau_lo = t; else tau_hi = t; }
         const uint lim = n;
         if (t != 0.0f) { QH_APPLY(false) }   // uniform
         QH_ROTATE_LEFT
@@ -237,7 +254,7 @@ kernel void qr_householder_simd(
 
     // 3. R
     QH_UNROLL(R, s, {
-        const uint row = s * 32 + lane;
+        const uint row = s * 32 + i;
         if (row < K) {
             QH_UNROLL(B, c, { if (c < n) out_r[row * n + c] = c >= row ? ldexp(x[s][c], expo) : 0.0f; });
         }
@@ -250,16 +267,16 @@ kernel void qr_householder_simd(
     for (uint u = 0; u + K <= B; ++u) { QH_ROTATE_RIGHT }
     for (int jj = (int)K - 1; jj >= 0; --jj) {
         const uint j = (uint)jj;
-        const float t = simd_shuffle(j < 32 ? tau_lo : tau_hi, (ushort)(j % 32));
+        const float t = simd_shuffle(j < 32 ? tau_lo : tau_hi, (ushort)(gb + j % 32));
         float v[R];
         QH_UNROLL(R, s, {
-            const uint row = s * 32 + lane;
+            const uint row = s * 32 + i;
             v[s] = row > j && row < m ? x[s][0] : 0.0f;
         });
         const uint lim = K;
         if (t != 0.0f) { QH_APPLY(true) }   // uniform
         QH_UNROLL(R, s, {
-            const uint row = s * 32 + lane;
+            const uint row = s * 32 + i;
             x[s][0] = row < j ? 0.0f : (row == j ? 1.0f - t : -t * v[s]);
         });
         if (j > 0) { QH_ROTATE_RIGHT }
@@ -267,25 +284,32 @@ kernel void qr_householder_simd(
 
     // 5. Q
     QH_UNROLL(R, s, {
-        const uint row = s * 32 + lane;
+        const uint row = s * 32 + i;
         if (row < m) {
             QH_UNROLL(B, c, { if (c < K) out_q[row * K + c] = x[s][c]; });
         }
     });
 }
 
-#define QH_SIMD(B, R)                                                                                    \
-    template [[host_name("qr_householder_simd_" #B "_" #R)]] kernel void qr_householder_simd<B, R>(     \
+#define QH_SIMD(B, R, G, NAME)                                                                           \
+    template [[host_name(NAME)]] kernel void qr_householder_simd<B, R, G>(                               \
         device const float*, device float*, device float*, constant QsParams&, uint, uint, uint, uint);
-QH_SIMD(8, 1)
-QH_SIMD(8, 2)
-QH_SIMD(8, 4)
-QH_SIMD(16, 1)
-QH_SIMD(16, 2)
-QH_SIMD(16, 4)
-QH_SIMD(32, 1)
-QH_SIMD(32, 2)
-QH_SIMD(32, 4)
+QH_SIMD(8, 1, 32, "qr_householder_simd_8_1")
+QH_SIMD(8, 2, 32, "qr_householder_simd_8_2")
+QH_SIMD(8, 4, 32, "qr_householder_simd_8_4")
+QH_SIMD(16, 1, 32, "qr_householder_simd_16_1")
+QH_SIMD(16, 2, 32, "qr_householder_simd_16_2")
+QH_SIMD(16, 4, 32, "qr_householder_simd_16_4")
+QH_SIMD(32, 1, 32, "qr_householder_simd_32_1")
+QH_SIMD(32, 2, 32, "qr_householder_simd_32_2")
+QH_SIMD(32, 4, 32, "qr_householder_simd_32_4")
+// packed, up to 8 or 16 rows
+QH_SIMD(8, 1, 8, "qr_householder_simd_8_1_g8")
+QH_SIMD(16, 1, 8, "qr_householder_simd_16_1_g8")
+QH_SIMD(32, 1, 8, "qr_householder_simd_32_1_g8")
+QH_SIMD(8, 1, 16, "qr_householder_simd_8_1_g16")
+QH_SIMD(16, 1, 16, "qr_householder_simd_16_1_g16")
+QH_SIMD(32, 1, 16, "qr_householder_simd_32_1_g16")
 
 // =============================================================================
 // Blocked, for larger matrices: panels in registers, updates by 8x8 products

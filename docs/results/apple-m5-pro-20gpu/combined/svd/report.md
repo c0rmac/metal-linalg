@@ -16,13 +16,13 @@ Row for `kTuned[]` in `src/svd.mm`:
 
 ```cpp
 // device, GPU cores,   qr_min_rows, qr_min_k,   block_min_k, block_min_k_batched, block_min_batch,   gpu_max_k, gpu_min_batch_times_k, gpu_min_batch, gpu_max_l,   values_gpu_max_k, values_gpu_min_batch_times_k, values_gpu_min_batch, values_gpu_max_l,   bidiag_min_k, values_bidiag_min_k, bidiag_max_batch, values_bidiag_max_batch,   gk_min_k, gk_max_k,   share_min_batch,   gpu_big_batch_max_k, gpu_big_batch_min,   values_band_min_k, values_band_width,   band_min_k
-{"Apple M5 Pro", 20,   256, 16,   192, 64, 64,   8, 4096, 1, 2048,   80, 16384, 1, 2048,   1024, 1024, 4, 2,   8, 80,   256,   80, 256,   768, 16,   1024},
+{"Apple M5 Pro", 20,   256, 16,   192, 64, 64,   8, 4096, 1, 2048,   80, 16384, 1, 2048,   1024, 1024, 4, 2,   8, 80,   256,   80, 256,   768, 16,   1024,   0, 0, 0, kSvdNoLimit,   0, 0, 0, kSvdNoLimit},
 ```
 
 To try it without rebuilding:
 
 ```sh
-SVD_QR_MIN_ROWS=256 SVD_QR_MIN_K=16 SVD_BLOCK_MIN_K=192 SVD_BLOCK_MIN_K_BATCHED=64 SVD_BLOCK_MIN_BATCH=64 SVD_GPU_MAX_K=8 SVD_GPU_MIN_BATCH_TIMES_K=4096 SVD_GPU_MIN_BATCH=1 SVD_GPU_MAX_L=2048 SVD_BIDIAG_MIN_K=1024 SVD_VALUES_BIDIAG_MIN_K=1024 SVD_BIDIAG_MAX_BATCH=4 SVD_VALUES_BIDIAG_MAX_BATCH=2 SVD_GK_MIN_K=8 SVD_GK_MAX_K=80 SVD_SHARE_MIN_BATCH=256 SVD_GPU_BIG_BATCH_MAX_K=80 SVD_GPU_BIG_BATCH_MIN=256 SVD_VALUES_BAND_MIN_K=768 SVD_VALUES_BAND_WIDTH=16 SVD_BAND_MIN_K=1024 SVD_VALUES_GPU_MAX_K=80 SVD_VALUES_GPU_MIN_BATCH_TIMES_K=16384 SVD_VALUES_GPU_MIN_BATCH=1 SVD_VALUES_GPU_MAX_L=2048
+SVD_QR_MIN_ROWS=256 SVD_QR_MIN_K=16 SVD_BLOCK_MIN_K=192 SVD_BLOCK_MIN_K_BATCHED=64 SVD_BLOCK_MIN_BATCH=64 SVD_GPU_MAX_K=8 SVD_GPU_MIN_BATCH_TIMES_K=4096 SVD_GPU_MIN_BATCH=1 SVD_GPU_MAX_L=2048 SVD_BIDIAG_MIN_K=1024 SVD_VALUES_BIDIAG_MIN_K=1024 SVD_BIDIAG_MAX_BATCH=4 SVD_VALUES_BIDIAG_MAX_BATCH=2 SVD_GK_MIN_K=8 SVD_GK_MAX_K=80 SVD_SHARE_MIN_BATCH=256 SVD_GPU_BIG_BATCH_MAX_K=80 SVD_GPU_BIG_BATCH_MIN=256 SVD_VALUES_BAND_MIN_K=768 SVD_VALUES_BAND_WIDTH=16 SVD_BAND_MIN_K=1024 SVD_VALUES_GPU_MAX_K=80 SVD_VALUES_GPU_MIN_BATCH_TIMES_K=16384 SVD_VALUES_GPU_MIN_BATCH=1 SVD_VALUES_GPU_MAX_L=2048 SVD_BIDIAG_BATCH_MIN_K=0 SVD_BIDIAG_BATCH_MAX_K=0 SVD_BIDIAG_BATCH_MIN_BATCH=0 SVD_BIDIAG_BATCH_MAX_L=4294967295 SVD_VALUES_BIDIAG_BATCH_MIN_K=0 SVD_VALUES_BIDIAG_BATCH_MAX_K=0 SVD_VALUES_BIDIAG_BATCH_MIN_BATCH=0 SVD_VALUES_BIDIAG_BATCH_MAX_L=4294967295
 ```
 
 The policy in effect on this device came from `tuned:Apple M5 Pro`. Against the best measured backend at every point the fitted rule scores 1.0170 geometric-mean regret, worst 1.75x, 18 of 295 points losing more than 10%, and 1.005x the oracle's total time.

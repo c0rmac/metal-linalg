@@ -35,6 +35,7 @@
 #include <map>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <unistd.h>
 
@@ -79,7 +80,7 @@ uint32_t round_up(uint32_t x, uint32_t to) { return (x + to - 1) / to * to; }
 // 4096 of 48 x 48 in 3.3 ms of GPU time against 2.3, of 64 x 64 4.4 against
 // 3.8, on an M5 Pro.)
 struct SimdShape {
-    uint32_t b = 0, r = 0;
+    uint32_t b = 0, r = 0, g = 32;   // g: lanes a matrix, 32 / g matrices a simdgroup
 };
 
 SimdShape simd_shape(uint32_t m, uint32_t n) {
@@ -89,6 +90,10 @@ SimdShape simd_shape(uint32_t m, uint32_t n) {
     for (uint32_t r : {1u, 2u, 4u})
         if (m <= 32 * r) { sh.r = r; break; }
     if (!sh.b || !sh.r) return SimdShape{};
+    // Up to 8 rows four matrices a simdgroup, up to 16 two (QR_SIMD_PACK=0:
+    // one): with one, the lanes past the rows had nothing to do
+    const char* env = std::getenv("QR_SIMD_PACK");
+    if (!(env && std::string(env) == "0")) sh.g = m <= 8 ? 8 : m <= 16 ? 16 : 32;
     return sh;
 }
 
@@ -183,16 +188,17 @@ struct WyWork {
 
 struct Cache {
     MetalRuntime& rt = MetalRuntime::shared(METAL_LINALG_SHADER(QR_Householder), "qr_householder");
-    std::map<std::pair<uint32_t, uint32_t>, id<MTLComputePipelineState>> simd;
+    std::map<std::tuple<uint32_t, uint32_t, uint32_t>, id<MTLComputePipelineState>> simd;
     id<MTLComputePipelineState> wy[3] = {nil, nil, nil};
     uint32_t  m = 0, n = 0;
     Workspace ws;
     WyWork    wyw;
 
     id<MTLComputePipelineState> simd_pipeline(SimdShape sh) {
-        const auto key = std::make_pair(sh.b, sh.r);
+        const auto key = std::make_tuple(sh.b, sh.r, sh.g);
         if (auto it = simd.find(key); it != simd.end()) return it->second;
-        NSString* name = [NSString stringWithFormat:@"qr_householder_simd_%u_%u", sh.b, sh.r];
+        NSString* name = sh.g == 32 ? [NSString stringWithFormat:@"qr_householder_simd_%u_%u", sh.b, sh.r]
+                                    : [NSString stringWithFormat:@"qr_householder_simd_%u_%u_g%u", sh.b, sh.r, sh.g];
         return simd[key] = make_pipeline(rt.device, rt.library, name, nil);
     }
 
@@ -348,7 +354,8 @@ void qr_householder(const Matrices& a, float* q_out, float* r_out, QrMode mode) 
         if (kind == Kind::simd) {
             const QsParams sp{M, N, bc, QC};
             [enc setBytes:&sp length:sizeof sp atIndex:3];
-            [enc dispatchThreadgroups:MTLSizeMake((bc + kSimdPerGroup - 1) / kSimdPerGroup, 1, 1)
+            const uint32_t per_tg = kSimdPerGroup * (32 / sh.g);   // matrices a threadgroup
+            [enc dispatchThreadgroups:MTLSizeMake((bc + per_tg - 1) / per_tg, 1, 1)
                 threadsPerThreadgroup:MTLSizeMake(32 * kSimdPerGroup, 1, 1)];
         } else {
             const QwParams wp{M, N, wy.mp, wy.np, wy.Kp, bc, q_in_place ? 1u : 0u, wy.sc, wq, QC, RR};
