@@ -475,7 +475,7 @@ Metal device name and GPU core count:
 
 | GPU | cores | GPU iff | golub_kahan | QR from | block from | else bidiag | status |
 |---|---|---|---|---|---|---|---|
-| Apple M5 Pro | 20 | k <= 56, l <= 256 and batch * k >= 16384, or 57 <= k <= 80 in batches of 1024+ (svdvals: k <= 56, l <= 256 and batch * k >= 16384) | k = 8 .. 80, shared with the CPU from batch 1024 | 512 rows, k >= 32 | k = 192; k = 64 in batches of 64+ | from k = 1024 (svdvals too, and `band` from 1536 for svdvals; never with vectors until measured), batches up to 2 | measured, stale (2.15.0's kernels) — run [`20261004-06bc11`](results/apple-m5-pro-20gpu/20261004-06bc11/svd/report.md) |
+| Apple M5 Pro | 20 | k <= 8, l <= 2048 and batch * k >= 4096, or k <= 80 in batches of 256+ (svdvals: k <= 80, l <= 2048 and batch * k >= 16384) | k = 8 .. 80, shared with the CPU from batch 256 | 256 rows, k >= 16 | k = 192; k = 64 in batches of 64+ | from k = 1024 (svdvals too), batches up to 4 (svdvals 2); `band` from k = 1024 with vectors, from 768 for svdvals | measured — run [`20261007-9f2589`](results/apple-m5-pro-20gpu/20261007-9f2589/svd/report.md) (1.0170 geometric-mean regret against the best backend at each of 295 points, worst 1.75x) |
 | anything else | — | estimated | estimated | estimated | estimated | estimated | **estimated** from the M5 Pro's timings ([how](tuning.md#macs-nobody-has-measured)) |
 
 On the M5 Pro large batches of small matrices, up to 56×56 and a long side

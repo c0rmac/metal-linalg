@@ -3,7 +3,7 @@ if (NOT CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
     message(FATAL_ERROR "metal-linalg runs on Apple Silicon Macs only (Metal and Accelerate); "
                         "it cannot be built on ${CMAKE_HOST_SYSTEM_NAME}.")
 endif ()
-project(metal_linalg VERSION 2.15.0 LANGUAGES CXX OBJCXX
+project(metal_linalg VERSION 2.16.0 LANGUAGES CXX OBJCXX
         DESCRIPTION "QR, symmetric eigendecomposition and SVD on Apple GPUs, for MLX")
 
 set(CMAKE_CXX_STANDARD 20)
@@ -153,9 +153,9 @@ function(metal_linalg_add_shader name)
     set_property(GLOBAL APPEND PROPERTY METAL_LINALG_METALLIBS "${_lib}")
 endfunction()
 
-metal_linalg_add_shader(QR_Unblocked)
 metal_linalg_add_shader(QR_Streaming_AMX_Reduced)
 metal_linalg_add_shader(QR_Streaming_AMX_Complete)
+metal_linalg_add_shader(QR_Householder)   # fast math: see QR_Householder.metal
 
 # The Jacobi rotations need c^2 + s^2 == 1 to roundoff and the non-finite
 # check needs IEEE semantics, neither of which fast-math guarantees. The
@@ -202,9 +202,9 @@ add_library(metal_linalg ${_ml_kind}
     src/band_reduce.mm
     src/bisect.mm
     src/qr.mm
-    src/qr_unblocked.mm
     src/qr_streaming_amx_reduced.mm
     src/qr_blocked.mm
+    src/qr_householder.mm
     src/qr_streaming_amx_complete.mm
     src/qr_cpu.mm
     src/eigh.mm

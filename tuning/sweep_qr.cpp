@@ -145,12 +145,17 @@ int main(int argc, char** argv) {
     else if (which == "reduced")   qr = detail::qr_streaming_amx_reduced;
     else if (which == "complete")  qr = detail::qr_streaming_amx_complete;
     else if (which == "blocked")   qr = detail::qr_blocked;
+    else if (which == "householder") qr = detail::qr_householder;
     else if (which == "cpu")       qr = detail::qr_cpu;          // LAPACK, the CPU route
     else if (which == "share")     qr = detail::qr_shared;       // the GPU kernel and the CPU on one batch
     else { std::fprintf(stderr, "unknown backend: %s\n", argv[4]); return 2; }
 
     set_default_device(Device::gpu);
-    set_cache_limit(0);
+    // MLX's buffer cache is left on, as an MLX program has it (2.16.0; off
+    // before): with it off, every call's outputs are fresh pages, which the
+    // GPU maps at some 12 us a MB and the CPU faults in, so the sweeps timed
+    // allocation as much as the decompositions (4096 of 64 x 64 QR on an M5
+    // Pro: 6.4 ms against 4.0 on the GPU, 10.5 against 9.0 on the CPU).
 
     array A = random_matrix(batch, M, N);
     eval({A});

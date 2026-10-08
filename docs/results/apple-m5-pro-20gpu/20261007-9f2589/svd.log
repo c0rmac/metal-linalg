@@ -1,0 +1,53 @@
+device: Apple M5 Pro (20 GPU cores), policy from tuned:Apple M5 Pro
+cost model scale: jacobi x0.09, block x0.24, qr x0.15, qrblock x0.22, cpu x0.07, bidiag x1.00, gk x0.34
+sweep -> /Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261007-9f2589/svd/raw.csv
+  309 points, 2271 backend timings per pass x 2 passes
+    20/618  elapsed 1.3m  eta 38.3m
+    40/618  elapsed 2.0m  eta 29.6m
+    60/618  elapsed 3.0m  eta 28.0m
+    80/618  elapsed 4.7m  eta 31.8m
+    100/618  elapsed 7.7m  eta 39.8m
+    120/618  elapsed 8.3m  eta 34.3m
+    140/618  elapsed 10.4m  eta 35.5m
+    160/618  elapsed 12.5m  eta 35.7m
+    180/618  elapsed 14.0m  eta 34.1m
+    200/618  elapsed 16.9m  eta 35.4m
+    220/618  elapsed 18.0m  eta 32.5m
+    240/618  elapsed 21.6m  eta 34.0m
+    260/618  elapsed 24.1m  eta 33.2m
+    280/618  elapsed 25.2m  eta 30.4m
+    300/618  elapsed 27.1m  eta 28.7m
+    320/618  elapsed 30.0m  eta 27.9m
+    340/618  elapsed 33.4m  eta 27.3m
+    360/618  elapsed 35.1m  eta 25.1m
+    380/618  elapsed 37.6m  eta 23.5m
+    400/618  elapsed 38.1m  eta 20.8m
+    420/618  elapsed 40.4m  eta 19.1m
+    440/618  elapsed 41.5m  eta 16.8m
+    460/618  elapsed 42.4m  eta 14.6m
+    480/618  elapsed 44.5m  eta 12.8m
+    500/618  elapsed 45.7m  eta 10.8m
+    520/618  elapsed 47.0m  eta 8.9m
+    540/618  elapsed 47.9m  eta 6.9m
+    560/618  elapsed 49.6m  eta 5.1m
+    580/618  elapsed 52.3m  eta 3.4m
+    600/618  elapsed 54.1m  eta 1.6m
+    618/618  elapsed 55.6m  eta 0.0m
+
+295 points on Apple M5 Pro (20 GPU cores)
+GPU backend: qr_min_rows=256 qr_min_k=16 block_min_k=192 block_min_k_batched=64 block_min_batch=64   (1.0308x vs best GPU backend, worst 2.05x)
+large batches: also the GPU for k above gpu_max_k up to 80 from batch 256
+CPU routing: gpu_max_k=8 gpu_max_l=2048 gpu_min_batch_times_k=4096 gpu_min_batch=1   (1.0170x vs best of all, worst 1.75x)
+in effect (tuned:Apple M5 Pro): 1.0586x, worst 1.90x
+gk window: k = 8 .. 80   (1.1383x vs best GPU backend, worst 2.67x; without 1.1876x)
+share with the CPU: from batch 256   (1.0765x vs best GPU backend; gk alone 1.2109x)
+svdvals routing: ('80', '16384', '1', '2048')   (1.0367x, worst 2.15x; as with vectors 1.0538x, worst 2.08x)
+bidiag (vectors): from 1024, batch <= 4   (1.0177x, worst 1.53x; without 1.1778x)
+bidiag (values): from 1024, batch <= 2   (1.0066x, worst 1.49x; without 1.0871x)
+band (values): 768, width 16   (1.0794x, worst 3.02x; without 1.3778x)
+band (vectors): 1024   (1.0579x, worst 1.77x; without 1.2529x)
+
+kTuned[] row:  {"Apple M5 Pro", 20,   256, 16,   192, 64, 64,   8, 4096, 1, 2048,   80, 16384, 1, 2048,   1024, 1024, 4, 2,   8, 80,   256,   80, 256,   768, 16,   1024},
+warning: chosen rule loses more than 25% at 16x8 batch=1024 (gk_share, 1.75x), 8x8 batch=1024 (gk_share, 1.69x), 32x8 batch=1024 (gk_share, 1.49x), 16x16 batch=256 (gk_share, 1.46x), 32x16 batch=256 (gk_share, 1.37x), 64x8 batch=1024 (gk_share, 1.29x), 2048x64 batch=64 (cpu, 1.26x), 2048x64 batch=16 (cpu, 1.25x)
+warning: the fitted policy differs from the one in effect (tuned:Apple M5 Pro)
+wrote /Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261007-9f2589/svd/results.json and report.md

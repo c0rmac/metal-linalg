@@ -278,7 +278,7 @@ int main(int argc, char* argv[]) {
                        const std::vector<int>& batches) {
         std::vector<std::vector<BenchResult>> results(
             configs.size(), std::vector<BenchResult>(batches.size()));
-        mlx::core::set_cache_limit(0);
+        // MLX's buffer cache left on, as an MLX program has it (see tuning/sweep_qr.cpp).
 
         for (int ci = 0; ci < (int)configs.size(); ++ci) {
             for (int bi = 0; bi < (int)batches.size(); ++bi) {

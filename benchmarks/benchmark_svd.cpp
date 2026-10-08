@@ -186,7 +186,7 @@ void print_row(int batch, int M, int N, const Row& r) {
 
 int main(int argc, char** argv) {
     set_default_device(Device::gpu);
-    set_cache_limit(0);
+    // MLX's buffer cache left on, as an MLX program has it (see tuning/sweep_qr.cpp).
 
     std::printf("\nThin SVD on an Apple GPU (one-sided Jacobi: whole-matrix and block kernels, each direct\n"
                 "and QR-preconditioned; gk: bidiagonalization and implicit QR, one threadgroup per matrix)\n"

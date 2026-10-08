@@ -240,7 +240,11 @@ int main(int argc, char** argv) {
     }
 
     set_default_device(Device::gpu);
-    set_cache_limit(0);
+    // MLX's buffer cache is left on, as an MLX program has it (2.16.0; off
+    // before): with it off, every call's outputs are fresh pages, which the
+    // GPU maps at some 12 us a MB and the CPU faults in, so the sweeps timed
+    // allocation as much as the decompositions (4096 of 64 x 64 QR on an M5
+    // Pro: 6.4 ms against 4.0 on the GPU, 10.5 against 9.0 on the CPU).
 
     array A = random_matrix(batch, M, N);
     eval({A});

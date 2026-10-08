@@ -73,6 +73,18 @@ metal_linalg_status metal_linalg_svd(const float* a, uint32_t batch, uint32_t ro
  * and write it from their own command queue and from the CPU. */
 void* metal_linalg_buffer_contents(const void* buffer, uint64_t offset, uint64_t bytes);
 
+/* Tells the decompositions that `contents` is where the Metal buffer
+ * `buffer` (an id<MTLBuffer> as a pointer, in shared storage) starts, until
+ * metal_linalg_forget_buffer with the same two: their GPU backends then use
+ * that buffer for memory starting there, rather than wrapping the memory in
+ * a new buffer, whose pages the first command buffer using it has to map
+ * (about 1 ms for 64 MB on an M5 Pro). The caller keeps the buffer alive
+ * meanwhile. Returns 1 if it was registered, 0 if not (the same checks as
+ * metal_linalg_buffer_contents, and its contents must be `contents`), when
+ * there is nothing to forget. */
+int metal_linalg_know_buffer(const void* contents, const void* buffer);
+void metal_linalg_forget_buffer(const void* contents, const void* buffer);
+
 /* ---------------------------------------------------------------------------
  * Device and routing
  * ------------------------------------------------------------------------- */

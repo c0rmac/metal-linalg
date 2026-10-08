@@ -60,6 +60,7 @@ cc -std=c99 main.c -I/opt/homebrew/include -L/opt/homebrew/lib -lmetal_linalg -o
 | `metal_linalg_{qr,eigh,svd}_policy_get()`, `_set(&p)`, `_source()` | the routing policies; see [tuning](tuning.md) |
 | `metal_linalg_set_calibration_notices(enabled)`, `metal_linalg_calibration_message(what)` | the notice printed when this Mac's measurements are missing or not current: off, or as a string to report another way |
 | `metal_linalg_buffer_contents(buffer, offset, bytes)` | the CPU address of a range of a Metal buffer in shared storage, to pass a GPU framework's tensor memory in place (below) |
+| `metal_linalg_know_buffer(contents, buffer)`, `metal_linalg_forget_buffer(contents, buffer)` | for the calls between them, the GPU backends use `buffer` for memory starting at `contents` rather than wrapping it in a new buffer (below) |
 
 Each call is routed exactly as in C++: to the fastest Metal kernel for its
 shape and batch, or to LAPACK on the CPU, by the policy measured for this Mac.
@@ -84,4 +85,22 @@ float* w = metal_linalg_buffer_contents(w_buf, 0, (uint64_t)batch * n * sizeof(f
 if (a && w) metal_linalg_eigh(a, batch, n, 1, w, NULL, NULL);
 else        /* private storage: copy to host memory and back instead */;
 ```
+
+Each call wraps the memory it is given in a Metal buffer of its own, and
+the first command buffer using that buffer maps its pages for the GPU (about
+1 ms for 64 MB on an M5 Pro, a third of a large batch's QR). Where the
+memory is a buffer's from its start, register the buffer itself for the
+call instead; the GPU backends then use it. `metal_linalg_know_buffer`
+returns 1 if it took the buffer (in shared storage, its contents at
+`contents`), 0 if not, when there is nothing to forget:
+
+```c
+int ka = metal_linalg_know_buffer(a, buf);      /* buf's contents start at a */
+int kw = metal_linalg_know_buffer(w, w_buf);
+metal_linalg_eigh(a, batch, n, 1, w, NULL, NULL);
+if (ka) metal_linalg_forget_buffer(a, buf);
+if (kw) metal_linalg_forget_buffer(w, w_buf);
+```
+
+The PyTorch package does this for its MPS tensors.
 

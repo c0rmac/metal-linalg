@@ -1,5 +1,68 @@
 # Changes
 
+## 2.16.0
+
+- **QR kernels for batches of small and mid-size matrices**
+  (`qr_householder`), which are now the `unblocked` backend: LAPACK's
+  methods, a matrix to a simdgroup or a threadgroup, as the SVD's
+  `golub_kahan` and the eigensolver's `ql` are built. Up to 32 columns and
+  128 rows in a simdgroup's registers (`sgeqr2`, `sorg2r`: rows a lane, a
+  step's dot products four columns to a `simd_sum`, no barrier); up to 4096
+  rows blocked in a threadgroup (`sgeqrf`, `sorgqr`: panels of 16 columns in
+  registers, T built on the way, the updates by blocks of 32 columns as 8 x 8
+  simdgroup matrix products, Q's start and R folded into the passes, an
+  aligned input read directly, and a small batch given up to 16 simdgroups a
+  matrix). The input read row-major, scanned and scaled on the GPU, Q and R
+  written straight out: no CPU pass. On an M5 Pro, through MLX: 1024 of
+  128 x 128 in 4.4 ms (the blocked QR 14.5, the CPU 24.5), 256 of 256 x 256
+  in 6.2 (14.5, 17.7), 4096 of 64 x 64 in 3.9 (13.1, 9.0), 4096 of 32 x 32 in
+  0.87 (3.5, 2.6), 16 of 2048 x 64 in 1.1 (1.7, 2.8). See
+  [qr-small-kernel.md](docs/proposals/qr-small-kernel.md) and
+  [qr-mid-size-kernel.md](docs/proposals/qr-mid-size-kernel.md).
+- `unblocked`'s own kernel (`QR_Unblocked.metal`), 2.5-6x slower wherever it
+  ran, is retired; beyond 4096 rows `unblocked` hands the call to the blocked
+  QR.
+- **Callers' Metal buffers are no longer wrapped again**: through the MLX
+  API the input's and outputs' own buffers are used (`KnownBuffer`), rather
+  than new buffers over the same memory, whose pages the first command
+  buffer maps at about 1 ms a 64 MB; the C API takes a caller's buffer for a
+  call (`metal_linalg_know_buffer`, `metal_linalg_forget_buffer`), and the
+  PyTorch package passes its MPS tensors' that way. 10-25% off a call for
+  large batches of small matrices, every decomposition
+  ([known-buffers.md](docs/proposals/known-buffers.md)).
+- **The sweeps and benchmarks keep MLX's buffer cache on**, as an MLX program
+  has it (off since 2.0): every call's outputs were fresh pages the GPU maps
+  on first use, so the timings counted allocation as much as the
+  decomposition (4096 of 64 x 64 QR: 6.4 ms on the GPU with it off, 4.0 on;
+  the CPU 10.5 and 9.0). **All three decompositions re-measured** on the M5
+  Pro (kernel epochs qr 7, eigh 7, svd 9; run
+  [`20261007-9f2589`](docs/results/apple-m5-pro-20gpu/20261007-9f2589/summary.md)).
+- **QR's routing**: the kernel crossover is on k = min(M, N) rather than
+  rows, split by batch (the new kernels walk a matrix's columns with its
+  rows in parallel; the blocked QR repays its dispatches on large matrices
+  or small batches), and the GPU-or-CPU rule on w = floor(sqrt(M k)) rather
+  than k (a tall narrow batch is the unblocked backend's in parallel by its
+  rows). On the M5 Pro the blocked QR takes k >= 80 below 8 matrices, k >=
+  768 from 8; the GPU takes w <= 448 with batch * w >= 1448, or sqrt(M k) >=
+  512 at any batch. 1.020x geometric-mean regret against the best backend at
+  each of 221 shapes (held out 1.030x). The fields keep their names.
+- eigh's M5 Pro row: the GPU for N <= 16 with batch * N >= 8192, or N <= 48
+  in batches of 256+, batches shared with the CPU from 4096 (1.023x regret);
+  the SVD's: `golub_kahan` batches shared from 256, the GPU for k <= 80 in
+  batches of 256+, `band` for singular values from k = 768 (1.017x).
+- `tune_qr.py`: the kernel crossover fitted on k, on the shapes where a GPU
+  kernel beats the CPU (fitted on every shape it sent 1024 of 128 x 128 to
+  the blocked QR), its batch split shipped where it survives held-out data;
+  the GPU-or-CPU rule fitted on sqrt(M k); the unblocked backend timed on
+  the tall large shapes too; ties in the large-matrix clause's batch cap go
+  to the GPU; the grid's kernel crossover goes down to 64 (80 x 80 and 96 x
+  96) and its mid-size batches up to 384.
+- Proposals: eigh and the SVD for batches of mid-size matrices analysed
+  ([eigh-svd-mid-size.md](docs/proposals/eigh-svd-mid-size.md)): the CPU path
+  is 2-10x ahead there, and a GPU kernel would at best be level with it.
+- README: QR in the table of large batches of small matrices; every
+  performance table re-measured.
+
 ## 2.15.0 (2026-10-07)
 
 The proposals left after 2.13.0 ([docs/proposals/](docs/proposals/README.md)),

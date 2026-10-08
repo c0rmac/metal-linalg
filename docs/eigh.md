@@ -623,11 +623,14 @@ rather than constants:
 | GPU | cores | simd up to | block from | ql for | GPU iff | tridiag | status |
 |---|---|---|---|---|---|---|---|
 | Apple M1 | 8 | — | — | — | — | — | measured before 2.9.0, out of date and no longer used since 2.14.0: estimated like any unmeasured Mac (the old row's study: [`studies/eigh-routing-apple-m1.md`](studies/eigh-routing-apple-m1.md)) |
-| Apple M5 Pro | 20 | never | N = 96 | N = 12-64, shared with the CPU from batch 1024 | N <= 48 and batch * N >= 16384, or N = 49-64 in batches of 1024+ (eigvalsh: N <= 48 and batch * N >= 16384) | from N = 1024, batch <= 4 (eigvalsh: from 1536, batch <= 2, and `band` from 4096) | measured — run [`20261004-06bc11`](results/apple-m5-pro-20gpu/20261004-06bc11/eigh/report.md) |
+| Apple M5 Pro | 20 | never | N = 96 | N = 2-64, shared with the CPU from batch 4096 | N <= 16 and batch * N >= 8192, or N <= 48 in batches of 256+ (eigvalsh: N <= 48 and batch * N >= 16384) | from N = 1024, batch <= 4 (eigvalsh: from 1024, batch <= 2, and `band` from 2048) | measured — run [`20261007-9f2589`](results/apple-m5-pro-20gpu/20261007-9f2589/eigh/report.md) |
 | anything else | — | estimated | estimated | estimated | estimated | estimated | **estimated** from the M5 Pro's timings ([how](tuning.md#macs-nobody-has-measured)) |
 
-The M5 Pro row is the first measured against the CPU path that spreads a
-batch over every core (2.9.0). Against it the GPU keeps two regions: large
+The M5 Pro row of 2.16.0 (run `9f2589`, timed with MLX's buffer cache on and
+MLX's own buffers passed to the GPU backends) scores 1.0231 geometric-mean
+regret against the best backend at each of 207 points, worst 1.82x. The M5
+Pro row of 2.9.0 was the first measured against the CPU path that spreads a
+batch over every core. Against it the GPU keeps two regions: large
 batches of matrices up to N = 48 (batch × N at least 16384, so 512 matrices of
 32×32 or 2048 of 8×8), on the `ql` backend from N = 12, shared with the
 CPU path from 1024 matrices (since 2.11.0), and up to four large matrices on

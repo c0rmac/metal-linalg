@@ -31,7 +31,7 @@ marked stale, rather than an estimate. The library reports the state at run time
 and docs/measurements.md shows it for every chip.
 """
 
-KERNEL_EPOCHS = {"qr": 5, "eigh": 6, "svd": 8}
+KERNEL_EPOCHS = {"qr": 7, "eigh": 7, "svd": 9}
 # The versions from which the CPU path spreads a batch over every core (2.9.0).
 MIN_EPOCHS = {"qr": 2, "eigh": 2, "svd": 3}
 
@@ -96,6 +96,25 @@ HISTORY = [
      "products): every shape the reduced backend's streaming kernels took, 1.8-3.5x faster; batches "
      "of 512-2048 now beat the CPU (16 x 1024^2: 25 ms against 48); the large clause counts rows "
      "and k, sqrt(M k), and the grid has tall large shapes"),
+    ("qr", 6, "2.16.0", "2026-10-08",
+     "the unblocked backend is new Householder kernels (in a simdgroup's registers up to 32 x 128, "
+     "else blocked in a threadgroup up to 4096 rows, its updates 8 x 8 simdgroup matrix products; "
+     "its own kernel retired): 1024 of 128 x 128 in 6.4 ms against 17.8 for the blocked QR and 25 "
+     "on the CPU, 4096 of 32 x 32 in 1.4 against 2.9 on the CPU; MLX's own buffers no longer "
+     "wrapped again; the grid's kernel crossover goes down to 64 rows and its mid-size batches up "
+     "to 384"),
+    ("qr", 7, "2.16.0", "2026-10-08",
+     "the sweeps keep MLX's buffer cache on, as an MLX program has it (off, every call's outputs "
+     "were fresh pages the GPU maps at about 12 us a MB: 4096 of 64 x 64 6.4 ms on the GPU against "
+     "4.0 with it on); the blocked kernel gives a small batch more simdgroups a matrix (one 384 x 384 "
+     "2.0 ms against 3.0) and reads an aligned input directly; the GPU-or-CPU rule is on sqrt(M k)"),
+    ("eigh", 7, "2.16.0", "2026-10-08",
+     "the sweeps keep MLX's buffer cache on, as an MLX program has it, and MLX's own buffers are no "
+     "longer wrapped again: the GPU backends' calls on large batches 10-40% cheaper"),
+    ("svd", 9, "2.16.0", "2026-10-08",
+     "the sweeps keep MLX's buffer cache on, as an MLX program has it, and MLX's own buffers are no "
+     "longer wrapped again: the GPU backends' calls on large batches 10-40% cheaper; the QR-"
+     "preconditioned backends run on 2.16.0's QR"),
 ]
 
 REQUIRED = {

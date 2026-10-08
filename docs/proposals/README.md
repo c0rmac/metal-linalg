@@ -11,6 +11,7 @@ Apple M5 Pro's (20 GPU cores, 18 CPU cores).
 |---|---|---|---|---|
 | [The blocked QR's fixed costs and panels](qr-fixed-costs.md#done-2026-10-07) (what is left) | QR, one matrix of 512-4096 | the TSQR's leaves, top and rebuild about 3.8 of 6.6 ms at 1024; updates inside aggregates 12% | 1-2 days | a few % each: the leaves and top as one dispatch, the in-aggregate updates as kernels of their own |
 | [The CPU path's divide and conquer](cpu-path-divide-and-conquer.md) | eigh and SVD with vectors on the CPU, one matrix | `sstedc` 43 of 239 ms, `sbdsdc` 133 of 439 at 2048 | about 2 days | eigh 1.15-1.25x, SVD ~1.34x at 1024-2048 (estimate) |
+| [eigh and the SVD for batches of mid-size matrices](eigh-svd-mid-size.md) (analysed, not built) | eigh and the SVD, batches of 88-128 with vectors | the CPU 2-10x ahead of every GPU backend at 96-512 (1024 of 96 x 96 eigh: 22.5 ms against 75) | 3-5 days | at best 1.2-1.5x the CPU at 88-128, with the vectors in registers |
 
 The CPU path's divide and conquer matters less on the M5 Pro since 2.15.0,
 where the GPU takes single matrices from about 512, but more on Macs whose
@@ -23,6 +24,14 @@ GPU is weaker against their CPU.
   Mac to run `python3 tuning/run.py` on an idle machine.
 
 ## Done
+
+In 2.16.0 (2026-10-08):
+
+| proposal | outcome |
+|---|---|
+| [A QR kernel for batches of small matrices](qr-small-kernel.md) | a kernel in a simdgroup's registers (sgeqr2, sorg2r; up to 32 columns and 128 rows), 4-6x the `unblocked` backend's first kernel; the threadgroup-memory kernel proposed was built and then beaten by the blocked one below |
+| [A QR kernel for batches of mid-size matrices](qr-mid-size-kernel.md) | LAPACK's blocked QR in one threadgroup a matrix, the updates 8 x 8 simdgroup matrix products: 1024 of 128 x 128 in 6.4 ms (the blocked QR 17.8, the CPU 25), 256 of 256 x 256 in 8.3 (17.8, 18.7); replaced two kernels; small batches get more simdgroups a matrix (one 384 x 384 2.0 ms against 3.0) |
+| [MLX's buffers, not wrapped again](known-buffers.md) | through the MLX API the arrays' own Metal buffers, not new ones over their memory: 10-25% off a call for large batches of small matrices, every decomposition; the same for the C API (`metal_linalg_know_buffer`) and PyTorch's MPS tensors; the rest of the per-call cost found to be the sweeps' (MLX's buffer cache off), which keep it on since; a residency set tried, no gain |
 
 In 2.15.0 (2026-10-07); see [the study](../studies/proposals-2-15-apple-m5-pro.md):
 

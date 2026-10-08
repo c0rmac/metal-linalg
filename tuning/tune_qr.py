@@ -91,9 +91,9 @@ LARGE_BATCHES = (1, 2, 4, 16)
 # Tall matrices large by their rows (2.15.0): the blocked QR takes one 8192 x
 # 512 in 9 ms on an M5 Pro, the CPU 48, which a rule on k = min(M, N) cannot
 # see; the large clause counts rows and k, sqrt(M k). Their wide transposes
-# too. Only the reduced kernel and the CPU for the tall ones
-# (the other kernel's workspace is M x M, and its crossover sends them to
-# the reduced one anyway); left out of the kernel crossover.
+# too. Left out of the kernel crossover. (Before 2.16.0 the tall ones were
+# timed without the unblocked backend, whose first kernel's workspace was
+# M x M.)
 TALL_LARGE = ((2048, 512), (4096, 256), (4096, 1024), (8192, 128), (8192, 512), (16384, 64))
 TALL_LARGE_BATCHES = (1, 4)
 
@@ -102,12 +102,14 @@ TALL_LARGE_BATCHES = (1, 4)
 # the CPU wins 1000 of 64x64 by 2x and the GPU 1024 of 128x128 by 1.3x. The
 # square batches above stop at 64, so without these a fit cannot see it. Also
 # left out of the kernel crossover, to keep that comparable with earlier runs.
-MID_DIMS = (64, 128, 256)
+# 96, 192 and 384 since the blocked Householder kernel (2.16.0), which takes
+# them all on the GPU (256 of 384 x 384, the largest under the memory cap).
+MID_DIMS = (64, 96, 128, 192, 256, 384)
 MID_BATCHES = (256, 1024, 4096)
 
 # Candidate thresholds. A threshold only changes behaviour when it crosses a
 # measured M, so values between two measured M's are equivalent by construction.
-THRESHOLDS = [128, 192, 256, 288, 320, 352, 384, 416, 448, 480, 512, 576, 640, 768, 1024]
+THRESHOLDS = [64, 80, 96, 128, 192, 256, 288, 320, 352, 384, 416, 448, 480, 512, 576, 640, 768, 1024]
 
 # The decision-surface panels are a dense cross product, measured explicitly so
 # the heatmap has no holes. This is the picture that shows *why* the crossover
@@ -135,7 +137,7 @@ def region(M, N):
 
 
 def shape_grid(full=False):
-    square_dims = [64, 128, 192, 256, 320, 384, 448, 512, 640, 768]
+    square_dims = [64, 80, 96, 128, 192, 256, 320, 384, 448, 512, 640, 768]
     tall = [(256, 16), (256, 64), (384, 32), (384, 64), (512, 32),
             (512, 128), (640, 64), (1024, 64), (1024, 256), (2048, 64)]
     near = [(384, 256), (448, 256), (512, 384), (256, 384), (320, 448)]
@@ -200,8 +202,7 @@ def tall_large(key):
 
 
 def sweep(binary, pts, passes, limit, out_csv):
-    jobs = [(b, M, N, k) for (b, M, N) in pts for k in BACKENDS
-            if not (tall_large((b, M, N)) and k == "unblocked")]
+    jobs = [(b, M, N, k) for (b, M, N) in pts for k in BACKENDS]
     jobs += [(b, M, N, "share") for (b, M, N) in pts if b >= SHARE_MIN_GRID_BATCH]
     total = len(jobs) * passes
     print(f"  {len(pts)} shapes x {len(BACKENDS)} backends (and sharing from batch {SHARE_MIN_GRID_BATCH}) "
@@ -230,11 +231,11 @@ def load(paths):
     Several raw.csv files from one submission merge by min-of-passes, so a
     sweep can be topped up with extra shapes rather than remeasured."""
     best, repeats, subs = sub.combine(paths, lambda r: (int(r["batch"]), int(r["M"]), int(r["N"])))
-    # Both GPU kernels are needed (but for the tall large shapes, timed with
-    # the reduced one alone); the CPU timing is there only in runs made since
-    # QR had a CPU path.
-    best = {k: v for k, v in best.items()
-            if all(x in v for x in GPU_BACKENDS) or (tall_large(k) and "reduced" in v)}
+    # Both GPU kernels are needed (the tall large shapes were timed with the
+    # reduced one alone before 2.16.0, whose unblocked backend takes any
+    # height); the CPU timing is there only in runs made since QR had a CPU
+    # path.
+    best = {k: v for k, v in best.items() if all(x in v for x in GPU_BACKENDS)}
     return best, repeats, subs
 
 # ---------------------------------------------------------------------------
@@ -316,23 +317,35 @@ def evaluate(rule, pts, tie=0.10):
             "over_tie": bad, "n": len(reg), "total": th / to}
 
 
+# The kernel crossover is on k = min(M, N) since 2.16.0 (qr_gpu_backend in
+# src/qr.mm): the unblocked backend's kernels hold a matrix's rows in parallel
+# and walk its columns. On M before, for the first unblocked kernel, which
+# swept a matrix's rows a column at a time.
 def flat_rule(t):
-    return lambda b, M, N: "reduced" if M >= t else "unblocked"
+    return lambda b, M, N: "reduced" if min(M, N) >= t else "unblocked"
 
 
 def two_regime(lo, hi, sat):
-    return lambda b, M, N: "reduced" if M >= (hi if b < sat else lo) else "unblocked"
+    return lambda b, M, N: "reduced" if min(M, N) >= (hi if b < sat else lo) else "unblocked"
+
+
+def kernel_rule(kc):
+    """The kernel crossover as shipped: a plain threshold on k, or (small,
+    large, sat), small for batches below sat and large from it (the policy's
+    m_crossover_small_batch, m_crossover_large_batch, batch_threshold)."""
+    if isinstance(kc, (tuple, list)):
+        small, large, sat = kc
+        return two_regime(large, small, sat)
+    return flat_rule(kc)
 
 
 def narrow_n(t1, tn, t2):
-    return lambda b, M, N: "reduced" if (M >= t1 or (N <= tn and M >= t2)) else "unblocked"
+    return lambda b, M, N: "reduced" if (min(M, N) >= t1 or (N <= tn and min(M, N) >= t2)) else "unblocked"
 
 
 def for_crossover(key):
     """Whether a shape takes part in the kernel crossover analysis."""
     b, M, N = key
-    if M == N and b in MID_BATCHES and M in MID_DIMS:
-        return False
     if tall_large(key):
         return False
     return not (M == N and (M in SMALL_DIMS or M in LARGE_DIMS))
@@ -345,8 +358,12 @@ def for_crossover(key):
 # sqrt(M k) 1.0133x (1.0274x): the CPU path's wide matrices (a square block
 # and a product) are cheaper than their work says, its tall ones dearer.
 def work_side(M, N):
-    """sqrt(M k), rounded."""
-    return round((M * min(M, N)) ** 0.5)
+    """floor(sqrt(M k)), exactly, as qr.mm computes it (qr_work_side). Since
+    2.16.0 the product rule is on it too (k before): the unblocked backend
+    takes a tall narrow batch in parallel by its rows, and on the run of
+    2026-10-08 the rule on k sent 16 of 1024 x 64 to the CPU at 1.9x the
+    GPU's time; refitted on sqrt(M k), 1.037x regret went to 1.024x."""
+    return math.isqrt(M * min(M, N))
 
 
 def large_enough(M, N, lk):
@@ -362,16 +379,16 @@ def routed(params, chosen, large=(0, 0)):
     gm, mb, mbatch = params[:3]
     mk = params[3] if len(params) > 3 else 0
     lk, lcap = large
-    base = flat_rule(chosen)
+    base = kernel_rule(chosen)
 
     def kernel(b, M, N):   # on the GPU: the kernel, or shared with the CPU from SHARE
         return "share" if SHARE and b >= SHARE and (b, M, N) in SHARED_PTS else base(b, M, N)
 
     def rule(b, M, N):
-        k = min(M, N)
+        w = work_side(M, N)
         if lk and large_enough(M, N, lk) and (not lcap or b <= lcap):
             return kernel(b, M, N)
-        if k < mk or k > gm or b * k < mb or b < mbatch:
+        if w < mk or w > gm or b * w < mb or b < mbatch:
             return "cpu"
         return kernel(b, M, N)
     return rule
@@ -385,7 +402,7 @@ def fit_share(best, chosen, tol=0.005):
     pts = {k: {g: v[g] for g in GPU_BACKENDS + ("share",) if g in v} for k, v in best.items() if "share" in v}
     if not pts:
         return 0, {}
-    kern = flat_rule(chosen)
+    kern = kernel_rule(chosen)
     cands = [0] + sorted({b for (b, _, _) in pts})
     scores = {}
     for c in cands:
@@ -405,8 +422,8 @@ def fit_cpu_routing(best, chosen, tol=0.005):
     pts = {k: v for k, v in best.items() if "cpu" in v}
     if not pts:
         return None
-    ks = sorted({min(M, N) for (_, M, N) in pts})
-    bks = sorted({b * min(M, N) for (b, M, N) in pts})
+    ks = sorted({work_side(M, N) for (_, M, N) in pts})       # the rule's size, sqrt(M k)
+    bks = sorted({b * work_side(M, N) for (b, M, N) in pts})
     batches = sorted({b for (b, _, _) in pts})
     # A limit at the largest k measured fits the data exactly as well as no
     # limit, but says nothing about larger k, where the GPU may win (for QR it
@@ -439,9 +456,14 @@ def fit_cpu_routing(best, chosen, tol=0.005):
         scored = {c: evaluate(routed(rule_params, chosen, c), points) for c in large_cands}
         g = min(e["geomean"] for e in scored.values())
         near = {c: e for c, e in scored.items() if e["geomean"] <= g * (1 + tol)}
-        # The smallest worst case; then the clause used least (larger k, smaller cap).
+        # The smallest worst case; then the clause's k used least (larger),
+        # and its batch cap the largest: caps above the grid's largest batch of
+        # large matrices tie on the data, and the GPU's lead on large matrices
+        # grows with the batch (16 of 1024 x 1024: 25 ms against the CPU's 48
+        # on an M5 Pro), so a tie goes to the GPU (2.16.0; the smallest before,
+        # which on the run of 2026-10-08 capped it at the grid's 16).
         return min(near, key=lambda c: (near[c]["worst"], near[c]["geomean"],
-                                        -c[0] if c[0] else 0, c[1] if c[1] else INF))
+                                        -c[0] if c[0] else 0, -(c[1] if c[1] else INF)))
 
     def fit(points):
         # Two orders, the better kept: the rule, then the clause given it, then
@@ -528,10 +550,26 @@ def noise_floor(repeats):
     }
 
 
+def gpu_takes(t):
+    """Whether a GPU kernel beats the CPU at this shape (or the CPU was not
+    timed): where the kernel crossover matters."""
+    return "cpu" not in t or min(t[g] for g in GPU_BACKENDS) < t["cpu"]
+
+
 def analyse(best_all, repeats, device):
     # The kernel crossover is a choice between the two GPU kernels, so it is
-    # made on their timings alone; the CPU comes in afterwards, in the routing.
-    best = {k: {g: v[g] for g in GPU_BACKENDS} for k, v in best_all.items() if for_crossover(k)}
+    # made on their timings alone, and only where it matters: on the shapes a
+    # GPU kernel takes from the CPU; the CPU comes in afterwards, in the
+    # routing. Since 2.16.0's Householder kernels the unblocked backend wins
+    # large batches of mid-size matrices by 2-3x and the blocked QR small
+    # batches of wide ones, which the CPU mostly takes: scored on every
+    # shape, those pulled the crossover to 64 and sent 1024 of 128 x 128 to
+    # the blocked QR (17.8 ms against 6.4). The mid-size batches take part
+    # since then too.
+    every = {k: {g: v[g] for g in GPU_BACKENDS} for k, v in best_all.items() if for_crossover(k)}
+    best = {k: v for k, v in every.items() if gpu_takes(best_all[k])}
+    if len(best) < 10:   # a GPU that wins (almost) nowhere: every shape
+        best = every
     by_region = {r: {k: v for k, v in best.items() if region(k[1], k[2]) == r}
                  for r in REGIONS}
 
@@ -583,8 +621,8 @@ def analyse(best_all, repeats, device):
     rules = {
         "original 5-rule heuristic": orig,
         "max(M,N) >= 512": lambda b, M, N: "reduced" if max(M, N) >= 512 else "unblocked",
-        "K = min(M,N) >= 128": lambda b, M, N: "reduced" if min(M, N) >= 128 else "unblocked",
-        f"M >= {chosen}  (chosen)": flat_rule(chosen),
+        f"k >= {chosen}  (chosen)": flat_rule(chosen),
+        "M >= 512  (rows, the feature before 2.16.0)": lambda b, M, N: "reduced" if M >= 512 else "unblocked",
     }
     rule_rows = []
     for lab, h in rules.items():
@@ -597,7 +635,7 @@ def analyse(best_all, repeats, device):
         e["total"] = round(e["total"], 4)
         rule_rows.append(e)
 
-    # Which feature? If M stops being the best feature on some GPU, that is a
+    # Which feature? If k stops being the best feature on some GPU, that is a
     # structural change and matters far more than the threshold moving.
     feats = {"M (rows)": lambda b, M, N: M,
              "max(M, N)": lambda b, M, N: max(M, N),
@@ -631,13 +669,16 @@ def analyse(best_all, repeats, device):
         return bf
 
     refinements = []
-    e2, c2 = fit(two_regime, [[256, 288, 320, 352, 384, 416],
-                              [352, 384, 416, 448, 480, 512, 576],
-                              [2, 4, 8, 16, 32]])
+    # The split's grid spans both directions: the first unblocked kernel lost
+    # to the grid-parallel one from a lower M at small batches; since 2.16.0
+    # the blocked QR takes small batches from a lower k (its spread over the
+    # GPU against one threadgroup a matrix), large ones from a higher.
+    split_ts = [t for t in THRESHOLDS] + [2048]
+    e2, c2 = fit(two_regime, [split_ts, split_ts, [2, 4, 8, 16, 32, 64]])
     te2 = evaluate(two_regime(*c2), te)
     refinements.append({
         "name": "batch-dependent split",
-        "form": f"M >= ({c2[1]} if batch < {c2[2]} else {c2[0]})",
+        "form": f"k >= ({c2[1]} if batch < {c2[2]} else {c2[0]})",
         "train_geomean": round(e2["geomean"], 4),
         "test_geomean": round(te2["geomean"], 4),
         "test_worst": round(te2["worst"], 3),
@@ -650,13 +691,18 @@ def analyse(best_all, repeats, device):
     te3 = evaluate(narrow_n(*c3), te)
     refinements.append({
         "name": "narrow-N special case",
-        "form": f"M >= {c3[0]} or (N <= {c3[1]} and M >= {c3[2]})",
+        "form": f"k >= {c3[0]} or (N <= {c3[1]} and k >= {c3[2]})",
         "train_geomean": round(e3["geomean"], 4),
         "test_geomean": round(te3["geomean"], 4),
         "test_worst": round(te3["worst"], 3),
         "justified": bool(te3["geomean"] < base_te["geomean"] - 0.002
                           and te3["worst"] <= base_te["worst"] + 0.01),
     })
+
+    # Shipped: the split where it survives held-out data, else the band's
+    # middle.
+    kernel = (c2[1], c2[0], c2[2]) if refinements[0]["justified"] else chosen
+    small, large, sat = kernel if isinstance(kernel, tuple) else (chosen, chosen, 16)
 
     counts = defaultdict(int)
     for k in best_all:
@@ -665,9 +711,9 @@ def analyse(best_all, repeats, device):
     global SHARE, SHARED_PTS
     SHARED_PTS = {k for k, v in best_all.items() if "share" in v}
     SHARE = 0
-    share, share_scores = fit_share(best_all, chosen)
+    share, share_scores = fit_share(best_all, kernel)
     SHARE = share
-    routing = fit_cpu_routing(best_all, chosen)
+    routing = fit_cpu_routing(best_all, kernel)
     if routing is not None:
         routing["share_min_batch"] = share
         routing["share_curve"] = [[c, round(v[0], 4), round(v[1], 3)] for c, v in sorted(share_scores.items())]
@@ -689,6 +735,8 @@ def analyse(best_all, repeats, device):
         "threshold_curves": curves,
         "band": {"lo": min(band), "hi": max(band), "chosen": chosen,
                  "best_geomean": round(gbest, 4), "tolerance": tol},
+        "kernel": {"small_batch": small, "large_batch": large, "batch_threshold": sat,
+                   "split": isinstance(kernel, tuple)},
         "cost_of_missing": cost,
         "surface": surface,
         "rules": rule_rows,
@@ -697,7 +745,7 @@ def analyse(best_all, repeats, device):
         "baseline_held_out": {"geomean": round(base_te["geomean"], 4),
                               "worst": round(base_te["worst"], 3)},
         "ktuned_entry": (f'{{"{device["name"]}", {device["gpu_cores"]}, '
-                         f'{chosen}, {chosen}, 16,   {gm_s}, {mb}, {mbatch}, {mk},   {lk}, {lcap},   {share}}},'),
+                         f'{small}, {large}, {sat},   {gm_s}, {mb}, {mbatch}, {mk},   {lk}, {lcap},   {share}}},'),
     }
 
 
@@ -757,18 +805,19 @@ def _ascii_surface(cells, chosen):
             return ".  "
         return "   "          # unblocked wins big
 
-    first = min((m for m in Ms if m >= chosen), default=None)
     out = ["      " + "".join(f"N={n:<8}" for n in Ns)]
     out.append("      " + "-" * (9 * len(Ns)))
     for M in Ms:
         row = f"{M:>5} "
         for N in Ns:
             v = g.get((M, N))
-            row += (f"{glyph(v)}{v:<5.2f}" if v is not None else f"{glyph(v)}{'':<5}") + " "
-        out.append(row.rstrip() + ("   <- M >= %d" % chosen if M == first else ""))
+            mark = "*" if min(M, N) >= chosen else " "
+            row += (f"{glyph(v)}{v:<5.2f}" if v is not None else f"{glyph(v)}{'':<5}") + mark
+        out.append(row.rstrip())
     out.append("")
     out.append("      ratio = reduced / unblocked.  ### <0.60  ## <0.85  # <0.95")
     out.append("      ~ tie (0.95-1.05)   . <1.30   blank >1.30  (unblocked wins)")
+    out.append(f"      * k = min(M, N) >= {chosen}: the blocked QR's")
     return "\n".join(out)
 
 
@@ -802,12 +851,18 @@ def write_report(res, path):
 
     A("## The band")
     A("")
-    A(f"```\nM >= {band['chosen']}  ->  qr_streaming_amx_reduced\notherwise  ->  qr_unblocked\n```")
+    A(f"```\nk = min(M, N) >= {band['chosen']}  ->  qr_streaming_amx_reduced\notherwise  ->  qr_unblocked\n```")
     A("")
-    A(f"The optimum is flat from **{band['lo']} to {band['hi']}** rows "
+    A(f"The optimum is flat from **k = {band['lo']} to {band['hi']}** "
       f"(every threshold within {band['tolerance']*100:.1f}% of the best, "
       f"{band['best_geomean']:.4f}x). Any value inside that band is equivalent on "
       f"this hardware; **{band['chosen']}** is the middle of it.")
+    kn = res.get("kernel")
+    if kn and kn.get("split"):
+        A("")
+        A(f"Shipped instead: the batch-dependent split, which survived held-out data "
+          f"([below](#refinements-tested)): the blocked QR from **k = {kn['small_batch']}** "
+          f"for batches below {kn['batch_threshold']}, from **k = {kn['large_batch']}** for larger ones.")
     A("")
     A("Paste into `kTuned[]` in `src/qr.mm`:")
     A("")
@@ -841,8 +896,8 @@ def write_report(res, path):
                  (f" and batch <= {rt['gpu_large_max_batch']}" if rt.get("gpu_large_max_batch") else "")
                  + "   (large matrices, by rows and k)") if lk else ""
         mk = rt.get("gpu_min_k", 0)
-        A(f"```\nGPU iff {str(mk) + ' <= ' if mk else ''}k <= {gm}, batch * k >= {rt['gpu_min_batch_times_k']} "
-          f"and batch >= {rt['gpu_min_batch']}   (k = min(M, N)){large}\notherwise LAPACK on the CPU\n```")
+        A(f"```\nGPU iff {str(mk) + ' <= ' if mk else ''}w <= {gm}, batch * w >= {rt['gpu_min_batch_times_k']} "
+          f"and batch >= {rt['gpu_min_batch']}   (w = floor(sqrt(M k)), k = min(M, N)){large}\notherwise LAPACK on the CPU\n```")
         A("")
         sh = rt.get("share_min_batch", 0)
         A("On the GPU, " + (f"from a batch of {sh} the batch is shared with the CPU path (the GPU and the CPU "
@@ -900,9 +955,10 @@ def write_report(res, path):
 
     A("## Which feature decides")
     A("")
-    A("`qr_unblocked` gives each matrix a single threadgroup, which sweeps `M` "
-      "rows per Householder reflection while `N` parallelises across that "
-      "threadgroup's threads. Rows and columns are therefore not "
+    A("`qr_unblocked` gives each matrix a simdgroup or a threadgroup whose "
+      "threads hold its rows, and walks its k = min(M, N) columns a panel step "
+      "at a time: its depth is k, while its rows run in parallel. The blocked "
+      "QR pays several dispatches a panel. Rows and columns are therefore not "
       "interchangeable, and a rule on `max(M, N)` cannot express the difference.")
     A("")
     A("| feature | best threshold | geomean regret | worst |")
@@ -910,9 +966,9 @@ def write_report(res, path):
     for f in res["features"]:
         A(f"| {f['feature']} | {f['best_threshold']} | {f['geomean']:.4f}x | {f['worst']:.2f}x |")
     A("")
-    if res["features"][0]["feature"] != "M (rows)":
-        A(f"> **The best feature here is {res['features'][0]['feature']}, not M.** "
-          "The dispatcher keys on `M`. If this reproduces, `qr_accelerated` needs "
+    if res["features"][0]["feature"] != "K = min(M, N)":
+        A(f"> **The best feature here is {res['features'][0]['feature']}, not k.** "
+          "The dispatcher keys on `k = min(M, N)`. If this reproduces, `qr_accelerated` needs "
           "revisiting for this GPU — a change of feature is structural and matters "
           "more than the threshold moving.")
         A("")
@@ -948,7 +1004,7 @@ def write_report(res, path):
       "much later, so the batch split in particular could be justified elsewhere. "
       "Each is fitted on half the shapes and scored on the other half.")
     A("")
-    A(f"Baseline for comparison — `M >= {band['chosen']}` on the held-out half: "
+    A(f"Baseline for comparison — `k >= {band['chosen']}` on the held-out half: "
       f"**{res['baseline_held_out']['geomean']:.4f}x** geomean, "
       f"{res['baseline_held_out']['worst']:.2f}x worst.")
     A("")
@@ -1029,7 +1085,8 @@ def main():
             json.dump(res, fh, indent=2)
         write_report(res, os.path.join(a.out, "report.md"))
         b = res["band"]
-        print(f"  band {b['lo']}..{b['hi']}   ship M >= {b['chosen']}   "
+        kn = res["kernel"]
+        print(f"  band {b['lo']}..{b['hi']}   ship k >= {kn['small_batch']} (batch < {kn['batch_threshold']}) / {kn['large_batch']}   "
               f"({b['best_geomean']:.4f}x geomean regret)")
         print(f"  -> {a.out}/report.md, {a.out}/results.json")
         return
@@ -1066,13 +1123,14 @@ def main():
 
     b = res["band"]
     print()
-    print(f"  band {b['lo']}..{b['hi']}   ship M >= {b['chosen']}   "
+    kn = res["kernel"]
+    print(f"  band {b['lo']}..{b['hi']}   ship k >= {kn['small_batch']} (batch < {kn['batch_threshold']}) / {kn['large_batch']}   "
           f"({b['best_geomean']:.4f}x geomean regret)")
     rt = res.get("routing")
     if rt:
         gm = "no limit" if rt["gpu_max_k"] >= NO_LIMIT else rt["gpu_max_k"]
         lk = rt.get("gpu_large_min_k", 0)
-        print(f"  CPU routing: GPU iff {rt.get('gpu_min_k', 0)} <= k <= {gm}, batch*k >= {rt['gpu_min_batch_times_k']}, "
+        print(f"  CPU routing: GPU iff {rt.get('gpu_min_k', 0)} <= w <= {gm}, batch*w >= {rt['gpu_min_batch_times_k']}, "
               f"batch >= {rt['gpu_min_batch']}" +
               (f", or sqrt(M k) >= {lk} and batch <= {rt['gpu_large_max_batch'] or 'any'}" if lk else "") +
               (f"; shared with the CPU from batch {rt['share_min_batch']}" if rt.get("share_min_batch") else "") +
