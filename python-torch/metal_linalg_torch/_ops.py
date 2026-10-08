@@ -128,21 +128,39 @@ def _run(a, shapes, call):
 # QR
 # ---------------------------------------------------------------------------
 
-@torch.library.custom_op("metal_linalg::qr", mutates_args=())
-def qr(a: Tensor) -> tuple[Tensor, Tensor]:
-    lead, batch, m, n = _dims(a, "qr")
+def _qr_shapes(shape, mode):
+    """Q's and R's shapes for `mode`, as torch.linalg.qr's: Q empty for "r",
+    square for "complete" (R then [..., M, N])."""
+    *lead, m, n = shape
     k = min(m, n)
-    shapes = ((*lead, m, k), (*lead, k, n))
-    if not (batch and k):
-        return tuple(_empty(s, a.device) for s in shapes)
-    return _run(a, shapes, lambda x, q, r: _lib.qr(x, batch, m, n, q, r))
+    if mode == "reduced":
+        return (*lead, m, k), (*lead, k, n)
+    if mode == "r":
+        return (0,), (*lead, k, n)
+    if mode == "complete":
+        return (*lead, m, m), (*lead, m, n)
+    raise ValueError(f"metal_linalg::qr: mode must be 'reduced', 'r' or 'complete', got {mode!r}")
+
+
+@torch.library.custom_op("metal_linalg::qr", mutates_args=())
+def qr(a: Tensor, mode: str = "reduced") -> tuple[Tensor, Tensor]:
+    lead, batch, m, n = _dims(a, "qr")
+    q_shape, r_shape = _qr_shapes(a.shape, mode)
+    if not (batch and min(m, n)):
+        Q, R = _empty(q_shape, a.device), _empty(r_shape, a.device)
+        if mode == "complete" and batch and m:   # nothing to factor: Q = I
+            Q.copy_(torch.eye(m, dtype=torch.float32, device=a.device).expand(q_shape))
+        return Q, R
+    if mode == "r":
+        (R,) = _run(a, (r_shape,), lambda x, r: _lib.qr(x, batch, m, n, None, r, mode))
+        return _empty(q_shape, a.device), R
+    return _run(a, (q_shape, r_shape), lambda x, q, r: _lib.qr(x, batch, m, n, q, r, mode))
 
 
 @qr.register_fake
-def _(a):
-    *lead, m, n = a.shape
-    k = min(m, n)
-    return a.new_empty((*lead, m, k)), a.new_empty((*lead, k, n))
+def _(a, mode="reduced"):
+    q_shape, r_shape = _qr_shapes(a.shape, mode)
+    return a.new_empty(q_shape), a.new_empty(r_shape)
 
 
 def _qr_square_grad(Q, R, gQ, gR):
@@ -182,12 +200,21 @@ def qr_grad(Q, R, gQ, gR):
 
 def _qr_setup(ctx, inputs, output):
     ctx.set_materialize_grads(False)
+    ctx.mode = inputs[1] if len(inputs) > 1 else "reduced"
     ctx.save_for_backward(*output)
 
 
 def _qr_backward(ctx, gQ, gR):
     Q, R = ctx.saved_tensors
-    return qr_grad(Q, R, gQ, gR)
+    # As torch.linalg.qr's backward. (metal_linalg_torch.qr computes Q for
+    # mode="r" when its input requires grad, so R alone is differentiable there.)
+    if ctx.mode == "r" and gR is not None:
+        raise RuntimeError("metal_linalg::qr: the derivative of QR depends on Q, which is not computed "
+                           "when mode='r'; use mode='reduced' to differentiate")
+    if ctx.mode == "complete" and Q.shape[-2] > R.shape[-1] and (gQ is not None or gR is not None):
+        raise RuntimeError("metal_linalg::qr: the QR decomposition is not differentiable when "
+                           "mode='complete' and M > N")
+    return qr_grad(Q, R, gQ, gR), None
 
 
 qr.register_autograd(_qr_backward, setup_context=_qr_setup)

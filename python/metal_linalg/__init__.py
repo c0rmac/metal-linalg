@@ -93,15 +93,23 @@ def _array(a):
 # Decompositions
 # ---------------------------------------------------------------------------
 
-def qr(a):
-    """Thin QR of a batch of matrices: ``a = Q @ R``.
+def qr(a, mode="reduced"):
+    """QR of a batch of matrices: ``a = Q @ R``.
 
     ``a`` is ``[..., M, N]``. Returns ``Q`` ``[..., M, K]`` with orthonormal
     columns and ``R`` ``[..., K, N]`` upper triangular, ``K = min(M, N)``.
     Runs on the GPU, or in LAPACK on the CPU for problems too small to pay
     for a GPU launch, as this Mac was measured (see :func:`qr_backend`).
+
+    ``mode`` as :func:`numpy.linalg.qr`'s: ``"reduced"`` (the above),
+    ``"r"`` (``R`` alone, returned on its own; ``Q`` is never formed, up to
+    twice as fast) or ``"complete"`` (``Q`` ``[..., M, M]`` square, ``R``
+    ``[..., M, N]`` with zero rows below ``K``).
     """
-    return _core.qr(_array(a))
+    if mode not in ("reduced", "r", "complete"):
+        raise ValueError(f'mode must be "reduced", "r" or "complete", not {mode!r}')
+    q, r = _core.qr(_array(a), mode)
+    return r if mode == "r" else (q, r)
 
 
 def eigh(a, uplo="L"):

@@ -39,6 +39,7 @@
 #include <unistd.h>
 
 using metal_linalg::core::Matrices;
+using metal_linalg::core::QrMode;
 using metal_linalg::detail::AutoreleasePool;
 using metal_linalg::detail::MetalRuntime;
 using metal_linalg::detail::copy_out;
@@ -53,9 +54,13 @@ struct QsParams {
     uint32_t m;
     uint32_t n;
     uint32_t batch;
+    uint32_t q_cols;   // Q's columns: K, or 0 for R alone
 };
 struct QwParams {
     uint32_t m, n, mp, np, Kp, batch, q_direct, sc;
+    uint32_t qn;   // Q's columns in its workspace: Kp, mp (Q square) or 0 (R alone)
+    uint32_t qc;   // ... in the output: K, M or 0
+    uint32_t rr;   // R's rows in the output: K, or M (Q square)
 };
 
 unsigned env_uint(const char* name, unsigned fallback) {
@@ -220,19 +225,18 @@ struct Cache {
     }
 
     // Output buffers for a caller's memory that is not page-aligned: the
-    // latest shape's, grown as needed.
-    Workspace& workspace(uint32_t batch, uint32_t M, uint32_t N) {
-        if (ws.capacity >= batch && m == M && n == N) return ws;
-        const size_t K = std::min(M, N);
+    // latest shape's (Q's and R's floats a matrix), grown as needed.
+    Workspace& workspace(uint32_t batch, uint32_t q_floats, uint32_t r_floats) {
+        if (ws.capacity >= batch && m == q_floats && n == r_floats) return ws;
         auto buf = [&](size_t floats) {
             return [rt.device newBufferWithLength:std::max<size_t>(16, floats * sizeof(float))
                                           options:MTLResourceStorageModeShared];
         };
-        ws.q = buf((size_t)batch * M * K);
-        ws.r = buf((size_t)batch * K * N);
+        ws.q = buf((size_t)batch * q_floats);
+        ws.r = buf((size_t)batch * r_floats);
         ws.capacity = batch;
-        m = M;
-        n = N;
+        m = q_floats;
+        n = r_floats;
         return ws;
     }
 
@@ -243,15 +247,17 @@ struct Cache {
 };
 
 // The kernel for m x n: in registers where the shape allows
-// (QR_HOUSEHOLDER_SIMD=0 turns it off), else blocked;
+// (QR_HOUSEHOLDER_SIMD=0 turns it off) and Q is not square beyond its
+// columns, else blocked;
 // QR_HOUSEHOLDER_KERNEL=simd|wy forces one where it fits. The register kernel
 // is the faster up to 32 columns (4096 of 32 x 32: 0.82 ms of GPU time against
 // 1.59, of 128 x 16 0.54 against 1.46), the blocked one from 48.
 enum class Kind { none, simd, wy };
 
-Kind choose(uint32_t m, uint32_t n) {
+Kind choose(uint32_t m, uint32_t n, QrMode mode = QrMode::reduced) {
     const char* se = std::getenv("QR_HOUSEHOLDER_SIMD");
-    const bool simd = !(se && std::string(se) == "0") && simd_shape(m, n).b != 0;
+    const bool simd = !(se && std::string(se) == "0") && simd_shape(m, n).b != 0 &&
+                      !(mode == QrMode::complete && m > n);
     const bool wy = wy_shape(m, n, Cache::shared().wy_max_simdgroups()).r != 0;
     if (const char* e = std::getenv("QR_HOUSEHOLDER_KERNEL")) {
         const std::string k = e;
@@ -278,31 +284,34 @@ bool qr_householder_preferred(uint32_t m, uint32_t n) {
     return choose(m, n) != Kind::none;
 }
 
-void qr_householder(const Matrices& a, float* q_out, float* r_out) {
+void qr_householder(const Matrices& a, float* q_out, float* r_out, QrMode mode) {
     const uint32_t M = a.rows, N = a.cols, K = std::min(M, N), batch = a.batch;
     if (K == 0 || batch == 0) return;
-    const Kind kind = choose(M, N);
+    const Kind kind = choose(M, N, mode);
     if (kind == Kind::none)
         throw std::invalid_argument("[qr] householder: " + std::to_string(M) + "x" + std::to_string(N) +
                                     " is more than its kernels take on this device.");
     AutoreleasePool pool;
     Cache& cache = Cache::shared();
     id<MTLDevice> dev = cache.rt.device;
+    // Q's columns (K, M, or none) and R's rows (K, or M with zeros below K)
+    const uint32_t QC = core::qr_q_cols(mode, M, N), RR = core::qr_r_rows(mode, M, N);
 
     // Q and R straight into the caller's memory where it is page-aligned,
     // else into a workspace and copied.
     const size_t page = (size_t)getpagesize(), f = sizeof(float);
-    const size_t qn = (size_t)batch * M * K, rn = (size_t)batch * K * N;
-    const bool q_direct = reinterpret_cast<uintptr_t>(q_out) % page == 0;
+    const size_t qn = (size_t)batch * M * QC, rn = (size_t)batch * RR * N;
+    const bool q_direct = QC && reinterpret_cast<uintptr_t>(q_out) % page == 0;
     const bool r_direct = reinterpret_cast<uintptr_t>(r_out) % page == 0;
     id<MTLBuffer> qb = nil, rb = nil;
-    if (!q_direct || !r_direct) {
-        Workspace& ws = cache.workspace(batch, M, N);
+    if ((QC && !q_direct) || !r_direct) {
+        Workspace& ws = cache.workspace(batch, M * QC, RR * N);
         qb = ws.q;
         rb = ws.r;
     }
     if (q_direct) qb = metal_linalg::detail::wrap_host(dev, q_out, qn);
     if (r_direct) rb = metal_linalg::detail::wrap_host(dev, r_out, rn);
+    if (!qb) qb = rb;   // R alone: bound, never written
     id<MTLBuffer> src = input_buffer(dev, a);
 
     // Work per command buffer: a large batch is cut into chunks by a
@@ -310,16 +319,19 @@ void qr_householder(const Matrices& a, float* q_out, float* r_out) {
     // kernel's workspace into chunks of at most about 256 MB.
     unsigned cores = gpu_core_count();
     if (cores == 0) cores = 8;
-    const double per_matrix = (kind == Kind::wy ? kWyCoreMs : kSimdCoreMs) * (double)M * N * K + 0.002;
+    const double per_matrix = (kind == Kind::wy ? kWyCoreMs : kSimdCoreMs) * (double)M * N * std::max(K, QC) + 0.002;
     const double budget = (double)env_uint("QR_CHUNK_MS", (unsigned)kChunkBudgetMs);
     uint32_t chunk = (uint32_t)std::min<double>(batch, std::max<double>(cores, std::floor(budget * cores / per_matrix)));
     const SimdShape sh = kind == Kind::simd ? simd_shape(M, N) : SimdShape{};
     const WyShape wy = kind == Kind::wy ? wy_shape(M, N, cache.wy_max_simdgroups(), batch, cores) : WyShape{};
+    // The blocked kernel's Q workspace: Kp columns, mp for Q square, none for
+    // R alone; none either where Q is formed in place in the output (the
+    // output has the workspace's shape)
+    const uint32_t wq = mode == QrMode::r ? 0 : mode == QrMode::complete && M > N ? wy.mp : wy.Kp;
+    const bool q_in_place = wq && wy.mp == M && wq == QC;
     WyWork* ww = nullptr;
     if (kind == Kind::wy) {
-        // Q's workspace only where Q is not formed in place in the output
-        const bool q_in_place = wy.mp == M && wy.Kp == K;
-        const size_t fa = (size_t)wy.mp * wy.np, fq = q_in_place ? 0 : (size_t)wy.mp * wy.Kp,
+        const size_t fa = (size_t)wy.mp * wy.np, fq = q_in_place ? 0 : (size_t)wy.mp * wq,
                      ft = (size_t)round_up(wy.Kp, 64) * 64;
         chunk = (uint32_t)std::clamp<size_t>(((size_t)1 << 26) / (fa + fq + ft), 1, chunk);
         ww = &cache.wy_work(fa * chunk, fq * chunk, ft * chunk);
@@ -331,17 +343,15 @@ void qr_householder(const Matrices& a, float* q_out, float* r_out) {
         id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
         [enc setComputePipelineState:pso];
         [enc setBuffer:src offset:(size_t)b0 * M * N * f atIndex:0];
-        [enc setBuffer:qb offset:(size_t)b0 * M * K * f atIndex:1];
-        [enc setBuffer:rb offset:(size_t)b0 * K * N * f atIndex:2];
+        [enc setBuffer:qb offset:QC ? (size_t)b0 * M * QC * f : 0 atIndex:1];
+        [enc setBuffer:rb offset:(size_t)b0 * RR * N * f atIndex:2];
         if (kind == Kind::simd) {
-            const QsParams sp{M, N, bc};
+            const QsParams sp{M, N, bc, QC};
             [enc setBytes:&sp length:sizeof sp atIndex:3];
             [enc dispatchThreadgroups:MTLSizeMake((bc + kSimdPerGroup - 1) / kSimdPerGroup, 1, 1)
                 threadsPerThreadgroup:MTLSizeMake(32 * kSimdPerGroup, 1, 1)];
         } else {
-            // Q formed in place in the output where it has the workspace's
-            // shape
-            const QwParams wp{M, N, wy.mp, wy.np, wy.Kp, bc, wy.mp == M && wy.Kp == K ? 1u : 0u, wy.sc};
+            const QwParams wp{M, N, wy.mp, wy.np, wy.Kp, bc, q_in_place ? 1u : 0u, wy.sc, wq, QC, RR};
             [enc setBytes:&wp length:sizeof wp atIndex:3];
             [enc setBuffer:ww->ba offset:0 atIndex:4];
             [enc setBuffer:ww->bq offset:0 atIndex:5];
@@ -359,19 +369,22 @@ void qr_householder(const Matrices& a, float* q_out, float* r_out) {
                                      " matrices in this command buffer).");
         }
     }
-    if (!q_direct) copy_out(static_cast<const float*>([qb contents]), q_out, batch, (size_t)M * K);
-    if (!r_direct) copy_out(static_cast<const float*>([rb contents]), r_out, batch, (size_t)K * N);
+    if (QC && !q_direct) copy_out(static_cast<const float*>([qb contents]), q_out, batch, (size_t)M * QC);
+    if (!r_direct) copy_out(static_cast<const float*>([rb contents]), r_out, batch, (size_t)RR * N);
 }
 
 // The unblocked backend: these kernels wherever they take the matrix (up to
 // 4096 rows), the blocked QR beyond. Its own kernel, a threadgroup a matrix
 // walking device memory with the matrix padded to 32 rows and a full square
 // Q, was 2.5-6x slower than these wherever it ran, and is gone (2.16.0).
-void qr_unblocked(const Matrices& a, float* q, float* r) {
-    if (qr_householder_preferred(a.rows, a.cols)) qr_householder(a, q, r);
-    else if (qr_blocked_fits(a.rows, a.cols)) qr_blocked(a, q, r);
-    else qr_streaming_amx_reduced(a, q, r);
+void qr_unblocked(const Matrices& a, float* q, float* r, QrMode mode) {
+    if (qr_householder_preferred(a.rows, a.cols)) qr_householder(a, q, r, mode);
+    else if (qr_blocked_fits(a.rows, a.cols)) qr_blocked(a, q, r, mode);
+    else qr_streaming_amx_reduced(a, q, r, mode);
 }
+
+void qr_householder(const Matrices& a, float* q, float* r) { qr_householder(a, q, r, QrMode::reduced); }
+void qr_unblocked(const Matrices& a, float* q, float* r) { qr_unblocked(a, q, r, QrMode::reduced); }
 
 } // namespace core::detail
 } // namespace metal_linalg

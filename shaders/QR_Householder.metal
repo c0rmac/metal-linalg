@@ -114,9 +114,10 @@ inline bool non_finite(float v) {
 
 // Must match `QsParams` in qr_householder.mm.
 struct QsParams {
-    uint m;       // rows, at most 32 R
-    uint n;       // columns, at most B
-    uint batch;   // matrices in this dispatch
+    uint m;        // rows, at most 32 R
+    uint n;        // columns, at most B
+    uint batch;    // matrices in this dispatch
+    uint q_cols;   // Q's columns: K, or 0 for R alone (Q not formed)
 };
 
 // slarfg's reflector from alpha and the tail's sum of squares: beta, tau and
@@ -167,7 +168,7 @@ inline void reflector(float alpha, float sumsq, thread float& beta, thread float
 template <uint B, uint R>
 kernel void qr_householder_simd(
     device const float* A_in [[buffer(0)]],   // [batch, m, n] input, row-major
-    device float*       Q    [[buffer(1)]],   // [batch, m, K]
+    device float*       Q    [[buffer(1)]],   // [batch, m, K], unless R alone
     device float*       Rout [[buffer(2)]],   // [batch, K, n]
     constant QsParams&  prm  [[buffer(3)]],
     uint tgi  [[threadgroup_position_in_grid]],
@@ -177,9 +178,9 @@ kernel void qr_householder_simd(
 {
     const uint mat = tgi * nsg + sg;
     if (mat >= prm.batch) return;   // a whole simdgroup: nothing below waits on the others
-    const uint m = prm.m, n = prm.n, K = min(m, n);
+    const uint m = prm.m, n = prm.n, K = min(m, n), QC = prm.q_cols;
     device const float* src = A_in + (ulong)mat * m * n;
-    device float* out_q = Q + (ulong)mat * m * K;
+    device float* out_q = Q + (ulong)mat * m * QC;
     device float* out_r = Rout + (ulong)mat * K * n;
 
     // 1. Load, scan, scale
@@ -200,7 +201,7 @@ kernel void qr_householder_simd(
     amax = simd_max(amax);
     if (simd_max(bad) > 0.0f) {
         const float qnan = as_type<float>(0x7FC00000u);
-        for (uint idx = lane; idx < m * K; idx += 32) out_q[idx] = qnan;
+        for (uint idx = lane; idx < m * QC; idx += 32) out_q[idx] = qnan;
         for (uint idx = lane; idx < K * n; idx += 32) out_r[idx] = qnan;
         return;
     }
@@ -241,6 +242,8 @@ kernel void qr_householder_simd(
             QH_UNROLL(B, c, { if (c < n) out_r[row * n + c] = c >= row ? ldexp(x[s][c], expo) : 0.0f; });
         }
     });
+
+    if (QC == 0) return;   // R alone
 
     // 4. Q in place, backward (sorg2r): before step j, columns j+1 .. K-1
     // hold H(j+1) ... H(K-1) and are zero in rows up to j
@@ -338,8 +341,11 @@ struct QwParams {
     uint mp, np;   // padded: multiples of 8, at least Kp
     uint Kp;       // min(m, n) rounded up to QW_B
     uint batch;    // matrices in this dispatch
-    uint q_direct; // 1: Q formed in place in the output (mp == m, Kp == K)
+    uint q_direct; // 1: Q formed in place in the output (mp == m, qn == qc)
     uint sc;       // the scratch's floats in threadgroup memory
+    uint qn;       // Q's columns in the workspace: Kp, mp (Q square) or 0 (R alone)
+    uint qc;       // ... in the output: K, m or 0
+    uint rr;       // R's rows in the output: K, or m (Q square: zeros below K)
 };
 
 // -a, in place.
@@ -645,10 +651,11 @@ kernel void qr_householder_wy(
     threadgroup float*  sc   = eye + 64;
 
     device const float* src = A_in + (ulong)mat * m * n;
-    device float* out_q = Q + (ulong)mat * m * K;
-    device float* out_r = Rout + (ulong)mat * K * n;
+    device float* out_q = Q + (ulong)mat * m * prm.qc;
+    device float* out_r = Rout + (ulong)mat * prm.rr * n;
     device float* A = W + (ulong)mat * mp * np;
-    device float* Qw = prm.q_direct ? out_q : QW + (ulong)mat * mp * Kp;
+    const uint qn = prm.qn;
+    device float* Qw = prm.q_direct ? out_q : QW + (ulong)mat * mp * qn;
     device float* Tw = TW + (ulong)mat * ((Kp + 63) / 64) * 64 * 64;   // a block's T at Tw + k0 64, ld 64
 
     // 1. Scan. A matrix that needs neither padding nor scaling (its largest
@@ -677,8 +684,8 @@ kernel void qr_householder_wy(
     const bool nonfinite = group_sum(bad, red + 32, sg, lane, S) > 0.0f;
     if (nonfinite) {
         const float qnan = as_type<float>(0x7FC00000u);
-        for (uint idx = t; idx < m * K; idx += T) out_q[idx] = qnan;
-        for (uint idx = t; idx < K * n; idx += T) out_r[idx] = qnan;
+        for (uint idx = t; idx < m * prm.qc; idx += T) out_q[idx] = qnan;
+        for (uint idx = t; idx < prm.rr * n; idx += T) out_r[idx] = qnan;
         return;   // uniform
     }
     int expo = 0;
@@ -768,8 +775,20 @@ kernel void qr_householder_wy(
         }
     }
 
+    // R's rows below K, where Q is square
+    for (uint idx = t + K * n; idx < prm.rr * n; idx += T) out_r[idx] = 0.0f;
+    if (qn == 0) return;   // R alone
+
     // 3. Q from [I; 0] by the blocks backward, the identity and the zeros
-    // made where Q is not yet written (wy_c)
+    // made where Q is not yet written (wy_c). A square Q's columns beyond Kp
+    // start as the identity, below row Kp (above it the blocks make zeros).
+    if (qn > Kp) {
+        for (uint idx = t; idx < (mp - Kp) * (qn - Kp); idx += T) {
+            const uint r = Kp + idx / (qn - Kp), c = Kp + idx % (qn - Kp);
+            Qw[(ulong)r * qn + c] = r == c ? 1.0f : 0.0f;
+        }
+        threadgroup_barrier(mem_flags::mem_device);
+    }
     for (uint kb = (Kp + QW_NB - 1) / QW_NB; kb > 0; --kb) {
         const uint k0 = (kb - 1) * QW_NB, nb = min((uint)QW_NB, Kp - k0);
         for (uint idx = t; idx < nb * 8; idx += T) {
@@ -777,15 +796,16 @@ kernel void qr_householder_wy(
             vd[idx] = c < r ? A[(ulong)(k0 + 8 * i + r) * np + k0 + 8 * i + c] : (c == r ? 1.0f : 0.0f);
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
-        wy_apply_n<false>(nb / 8, Qw, Qw, Kp, A, np, k0, mp, k0, Kp, vd, Tw + k0 * 64, sc, prm.sc, eye, sg, S);
+        wy_apply_n<false>(nb / 8, Qw, Qw, qn, A, np, k0, mp, k0, qn, vd, Tw + k0 * 64, sc, prm.sc, eye, sg, S);
         threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
     }
 
     // 4. Q, from the workspace
     if (!prm.q_direct) {
-        for (uint idx = t; idx < m * K; idx += T) {
-            const uint r = idx / K, c = idx - r * K;
-            out_q[idx] = Qw[(ulong)r * Kp + c];
+        const uint qc = prm.qc;
+        for (uint idx = t; idx < m * qc; idx += T) {
+            const uint r = idx / qc, c = idx - r * qc;
+            out_q[idx] = Qw[(ulong)r * qn + c];
         }
     }
 }

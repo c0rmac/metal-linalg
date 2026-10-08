@@ -58,18 +58,48 @@ func output(_ count: Int, _ body: (UnsafeMutablePointer<Float>?) throws -> Void)
 
 // MARK: - Decompositions
 
+/// Which factors QR returns, as numpy.linalg.qr's and torch.linalg.qr's modes.
+public enum QrMode: Sendable {
+    /// Q [rows, K] with orthonormal columns, R [K, cols].
+    case reduced
+    /// R [K, cols] alone; Q is empty and never formed (up to twice as fast).
+    case r
+    /// Q [rows, rows] square and orthogonal, R [rows, cols] with zero rows below K.
+    case complete
+
+    package var c: metal_linalg_qr_mode {
+        switch self {
+        case .reduced:  return METAL_LINALG_QR_REDUCED
+        case .r:        return METAL_LINALG_QR_R
+        case .complete: return METAL_LINALG_QR_COMPLETE
+        }
+    }
+
+    /// Q's columns and R's rows for rows x cols matrices.
+    package func shape(rows: Int, cols: Int) -> (qCols: Int, rRows: Int) {
+        let k = min(rows, cols)
+        switch self {
+        case .reduced:  return (k, k)
+        case .r:        return (0, k)
+        case .complete: return (rows, rows)
+        }
+    }
+}
+
 /// QR: A = Q R with K = min(rows, cols), for `batch` matrices of rows x cols.
 /// Returns Q [batch, rows, K] with orthonormal columns and R [batch, K, cols]
-/// upper triangular.
-public func qrAccelerated(_ a: [Float], batch: Int = 1, rows: Int, cols: Int) throws -> (q: [Float], r: [Float]) {
+/// upper triangular; `mode` .r gives R alone (Q empty), .complete a square
+/// Q [batch, rows, rows] and R [batch, rows, cols].
+public func qrAccelerated(_ a: [Float], batch: Int = 1, rows: Int, cols: Int,
+                          mode: QrMode = .reduced) throws -> (q: [Float], r: [Float]) {
     try checkCount(a.count, batch: batch, rows: rows, cols: cols, "qr")
     let (b, m, n) = (try dimension(batch, "batch", "qr"), try dimension(rows, "rows", "qr"), try dimension(cols, "cols", "qr"))
-    let k = min(rows, cols)
+    let (qCols, rRows) = mode.shape(rows: rows, cols: cols)
     var r: [Float] = []
     let q = try a.withUnsafeBufferPointer { ap in
-        try output(batch * rows * k) { qp in
-            r = try output(batch * k * cols) { rp in
-                try check(metal_linalg_qr(ap.baseAddress, b, m, n, qp, rp))
+        try output(batch * rows * qCols) { qp in
+            r = try output(batch * rRows * cols) { rp in
+                try check(metal_linalg_qr_with_mode(ap.baseAddress, b, m, n, mode.c, qCols > 0 ? qp : nil, rp))
             }
         }
     }

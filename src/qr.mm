@@ -284,11 +284,14 @@ bool qr_shares_batch(unsigned m, unsigned n, unsigned batch) {
     return from != 0 && batch >= from && qr_backend(m, n, batch) != QrBackend::cpu;
 }
 
-void core::detail::qr_shared(const Matrices& a, float* q, float* r) {
+void core::detail::qr_shared(const Matrices& a, float* q, float* r, QrMode mode) {
     const uint32_t M = a.rows, N = a.cols, K = std::min(M, N);
     if (K == 0 || a.batch == 0) return;
     const QrBackend gpu = qr_gpu_backend(M, N, a.batch);
+    // Each matrix's Q and R, as the mode shapes them
+    const size_t sq = (size_t)M * qr_q_cols(mode, M, N), sr = (size_t)qr_r_rows(mode, M, N) * N;
     auto sub = [&](uint32_t b0, uint32_t count) { return Matrices{a.data + (size_t)b0 * M * N, count, M, N}; };
+    auto qat = [&](uint32_t b0) { return q && sq ? q + b0 * sq : nullptr; };
     // The smallest GPU chunk worth a dispatch: eight matrices per core. The
     // CPU's chunks are a few matrices per worker (share_batch).
     metal_linalg::detail::share_batch(
@@ -296,25 +299,33 @@ void core::detail::qr_shared(const Matrices& a, float* q, float* r) {
         std::clamp(a.batch / (16 * std::max(1u, cpu_threads())), 1u, 16u),
         [&](uint32_t b0, uint32_t count) {
             if (gpu == QrBackend::streaming_reduced)
-                qr_streaming_amx_reduced(sub(b0, count), q + (size_t)b0 * M * K, r + (size_t)b0 * K * N);
+                qr_streaming_amx_reduced(sub(b0, count), qat(b0), r + b0 * sr, mode);
             else
-                qr_unblocked(sub(b0, count), q + (size_t)b0 * M * K, r + (size_t)b0 * K * N);
+                qr_unblocked(sub(b0, count), qat(b0), r + b0 * sr, mode);
         },
-        [&](uint32_t b0, uint32_t count) {
-            qr_cpu(sub(b0, count), q + (size_t)b0 * M * K, r + (size_t)b0 * K * N);
-        });
+        [&](uint32_t b0, uint32_t count) { qr_cpu(sub(b0, count), qat(b0), r + b0 * sr, mode); });
 }
 
-void core::qr(const Matrices& a, float* q, float* r) {
+void core::qr(const Matrices& a, float* q, float* r, QrMode mode) {
+    // Nothing to factor: the complete Q is the identity
+    if (mode == QrMode::complete && a.cols == 0 && q) {
+        const size_t M = a.rows;
+        std::fill(q, q + a.batch * M * M, 0.0f);
+        for (size_t i = 0; i < a.batch * M; ++i) q[i * M + i % M] = 1.0f;
+        return;
+    }
     if (qr_shares_batch(a.rows, a.cols, a.batch)) {
-        core::detail::qr_shared(a, q, r);
+        core::detail::qr_shared(a, q, r, mode);
         return;
     }
     switch (qr_backend(a.rows, a.cols, a.batch)) {
-        case QrBackend::cpu:               core::detail::qr_cpu(a, q, r); break;
-        case QrBackend::streaming_reduced: core::detail::qr_streaming_amx_reduced(a, q, r); break;
-        default:                           core::detail::qr_unblocked(a, q, r); break;
+        case QrBackend::cpu:               core::detail::qr_cpu(a, q, r, mode); break;
+        case QrBackend::streaming_reduced: core::detail::qr_streaming_amx_reduced(a, q, r, mode); break;
+        default:                           core::detail::qr_unblocked(a, q, r, mode); break;
     }
 }
+
+void core::qr(const Matrices& a, float* q, float* r) { core::qr(a, q, r, QrMode::reduced); }
+void core::detail::qr_shared(const Matrices& a, float* q, float* r) { qr_shared(a, q, r, QrMode::reduced); }
 
 } // namespace metal_linalg

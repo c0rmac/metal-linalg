@@ -42,6 +42,44 @@ int main(void) {
         }
     }
 
+    /* The modes: R alone is the reduced R, without q; the complete Q is
+     * square and orthogonal, its first K columns the reduced Q's, and R has
+     * zero rows below K. */
+    {
+        const float a[12] = {1, 2, 3, 4, 5, 6,   2, 0, 0, 3, 1, 1};
+        float q[12], r[8], r_alone[8], qc[18], rc[12];
+        CHECK(metal_linalg_qr(a, 2, 3, 2, q, r) == METAL_LINALG_OK, "qr: %s", metal_linalg_last_error());
+        CHECK(metal_linalg_qr_with_mode(a, 2, 3, 2, METAL_LINALG_QR_R, NULL, r_alone) == METAL_LINALG_OK, "qr R alone: %s",
+              metal_linalg_last_error());
+        for (int i = 0; i < 8; ++i) CHECK(near(r_alone[i], r[i]), "qr R alone: r[%d] = %g, want %g", i, r_alone[i], r[i]);
+        CHECK(metal_linalg_qr_with_mode(a, 2, 3, 2, METAL_LINALG_QR_COMPLETE, qc, rc) == METAL_LINALG_OK, "qr complete: %s",
+              metal_linalg_last_error());
+        for (int b = 0; b < 2; ++b) {
+            CHECK(rc[b * 6 + 4] == 0.0f && rc[b * 6 + 5] == 0.0f, "qr complete: R[%d] row 2 not zero", b);
+            for (int i = 0; i < 3; ++i)
+                for (int j = 0; j < 3; ++j) {
+                    float s = 0.0f, x = 0.0f;
+                    for (int t = 0; t < 3; ++t) s += qc[b * 9 + t * 3 + i] * qc[b * 9 + t * 3 + j];
+                    CHECK(fabsf(s - (i == j)) < 1e-5f, "qr complete: (Q^T Q)[%d][%d][%d] = %g", b, i, j, s);
+                    if (j < 2) {
+                        for (int t = 0; t < 3; ++t) x += qc[b * 9 + i * 3 + t] * rc[b * 6 + t * 2 + j];
+                        CHECK(near(x, a[b * 6 + i * 2 + j]), "qr complete: (QR)[%d][%d][%d] = %g", b, i, j, x);
+                        CHECK(near(qc[b * 9 + i * 3 + j], q[b * 6 + i * 2 + j]), "qr complete: Q[%d][%d][%d] = %g, want %g",
+                              b, i, j, qc[b * 9 + i * 3 + j], q[b * 6 + i * 2 + j]);
+                    }
+                }
+        }
+        CHECK(metal_linalg_qr_with_mode(a, 2, 3, 2, METAL_LINALG_QR_COMPLETE, NULL, rc) == METAL_LINALG_INVALID_ARGUMENT,
+              "qr complete without q not rejected");
+        CHECK(metal_linalg_qr_with_mode(a, 2, 3, 2, (metal_linalg_qr_mode)7, q, r) == METAL_LINALG_INVALID_ARGUMENT,
+              "qr mode 7 not rejected");
+        /* Nothing to factor (no columns): the complete Q is the identity. */
+        CHECK(metal_linalg_qr_with_mode(a, 2, 3, 0, METAL_LINALG_QR_COMPLETE, qc, NULL) == METAL_LINALG_OK,
+              "qr complete of 3 x 0: %s", metal_linalg_last_error());
+        for (int i = 0; i < 18; ++i)
+            CHECK(qc[i] == (float)(i % 9 % 4 == 0), "qr complete of 3 x 0: Q[%d] = %g", i, qc[i]);
+    }
+
     /* eigh of [[2, 1], [1, 2]]: eigenvalues 1 and 3, eigenvectors (1, -1) and (1, 1) / sqrt 2. */
     {
         const float a[4] = {2, 1, 1, 2};

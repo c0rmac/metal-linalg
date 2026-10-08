@@ -6,6 +6,11 @@
 // a: MLX array of shape [M, N] or [..., M, N] (real: float32, or cast to it; complex input throws)
 // Returns: {Q, R} where Q is [..., M, K] and R is [..., K, N], K = min(M, N)
 auto [Q, R] = metal_linalg::qr_accelerated(a);
+
+// mode, as numpy's and torch's (since 2.17.0): "reduced" (the above), "r"
+// (R alone, Q an empty array and never formed) or "complete" (Q [..., M, M])
+auto [_, R_alone] = metal_linalg::qr_accelerated(a, "r");
+auto [Q_square, R_full] = metal_linalg::qr_accelerated(a, "complete");
 ```
 
 As for the eigensolver and the SVD, each call is routed by a policy measured on
@@ -53,6 +58,18 @@ which can be stated compactly as $Q^T Q = I_K$. The columns of $Q$ form an ortho
 $$R_{ij} = 0 \quad \text{for all } i > j$$
 
 This is the *thin* (or *reduced*) QR decomposition. The full decomposition extends $Q$ to a square $M \times M$ orthogonal matrix, but the thin form is sufficient to reconstruct $A$ and is more compact when $M > N$.
+
+Since 2.17.0 every API takes a `mode`, as `numpy.linalg.qr` and `torch.linalg.qr` do:
+
+| mode | Q | R | |
+|---|---|---|---|
+| `"reduced"` (the default) | $M \times K$ | $K \times N$ | the thin factors, as above |
+| `"r"` | not formed | $K \times N$ | the same R, bit for bit; up to 1.7x faster ([below](#modes)) |
+| `"complete"` | $M \times M$, orthogonal | $M \times N$, zero below row $K$ | Q's first $K$ columns are the thin Q |
+
+In C++ and in Python with MLX `"r"` follows numpy: Python returns R alone, C++
+an empty Q with it. The PyTorch package follows torch (an empty Q tensor), the
+C API takes `METAL_LINALG_QR_R` with `q` NULL, and Swift a `QrMode`.
 
 For example, given:
 
@@ -252,6 +269,39 @@ Two Metal backends and a CPU path handle different regimes, with a dispatcher th
 **`qr_streaming_amx_reduced`** — The GPU path for large matrices. Since 2.15.0 it hands every call it can to the blocked QR (`qr_blocked`, above; `QR_BLOCKED=0` turns that off), which beat its own kernels at every shape and batch measured (1.8-3.5x on an M5 Pro). Its own kernels, kept for matrices taller than $2^{22}$ rows: multi-pass panel factorisation with grid-parallel trailing matrix updates, column panels of width 32, the T-matrix for each WY representation, then a grid of threadgroups for the trailing update, Q accumulated at its economic width of `K = min(M, N)` columns by a backward pass.
 
 **`qr_streaming_amx_complete`** — The same panel factorisation, but accumulating the full `M x M` orthogonal factor inside the forward loop and slicing Q down to `K` columns at the end. Measured to be within noise of the reduced backend, so it is no longer dispatched to.
+
+### Modes
+
+Every backend takes the mode, routed exactly as `"reduced"` is. For `"r"` none
+of them forms Q: the Householder kernels stop after the factorisation, the
+blocked QR skips the backward accumulation, and the CPU path skips `sorgqr`
+(except for a wide matrix, whose $R_2 = Q^T A_2$ needs Q). For `"complete"`
+with $M > N$, the backward accumulation starts from the $M \times M$ identity
+instead of its first $K$ columns, with the same reflectors: Q's first $K$
+columns are the reduced Q's, and R gains zero rows. The register kernel holds
+at most 32 columns of Q, so `qr_householder` gives a complete Q of a tall
+matrix to its blocked kernel; the grid-parallel kernels kept for more than
+$2^{22}$ rows accumulate $K$ columns alone, and refuse `"complete"` there.
+
+R alone against the reduced factors on an M5 Pro (2.17.0, the MLX API,
+median of the routed call):
+
+| batch × shape | R alone, faster by |
+|---|---|
+| 4096 × 32×32 | 1.67x (0.85 ms to 0.51) |
+| 4096 × 64×64 | 1.39x |
+| 1024 × 128×128 | 1.44x |
+| 256 × 256×256 | 1.51x |
+| 16 × 1024×1024 | 1.39x |
+| one 4096×4096 | 1.39x (61.7 ms to 44.3) |
+| one 8192×512 | 1.12x |
+| one 512×512 | 1.03x |
+| one 128×128, on the CPU | 1.95x |
+| one 256×256, on the CPU | 2.27x |
+| one 64×2048, on the CPU | none (wide: $R_2$ needs Q) |
+
+The complete Q costs what its size does: $M^2$ floats a matrix written, and
+$M/K$ times the accumulation's work.
 
 ### Magnitude and nearly dependent columns
 
@@ -485,7 +535,7 @@ cmake --build build --target test_qr
 ./build/test_qr          # or: ctest --test-dir build
 ```
 
-`tests/test_qr.cpp` checks each backend, the CPU path included, directly as well as through the dispatcher and the routing policy, verifying output shapes, reconstruction (`Q*R == A`), orthogonality (`Q^T*Q == I`) and upper-triangularity of `R`, across input magnitudes from 1e-30 to 1e+37 and for nearly dependent columns.
+`tests/test_qr.cpp` checks each backend, the CPU path included, directly as well as through the dispatcher and the routing policy, verifying output shapes, reconstruction (`Q*R == A`), orthogonality (`Q^T*Q == I`) and upper-triangularity of `R`, across input magnitudes from 1e-30 to 1e+37 and for nearly dependent columns. Its modes section runs every backend in `"r"` and `"complete"` over tall, square and wide shapes: R alone equal to the reduced R, the complete Q orthogonal with the reduced Q as its first columns, and R's rows below $K$ zero.
 
 
 ## Benchmark

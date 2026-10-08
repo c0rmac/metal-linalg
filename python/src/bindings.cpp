@@ -93,7 +93,8 @@ NB_MODULE(_core, m) {
     m.attr("__version__") = METAL_LINALG_VERSION;
     m.attr("mlx_version") = METAL_LINALG_MLX_VERSION;
 
-    m.def("qr", &ml::qr_accelerated, "a"_a);
+    m.def("qr", [](const mlx::core::array& a, const std::string& mode) { return ml::qr_accelerated(a, mode); },
+          "a"_a, "mode"_a = "reduced");
     m.def("eigh", &ml::eigh_accelerated, "a"_a, "uplo"_a = "L");
     m.def("eigvalsh", &ml::eigvalsh_accelerated, "a"_a, "uplo"_a = "L");
     m.def("svd", &ml::svd_accelerated, "a"_a);

@@ -1,7 +1,9 @@
 # metal-linalg for PyTorch
 
 QR, symmetric eigendecomposition and SVD for batches of matrices on Apple
-GPUs, on [PyTorch](https://pytorch.org) tensors.
+GPUs, on [PyTorch](https://pytorch.org) tensors: on an M5 Pro, **4.7-35x
+faster than `torch.linalg`** for the same calls, against whichever of its CPU
+and MPS paths is quicker ([the measurements](https://github.com/c0rmac/metal-linalg/blob/main/python-torch/README.md#performance)).
 
 ```python
 import torch
@@ -58,7 +60,7 @@ pip install "git+https://github.com/c0rmac/metal-linalg.git#subdirectory=python-
 
 | function | like | returns |
 |---|---|---|
-| `qr(A, mode="reduced")` | `torch.linalg.qr` | `(Q, R)`, thin; `mode="r"` gives an empty `Q` |
+| `qr(A, mode="reduced")` | `torch.linalg.qr` | `(Q, R)`; `mode="r"` gives `R` alone (an empty `Q`, never formed), `"complete"` a square `Q` |
 | `eigh(A, UPLO="L")` | `torch.linalg.eigh` | `(eigenvalues, eigenvectors)`, ascending |
 | `eigvalsh(A, UPLO="L")` | `torch.linalg.eigvalsh` | eigenvalues, ascending; less work than `eigh` |
 | `svd(A, full_matrices=False)` | `torch.linalg.svd` | `(U, S, Vh)`, thin, `S` descending |
@@ -70,9 +72,11 @@ pip install "git+https://github.com/c0rmac/metal-linalg.git#subdirectory=python-
 - **float32.** The kernels compute in float32. Other real dtypes (float64,
   float16, bfloat16, integers) are converted, and results are float32;
   complex input raises `TypeError`.
-- **Thin factors only.** `svd` defaults to `full_matrices=False` (torch's
-  default is `True`), and `full_matrices=True` or `qr(mode="complete")` on a
-  non-square matrix raises `NotImplementedError`.
+- **Thin SVD factors only.** `svd` defaults to `full_matrices=False`
+  (torch's default is `True`), and `full_matrices=True` on a non-square
+  matrix raises `NotImplementedError`. QR has all three of torch's modes
+  (since 2.17.0); `mode="r"` is differentiable here (Q is computed for the
+  gradient when `A` requires grad), where torch's raises.
 - **No exceptions for bad matrices.** A matrix with a NaN or an infinity
   gives NaN results for that matrix alone, leaving the rest of its batch
   intact, where torch raises.

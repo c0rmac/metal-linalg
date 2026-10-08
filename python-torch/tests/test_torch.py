@@ -203,8 +203,6 @@ class Arguments(unittest.TestCase):
         with self.assertRaises(ValueError):
             mlt.qr(torch.randn(3, 3), mode="full")
         with self.assertRaises(NotImplementedError):
-            mlt.qr(torch.randn(5, 3), mode="complete")
-        with self.assertRaises(NotImplementedError):
             mlt.svd(torch.randn(5, 3), full_matrices=True)
 
     def test_modes(self):
@@ -214,6 +212,23 @@ class Arguments(unittest.TestCase):
         self.assertEqual(R.shape, (3, 5))
         Q2, R2 = mlt.qr(a, mode="complete")   # M <= N: the same as reduced
         self.assertEqual(Q2.shape, (3, 3))
+        for shape in ((40, 12), (3, 30, 7), (5, 5), (6, 9)):
+            a = torch.randn(*shape)
+            *lead, m, n = shape
+            k = min(m, n)
+            Q, R = mlt.qr(a)
+            Qr, Rr = mlt.qr(a, mode="r")
+            self.assertEqual((Qr.shape, Rr.shape), ((0,), R.shape), shape)
+            self.assertTrue(torch.equal(Rr, R), shape)
+            Qc, Rc = mlt.qr(a, mode="complete")
+            self.assertEqual((Qc.shape, Rc.shape), ((*lead, m, m), (*lead, m, n)), shape)
+            self.assertLess(rel(Qc @ Rc, a), 2e-5, shape)
+            self.assertLess((Qc.mT @ Qc - torch.eye(m)).abs().max().item(), 2e-5, shape)
+            self.assertLess((Qc[..., :k] - Q).abs().max().item(), 2e-5, shape)
+            self.assertEqual(Rc[..., k:, :].abs().max().item() if m > k else 0.0, 0.0, shape)
+        Qc, Rc = mlt.qr(torch.randn(2, 4, 0), mode="complete")   # nothing to factor
+        self.assertTrue(torch.equal(Qc, torch.eye(4).expand(2, 4, 4)))
+        self.assertEqual(Rc.shape, (2, 4, 0))
         U, S, Vh = mlt.svd(torch.randn(4, 4), full_matrices=True)   # square: the same
         self.assertEqual(U.shape, (4, 4))
 
@@ -289,6 +304,17 @@ class MpsInPlace(unittest.TestCase):
         Q, R = mlt.qr(a)
         back = Q @ R                                   # MPS reads the outputs at once
         self.assertLess(rel(back, a), 2e-5)
+
+    def test_qr_modes(self):
+        a = torch.randn(256, 96, 40, device="mps")
+        Q, R = mlt.qr(a)
+        Qr, Rr = mlt.qr(a, mode="r")
+        self.assertEqual((Qr.numel(), Rr.device.type), (0, "mps"))
+        self.assertTrue(torch.equal(Rr, R))
+        Qc, Rc = mlt.qr(a, mode="complete")
+        self.assertEqual((Qc.shape, Rc.shape), ((256, 96, 96), (256, 96, 40)))
+        self.assertLess(rel(Qc @ Rc, a), 2e-5)
+        self.assertLess((Qc.mT @ Qc - torch.eye(96, device="mps")).abs().max().item(), 2e-5)
 
     def test_views_and_dtypes(self):
         base = torch.randn(64, 40, 24, device="mps")
@@ -442,6 +468,14 @@ class Gradients(unittest.TestCase):
             gm, gr = self.grads(a, lambda x: (mlt.qr(x, mode="r").R.abs() * W2).sum(),
                                 lambda x: (torch.linalg.qr(x).R.abs() * W2.double()).sum())
             self.assertLess(rel(gm, gr), self.TOL, shape)
+            if m <= n:   # "complete" is "reduced" there
+                gm, gr = self.grads(a, loss(lambda x: mlt.qr(x, mode="complete")),
+                                    loss(lambda x: torch.linalg.qr(x, mode="complete")))
+                self.assertLess(rel(gm, gr), self.TOL, shape)
+            else:        # and not differentiable otherwise, as torch's
+                x = a.clone().float().requires_grad_(True)
+                with self.assertRaises(RuntimeError):
+                    mlt.qr(x, mode="complete").R.sum().backward()
 
     def test_eigh(self):
         for lead, n in (((), 6), ((3,), 5)):
@@ -520,13 +554,20 @@ class Operators(unittest.TestCase):
             torch.library.opcheck(op, args)
             grad_args = tuple(x.clone().requires_grad_(True) if isinstance(x, torch.Tensor) else x for x in args)
             torch.library.opcheck(op, grad_args)
+        # The modes; not differentiable, as torch's, but "complete" where M <= N.
+        qr = torch.ops.metal_linalg.qr.default
+        for args in ((a, "r"), (a, "complete"), (a.mT.contiguous(), "r")):
+            torch.library.opcheck(qr, args)
+        torch.library.opcheck(qr, (a.mT.contiguous().requires_grad_(True), "complete"))
 
     def test_compile(self):
         def f(x):
             L, V = mlt.eigh(x @ x.mT + 0.1 * torch.eye(x.shape[-1]))
             U, S, Vh = mlt.svd(x)
             R = mlt.qr(x).R
+            R2 = mlt.qr(x, mode="r").R
             return (L.sum() + S.sum() + R.diagonal(dim1=-2, dim2=-1).abs().sum() + mlt.svdvals(x).sum()
+                    + R2.abs().sum() + mlt.qr(x, mode="complete").Q.abs().sum()
                     + mlt.eigh(x @ x.mT).eigenvalues.sum() + mlt.svd(x).S.sum())
         cf = torch.compile(f, backend="aot_eager", fullgraph=True)
         x = torch.randn(4, 6, 6)

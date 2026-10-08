@@ -34,6 +34,27 @@ final class MetalLinalgTests: XCTestCase {
         }
     }
 
+    func testQRModes() throws {
+        let (batch, m, n) = (3, 20, 7)
+        let a = values(batch * m * n, seed: 4)
+        let (q, r) = try qrAccelerated(a, batch: batch, rows: m, cols: n)
+        let (qr0, rAlone) = try qrAccelerated(a, batch: batch, rows: m, cols: n, mode: .r)
+        XCTAssertEqual(qr0.count, 0)
+        XCTAssertEqual(rAlone, r)
+        let (qc, rc) = try qrAccelerated(a, batch: batch, rows: m, cols: n, mode: .complete)
+        XCTAssertEqual(qc.count, batch * m * m)
+        XCTAssertEqual(rc.count, batch * m * n)
+        for b in 0..<batch {
+            let qcb = qc[(b * m * m)..<((b + 1) * m * m)]
+            let qr = multiply(qcb, rc[(b * m * n)..<((b + 1) * m * n)], m, m, n)
+            for i in 0..<(m * n) { XCTAssertEqual(qr[i], Double(a[b * m * n + i]), accuracy: 1e-5) }
+            let qtq = multiply(ArraySlice((0..<(m * m)).map { qcb[b * m * m + ($0 % m) * m + $0 / m] }), qcb, m, m, m)
+            for i in 0..<m { for j in 0..<m { XCTAssertEqual(qtq[i * m + j], i == j ? 1 : 0, accuracy: 1e-5) } }
+            for i in 0..<m { for j in 0..<n { XCTAssertEqual(qcb[b * m * m + i * m + j], q[b * m * n + i * n + j], accuracy: 1e-5) } }
+            for i in n..<m { for j in 0..<n { XCTAssertEqual(rc[b * m * n + i * n + j], 0) } }
+        }
+    }
+
     func testEigh() throws {
         let (batch, n) = (64, 8)
         var a = values(batch * n * n, seed: 2)

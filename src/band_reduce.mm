@@ -430,10 +430,10 @@ void qr_scale_copy(id<MTLCommandBuffer> cb, id<MTLBuffer> src, id<MTLBuffer> dst
 }
 
 void qr_r_out(id<MTLCommandBuffer> cb, id<MTLBuffer> A, id<MTLBuffer> R, uint32_t k, uint32_t n, uint32_t lda,
-              size_t sa, uint32_t batch, id<MTLBuffer> up) {
+              size_t sa, uint32_t batch, id<MTLBuffer> up, size_t sr) {
     State& s = State::shared();
     if (!s.r_out) s.r_out = make_pipeline(s.rt.device, s.rt.library, @"bd_qr_r", nil);
-    const uint32_t p[5] = {k, n, lda, (uint32_t)sa, k * n};
+    const uint32_t p[5] = {k, n, lda, (uint32_t)sa, sr ? (uint32_t)sr : k * n};
     id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
     [enc setComputePipelineState:s.r_out];
     [enc setBuffer:A offset:0 atIndex:0];

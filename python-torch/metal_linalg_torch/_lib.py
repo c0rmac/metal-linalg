@@ -37,7 +37,7 @@ def _fn(name, restype, *argtypes):
 
 
 last_error = _fn("metal_linalg_last_error", _cstr)
-_qr = _fn("metal_linalg_qr", ctypes.c_int, _f32p, _u32, _u32, _u32, _f32p, _f32p)
+_qr = _fn("metal_linalg_qr_with_mode", ctypes.c_int, _f32p, _u32, _u32, _u32, ctypes.c_int, _f32p, _f32p)
 _eigh = _fn("metal_linalg_eigh", ctypes.c_int, _f32p, _u32, _u32, ctypes.c_int, _f32p, _f32p, _u32p)
 _svd = _fn("metal_linalg_svd", ctypes.c_int, _f32p, _u32, _u32, _u32, _f32p, _f32p, _f32p, _u32p)
 buffer_contents = _fn("metal_linalg_buffer_contents", ctypes.c_void_p,
@@ -126,9 +126,12 @@ def check(status, what):
     raise RuntimeError(f"metal_linalg_torch.{what}: {msg}")
 
 
-def qr(a, batch, rows, cols, q, r):
+QR_MODES = {"reduced": 0, "r": 1, "complete": 2}   # metal_linalg_qr_with_mode's
+
+
+def qr(a, batch, rows, cols, q, r, mode="reduced"):
     with lock:
-        check(_qr(a, batch, rows, cols, q, r), "qr")
+        check(_qr(a, batch, rows, cols, QR_MODES[mode], q, r), "qr")
 
 
 def eigh(a, batch, n, lower, w, v):

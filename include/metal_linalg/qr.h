@@ -2,6 +2,7 @@
 #include <metal_linalg/core.h>   // QrPolicy, qr_backend and the rest of the routing
 
 #include <mlx/mlx.h>
+#include <string>
 #include <utility>
 
 namespace metal_linalg {
@@ -14,7 +15,13 @@ namespace metal_linalg {
     // orthonormal columns and R [..., K, N] upper triangular. Output is
     // float32; any shape and magnitude is accepted. Routed to one of two GPU
     // kernels or to LAPACK on the CPU by the policy in core.h.
-    std::pair<mlx::core::array, mlx::core::array> qr_accelerated(const mlx::core::array& a);
+    //
+    // `mode`, as torch.linalg.qr's: "reduced" (the above), "r" (R alone, Q
+    // never formed; the first array returned is empty) or "complete" (Q
+    // [..., M, M] square, R [..., M, N] with zero rows below K).
+    std::pair<mlx::core::array, mlx::core::array> qr_accelerated(const mlx::core::array& a,
+                                                                 const std::string& mode);
+    std::pair<mlx::core::array, mlx::core::array> qr_accelerated(const mlx::core::array& a);   // "reduced"
 
     // -------------------------------------------------------------------------
     // Lower-level entry points, for tests and tuning

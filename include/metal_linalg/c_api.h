@@ -36,6 +36,19 @@ const char* metal_linalg_last_error(void);
 metal_linalg_status metal_linalg_qr(const float* a, uint32_t batch, uint32_t rows, uint32_t cols,
                                     float* q, float* r);
 
+/* The same with a mode, as numpy.linalg.qr's and torch.linalg.qr's:
+ * METAL_LINALG_QR_REDUCED as above; METAL_LINALG_QR_R, R alone, r
+ * [batch, K, cols], q unused (NULL is fine) and Q never formed;
+ * METAL_LINALG_QR_COMPLETE, q [batch, rows, rows] square, r
+ * [batch, rows, cols] with zero rows below K. */
+typedef enum metal_linalg_qr_mode {
+    METAL_LINALG_QR_REDUCED  = 0,
+    METAL_LINALG_QR_R        = 1,
+    METAL_LINALG_QR_COMPLETE = 2,
+} metal_linalg_qr_mode;
+metal_linalg_status metal_linalg_qr_with_mode(const float* a, uint32_t batch, uint32_t rows, uint32_t cols,
+                                              metal_linalg_qr_mode mode, float* q, float* r);
+
 /* A = V diag(w) V^T for symmetric n x n matrices, reading only the lower
  * triangle if `lower` is nonzero, else the upper. w [batch, n] ascending;
  * v [batch, n, n] with the eigenvectors as columns, or NULL for the

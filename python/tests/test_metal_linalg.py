@@ -50,6 +50,21 @@ class Decompositions(unittest.TestCase):
         self.assertLess(max_abs(mm(q.swapaxes(-1, -2), q) - eye(16)), 1e-5)
         self.assertEqual(max_abs(mx.tril(r, -1)), 0.0)
 
+    def test_qr_modes(self):
+        a = mx.random.normal((8, 48, 20))
+        q, r = ml.qr(a)
+        r_alone = ml.qr(a, mode="r")
+        self.assertEqual(r_alone.shape, (8, 20, 20))
+        self.assertLess(max_abs(r_alone - r), 1e-5)
+        qc, rc = ml.qr(a, mode="complete")
+        self.assertEqual(qc.shape, (8, 48, 48))
+        self.assertEqual(rc.shape, (8, 48, 20))
+        self.assertLess(max_abs(mm(qc, rc) - a), 1e-4)
+        self.assertLess(max_abs(mm(qc.swapaxes(-1, -2), qc) - eye(48)), 1e-5)
+        self.assertEqual(max_abs(rc[:, 20:, :]), 0.0)
+        with self.assertRaises(ValueError):
+            ml.qr(a, mode="full")
+
     def test_eigh(self):
         a = mx.random.normal((32, 24, 24))
         s = a + a.swapaxes(-1, -2)

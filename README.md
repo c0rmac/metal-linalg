@@ -3,7 +3,12 @@
 QR decomposition, symmetric eigendecomposition (`eigh`) and singular value
 decomposition (SVD) for batches of matrices on Apple Silicon GPUs, for
 [MLX](https://github.com/ml-explore/mlx), [PyTorch](https://pytorch.org) and
-plain float buffers. A C++ library, installed with Homebrew or built from
+plain float buffers. On an M5 Pro it is **1.6-10x faster than Apple's LAPACK
+on all 18 CPU cores for one large matrix** (1024×1024 to 4096×4096, and
+11.8x at 8192), **1.4-5.6x faster for batches of thousands of small
+matrices**, and **4.7-35x faster than PyTorch's `torch.linalg`**, against
+whichever of its CPU and MPS paths is quicker ([where the GPU
+wins](#where-the-gpu-wins)). A C++ library, installed with Homebrew or built from
 source inside your own project, with Python packages for `mlx.core` arrays
 and for `torch` tensors, a C API, and a Swift package (on `[Float]`, and on
 mlx-swift's `MLXArray`).
@@ -88,8 +93,9 @@ On the CPU a batch is spread over every core, each solving whole matrices
 Input is any batch shape `[..., M, N]`, any real dtype (computed in float32),
 any magnitude from 1e-30 to 1e+37, rank-deficient or not. The eigensolver and
 the SVD return NaN for a non-finite matrix rather than raising, leaving the
-rest of its batch intact. The QR and SVD factors are the thin ones,
-`K = min(M, N)`.
+rest of its batch intact. The SVD's factors are the thin ones,
+`K = min(M, N)`; QR's too by default, with numpy's and torch's other modes:
+R alone (Q never formed, up to 1.7x faster) and a square, complete Q.
 
 ### Platforms
 
@@ -606,12 +612,12 @@ lists them.
 | header | contents |
 |---|---|
 | `<metal_linalg/metal_linalg.h>` | all of the below |
-| `<metal_linalg/qr.h>` | `qr_accelerated`; `QrPolicy`, `qr_policy()`, `set_qr_policy()`, `qr_policy_source()`; `qr_backend(m, n, batch)` |
+| `<metal_linalg/qr.h>` | `qr_accelerated(a, mode)`; `QrPolicy`, `qr_policy()`, `set_qr_policy()`, `qr_policy_source()`; `qr_backend(m, n, batch)` |
 | `<metal_linalg/eigh.h>` | `eigh_accelerated`, `eigvalsh_accelerated`; `EighPolicy`, `eigh_policy()`, `set_eigh_policy()`, `eigh_policy_source()`; `eigh_backend(n, batch)`, `eigvalsh_backend(n, batch)`, `eigh_uses_gpu`, `eigvalsh_uses_gpu` |
 | `<metal_linalg/svd.h>` | `svd_accelerated`, `svdvals_accelerated`; `SvdPolicy`, `svd_policy()`, `set_svd_policy()`, `svd_policy_source()`; `svd_backend(m, n, batch)`, `svdvals_backend(m, n, batch)`, `svd_uses_gpu`, `svdvals_uses_gpu` |
 | `<metal_linalg/device.h>` | `device_name()`, `gpu_core_count()`: the GPU the policies were resolved for; `cpu_threads()`, `set_cpu_threads()`: how many cores the CPU paths spread a batch over |
 | `<metal_linalg/core.h>` | the same on float buffers, without MLX: `core::qr`, `core::eigh`, `core::svd`; the policies, backends and options |
-| `<metal_linalg/c_api.h>` | the C API: `metal_linalg_qr`, `_eigh`, `_svd`, the routing queries and policies |
+| `<metal_linalg/c_api.h>` | the C API: `metal_linalg_qr`, `_qr_with_mode`, `_eigh`, `_svd`, the routing queries and policies |
 
 Each header's `metal_linalg::detail` namespace has the individual backends,
 which always run their kernel, with options (tolerances, sweep bounds, launch

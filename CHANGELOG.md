@@ -1,5 +1,27 @@
 # Changes
 
+## 2.17.0
+
+- **QR modes**, as `numpy.linalg.qr`'s and `torch.linalg.qr`'s, in every
+  API: `"reduced"` (the default, as before), `"r"` (R alone: Q is never
+  formed) and `"complete"` (a square M x M Q, and R [M, N] with zero rows
+  below K). Every backend takes the mode and the routing is unchanged. R
+  alone is bit-for-bit the reduced R and, on an M5 Pro, 1.4-1.7x faster for
+  batches on the GPU (4096 of 32 x 32: 0.51 ms against 0.85; one
+  4096 x 4096: 44 ms against 62) and 2-2.3x for a lone 128 x 128 or
+  256 x 256 on the CPU. The complete Q's first K columns are the reduced Q's.
+  - C++: `qr_accelerated(a, mode)` and `core::qr(a, q, r, QrMode)`; the
+    three-argument forms remain (and remain exported).
+  - C: `metal_linalg_qr_with_mode(a, batch, rows, cols, mode, q, r)` with
+    `METAL_LINALG_QR_REDUCED`, `_R` (`q` may be NULL) and `_COMPLETE`.
+  - Python with MLX: `ml.qr(a, mode=...)`; `"r"` returns R alone, as numpy.
+  - PyTorch: `mlt.qr(A, mode=...)` now computes `"complete"` for M > N
+    (it raised `NotImplementedError`), and `"r"` no longer forms Q unless
+    `A` requires grad; the operator is `metal_linalg::qr(Tensor a, str
+    mode="reduced")`.
+  - Swift: `qrAccelerated(..., mode: .r)` and `.complete`, on `[Float]` and
+    on `MLXArray`.
+
 ## 2.16.0
 
 - **QR kernels for batches of small and mid-size matrices**

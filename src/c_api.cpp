@@ -92,6 +92,22 @@ metal_linalg_status metal_linalg_qr(const float* a, uint32_t batch, uint32_t row
     });
 }
 
+metal_linalg_status metal_linalg_qr_with_mode(const float* a, uint32_t batch, uint32_t rows, uint32_t cols,
+                                              metal_linalg_qr_mode mode, float* q, float* r) {
+    return guarded([&] {
+        require(mode == METAL_LINALG_QR_REDUCED || mode == METAL_LINALG_QR_R || mode == METAL_LINALG_QR_COMPLETE,
+                "[qr] mode must be METAL_LINALG_QR_REDUCED, _R or _COMPLETE");
+        const core::QrMode m = mode == METAL_LINALG_QR_R          ? core::QrMode::r
+                               : mode == METAL_LINALG_QR_COMPLETE ? core::QrMode::complete
+                                                                  : core::QrMode::reduced;
+        const uint64_t qc = core::qr_q_cols(m, rows, cols), rr = core::qr_r_rows(m, rows, cols);
+        require(present(a, (uint64_t)batch * rows * cols), "[qr] a is NULL");
+        if (qc) require(present(q, (uint64_t)batch * rows * qc), "[qr] q is NULL");
+        require(present(r, (uint64_t)batch * rr * cols), "[qr] r is NULL");
+        core::qr({a, batch, rows, cols}, qc ? q : nullptr, r, m);
+    });
+}
+
 metal_linalg_status metal_linalg_eigh(const float* a, uint32_t batch, uint32_t n, int lower,
                                       float* w, float* v, uint32_t* info) {
     return guarded([&] {

@@ -28,6 +28,25 @@ final class MetalLinalgMLXTests: XCTestCase {
         }
     }
 
+    func testQRModes() throws {
+        try onCPU {
+            let a = MLXRandom.normal([6, 24, 10])
+            let (_, r) = try qrAccelerated(a)
+            let (q0, rAlone) = try qrAccelerated(a, mode: .r)
+            XCTAssertEqual(q0.shape, [0])
+            XCTAssertEqual(maxAbs(rAlone - r), 0)
+            let (qc, rc) = try qrAccelerated(a, mode: .complete)
+            XCTAssertEqual(qc.shape, [6, 24, 24])
+            XCTAssertEqual(rc.shape, [6, 24, 10])
+            XCTAssertLessThan(maxAbs(matmul(qc, rc) - a), 1e-4)
+            XCTAssertLessThan(maxAbs(matmul(qc.transposed(0, 2, 1), qc) - MLXArray.identity(24)), 1e-5)
+            let (qi, ri) = try qrAccelerated(MLXArray.zeros([2, 4, 0]), mode: .complete)   // nothing to factor
+            XCTAssertEqual(qi.shape, [2, 4, 4])
+            XCTAssertEqual(ri.shape, [2, 4, 0])
+            XCTAssertEqual(maxAbs(qi - MLXArray.identity(4)), 0)
+        }
+    }
+
     func testEigh() throws {
         try onCPU {
             let x = MLXRandom.normal([64, 12, 12])

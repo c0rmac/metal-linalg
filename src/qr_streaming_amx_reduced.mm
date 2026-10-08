@@ -8,6 +8,7 @@
 #include <string>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 using metal_linalg::detail::AutoreleasePool;
 using metal_linalg::detail::MetalRuntime;
@@ -115,19 +116,40 @@ struct Cache {
 // MAIN ENTRY POINT
 // =============================================================================
 
-void qr_streaming_amx_reduced(const Matrices& a, float* q, float* r) {
+namespace {
+void streaming(const Matrices& a, float* q, float* r);
+}
+
+void qr_streaming_amx_reduced(const Matrices& a, float* q, float* r, QrMode mode) {
+    const uint M = a.rows, N = a.cols, K = std::min(M, N);
+    if (K == 0 || a.batch == 0) return;
+    // One matrix, or a few large ones: the blocked QR (qr_blocked.mm), whose
+    // updates are MPS products where these kernels stream each panel's
+    // update through a threadgroup a 32-column tile.
+    if (qr_blocked_preferred(M, N, a.batch)) {
+        qr_blocked(a, q, r, mode);
+        return;
+    }
+    // These kernels form the thin Q: R alone discards it; a square Q of a
+    // matrix taller than the blocked QR takes (2^22 rows) would not fit in
+    // memory anyway
+    if (mode == QrMode::complete && M > N)
+        throw std::invalid_argument("[qr] complete mode: a square Q for " + std::to_string(M) + " x " +
+                                    std::to_string(N) + " is the blocked QR's, which this call does not reach");
+    if (mode == QrMode::r) {
+        std::vector<float> scratch((size_t)a.batch * M * K);
+        streaming(a, scratch.data(), r);
+        return;
+    }
+    streaming(a, q, r);
+}
+
+namespace {
+void streaming(const Matrices& a, float* q, float* r) {
     const uint original_M = a.rows;
     const uint original_N = a.cols;
     const uint original_K = std::min(original_M, original_N);
     const uint batch      = a.batch;
-    if (original_K == 0 || batch == 0) return;
-    // One matrix, or a few large ones: the blocked QR (qr_blocked.mm), whose
-    // updates are MPS products where these kernels stream each panel's
-    // update through a threadgroup a 32-column tile.
-    if (qr_blocked_preferred(original_M, original_N, batch)) {
-        qr_blocked(a, q, r);
-        return;
-    }
     AutoreleasePool pool;
 
     const uint M_pad = pad_up(original_M, 32);
@@ -264,6 +286,11 @@ void qr_streaming_amx_reduced(const Matrices& a, float* q, float* r) {
     copy_out(static_cast<const float*>([w.buf_R_out contents]), r, batch, (size_t)original_K * original_N,
              in.scaled ? &in.unscale : nullptr);
     copy_out(static_cast<const float*>([w.buf_Q_out contents]), q, batch, (size_t)original_M * original_K);
+}
+} // namespace
+
+void qr_streaming_amx_reduced(const Matrices& a, float* q, float* r) {
+    qr_streaming_amx_reduced(a, q, r, QrMode::reduced);
 }
 
 } // namespace metal_linalg::core::detail

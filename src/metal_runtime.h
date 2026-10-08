@@ -385,10 +385,10 @@ uint32_t qr_blocks(id<MTLCommandBuffer> __strong& cb, id<MTLBuffer> A, uint32_t 
 // past Q's (a factored matrix padded with zero rows): they are left out.
 void qr_blocks_apply(id<MTLCommandBuffer> cb, id<MTLBuffer> Q, uint32_t m, uint32_t K, uint32_t ldq, uint32_t b,
                      uint32_t blocks, const QrStore& st);
-// Each R (k x n row-major, k n apart) = up[i] times A's upper triangle (ld
-// lda, sa apart), zeros below.
+// Each R (k x n row-major, sr apart, k n if 0) = up[i] times A's upper
+// triangle (ld lda, sa apart), zeros below.
 void qr_r_out(id<MTLCommandBuffer> cb, id<MTLBuffer> A, id<MTLBuffer> R, uint32_t k, uint32_t n, uint32_t lda,
-              size_t sa, uint32_t batch, id<MTLBuffer> up);
+              size_t sa, uint32_t batch, id<MTLBuffer> up, size_t sr = 0);
 // Each dst (mp x np, row-major, sd apart) = scale[i] src (m x n, m n
 // apart), zeros around it.
 void qr_scale_copy(id<MTLCommandBuffer> cb, id<MTLBuffer> src, id<MTLBuffer> dst, uint32_t m, uint32_t n,
