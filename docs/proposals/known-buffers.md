@@ -1,7 +1,8 @@
 # MLX's buffers, not wrapped again
 
-Status: **done** in 2.16.0 (2026-10-08) for the MLX API; what is left is
-[below](#left).
+Status: **done** in 2.16.0 (2026-10-08): the MLX API, then the C API and
+the PyTorch package; and the remaining per-call cost found to be the sweeps'
+own ([Then](#then-2026-10-08)).
 
 ## What
 
@@ -27,7 +28,8 @@ ms for 3.7 of GPU time.
 
 ## Done (2026-10-08)
 
-M5 Pro, `sweep_qr` through MLX, the Householder kernels, ms a call:
+M5 Pro, `sweep_qr` through MLX (with MLX's buffer cache off, as the sweeps
+had it then), the Householder kernels, ms a call:
 
 | shape | before | after |
 |---|---|---|
@@ -41,14 +43,33 @@ Every backend that wraps its caller's memory gains as much for the same
 bytes, the eigensolver's and the SVD's too; their routing, measured before
 it, is a little conservative about the GPU until they are re-measured.
 
-## Left
+## Then (2026-10-08)
 
-- At 4096 x 64 x 64 the call is still 5.9 ms for 3.65 of GPU time: about 2
-  ms between, which the GPU timestamps do not see: the command buffer's
-  submission, making 192 MB of buffers resident for a queue that has not
-  used them, MLX's own allocation of the outputs. A residency set
-  (`MTLResidencySet`, macOS 15) kept by the library might take part of it;
-  not tried.
-- The C API and the PyTorch package pass plain pointers and gain nothing:
-  a C entry point taking `MTLBuffer`s (and PyTorch's MPS tensors through it,
-  as the `torch-mps-zero-copy` branch does for its own path) would.
+**The rest of the gap was the sweeps' own.** At 4096 x 64 x 64 the call was
+still 5.9 ms for 3.65 of GPU time, and command-buffer timestamps put 2.4 ms
+of it between the commit and the GPU starting, about 12 us for every MB the
+call touched. The sweep tools (and the benchmarks) had turned MLX's buffer
+cache off since 2.0, so every call's outputs were fresh pages, which the GPU
+maps on first use. Through MLX as a program has it, cache on, the same call
+takes 3.9 ms, the commit-to-start 0.1. The sweeps and the benchmarks keep
+the cache on since; it moved every GPU backend more than the CPU path:
+
+| shape (QR) | CPU, cache off -> on | GPU, cache off -> on |
+|---|---|---|
+| 4096 x 64 x 64 | 10.5 -> 9.0 ms | 6.4 -> 4.0 |
+| 1024 x 128 x 128 | 25.1 -> 24.4 | 7.2 -> 4.6 |
+| 4096 x 16 x 16 | 1.32 -> 0.89 | 0.52 -> 0.39 |
+
+so all three decompositions were re-measured (kernel epochs qr 7, eigh 7,
+svd 9).
+
+**Residency sets, tried.** Keeping the call's buffers in a residency set of
+the library's own (`MTLResidencySet`, macOS 15) cut the commit-to-start to
+0.1-0.5 ms but cost 1.7 ms a call to make it resident again, and holding
+MLX's buffers in it kept MLX's allocator from recycling them: each call got
+fresh memory. With the cache on there is nothing left for it to save.
+
+**The C API and PyTorch**: `metal_linalg_know_buffer` and
+`metal_linalg_forget_buffer` register a caller's `MTLBuffer` for memory that
+starts where it does, as the MLX layer does for its arrays; the PyTorch
+package registers its MPS tensors' buffers for each call.

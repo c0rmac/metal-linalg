@@ -85,6 +85,12 @@ docs/results/<device>/combined/    the combined report per decomposition, summar
 src/tuned/{qr,eigh,svd}.inc        included by kTuned[] in src/qr.mm, src/eigh.mm, src/svd.mm
 ```
 
+**What a timing is.** Each sweep tool times one shape in a process of its
+own, a call through the MLX API as a program makes it, the median of its
+reps after two warm-ups, with MLX's buffer cache on as MLX has it by default
+(since 2.16.0; off before, which made every call's outputs fresh pages for
+the GPU to map, and timed the allocation as much as the decomposition).
+
 **How runs combine** (`tuning/submissions.py`): for each decomposition,
 every run whose measurements of it are trustworthy is used, and smoke tests,
 interrupted runs, untrustworthy results and runs from an older measurement

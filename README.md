@@ -109,7 +109,7 @@ On an Apple M5 Pro (20 GPU cores), against a CPU path that spreads every call
 over all 18 CPU cores, the GPU wins in two places, and the router sends work
 there and nowhere else.
 
-**One large matrix: up to 10x, and 11.3x at 8192.** eigh and the SVD keep
+**One large matrix: up to 10x, and 11.8x at 8192.** eigh and the SVD keep
 LAPACK's method and move its memory-bound reduction (to tridiagonal or
 bidiagonal form) and its back-transformation to the GPU; the divide and
 conquer between them runs on every CPU core (since 2.15.0). For the eigenvalues
@@ -124,64 +124,63 @@ against the CPU:
 
 | | 1024 | 1536 | 2048 | 3072 | 4096 |
 |---|---|---|---|---|---|
-| svdvals, singular values alone | 1.80x | 2.55x | **3.75x** | **7.23x** | **9.96x** |
-| eigh, with eigenvectors | 2.26x | **3.08x** | **4.39x** | **5.75x** | **8.83x** |
-| eigvalsh, eigenvalues alone | 1.55x | 1.96x | 2.25x | 2.99x | **3.62x** |
-| SVD, with vectors | 2.68x | **3.62x** | **5.54x** | **7.93x** | **9.91x** |
-| QR | 2.48x | **3.27x** | **5.24x** | **6.91x** | **10.1x** |
+| svdvals, singular values alone | 1.86x | 2.57x | **3.77x** | **7.10x** | **9.95x** |
+| eigh, with eigenvectors | 2.29x | **3.16x** | **4.49x** | **5.91x** | **9.24x** |
+| eigvalsh, eigenvalues alone | 1.62x | 2.01x | 2.31x | **3.10x** | **3.69x** |
+| SVD, with vectors | 2.77x | **3.65x** | **5.57x** | **8.10x** | **10.4x** |
+| QR | 2.54x | **3.34x** | **5.24x** | **6.87x** | **10.3x** |
 
-At 8192, the singular values alone take 1.11 s against the CPU's 12.6 s
-(11.3x), eigh 2.14 s against 18.2 s (8.5x), and the eigenvalues alone 0.72 s
-against 2.64 s (3.7x, against LAPACK's own two-stage driver). The M5 Pro uses
+At 8192, the singular values alone take 1.07 s against the CPU's 12.6 s
+(11.8x), eigh 2.05 s against 18.2 s (8.9x), and the eigenvalues alone 0.70 s
+against 2.64 s (3.8x, against LAPACK's own two-stage driver). The M5 Pro uses
 these backends from N = 1024, for one matrix or a few: a batch of them is
 pipelined, the CPU solving one matrix's small problem while the GPU reduces
 the next, but the CPU path spreads a large batch over its cores. The SVD
 with vectors' row is the two-stage `band` backend, which the M5 Pro routes to
-from k = 1024 (`bidiag`, the one-stage reduction, 4.0x at 4096). QR's GPU
-path takes batches too: 16 of 1024×1024 1.9x, 4 of 2048×2048 3.9x, and tall
+from k = 1024 (`bidiag`, the one-stage reduction, 4.2x at 4096). QR's GPU
+path takes batches too: 16 of 1024×1024 2.1x, 4 of 2048×2048 4.1x, and tall
 matrices, one 8192×512 5.6x. At 4096, 2.14 had svdvals at 8.62x, eigh 5.62x,
 eigvalsh 2.91x, the SVD with vectors 2.32x and QR 2.7x.
 
-**Large batches of small matrices: up to 3x.** LAPACK's own methods, a
+**Large batches of small matrices: up to 5.6x.** LAPACK's own methods, a
 matrix to a threadgroup or a simdgroup, carry the GPU's lead: the
 eigensolver's `ql` kernel (tridiagonalization and QL), the SVD's
 `golub_kahan` (bidiagonalization and implicit QR, 1.6-3x faster than the
 Jacobi kernels it replaced), and since 2.16.0 QR's Householder kernels (up to
 32 columns in a simdgroup's registers; above that blocked in a threadgroup,
 the updates as 8×8 simdgroup matrix products), which take QR's batches from
-the CPU from 64×64 at 256 matrices and lead by 3x at 128×128. From 1024
-matrices eigh's and the SVD's batches are shared, the GPU and the CPU solving
-them at once (1.4-1.7x over either alone), up to 64×64 for eigh and 80×80
-for the SVD. The best GPU route against the CPU alone:
+the CPU from 64×64 at 256 matrices and lead by 4.7-5.6x at 128×128. eigh's
+and the SVD's large batches are shared, the GPU and the CPU solving them at
+once (from 4096 matrices for eigh, 256 for the SVD), up to 64×64 for eigh and
+80×80 for the SVD. The best GPU route against the CPU alone:
 
 | | lone matrix | batch 16 | batch 256 | batch 4096 |
 |---|---|---|---|---|
-| eigh 24×24 | 0.10x | 0.33x | 1.09x | **2.17x** |
-| eigh 32×32 | 0.13x | 0.36x | 1.14x | **2.10x** |
-| eigh 64×64 | 0.17x | 0.26x | 0.95x | 1.61x |
-| eigvalsh 32×32 | 0.38x | 0.22x | 0.72x | 1.62x |
-| SVD 16×16 | 0.07x | 0.38x | 1.17x | **2.04x** |
-| SVD 32×32 | 0.18x | 0.46x | 1.31x | **2.11x** |
-| SVD 48×48 | 0.16x | 0.38x | 1.57x | 1.83x |
-| SVD 64×64 | 0.21x | 0.35x | 1.08x | 1.62x |
-| QR 16×16 | 0.02x | 0.19x | 0.56x | 1.06x |
-| QR 32×32 | 0.03x | 0.23x | 0.55x | 1.92x |
-| QR 64×64 | 0.09x | 0.23x | 1.27x | 1.71x |
-| QR 128×128 | 0.32x | 0.80x | **3.15x** | **2.96x** |
-| QR 256×256 | 0.58x | 0.87x | **2.14x** | 1.76x |
+| eigh 24×24 | 0.08x | 0.46x | 1.20x | **2.37x** |
+| eigh 32×32 | 0.11x | 0.30x | 1.20x | **2.36x** |
+| eigh 64×64 | 0.17x | 0.20x | 0.99x | 1.69x |
+| eigvalsh 32×32 | 0.37x | 0.33x | 0.71x | 1.64x |
+| SVD 16×16 | 0.06x | 0.27x | 1.40x | **2.38x** |
+| SVD 32×32 | 0.11x | 0.30x | 1.33x | **2.44x** |
+| SVD 48×48 | 0.16x | 0.30x | 1.66x | **2.11x** |
+| SVD 64×64 | 0.20x | 0.31x | 1.13x | 1.71x |
+| QR 16×16 | 0.01x | 0.15x | 0.53x | 1.42x |
+| QR 32×32 | 0.02x | 0.34x | 0.55x | **3.13x** |
+| QR 64×64 | 0.03x | 0.43x | 1.35x | **2.34x** |
+| QR 128×128 | 0.29x | 1.22x | **4.65x** | **5.57x** |
+| QR 256×256 | 0.85x | 1.45x | **2.87x** | **2.79x** |
 
 Lone small matrices and small batches stay on the CPU, which is 3-100x faster
 there: since 2.9.0 it spreads a batch over every core ([the
 performance-headroom study](docs/studies/performance-headroom-apple-m5-pro.md)
 has why); so do batches of mid-size matrices (about 96 to 512) for eigh and
-the SVD. At 4096 of 16×16 the GPU's QR takes 0.19 ms of GPU time, but a call
-around it 0.5-1.3 ms, level with the CPU's 0.9. The numbers for one large
-matrix are 2.16.0's, measured side by side with the CPU path (`sweep_eigh`,
-`sweep_svd`, `sweep_qr`, median; at 8192 the CPU's from 2.15.0, its path
-unchanged since); the batches' too, on 2.16.0 (each GPU backend against the
-CPU path, the best of two passes, sharing from batch 64 as the routing
+the SVD. The numbers for one large matrix are 2.16.0's, measured side by
+side with the CPU path (`sweep_eigh`, `sweep_svd`, `sweep_qr`, median, MLX's
+buffer cache on as an MLX program has it; at 8192 the CPU's from 2.15.0, its
+path unchanged since); the batches' too, on 2.16.0 (each GPU backend against
+the CPU path, the best of two passes, sharing from batch 64 as the routing
 sweeps time it), and QR's tall matrices from
-[`20261007-8633ac`](docs/results/apple-m5-pro-20gpu/20261007-8633ac/summary.md). The full tables are in the per-solver docs; how the two-stage reduction
+[`20261007-9f2589`](docs/results/apple-m5-pro-20gpu/20261007-9f2589/summary.md). The full tables are in the per-solver docs; how the two-stage reduction
 got there is in [the two-stage study](docs/studies/two-stage-apple-m5-pro.md),
 and 2.15.0's changes in [its study](docs/studies/proposals-2-15-apple-m5-pro.md).
 
@@ -421,23 +420,23 @@ the same tensors on MPS for torch's MPS path and for this package, which uses th
 
 | | torch, CPU | torch, MPS | metal-linalg-torch |
 |---|---|---|---|
-| QR, 1024 × 128×128 | 202 ms | 33 ms | 6.5 ms |
-| SVD, 256 × 128×64 | 69 ms | 72 ms | 5.3 ms |
-| SVD, 4096 × 32×32 | 222 ms | 233 ms | 6.2 ms |
-| eigh, 4096 × 16×16 | 33 ms | 35 ms | 1.9 ms |
-| eigh, one 2048×2048 | 255 ms | 261 ms | 57 ms |
-| SVD, one 4096×4096 | 3.68 s | 3.72 s | 356 ms |
-| eigvalsh, one 4096×4096 | 1.81 s | 1.83 s | 131 ms |
-| svdvals, one 4096×4096 | 2.01 s | 2.02 s | 196 ms |
+| QR, 1024 × 128×128 | 202 ms | 32 ms | 4.4 ms |
+| SVD, 256 × 128×64 | 69 ms | 71 ms | 5.1 ms |
+| SVD, 4096 × 32×32 | 223 ms | 232 ms | 6.3 ms |
+| eigh, 4096 × 16×16 | 33 ms | 35 ms | 2.0 ms |
+| eigh, one 2048×2048 | 263 ms | 272 ms | 56 ms |
+| SVD, one 4096×4096 | 3.60 s | 3.64 s | 339 ms |
+| eigvalsh, one 4096×4096 | 1.78 s | 1.80 s | 125 ms |
+| svdvals, one 4096×4096 | 1.95 s | 1.99 s | 193 ms |
 
 It is ahead on every row. Of these calls PyTorch 2.13 runs only QR on the GPU
-for MPS tensors, and this is 5x faster there (the QR batch runs on the
+for MPS tensors, and this is 7x faster there (the QR batch runs on the
 library's Householder kernels); its SVD takes as long on MPS
 as on the CPU, and eigh, eigvalsh and svdvals have no MPS kernels and go
-through its CPU fallback. Against those, 13-36x for the other batches of
-small matrices (the SVD of 256 matrices of 128×64 runs on the library's CPU
-path, which spreads a batch over every core; the two batches of 4096 run on
-the GPU and the CPU at once), 4.5x for eigh of one 2048×2048
+through its CPU fallback. Against those, 13-35x for the other batches of
+small matrices (the SVD of 256 matrices of 128×64 is a QR and then
+`golub_kahan` on the GPU; the two batches of 4096 run on the GPU and the CPU
+at once), 4.7x for eigh of one 2048×2048
 and 10x for the SVD of one 4096×4096 with its vectors, and 10-14x for its
 eigenvalues or singular values alone (the last three by a two-stage
 reduction).

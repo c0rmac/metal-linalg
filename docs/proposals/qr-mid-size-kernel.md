@@ -91,7 +91,8 @@ is now the two Householder kernels, up to 4096 rows, and the blocked QR
 beyond.
 
 **Measured** (M5 Pro, through MLX, ms a call, with MLX's buffers reused, see
-[known-buffers.md](known-buffers.md)):
+[known-buffers.md](known-buffers.md), and MLX's buffer cache off, as the sweeps
+had it then):
 
 | batch x shape | CPU | blocked QR | this kernel |
 |---|---|---|---|
@@ -110,7 +111,22 @@ threadgroup a matrix is latency-bound: one 512 x 512 takes 4.9 ms, the
 blocked QR 2.9, the CPU 3.7); the re-measured routing (kernel epoch qr 6)
 finds the crossovers.
 
-**Left:** the fixed passes are most of what remains at 128^2. Factoring
-straight from the input (the first block's loads from the caller's buffer)
-would save a pass; keeping a 128 x 128 matrix on chip would save most of
-them, but at 64 KB it is twice a threadgroup's memory.
+**Then, the same night:**
+
+- **Small batches get more simdgroups a matrix.** A batch that would leave
+  the GPU with fewer than about 12 simdgroups a core gives each matrix up to
+  16, one row a thread: its panels are a latency-bound chain, which more
+  threads shorten. One 256 x 256 0.98 ms (1.52 before), one 384 x 384 2.0
+  (3.0), 16 of 256 x 256 1.19 (1.74), 32 of them 1.66 (2.09); large batches
+  unchanged (from 2 to 32 simdgroups a matrix made no difference there).
+- **An aligned input read directly.** A matrix that needs neither padding
+  nor scaling is read by block 0 straight from the input, which writes the
+  workspace, so the copy pass is gone: 2-4% (1024 of 128^2 4.65 to 4.51 ms).
+- With MLX's buffer cache on in the sweeps ([known-buffers.md](known-buffers.md#then-2026-10-08)),
+  1024 of 128 x 128 takes 4.5 ms a call, 4096 of 64 x 64 3.9.
+
+**Left:** the fixed passes are most of what remains at 128^2. Keeping a
+128 x 128 matrix on chip would save most of them, but at 64 KB it is twice a
+threadgroup's memory. A lone matrix of 256-384 is still a little slower
+than the CPU (0.98 ms against 0.84 at 256): its panels' two barriers a
+column are the chain.

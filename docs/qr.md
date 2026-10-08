@@ -219,9 +219,12 @@ LAPACK's `sgeqrf` and `sorgqr` as they run on one core.
    workspace's shape).
 
 The matrix, padded with zero rows and columns to multiples of 8 (and to K
-rounded up to 16), is in a device workspace. A simdgroup for every 64 rows
-(128 with four rows a thread), and for every 128 columns of a wide matrix,
-up to 8.
+rounded up to 16), is in a device workspace; one that needs neither padding
+nor scaling is read by the first block straight from the input. A simdgroup
+for every 64 rows (128 with four rows a thread), and for every 128 columns
+of a wide matrix, up to 8; and for a small batch, which would leave the GPU
+fewer than about 12 simdgroups a core, up to 16 a matrix, one row a thread
+(its panels are a latency-bound chain: one 384×384 in 2.0 ms against 3.0).
 
 Both read the caller's input row-major as it is, find each matrix's scale
 and non-finite entries on the GPU, and write Q and R straight out. On an M5
@@ -269,10 +272,11 @@ no more), which saves it a pass over the matrix.
 ### Dispatch logic
 
 Two decisions, as for the eigensolver and the SVD. First GPU or CPU, with
-`k = min(M, N)`:
+`k = min(M, N)` and `w = floor(sqrt(M k))` (k for a square or wide matrix,
+more for a tall one):
 
 ```
-GPU iff  gpu_min_k <= k <= gpu_max_k,  batch * k >= gpu_min_batch_times_k  and  batch >= gpu_min_batch,
+GPU iff  gpu_min_k <= w <= gpu_max_k,  batch * w >= gpu_min_batch_times_k  and  batch >= gpu_min_batch,
      or  sqrt(M k) >= gpu_large_min_k  and  batch <= gpu_large_max_batch       (large matrices)
 else CPU
 on the GPU, from a batch of share_min_batch: the batch shared with the CPU path
@@ -290,6 +294,12 @@ alone by much (1024 of 256×256: 80 ms on the GPU, 69 on the CPU, 43 shared).
 `qr_shares_batch(m, n, batch)` reports it; `QR_SHARE_MIN_BATCH` overrides it.
 The threshold is fitted by `tuning/tune_qr.py` before the GPU-or-CPU boundary,
 which is then fitted with sharing in effect.
+
+**The size is `w`, rows and k both** (since 2.16.0; `k` before, and the fields
+keep their names). The unblocked backend's kernels take a tall, narrow batch in
+parallel by its rows, which a rule on `k` cannot see: on the M5 Pro's run of
+2026-10-08 it sent 16 of 1024×64 to the CPU at 1.9x the GPU's time, and
+refitted on `w` the row's regret went from 1.037x to 1.024x.
 
 The GPU needs enough work to pay for a launch, so lone and small-batch calls go
 to LAPACK. Since 2.9.0 the CPU path also spreads a batch over every core,
@@ -322,7 +332,7 @@ the measured row is `k <= 128` with `batch * k >= 40960`, no lower bound. Then,
 on the GPU, which kernel:
 
 ```
-k >= m_crossover  ->  qr_streaming_amx_reduced      (on an M5 Pro: 192 for batches below 8, 576 from 8)
+k >= m_crossover  ->  qr_streaming_amx_reduced      (on an M5 Pro: 80 for batches below 8, 768 from 8)
 otherwise         ->  qr_unblocked
 ```
 
@@ -333,10 +343,10 @@ while its rows run in parallel. The blocked QR spreads a matrix over the
 whole GPU at several dispatches a panel, which a large matrix repays, or a
 small batch (one threadgroup a matrix leaves most of the GPU idle: one
 4096×256 takes 13 ms on the unblocked backend, 2.6 on the blocked QR). On
-the shapes the GPU takes in the M5 Pro's run of 2026-10-08, `k` fitted at
-1.040x regret, `M` at 1.129x; split by batch (the fields
+the shapes the GPU takes in the M5 Pro's runs of 2026-10-08, `k` fitted at
+1.040x regret and `M` at 1.129x (run `8633ac`); split by batch (the fields
 `m_crossover_small_batch`, `m_crossover_large_batch`, `batch_threshold`), at
-1.004x held out against 1.065x for one threshold. The split's field names
+1.008x held out against 1.032x for one threshold (run `9f2589`). The split's field names
 are historical.
 
 Before 2.16.0 the `unblocked` backend's kernel swept a matrix's rows a
@@ -393,7 +403,7 @@ flip column `i` of Q and row `i` of R wherever `R[i][i] < 0`.
 **The crossover is hardware-specific.** `384` was measured on an 8-core Apple
 M1 over 421 shapes; on a 20-core M5 Pro it was `512`, then `128` once the
 grid-parallel backend handed its calls to the blocked QR (2.15.0), and since
-2.16.0's kernels it is on `k`: 192 for batches below 8, 576 from 8. None is
+2.16.0's kernels it is on `k`: 80 for batches below 8, 768 from 8. None is
 a universal constant. The library ships a table of measured values rather than a formula,
 because the crossover depends on both core count and per-core throughput and the
 two push in opposite directions across GPU generations: more cores favour the
@@ -403,18 +413,19 @@ the M5 Pro the second effect won.
 | GPU | cores | `m_crossover` | GPU or CPU | status |
 |---|---|---|---|---|
 | Apple M1 | 8 | — | — | measured before 2.9.0, out of date and no longer used since 2.14.0: estimated like any unmeasured Mac (the old row's study: [`studies/qr-routing-apple-m1.md`](studies/qr-routing-apple-m1.md)) |
-| Apple M5 Pro | 20 | k: 192 below batch 8, 576 from 8 | GPU iff `k <= 320` and `batch * k >= 6144`, or `sqrt(M k) >= 362`; no batch shared with the CPU | measured — run [`20261007-8633ac`](results/apple-m5-pro-20gpu/20261007-8633ac/qr/report.md) |
+| Apple M5 Pro | 20 | k: 80 below batch 8, 768 from 8 | GPU iff `w <= 448` and `batch * w >= 1448` (w = floor(sqrt(M k))), or `sqrt(M k) >= 512`; no batch shared with the CPU | measured — run [`20261007-9f2589`](results/apple-m5-pro-20gpu/20261007-9f2589/qr/report.md) |
 | anything else | — | estimated | estimated | **estimated** from the M5 Pro's timings ([how](tuning.md#macs-nobody-has-measured)) |
 
 The GPU-or-CPU boundary is measured by every run made since QR had a CPU path;
 a device's row sends every call to the GPU until such a run has been submitted
 for it (`python3 tuning/run.py --only qr` measures QR alone in about 5
 minutes). Against the best backend at each of the 221 shapes of its run
-(2.16.0), the M5 Pro row scores 1.0377 geometric-mean regret, worst 1.96x,
-1.0670 held out; always the CPU would score 1.316, always the GPU 1.73. The
-CPU is the fastest at 123 of the 221 shapes: lone matrices up to about 384
-and small batches. The run's first analysis, with the crossover on `M` and
-fitted on every shape (the CPU's included), scored 1.091 and sent 1024 of
+(2.16.0, MLX's buffer cache on), the M5 Pro row scores 1.0200 geometric-mean
+regret, worst 1.85x, 1.0302 held out; always the CPU would score 1.442,
+always the GPU 1.70. The CPU is the fastest at 104 of the 221 shapes: lone
+matrices up to about 384 and small batches. An earlier run of the same day
+(`20261007-8633ac`, the cache off), first analysed with the crossover on `M`
+and fitted on every shape (the CPU's included), scored 1.091 and sent 1024 of
 128×128 to the blocked QR (17.8 ms, against 6.4 on the unblocked backend):
 the crossover is now fitted where a GPU kernel beats the CPU. With the
 blocked QR (2.15.0) the row scored 1.0133 on its run's 207 shapes, and the
