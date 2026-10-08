@@ -42,6 +42,8 @@ _eigh = _fn("metal_linalg_eigh", ctypes.c_int, _f32p, _u32, _u32, ctypes.c_int, 
 _svd = _fn("metal_linalg_svd", ctypes.c_int, _f32p, _u32, _u32, _u32, _f32p, _f32p, _f32p, _u32p)
 buffer_contents = _fn("metal_linalg_buffer_contents", ctypes.c_void_p,
                       ctypes.c_void_p, ctypes.c_uint64, ctypes.c_uint64)
+know_buffer = _fn("metal_linalg_know_buffer", ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)
+forget_buffer = _fn("metal_linalg_forget_buffer", None, ctypes.c_void_p, ctypes.c_void_p)
 
 device_name = _fn("metal_linalg_device_name", _cstr)
 gpu_core_count = _fn("metal_linalg_gpu_core_count", _u32)

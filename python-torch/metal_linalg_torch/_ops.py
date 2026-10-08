@@ -105,7 +105,18 @@ def _run(a, shapes, call):
         torch.mps.synchronize()
         addresses = [_mps_address(t) for t in (x, *outs)]
         if all(addresses):
-            call(*addresses)
+            # The tensors' own Metal buffers, made known to the library for
+            # the call, which its GPU backends then use rather than wrapping
+            # the memory in new buffers (whose pages the GPU maps on first
+            # use: about 1 ms for 64 MB)
+            known = [(address, t.untyped_storage().data_ptr())
+                     for address, t in zip(addresses, (x, *outs)) if t.storage_offset() == 0]
+            known = [k for k in known if _lib.know_buffer(*k)]
+            try:
+                call(*addresses)
+            finally:
+                for k in known:
+                    _lib.forget_buffer(*k)
             return outs
     x = _host(a)
     outs = tuple(_empty(s) for s in shapes)

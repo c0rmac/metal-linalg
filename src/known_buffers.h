@@ -10,6 +10,11 @@
 
 namespace metal_linalg::detail {
 
+// The same, unscoped: `buffer` known for memory starting at `data` until
+// forget_buffer with the same two (the C API's metal_linalg_know_buffer).
+void know_buffer(const void* data, void* buffer);
+void forget_buffer(const void* data, void* buffer);
+
 class KnownBuffer {
 public:
     // `buffer` an MTLBuffer (unretained: the caller keeps it alive), nullptr

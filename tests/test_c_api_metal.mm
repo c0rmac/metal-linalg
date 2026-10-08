@@ -1,7 +1,7 @@
-// Tests of metal_linalg_buffer_contents (c_api.h): which Metal buffers it
-// gives an address for, and the decompositions reading their input from, and
-// writing their outputs to, buffer memory in place, sub-allocated from a heap
-// as PyTorch's MPS allocator does it. Each shape is run at a batch the CPU
+// Tests of metal_linalg_buffer_contents and metal_linalg_know_buffer
+// (c_api.h): which Metal buffers they take, and the decompositions reading
+// their input from, and writing their outputs to, buffer memory in place,
+// sub-allocated from a heap as PyTorch's MPS allocator does it. Each shape is run at a batch the CPU
 // takes and at one the GPU takes on a measured device.
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
@@ -231,6 +231,31 @@ void test_svd(Arena& arena, uint32_t batch, uint32_t m, uint32_t n, bool vectors
     CHECK(values < 1e-4 && rec < 10 * kTol && orth < 10 * kTol, "svd %ux%u x%u in buffers is off", m, n, batch);
 }
 
+// The decompositions on buffers made known to them (metal_linalg_know_buffer),
+// which their GPU backends then use rather than wrapping the memory.
+void test_known(Arena& arena, uint32_t batch, uint32_t m, uint32_t n) {
+    const uint32_t k = std::min(m, n);
+    const size_t na = (size_t)batch * m * n, nq = (size_t)batch * m * k, nr = (size_t)batch * k * n;
+    const std::vector<float> host = random_matrices(na, 3, false, 0);
+    float* mem[3] = {arena.floats(na), arena.floats(nq), arena.floats(nr)};
+    const void* buf[3];
+    for (int i = 0; i < 3; ++i) buf[i] = (__bridge const void*)arena.held[arena.held.count - 3 + i];
+    CHECK(mem[0] && mem[1] && mem[2], "known: no buffer memory");
+    if (!(mem[0] && mem[1] && mem[2])) return;
+    std::copy(host.begin(), host.end(), mem[0]);
+    CHECK(metal_linalg_know_buffer(mem[0] + 1, buf[0]) == 0, "know_buffer took memory not at the buffer's start");
+    CHECK(metal_linalg_know_buffer(mem[0], nullptr) == 0, "know_buffer took a NULL buffer");
+    for (int i = 0; i < 3; ++i) CHECK(metal_linalg_know_buffer(mem[i], buf[i]) == 1, "know_buffer refused a buffer");
+    CHECK(metal_linalg_qr(mem[0], batch, m, n, mem[1], mem[2]) == METAL_LINALG_OK, "qr in known buffers: %s",
+          metal_linalg_last_error());
+    for (int i = 0; i < 3; ++i) metal_linalg_forget_buffer(mem[i], buf[i]);
+    const double rec = reconstruction(host.data(), mem[1], nullptr, mem[2], batch, m, n, k);
+    const double orth = orthogonality(mem[1], batch, m, k);
+    printf("  qr %ux%u x%-5u [%s], known buffers: reconstruction %.1e, orthogonality %.1e\n", m, n, batch,
+           metal_linalg_qr_backend(m, n, batch), rec, orth);
+    CHECK(rec < kTol && orth < 10 * kTol, "qr %ux%u x%u in known buffers is off", m, n, batch);
+}
+
 } // namespace
 
 int main() {
@@ -254,6 +279,8 @@ int main() {
             test_svd(arena, batch, 48, 16, true);
             test_svd(arena, batch, 32, 32, false);
         }
+        test_known(arena, 4096, 64, 64);
+        test_known(arena, 256, 128, 96);
 
         printf("\n%d of %d checks failed\n", g_failures, g_checks);
     }

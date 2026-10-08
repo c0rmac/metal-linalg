@@ -82,22 +82,26 @@ id<MTLBuffer> known_buffer(const void* data, size_t bytes) {
 
 } // namespace
 
-KnownBuffer::KnownBuffer(const void* data, void* buffer) : data_(data), buffer_(buffer) {
-    if (!data_ || !buffer_) return;
+void know_buffer(const void* data, void* buffer) {
+    if (!data || !buffer) return;
     std::lock_guard<std::mutex> lock(known_mutex());
-    known().push_back({data_, buffer_});
+    known().push_back({data, buffer});
 }
 
-KnownBuffer::~KnownBuffer() {
-    if (!data_ || !buffer_) return;
+void forget_buffer(const void* data, void* buffer) {
+    if (!data || !buffer) return;
     std::lock_guard<std::mutex> lock(known_mutex());
     std::vector<Known>& k = known();
     for (size_t i = k.size(); i-- > 0;)
-        if (k[i].data == data_ && k[i].buffer == buffer_) {
+        if (k[i].data == data && k[i].buffer == buffer) {
             k.erase(k.begin() + (long)i);
             break;
         }
 }
+
+KnownBuffer::KnownBuffer(const void* data, void* buffer) : data_(data), buffer_(buffer) { know_buffer(data_, buffer_); }
+
+KnownBuffer::~KnownBuffer() { forget_buffer(data_, buffer_); }
 
 id<MTLBuffer> wrap_host(id<MTLDevice> device, float* data, size_t floats) {
     if (id<MTLBuffer> b = known_buffer(data, floats * sizeof(float))) return b;
