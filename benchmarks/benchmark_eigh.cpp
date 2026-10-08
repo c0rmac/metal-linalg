@@ -319,7 +319,7 @@ void run_tune(int only) {
 
 int main(int argc, char** argv) {
     set_default_device(Device::gpu);
-    set_cache_limit(0);
+    // MLX's buffer cache left on, as an MLX program has it (see tuning/sweep_qr.cpp).
     // The public functions route to the CPU where the GPU was measured
     // slower; this is the measurement, so force the kernel.
     setenv("EIGH_DEVICE", "gpu", 1);

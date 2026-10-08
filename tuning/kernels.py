@@ -31,7 +31,7 @@ marked stale, rather than an estimate. The library reports the state at run time
 and docs/measurements.md shows it for every chip.
 """
 
-KERNEL_EPOCHS = {"qr": 6, "eigh": 6, "svd": 8}
+KERNEL_EPOCHS = {"qr": 7, "eigh": 7, "svd": 9}
 # The versions from which the CPU path spreads a batch over every core (2.9.0).
 MIN_EPOCHS = {"qr": 2, "eigh": 2, "svd": 3}
 
@@ -103,6 +103,18 @@ HISTORY = [
      "on the CPU, 4096 of 32 x 32 in 1.4 against 2.9 on the CPU; MLX's own buffers no longer "
      "wrapped again; the grid's kernel crossover goes down to 64 rows and its mid-size batches up "
      "to 384"),
+    ("qr", 7, "2.16.0", "2026-10-08",
+     "the sweeps keep MLX's buffer cache on, as an MLX program has it (off, every call's outputs "
+     "were fresh pages the GPU maps at about 12 us a MB: 4096 of 64 x 64 6.4 ms on the GPU against "
+     "4.0 with it on); the blocked kernel gives a small batch more simdgroups a matrix (one 384 x 384 "
+     "2.0 ms against 3.0) and reads an aligned input directly; the GPU-or-CPU rule is on sqrt(M k)"),
+    ("eigh", 7, "2.16.0", "2026-10-08",
+     "the sweeps keep MLX's buffer cache on, as an MLX program has it, and MLX's own buffers are no "
+     "longer wrapped again: the GPU backends' calls on large batches 10-40% cheaper"),
+    ("svd", 9, "2.16.0", "2026-10-08",
+     "the sweeps keep MLX's buffer cache on, as an MLX program has it, and MLX's own buffers are no "
+     "longer wrapped again: the GPU backends' calls on large batches 10-40% cheaper; the QR-"
+     "preconditioned backends run on 2.16.0's QR"),
 ]
 
 REQUIRED = {

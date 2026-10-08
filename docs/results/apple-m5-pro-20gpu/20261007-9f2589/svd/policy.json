@@ -1,0 +1,101 @@
+{
+ "policy": {
+  "device": "Apple M5 Pro",
+  "gpu_cores": 20,
+  "source": "tuned:Apple M5 Pro",
+  "qr_min_rows": 512,
+  "qr_min_k": 32,
+  "block_min_k": 192,
+  "block_min_k_batched": 64,
+  "block_min_batch": 64,
+  "gpu_max_k": 56,
+  "gpu_min_batch_times_k": 16384,
+  "gpu_min_batch": 1,
+  "gpu_max_l": 256,
+  "bidiag_min_k": 1024,
+  "values_bidiag_min_k": 1024,
+  "bidiag_max_batch": 4,
+  "values_bidiag_max_batch": 2,
+  "gk_min_k": 8,
+  "gk_max_k": 80,
+  "gk_limit": 83,
+  "values_gpu_max_k": 56,
+  "values_gpu_min_batch_times_k": 16384,
+  "values_gpu_min_batch": 1,
+  "values_gpu_max_l": 256,
+  "share_min_batch": 1024,
+  "gpu_big_batch_max_k": 80,
+  "gpu_big_batch_min": 1024,
+  "values_band_min_k": 768,
+  "values_band_width": 16,
+  "band_min_k": 1024
+ },
+ "calibration": {
+  "probe": {
+   "batch": 64,
+   "M": 128,
+   "N": 32,
+   "ms": {
+    "jacobi": 0.885334,
+    "block": 2.148792,
+    "qr": 1.135834,
+    "qrblock": 2.311,
+    "cpu": 0.4915,
+    "gk": 0.810083
+   }
+  },
+  "scale": {
+   "jacobi": 0.08540477045993213,
+   "block": 0.23576040474401552,
+   "qr": 0.15371029689044094,
+   "qrblock": 0.21923001032117054,
+   "cpu": 0.06647008291787841,
+   "bidiag": 1.0,
+   "gk": 0.33793560024562486
+  }
+ },
+ "machine": {
+  "start": {
+   "load_1m": 4.52001953125,
+   "cpus": 18,
+   "power": "mains",
+   "low_power_mode": 0,
+   "busy_processes": 0
+  },
+  "end": {
+   "load_1m": 5.49462890625,
+   "cpus": 18,
+   "power": "mains",
+   "low_power_mode": 0,
+   "busy_processes": 0
+  }
+ },
+ "drift": {
+  "before_ms": {
+   "jacobi": 0.885334,
+   "block": 2.148792,
+   "qr": 1.135834,
+   "qrblock": 2.311,
+   "cpu": 0.4915,
+   "gk": 0.810083
+  },
+  "after_ms": {
+   "jacobi": 0.9355,
+   "block": 2.08175,
+   "qr": 1.161333,
+   "qrblock": 2.337,
+   "cpu": 0.477041,
+   "gk": 0.864417
+  },
+  "ratio": {
+   "jacobi": 1.0566633609462643,
+   "block": 0.9688001444532557,
+   "qr": 1.0224495833017853,
+   "qrblock": 1.0112505408913892,
+   "cpu": 0.9705818921668362,
+   "gk": 1.0670721395215057
+  },
+  "worst": 1.0670721395215057,
+  "ok": true
+ }
+}

@@ -1,0 +1,45 @@
+device: Apple M5 Pro (20 GPU cores), policy from tuned:Apple M5 Pro
+cost model scale: tg x1.00, simd x1.00, block x0.13, cpu x0.08, ql x1.00
+sweep -> /Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261007-9f2589/eigh/raw.csv
+  207 points, 1766 backend timings per pass x 2 passes; rough estimate 50 min
+    20/414  elapsed 0.9m  eta 17.7m
+    40/414  elapsed 3.0m  eta 28.3m
+    60/414  elapsed 4.4m  eta 26.0m
+    80/414  elapsed 5.8m  eta 24.4m
+    100/414  elapsed 6.9m  eta 21.8m
+    120/414  elapsed 8.7m  eta 21.3m
+    140/414  elapsed 11.5m  eta 22.5m
+    160/414  elapsed 12.5m  eta 19.9m
+    180/414  elapsed 14.8m  eta 19.2m
+    200/414  elapsed 15.7m  eta 16.8m
+    220/414  elapsed 16.3m  eta 14.3m
+    240/414  elapsed 17.4m  eta 12.6m
+    260/414  elapsed 20.8m  eta 12.3m
+    280/414  elapsed 23.4m  eta 11.2m
+    300/414  elapsed 24.3m  eta 9.2m
+    320/414  elapsed 25.2m  eta 7.4m
+    340/414  elapsed 25.8m  eta 5.6m
+    360/414  elapsed 26.7m  eta 4.0m
+    380/414  elapsed 28.7m  eta 2.6m
+    400/414  elapsed 30.3m  eta 1.1m
+    414/414  elapsed 31.9m  eta 0.0m
+
+207 points on Apple M5 Pro (20 GPU cores)
+GPU split:   simd_max_n=0 block_min_n=96 block_min_n_batched=none block_min_batch=none   (1.0195x vs best GPU backend, worst 1.64x)
+CPU routing: gpu_max_n=16 gpu_min_batch_times_n=8192 gpu_min_batch=1   (1.0231x vs best of all, worst 1.82x)
+in effect (tuned:Apple M5 Pro): 1.0290x, worst 1.88x
+eigenvalues alone: values_gpu_max_n=48 values_gpu_min_batch_times_n=16384 values_gpu_min_batch=1   (1.0492x, worst 3.75x; with eigh's boundary 1.0638x, worst 3.75x)
+ql window:   N=2..64   (1.0474x vs best GPU backend, worst 1.74x; without it 1.1664x, worst 4.02x)
+large batches: also the GPU for N above gpu_max_n up to 48 from batch 256
+share with the CPU: from batch 4096   (1.0901x vs best GPU backend; ql alone 1.0945x)
+tridiag (vectors): from 1024, batch <= 4   (1.0116x, worst 1.50x; without it 1.2566x, worst 8.86x; held out 1.0195x vs 1.0971x)
+tridiag (values): from 1024, batch <= 2   (1.0181x, worst 1.60x; without it 1.1133x, worst 3.75x; held out 1.0162x vs 1.0460x)
+band (values): 2048, width 16   (1.0184x, worst 1.22x; without 1.0620x)
+
+kTuned[] row:  {"Apple M5 Pro", 20,   0, 96, 0, 0,   16, 8192, 1,   48, 16384, 1,   1024, 1024, 4, 2,   2, 64,   4096,   48, 256,   2048, 16},
+warning: chosen rule loses more than 25% at N=2 batch=4096 (ql_share, 1.82x), N=64 batch=2048 (cpu, 1.75x), N=64 batch=4096 (cpu, 1.72x), N=64 batch=1024 (cpu, 1.63x), N=48 batch=256 (ql, 1.60x), N=4 batch=4096 (ql_share, 1.54x), N=48 batch=2048 (ql, 1.35x), N=48 batch=1024 (ql, 1.29x) ...
+warning: GPU split loses more than 25% against the best GPU backend at N=32 batch=1 (ql, 1.74x), N=32 batch=4 (ql, 1.59x), N=32 batch=2 (ql, 1.57x), N=32 batch=8 (ql, 1.56x), N=32 batch=16 (ql, 1.48x), N=24 batch=16 (ql, 1.41x), N=24 batch=8 (ql, 1.39x), N=24 batch=32 (ql, 1.38x) ...
+warning: the fitted policy differs from the one in effect (tuned:Apple M5 Pro): update this device's row in kTuned[] in src/eigh.mm
+warning: eigenvalues alone: the GPU is still ahead at the largest N measured (4096); values_gpu_max_n is a lower bound
+warning: eigenvalues alone: the chosen boundary loses more than 25% at N=4096 batch=1 (cpu, 3.75x), N=3584 batch=1 (cpu, 3.00x), N=3072 batch=1 (cpu, 2.62x), N=2560 batch=1 (cpu, 2.16x), N=2048 batch=1 (cpu, 1.76x), N=48 batch=2048 (ql, 1.76x), N=48 batch=1024 (ql, 1.57x), N=1536 batch=1 (cpu, 1.56x) ...
+wrote /Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261007-9f2589/eigh/results.json and report.md

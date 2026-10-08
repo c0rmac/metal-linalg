@@ -8472,7 +8472,7 @@
   "routing": 1320
  },
  "raw": [
-  "docs/results/apple-m5-pro-20gpu/20261007-9f2589/eigh/raw.csv"
+  "/Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261007-9f2589/eigh/raw.csv"
  ],
  "submissions": [
   "20261007-9f2589"
