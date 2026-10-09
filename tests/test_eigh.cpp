@@ -740,14 +740,15 @@ int main() {
             check("tridiag_batch " + std::to_string(b) + " x " + std::to_string(n) + "x" + std::to_string(n), A,
                   tb(A, true, true));
         }
-        // With eigenvectors in two stages from N = 384, for batches up to half
-        // the CPU's solve threads (a quarter below 640): sizes about the blocks
+        // With eigenvectors in two stages from N = 64, for batches up to half
+        // the CPU's solve threads (all from 640, twice from 896): sizes about the blocks
         // (16) and the CPU's tail, one chunk and two (8 of 1024), against the
         // one-stage reduction (EIGH_TRIDIAG_BATCH_BAND=0); each triangle;
         // scaled, constant, a NaN, unaligned outputs
         if (cpu_threads() >= 10) {   // batches of 8 in two stages: 16 solve threads or so
-            for (auto [b, n] : {std::pair{2, 384}, std::pair{3, 400}, std::pair{4, 433}, std::pair{4, 640},
-                                std::pair{3, 1000}, std::pair{8, 1024}}) {
+            for (auto [b, n] : {std::pair{4, 64}, std::pair{6, 100}, std::pair{2, 130}, std::pair{2, 384},
+                                std::pair{3, 400}, std::pair{4, 433}, std::pair{4, 640}, std::pair{3, 1000},
+                                std::pair{8, 1024}}) {
                 array A = random_symmetric(b, n, 4500 + n);
                 EighResult r = tb(A, true, true);
                 const std::string label = "tridiag_batch two-stage " + std::to_string(b) + " x " + std::to_string(n) +
