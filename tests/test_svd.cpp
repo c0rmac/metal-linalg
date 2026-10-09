@@ -608,7 +608,9 @@ int main() {
         SvdResult r = detail::svd_bidiag(full({2048, 256}, 1.0f), true);
         eval({r.U, r.S, r.Vt, r.info});
         const array se = ones_singular_values(1, 2048, 256);
-        check("bidiag constant 2048x256 (QR first)", full({2048, 256}, 1.0f), r, &se, 5.0f);
+        // (slack 10: where a policy sends its QR to the CPU, LAPACK's own on this
+        // matrix reconstructs to 1.5e-4)
+        check("bidiag constant 2048x256 (QR first)", full({2048, 256}, 1.0f), r, &se, 10.0f);
     }
     run_bidiag("bidiag identity 300x300", eye(300));
     {
