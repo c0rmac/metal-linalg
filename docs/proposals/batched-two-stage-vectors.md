@@ -1,6 +1,6 @@
 # Batches of a few large matrices with vectors in two stages
 
-Status: proposal, not started (2026-10-09).
+Status: **done** in 2.17.0 (2026-10-09), for both; see [Outcome](#outcome).
 
 ## What
 
@@ -65,3 +65,46 @@ with vectors and the extra back-transformation take some of that back. About
 `direct()` and the band flag in `src/svd_bidiag_batch.mm`; the `band`
 backend's chase with vectors and back-transformation kernels
 (`src/band_reduce.mm`, `src/band_chase.cpp`, `src/svd_bidiag.mm`, `src/eigh_band.mm`).
+
+## Outcome
+
+Built as planned, the SVD's first (`direct()` and its helpers in
+`src/svd_bidiag_batch.mm`), then the eigensolver's (`eigh_band_batch`, in the
+same file, for its products and kernels), in less time than the three to
+five days estimated, because every piece existed: `bb_panel` gained row
+lengths for its V and T (and a second V) so that each block's reflectors go
+straight where the back-transformation reads them; the blocked QR's
+`bd_merge_t` aggregates them; `bd_chase_apply` takes a matrix a dispatch,
+the matrices at once; and the LAPACK tail and the chase's block building are
+shared with the one-matrix backends. Two things beyond the plan: the CPU's
+step in two parts, so that the GPU forms $Q_1$ and $P_1$ while the CPU chases
+(1.03-1.08x), and the eigensolver's symmetric update as one rank-32 product
+(1.1x).
+
+On an M5 Pro, with vectors:
+
+| | CPU path | before (direct / one-stage) | two stages |
+|---|---|---|---|
+| SVD, 1 x 1024^2 | 57 ms | 119 | **29** |
+| SVD, 4 x 1024^2 | 97 | 140 | **47** |
+| SVD, 8 x 1024^2 | 125 | 229 | **68** |
+| SVD, 16 x 1024^2 | 319 | 430 | **119** |
+| SVD, 8 x 768^2 | 54 | 72 | **38** |
+| eigh, 1 x 1024^2 | 34 | 49 | **21** |
+| eigh, 4 x 1024^2 | 40 | 55 | **32** |
+| eigh, 8 x 1024^2 | 83 | 64 | **49** |
+
+The SVD's from k = 384 at any batch; the eigensolver's from N = 384 for up to
+half as many matrices as the CPU's solve has threads (a quarter below 640),
+beyond which its CPU chases bound it and the one-stage reduction, already
+fast, wins (16 of 1024: 0.99x). The estimate (1.2-1.5x the CPU) was low: the
+reduction is 2.7-3.4x faster for the SVD, and the CPU's per-matrix work
+pipelines under the GPU's.
+
+Routing: the `band` backends with vectors hand a batch of two or more of
+384-1024 to these paths (one matrix stays: its chase starts under its
+reduction, 28 ms against 31), so `band_min_k`/`band_min_n` and the batch cap
+route the few large matrices; the tuners' stages 3c (SVD) and 4c (eigh) now
+fit the threshold and the cap together. For eigenvalues alone the
+eigensolver's two stages were tried and not kept: LAPACK's two-stage driver,
+a matrix a core, was faster (0.52-0.91x).

@@ -469,7 +469,17 @@ Pro, one matrix against `tridiag`: level up to 2048 (52.2 ms both), 1.12x at
 (1.31 s against 2.09); residual and orthogonality about $4 \times 10^{-6}$ at
 2048 and $8 \times 10^{-6}$ at 8192, `tridiag`'s $3$-$5 \times 10^{-6}$. The
 routing sweep fits `band_min_n`, from which $N$ it is used (stage 4c of
-`tuning/tune_eigh.py`).
+`tuning/tune_eigh.py`, with the batch cap: see below).
+
+A batch of two or more from $N = 384$ up to 1024 goes to `tridiag_batch`'s
+two stages instead (below), the same method for every matrix at once: 2 of
+1024 × 1024 in 25 ms against 33 a matrix at a time, 4 in 33 against 68; one
+matrix stays here, its chase under its reduction (18 ms against 21).
+`EIGH_BAND_BATCH=0` keeps a batch here. So `band` serves batches as well as
+lone matrices, and stage 4c fits `band_min_n` and the batch cap
+(`tridiag_max_batch`, which `band` shares with `tridiag`) together, over
+`band`'s points and `tridiag`'s: the cap that suits `tridiag`, a matrix at a
+time, need not suit `band`.
 
 ## Backend 6: a batch reduced together (`tridiag_batch`)
 
@@ -513,6 +523,42 @@ with eigenvectors 1.46x at 1024 × 128^2 (30 ms against 44), 1.36x at
 eigenvalues alone 1.23x at 1024 × 128^2 and 1.35x at 1024 × 96^2, behind it
 from 256. Up to $N = 1024$ (the panel kernel's threadgroup memory). The
 routing sweep fits its windows (stage 5 of `tuning/tune_eigh.py`).
+
+**With eigenvectors in two stages** (`eigh_band_batch`, in
+`src/svd_bidiag_batch.mm` beside the SVD's counterpart), from $N = 384$ for
+batches of up to half as many matrices as the CPU's solve has threads (a
+quarter below 640; 8 and 4 on an M5 Pro): `band`'s method with eigenvectors
+for the batch at once, the one-stage reduction's memory-bound column steps
+replaced by matrix products.
+
+1. **Every matrix to a band of width 16 by blocks**, as
+   `band_reduce_symmetric` reduces one: per block, the panel below the
+   diagonal block factored by `bb_panel` (a threadgroup a matrix), then the
+   trailing matrix's two-sided update as batched products on the whole of
+   it: $X = A_{22} V T$, $Y = X - V (T^T V^T X)/2$, and
+   $A_{22} \mathrel{-}= [V\ Y][Y\ V]^T$, one rank-32 product (two rank-16
+   ones took 1.1x as long). The panel writes its $V$ into $[V\ Y\ V]$ and
+   into the layout the back-transformation reads; the matrices are loaded,
+   mirrored and scaled on the GPU (`sb_load`).
+2. **On the CPU's cores**, a matrix a core (its threads shared out when
+   there are fewer matrices): the last columns by `ssytrd_sy2sb` and
+   $Q = Q_{	ext{tail}}$; then, while the GPU forms $Q \leftarrow Q_1 Q$
+   (aggregates of eight blocks, their $T$ merged by `bd_merge_t` from the
+   Gram matrices), the band chased to tridiagonal keeping the chase's
+   reflectors (`bd_chase_apply`'s blocks) and $T = Z \Lambda Z^T$ by the
+   divide and conquer.
+3. **On the GPU**: $Q \leftarrow Q Q_2$ (`bd_chase_apply`, a dispatch a
+   matrix, the matrices at once) and $V = Q Z$, one batched product.
+
+On an M5 Pro, against the one-stage reduction: one 1024 × 1024 2.4x (20.8 ms
+against 49.3; 1.6x the CPU path), 4 1.73x, 8 1.32x; 8 of 768 1.2x, 4 of 512
+1.11x, 4 of 384 1.06x. For larger batches the CPU's chases bound it (12 of
+1024 0.98x, 16 of 768 0.92x), hence the batch limit. Eigenvalues within
+$9 	imes 10^{-8}$ of the one-stage reduction's relative to $\|A\|_F$;
+residual and orthogonality about $3 	imes 10^{-6}$ at 1024.
+`EIGH_TRIDIAG_BATCH_BAND=0` keeps the one-stage reduction. For eigenvalues
+alone the two stages were tried and not kept: LAPACK's own two-stage driver,
+a matrix a core, was faster (0.52-0.91x).
 
 ## Dispatch
 
@@ -849,6 +895,8 @@ To probe another GPU without a rebuild:
 | `EIGH_TRIDIAG_BATCH_MIN_N`, `EIGH_TRIDIAG_BATCH_MAX_N`, `EIGH_TRIDIAG_BATCH_MIN_BATCH` | the tridiag_batch backend instead of the CPU for N in this window from this batch (`..._MAX_N=0`: never); `EIGH_VALUES_TRIDIAG_BATCH_*` the same for eigenvalues alone |
 | `EIGH_QL_SIMD=0` | the ql backend in threadgroup memory at every N (off: up to 32 in registers) |
 | `EIGH_CPU_DC=0` | the CPU path with eigenvectors calls `ssyevd` whole (off: its steps, the divide and conquer on idle cores, from N = 192) |
+| `EIGH_TRIDIAG_BATCH_BAND=0` | tridiag_batch with eigenvectors reduces in one stage at every N (off: two stages from N = 384 for small batches) |
+| `EIGH_BAND_BATCH=0` | the band backend with eigenvectors solves a batch a matrix at a time (off: two or more of 384-1024 go to tridiag_batch's two stages) |
 | `EIGH_QL_MIN_N`, `EIGH_QL_MAX_N` | the ql backend on the GPU for N in this window (`EIGH_QL_MAX_N=0`: never) |
 | `METAL_LINALG_CPU_THREADS=<n>` | CPU threads a batch is spread over (default: every core; all three decompositions) |
 | `EIGH_DEVICE=gpu` / `cpu` / `tridiag` / `band` / `tridiag_batch` | bypass the GPU/CPU boundary; `tridiag`, `band` and `tridiag_batch` force that backend |

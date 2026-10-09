@@ -102,6 +102,28 @@
 - **QR's register kernel packs small matrices**: up to 8 rows four a
   simdgroup, up to 16 two (`QR_SIMD_PACK=0` turns it off): 2.5x at 4 x 4,
   1.7-2.5x at 8 x 8, 1.3-1.7x at 16 x 16 for large batches.
+- **The SVD with vectors for batches in two stages**: `bidiag_batch` from
+  k = 384 reduces every matrix to a band by blocks of batched products, as
+  for the singular values alone, keeping both stages' reflectors: the CPU's
+  cores chase each band to bidiagonal (keeping the chase's) and solve it
+  while the GPU forms Q1 and P1; the GPU applies the chase's to them, a
+  dispatch a matrix, and forms U and V^T. On an M5 Pro 1.96x the CPU path for
+  one 1024 x 1024 (29 ms against 57), 2.1x for 4, 2.7x for 16, 1.43x for 8 of
+  768; 2.7-3.4x the direct reduction at 1024. `SVD_BIDIAG_BATCH_BAND=0` turns
+  it off with the values' two stages.
+- **eigh with eigenvectors for small batches in two stages**:
+  `tridiag_batch` from N = 384, for batches of up to half as many matrices as
+  the CPU's solve has threads (a quarter below 640), the same for the
+  symmetric case (the two-sided update one rank-32 product a block). On an
+  M5 Pro 2.4x the one-stage reduction for one 1024 x 1024 (21 ms; 1.6x the
+  CPU), 1.73x for 4, 1.32x for 8; 1.2x for 8 of 768.
+  `EIGH_TRIDIAG_BATCH_BAND=0` turns it off. For eigenvalues alone it lost to
+  LAPACK's two-stage driver and is not used.
+- **The `band` backends with vectors hand a batch of two or more of 384-1024
+  to those paths** (`SVD_BAND_BATCH=0`, `EIGH_BAND_BATCH=0` keep it): SVD 2 of
+  1024^2 in 36 ms against 55, 4 in 46 against 111; eigh 4 in 33 against 68.
+  The tuners now fit `band_min_k`/`band_min_n` and the batch cap together
+  (stages 3c and 4c), since `band` takes batches.
 - **The CPU path's divide and conquer on every core**: eigh with
   eigenvectors from N = 192 and the SVD with vectors from k = 192, for a
   batch of at most a quarter as many matrices as cores, call LAPACK's

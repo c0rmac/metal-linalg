@@ -524,6 +524,45 @@ ms against 57.7), 2.0-2.3x at 1024² (16 × 1024² 68 ms against 137); at 128,
 0.88x, where the CPU's chase is the longer stage. Against the CPU path:
 1.22x at 256 × 256², 1.34x at 64 × 512², 3.3x at 16 × 1024².
 
+**With vectors, from $k = 384$, in two stages too** (since 2.17.0), `band`'s
+method with vectors for the batch at once, both stages' reflectors kept and
+applied:
+
+1. the band reduction as for the singular values alone, `bb_panel` writing
+   each panel's $V$ straight into the layout the back-transformation's
+   products read ($V$ row-major beside its neighbours, zeros above, the
+   $T$'s in 32 × 32 slots);
+2. on the CPU's cores, a matrix a core: the LAPACK tail, keeping its
+   reflectors, and $Q = Q_{\text{tail}}[I; 0]$, $P = P_{\text{tail}}$; then,
+   while the GPU forms $Q \leftarrow Q_1 Q$ and $P \leftarrow P_1 P$
+   (aggregates of eight blocks, their $T$ merged by `bd_merge_t` from the
+   Gram matrices), the band chased to bidiagonal keeping the chase's
+   reflectors (into `bd_chase_apply`'s blocks, built on the matrix's
+   threads) and $B = U_B S V_B^T$ by the divide and conquer;
+3. on the GPU: $Q \leftarrow Q Q_2$ and $P \leftarrow P P_2$
+   (`bd_chase_apply`, a dispatch a matrix, the matrices at once), then
+   $U = Q U_B$ and $V^T = V_B^T P^T$ as batched products straight into the
+   outputs' layout (for a wide matrix's transpose, $U = P V_B$ and
+   $V^T = U_B^T Q^T$).
+
+On an M5 Pro against the CPU path: one 1024 × 1024 1.96x (29 ms against 57),
+4 2.1x, 8 1.84x, 16 2.7x; 8 of 768 1.43x, 16 1.23x; 32 of 512 1.15x; 2.7-3.4x
+the direct reduction at 1024, 1.6-2.1x at 768, 1.08-1.27x at 512, 1.07x at
+384 (0.88-0.9x at 256, hence the threshold). Singular values within
+$7 \times 10^{-8}$ of the direct reduction's relative to $\|A\|_F$,
+reconstruction and orthogonality about $2$-$3 \times 10^{-6}$. With more
+matrices than fit a slot's 256 MB (about 4 of 1024 × 1024) the chunks are
+balanced. `SVD_BIDIAG_BATCH_BAND=0` reduces directly here too.
+
+The `band` backend with vectors hands a batch of two or more (k from 384,
+up to 1024 rows after any QR first) to this path: 2 of 1024 × 1024 in 36 ms
+against 55 a matrix at a time, 4 in 46 against 111; one matrix stays in
+`band` (28 ms against 31: its chase starts under its reduction).
+`SVD_BAND_BATCH=0` keeps a batch in `band`. Stage 3c of
+`tuning/tune_svd.py` therefore fits `band_min_k` and the batch cap
+(`bidiag_max_batch`, which `band` shares with `bidiag`) together, over
+`band`'s points and `bidiag`'s.
+
 The batch is pipelined in chunks over two workspace slots, as `tridiag_batch`'s
 is. The panel kernel is bound by memory, so each step reads the trailing block
 once where `slabrd` reads it twice ($A^T v$, then $A u$): a simdgroup takes a
@@ -646,8 +685,10 @@ threadgroup memory at every size (off: up to 32 × 32 in registers),
 `SVD_GK_RUN=0` keeps the register kernel's QR iterations a simdgroup each,
 `SVD_CPU_DC=0` has the CPU path call `sgesdd` whole,
 `SVD_BIDIAG_BATCH_QR=0` has `bidiag_batch` bidiagonalize a tall or wide
-matrix as it is rather than its R, and `SVD_BIDIAG_BATCH_BAND=0` has it
-reduce directly for the singular values alone rather than in two stages.
+matrix as it is rather than its R, `SVD_BIDIAG_BATCH_BAND=0` has it
+reduce directly rather than in two stages (singular values alone from
+k = 160, with vectors from 384), and `SVD_BAND_BATCH=0` keeps a batch in
+`band` rather than handing it to `bidiag_batch`'s two stages.
 `svd_backend(m, n, batch)` and `svdvals_backend(m, n, batch)` say which of the
 ten backends a problem gets, with vectors and for singular values alone.
 
