@@ -3,6 +3,7 @@
 #endif
 #include <metal_linalg/core.h>
 #include "calibration.h"
+#include "divide_conquer.h"
 #include "estimate.h"
 #include "metal_runtime.h"
 #include "shaders.h"
@@ -653,6 +654,117 @@ void svd_qr_jacobi(const Matrices& a, const SvdOptions& opt,
     if (u_out) batched_matmul(q.data(), ur.data(), u_out, batch, l, k, k);
 }
 
+namespace {
+
+// The smallest min(M, N) whose vectors svd_cpu finds in sgesdd's steps where
+// cores are idle.
+constexpr uint32_t kSvdCpuDcMinK = 192;
+
+// svd_cpu with vectors in sgesdd's steps, the divide and conquer on
+// `threads` threads per matrix: sgebrd, bidiagonal_svd, sormbr on each side,
+// a QR first where one side is at least twice the other (as svd_cpu). The
+// matrix reduced is the taller of A (transposed into column-major) and
+// LAPACK's view of A, A^T (the row-major data as it is), so that sgebrd's
+// bidiagonal is upper.
+void svd_cpu_steps(const Matrices& a, const float* amax, const char* finite, unsigned threads,
+                   float* u_out, float* s_out, float* vt_out, uint32_t* info_out) {
+    using L = __LAPACK_int;
+    const uint32_t M = a.rows, N = a.cols, K = std::min(M, N), P = std::max(M, N), batch = a.batch;
+    const size_t   per = (size_t)M * N;
+    const bool     view = M <= N;          // A^T, LAPACK's view of the data, is the taller
+    const bool     qr = P >= 2 * K;
+    const uint32_t p = qr ? K : P;         // the rows sgebrd reduces
+    const L lP = (L)P, lK = (L)K, lp = (L)p;
+    L lwork = std::max<L>(1, 64 * lP), query = -1, err = 0;
+    {
+        float q = 0.0f, scratch = 0.0f;
+        auto grow = [&](float v) { lwork = std::max<L>(lwork, (L)std::ceil(v)); };
+        if (qr) {
+            sgeqrf_(&lP, &lK, &scratch, &lP, &scratch, &q, &query, &err);                   grow(q);
+            sorgqr_(&lP, &lK, &lK, &scratch, &lP, &scratch, &q, &query, &err);             grow(q);
+        }
+        sgebrd_(&lp, &lK, &scratch, &lp, &scratch, &scratch, &scratch, &scratch, &q, &query, &err); grow(q);
+        sormbr_("Q", "L", "N", &lp, &lK, &lK, &scratch, &lp, &scratch, &scratch, &lp, &q, &query, &err); grow(q);
+        sormbr_("P", "R", "T", &lK, &lK, &lp, &scratch, &lp, &scratch, &scratch, &lK, &q, &query, &err); grow(q);
+    }
+    // sgesdd's scaling: a matrix whose largest entry is outside
+    // [2^-40, 2^40] is solved scaled, here by a power of two, so exactly.
+    const float lo = std::ldexp(1.0f, -40), hi = std::ldexp(1.0f, 40);
+
+    lapack_batches(batch, per, [&](uint32_t b0, uint32_t b1) {
+        std::vector<float> h(per), r(qr ? (size_t)K * K : 1), ub((size_t)p * K), vb((size_t)K * K), d(K), e(K),
+            tauq(K), taup(K), tau(K), work(lwork), spare_u(u_out ? 1 : (size_t)M * K),
+            spare_vt(vt_out ? 1 : (size_t)K * N);
+        L lw = lwork, err = 0;
+        auto check = [&](const char* routine, long info, uint32_t b) {
+            if (info != 0) {
+                throw std::runtime_error(std::string("[svd] ") + routine + " failed on matrix " + std::to_string(b) +
+                                         " of " + std::to_string(batch) + " (" + std::to_string(M) + "x" +
+                                         std::to_string(N) + "), info " + std::to_string(info) + ".");
+            }
+        };
+        for (uint32_t b = b0; b < b1; ++b) {
+            float* s  = s_out + (size_t)b * K;
+            float* u  = u_out  ? u_out  + (size_t)b * M * K : spare_u.data();
+            float* vt = vt_out ? vt_out + (size_t)b * K * N : spare_vt.data();
+            if (!finite[b]) {
+                std::fill(s, s + K, NAN);
+                if (u_out)  std::fill(u, u + (size_t)M * K, NAN);
+                if (vt_out) std::fill(vt, vt + (size_t)K * N, NAN);
+                if (info_out) info_out[b] = 1u << 17;
+                continue;
+            }
+            // The taller of A and A^T, column-major P x K.
+            if (view) std::memcpy(h.data(), a.data + b * per, per * sizeof(float));
+            else      vDSP_mtrans(a.data + b * per, 1, h.data(), 1, N, M);
+            int exponent = 0;
+            if (amax[b] > 0.0f && (amax[b] < lo || amax[b] > hi)) {
+                std::frexp(amax[b], &exponent);
+                const float scale = std::ldexp(1.0f, -exponent);
+                vDSP_vsmul(h.data(), 1, &scale, h.data(), 1, per);
+            }
+            float* B = h.data();
+            if (qr) {
+                sgeqrf_(&lP, &lK, h.data(), &lP, tau.data(), work.data(), &lw, &err);
+                check("LAPACK sgeqrf", err, b);
+                for (uint32_t j = 0; j < K; ++j)          // R: the upper triangle, column-major
+                    for (uint32_t i = 0; i < K; ++i) r[i + (size_t)j * K] = i <= j ? h[i + (size_t)j * P] : 0.0f;
+                B = r.data();
+            }
+            // B = Q_B [d, e] P_B^T, then [d, e] = U_d S V_d^T: Ub = Q_B U_d, Vb^T = V_d^T P_B^T.
+            sgebrd_(&lp, &lK, B, &lp, d.data(), e.data(), tauq.data(), taup.data(), work.data(), &lw, &err);
+            check("LAPACK sgebrd", err, b);
+            // Read row-major, Vb^T (K x K, column-major) is Vb, and the
+            // column-major P x K Ub is Ub^T: in the view A = Vb S Ub^T, so
+            // these are U and Vt as they are.
+            float* ubp = view && !qr ? vt : ub.data();
+            float* vbp = view ? u : vb.data();
+            std::fill(ubp, ubp + (size_t)p * K, 0.0f);
+            check("bidiagonal_svd",
+                  metal_linalg::detail::bidiagonal_svd(K, d.data(), e.data(), ubp, p, vbp, K, threads), b);
+            sormbr_("Q", "L", "N", &lp, &lK, &lK, B, &lp, tauq.data(), ubp, &lp, work.data(), &lw, &err);
+            check("LAPACK sormbr", err, b);
+            sormbr_("P", "R", "T", &lK, &lK, &lp, B, &lp, taup.data(), vbp, &lK, work.data(), &lw, &err);
+            check("LAPACK sormbr", err, b);
+            if (qr) {
+                sorgqr_(&lP, &lK, &lK, h.data(), &lP, tau.data(), work.data(), &lw, &err);
+                check("LAPACK sorgqr", err, b);
+                if (view) cblas_sgemm(CblasColMajor, CblasNoTrans, CblasNoTrans, lP, lK, lK, 1.0f, h.data(), lP,
+                                      ubp, lK, 0.0f, vt, lP);   // Ub = Q Ub_R, column-major: Vt
+                else      cblas_sgemm(CblasRowMajor, CblasTrans, CblasTrans, lP, lK, lK, 1.0f, h.data(), lP, ubp,
+                                      lK, 0.0f, u, lK);         // U = Q Ub_R, row-major
+            } else if (!view) {
+                vDSP_mtrans(ubp, 1, u, 1, M, K);
+            }
+            if (!view) vDSP_mtrans(vbp, 1, vt, 1, K, K);
+            for (uint32_t i = 0; i < K; ++i) s[i] = std::ldexp(d[i], exponent);
+            if (info_out) info_out[b] = 1u | (1u << 16);
+        }
+    });
+}
+
+} // namespace
+
 void svd_cpu(const Matrices& a, float* u_out, float* s_out, float* vt_out, uint32_t* info_out) {
     const uint32_t M = a.rows, N = a.cols, K = std::min(M, N), batch = a.batch;
     if (K == 0 || batch == 0) {
@@ -700,6 +812,19 @@ void svd_cpu(const Matrices& a, float* u_out, float* s_out, float* vt_out, uint3
     std::vector<float> amax(batch);
     std::vector<char>  finite(batch);
     scan(a, Part::all, amax.data(), finite.data());
+
+    // With vectors, and cores idle beside each matrix (a quarter as many
+    // matrices as cores, at most), sgesdd's steps one by one, its divide and
+    // conquer (sbdsdc, on one core) on the idle cores too. On an M5 Pro, one
+    // square matrix 1.22x faster at 256, 1.26x at 512, 1.35x at 1024 and
+    // 2048; level at 128. SVD_CPU_DC=0 keeps sgesdd.
+    using metal_linalg::detail::kCpuDcMinThreads;
+    const unsigned dc_threads = compute_uv ? metal_linalg::detail::lapack_threads_per_matrix(batch, per) : 1;
+    const char*    dc_env = std::getenv("SVD_CPU_DC");
+    if (compute_uv && K >= kSvdCpuDcMinK && dc_threads >= kCpuDcMinThreads && !(dc_env && std::string(dc_env) == "0")) {
+        svd_cpu_steps(a, amax.data(), finite.data(), dc_threads, u_out, s_out, vt_out, info_out);
+        return;
+    }
 
     // Each chunk of the batch, on its own thread with its own workspace.
     lapack_batches(batch, per, [&](uint32_t b0, uint32_t b1) {

@@ -3,6 +3,7 @@
 #endif
 #include <metal_linalg/core.h>
 #include "calibration.h"
+#include "divide_conquer.h"
 #include "estimate.h"
 #include "metal_runtime.h"
 #include "shaders.h"
@@ -549,6 +550,9 @@ void eigh_jacobi(const Matrices& a, bool lower, const EighOptions& opt,
 // The smallest n whose eigenvalues alone go through the two-stage reduction.
 constexpr uint32_t kEighTwoStageMinN = 128;
 
+// The smallest n solved in ssyevd's steps where cores are idle (eigh_cpu).
+constexpr uint32_t kEighCpuDcMinN = 192;
+
 // Whether LAPACK's two-stage driver can be trusted here. Accelerate's
 // ssyevd_2stage gives wrong eigenvalues on macOS 14 (off by 1.5-7% of the
 // largest for every N from 128, on GitHub's macOS 14 runners) and right ones
@@ -592,6 +596,67 @@ bool two_stage_trusted() {
     return trusted;
 }
 
+namespace {
+
+// eigh_cpu with vectors in ssyevd's steps, the divide and conquer on
+// `threads` threads per matrix. uplo is the triangle as LAPACK sees it.
+void eigh_cpu_steps(const Matrices& a, char uplo, const float* amax, const char* finite, unsigned threads,
+                    float* w_out, float* v_out, uint32_t* info_out) {
+    const uint32_t n = a.cols, batch = a.batch;
+    const size_t   per = (size_t)n * n;
+    __LAPACK_int N = (__LAPACK_int)n, lwork = std::max<__LAPACK_int>(1, 64 * N), query = -1, err = 0;
+    {
+        float q = 0.0f, scratch = 0.0f;
+        ssytrd_(&uplo, &N, &scratch, &N, &scratch, &scratch, &scratch, &q, &query, &err);
+        lwork = std::max<__LAPACK_int>(lwork, (__LAPACK_int)std::ceil(q));
+        sormtr_("L", &uplo, "N", &N, &N, &scratch, &N, &scratch, &scratch, &N, &q, &query, &err);
+        lwork = std::max<__LAPACK_int>(lwork, (__LAPACK_int)std::ceil(q));
+    }
+    // ssyevd's scaling: a matrix whose largest entry is outside
+    // [2^-51, 2^51] is solved scaled, here by a power of two, so exactly.
+    const float lo = std::ldexp(1.0f, -51), hi = std::ldexp(1.0f, 51);
+
+    lapack_batches(batch, per, [&](uint32_t b0, uint32_t b1) {
+        std::vector<float> h(per), z(per), d(n), e(n), tau(n), work(lwork);
+        __LAPACK_int lw = lwork, err = 0;
+        auto check = [&](const char* routine, long info, uint32_t b) {
+            if (info != 0) {
+                throw std::runtime_error(std::string("[eigh] ") + routine + " failed on matrix " +
+                                         std::to_string(b) + " of " + std::to_string(batch) + " (N=" +
+                                         std::to_string(n) + "), info " + std::to_string(info) + ".");
+            }
+        };
+        for (uint32_t b = b0; b < b1; ++b) {
+            float* w = w_out + (size_t)b * n;
+            if (!finite[b]) {
+                std::fill(w, w + n, NAN);
+                std::fill(v_out + b * per, v_out + (b + 1) * per, NAN);
+                if (info_out) info_out[b] = 1u << 17;
+                continue;
+            }
+            int exponent = 0;
+            if (amax[b] > 0.0f && (amax[b] < lo || amax[b] > hi)) std::frexp(amax[b], &exponent);
+            if (exponent != 0) {
+                const float scale = std::ldexp(1.0f, -exponent);
+                vDSP_vsmul(a.data + b * per, 1, &scale, h.data(), 1, per);
+            } else {
+                std::memcpy(h.data(), a.data + b * per, per * sizeof(float));
+            }
+            ssytrd_(&uplo, &N, h.data(), &N, d.data(), e.data(), tau.data(), work.data(), &lw, &err);
+            check("LAPACK ssytrd", err, b);
+            check("tridiagonal_eigensystem",
+                  metal_linalg::detail::tridiagonal_eigensystem(n, d.data(), e.data(), z.data(), n, threads), b);
+            sormtr_("L", &uplo, "N", &N, &N, h.data(), &N, tau.data(), z.data(), &N, work.data(), &lw, &err);
+            check("LAPACK sormtr", err, b);
+            for (uint32_t i = 0; i < n; ++i) w[i] = std::ldexp(d[i], exponent);
+            vDSP_mtrans(z.data(), 1, v_out + b * per, 1, n, n);   // the vectors as columns, row-major
+            if (info_out) info_out[b] = 1u | (1u << 16);
+        }
+    });
+}
+
+} // namespace
+
 void eigh_cpu(const Matrices& a, bool lower, float* w_out, float* v_out, uint32_t* info_out) {
     const uint32_t n = a.cols, batch = a.batch;
     if (a.rows != n) {
@@ -629,6 +694,20 @@ void eigh_cpu(const Matrices& a, bool lower, float* w_out, float* v_out, uint32_
     std::vector<float> amax(batch);
     std::vector<char>  finite(batch);
     scan(a, lower ? Part::lower : Part::upper, amax.data(), finite.data());
+
+    // With vectors, and cores idle beside each matrix (a quarter as many
+    // matrices as cores, at most), ssyevd's steps one by one, its divide and
+    // conquer (sstedc, on one core) on the idle cores too: ssytrd,
+    // tridiagonal_eigensystem, sormtr. On an M5 Pro, one matrix 1.26x faster
+    // at 256, 1.11x at 512, 1.2x at 1024, 1.17x at 2048; level at 128; 4 of
+    // 1024 1.2x. EIGH_CPU_DC=0 keeps ssyevd.
+    using metal_linalg::detail::kCpuDcMinThreads;
+    const unsigned dc_threads = v_out ? metal_linalg::detail::lapack_threads_per_matrix(batch, per) : 1;
+    const char*    dc_env = std::getenv("EIGH_CPU_DC");
+    if (v_out && n >= kEighCpuDcMinN && dc_threads >= kCpuDcMinThreads && !(dc_env && std::string(dc_env) == "0")) {
+        eigh_cpu_steps(a, uplo, amax.data(), finite.data(), dc_threads, w_out, v_out, info_out);
+        return;
+    }
 
     // Each chunk of the batch, on its own thread with its own workspace.
     lapack_batches(batch, per, [&](uint32_t b0, uint32_t b1) {

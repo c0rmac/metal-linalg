@@ -156,6 +156,16 @@ void for_each_rows(uint32_t batch, uint32_t rows, uint32_t cols, const F& f) {
 void lapack_batches(uint32_t batch, size_t per, const std::function<void(uint32_t, uint32_t)>& f);
 // The same on at most `threads` threads (beside the GPU's host work, say).
 void lapack_batches(uint32_t batch, size_t per, unsigned threads, const std::function<void(uint32_t, uint32_t)>& f);
+// The threads one matrix of lapack_batches(batch, per, f) can spread its own
+// work over (the CPU paths' divide and conquer): the cores its threads leave
+// idle, shared out. 1 on share_batch's workers and from a batch of
+// cpu_threads() up.
+unsigned lapack_threads_per_matrix(uint32_t batch, size_t per);
+// The fewest of those threads with which the CPU paths run that divide and
+// conquer themselves rather than call LAPACK's drivers. On an M5 Pro (6 + 12
+// cores), eigh of 1024 x 1024: 4 matrices with 4 threads each 1.2x faster
+// than ssyevd, 6 with 3 1.1x slower, 8 with 2 1.25x slower.
+constexpr unsigned kCpuDcMinThreads = 4;
 
 // A batch on the GPU and the CPU at once. gpu(b0, count) solves matrices
 // [b0, b0 + count) with a GPU backend, cpu(b0, count) with the CPU path. The

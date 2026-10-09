@@ -494,6 +494,57 @@ int main() {
         else std::printf("  ok    %-44s |dS|=%.1e\n", (dims(37, m, n) + " one thread == every thread").c_str(), d);
     }
 
+    // With vectors, a batch that leaves cores idle goes through sgesdd's steps
+    // (the divide and conquer on the idle cores): square, A and its transpose
+    // as the matrix reduced, with and without the QR first, scaled far up and
+    // down, a NaN, and the singular values of sgesdd (SVD_CPU_DC=0).
+    if (cpu_threads() < 4) {
+        std::printf("  skip  sgesdd's steps: fewer than 4 CPU threads\n");
+    } else {
+        for (auto [b, m, n] : std::vector<std::tuple<int, int, int>>{{1, 256, 256}, {2, 256, 256}, {1, 300, 200},
+                                                                     {1, 200, 300}, {1, 600, 192}, {1, 192, 600},
+                                                                     {2, 450, 250}}) {
+            array A = random_matrix(b, m, n, 1200 + m + n + b);
+            SvdResult r = detail::svd_cpu(A, true);
+            setenv("SVD_CPU_DC", "0", 1);
+            SvdResult ref = detail::svd_cpu(A, true);
+            unsetenv("SVD_CPU_DC");
+            eval({r.U, r.S, r.Vt, r.info, ref.S});
+            const std::string label = "steps " + dims(b, m, n);
+            check(label, A, r);
+            array dS = max(abs(subtract(r.S, ref.S)));
+            array nS = max(abs(ref.S));
+            eval({dS, nS});
+            ++g_checks;
+            const float d = dS.item<float>() / std::max(nS.item<float>(), 1e-30f);
+            if (d > 1e-5f) fail(label + " == sgesdd", "differ by " + std::to_string(d));
+            else std::printf("  ok    %-44s |dS|=%.1e\n", (label + " == sgesdd").c_str(), d);
+        }
+        for (float scale : {1e30f, 1e-30f}) {
+            array A = multiply(random_matrix(1, 256, 256, 1300), array(scale));
+            SvdResult r = detail::svd_cpu(A, true);
+            eval({r.U, r.S, r.Vt, r.info});
+            char label[64];
+            std::snprintf(label, sizeof label, "steps 256x256 scaled by %.0e", scale);
+            check(label, A, r);
+        }
+        {
+            const int n = 200, batch = 2;
+            array A0 = random_matrix(batch, n, n, 1301);
+            eval({A0});
+            std::vector<float> data(A0.data<float>(), A0.data<float>() + (size_t)batch * n * n);
+            data[(size_t)n * n + 9 * n + 3] = NAN;   // matrix 1
+            SvdResult r = detail::svd_cpu(from_values(data, {batch, n, n}), true);
+            eval({r.S, r.info});
+            const float* sp = r.S.data<float>();
+            bool ok = !detail::svd_nonfinite(r.info.data<uint32_t>()[0]) && detail::svd_nonfinite(r.info.data<uint32_t>()[1]);
+            for (int i = 0; i < 2 * n; ++i) ok = ok && (std::isnan(sp[i]) == (i >= n));
+            ++g_checks;
+            if (!ok) fail("steps NaN in matrix 1 of 2", "not isolated");
+            else std::printf("  ok    %-44s\n", "steps NaN in matrix 1 of 2 stays there");
+        }
+    }
+
     // The bidiag backend reduces on the GPU in panels of 32 columns while more
     // than 33 remain, LAPACK takes the rest; a matrix at least twice as tall
     // as wide and 64 wide goes through a QR first; a wide one is its transpose.

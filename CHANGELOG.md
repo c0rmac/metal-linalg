@@ -97,6 +97,19 @@
 - **QR's register kernel packs small matrices**: up to 8 rows four a
   simdgroup, up to 16 two (`QR_SIMD_PACK=0` turns it off): 2.5x at 4 x 4,
   1.7-2.5x at 8 x 8, 1.3-1.7x at 16 x 16 for large batches.
+- **The CPU path's divide and conquer on every core**: eigh with
+  eigenvectors from N = 192 and the SVD with vectors from k = 192, for a
+  batch of at most a quarter as many matrices as cores, call LAPACK's
+  drivers' steps one by one (`ssytrd`, `sormtr`; `sgebrd`, `sormbr`, the QR
+  first for tall and wide matrices as before) with the `tridiag` and `bidiag`
+  backends' divide and conquer on the idle cores in between (`sstedc` and
+  `sbdsdc` run on one). On an M5 Pro eigh 1.26x `ssyevd` at 256, 1.2x at 1024,
+  1.17x at 2048; the SVD 1.23x `sgesdd` at 256, 1.32x at 1024, 1.4x at 2048,
+  1.16-1.3x tall or wide; the same values (bit for bit for eigh).
+  `EIGH_CPU_DC=0` and `SVD_CPU_DC=0` keep the drivers. The CPU path is every
+  boundary's baseline, so both are re-measured.
+- **Batch backends' pipelines** in eight chunks for matrices of up to
+  128 x 128 (four above): 1.07-1.15x at 1024 x 96-128^2.
 - **The measurement takes half the time** (eigh and SVD about 40 minutes
   instead of 75 on an M5 Pro): the Jacobi kernels are timed only up to
   N = 96 and k = 128, where they can win, with a canary beyond that warns if

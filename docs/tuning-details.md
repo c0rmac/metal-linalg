@@ -396,6 +396,7 @@ in the policy source.
 | `EIGH_TRIDIAG_MAX_BATCH`, `EIGH_VALUES_TRIDIAG_MAX_BATCH` | eigensolver: the tridiag backend only for batches up to this (0: any) |
 | `EIGH_QL_MIN_N`, `EIGH_QL_MAX_N` | eigensolver: the ql backend on the GPU for N in this window (`EIGH_QL_MAX_N=0`: never) |
 | `EIGH_QL_SIMD=0` | eigensolver: the ql backend in threadgroup memory at every N (off: up to 32 in registers) |
+| `EIGH_CPU_DC=0` | eigensolver: the CPU path with eigenvectors calls `ssyevd` whole, not its steps with the divide and conquer on idle cores |
 | `EIGH_SHARE_MIN_BATCH` | eigensolver: a ql batch shared with the CPU from this batch (0: never) |
 | `EIGH_GPU_BIG_BATCH_MAX_N`, `EIGH_GPU_BIG_BATCH_MIN` | eigensolver: the GPU also for N above `gpu_max_n` up to this, in batches of at least this (0: never) |
 | `EIGH_VALUES_BAND_MIN_N` | eigenvalues alone: the `band` backend (the two-stage reduction) from this N (0: never) |
@@ -427,6 +428,7 @@ in the policy source.
 | `SVD_BIDIAG_BATCH_QR=0` | SVD: the bidiag_batch backend bidiagonalizes a tall or wide matrix as it is, not R of a QR first |
 | `SVD_BIDIAG_BATCH_BAND=0` | SVD, singular values alone: the bidiag_batch backend reduces directly, not to a band first |
 | `SVD_GK_RUN=0` | SVD: the register kernel's QR iterations a simdgroup each, no runner simdgroup |
+| `SVD_CPU_DC=0` | SVD: the CPU path with vectors calls `sgesdd` whole, not its steps with the divide and conquer on idle cores |
 | `SVD_DEVICE=bidiag` | SVD: every call on the bidiag backend |
 | `SVD_DEVICE=band` | SVD: every call on the band backend |
 | `SVD_DEVICE=bidiag_batch` | SVD: every call on the bidiag_batch backend |

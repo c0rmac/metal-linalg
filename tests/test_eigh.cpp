@@ -1109,6 +1109,61 @@ int main() {
     }
 
     // -------------------------------------------------------------------------
+    // CPU path with vectors in ssyevd's steps (the divide and conquer on the
+    // idle cores) where a batch leaves cores idle: each triangle, scaled far
+    // up and down, a NaN, and the same eigenvalues as ssyevd (EIGH_CPU_DC=0).
+    // -------------------------------------------------------------------------
+    std::printf("\n[ CPU path with vectors: ssyevd's steps on idle cores ]\n");
+    if (cpu_threads() < 4) {
+        std::printf("  skip  fewer than 4 CPU threads\n");
+    } else {
+        for (int n : {192, 300}) {
+            for (int batch : {1, 2}) {
+                array S = random_symmetric(batch, n, 3100 + n + batch);
+                array junk = full({batch, n, n}, 7.0f);
+                for (bool lower : {true, false}) {
+                    array A = lower ? add(tril(S), triu(junk, 1)) : add(triu(S), tril(junk, -1));
+                    EighResult r = detail::eigh_cpu(A, true, lower);
+                    setenv("EIGH_CPU_DC", "0", 1);
+                    EighResult ref = detail::eigh_cpu(A, true, lower);
+                    unsetenv("EIGH_CPU_DC");
+                    eval({r.eigenvalues, r.eigenvectors, ref.eigenvalues});
+                    const std::string label = "steps " + std::to_string(batch) + " x " + std::to_string(n) +
+                                              (lower ? " L" : " U");
+                    check(label, A, r, lower);
+                    const float d = max_abs(subtract(r.eigenvalues, ref.eigenvalues)) / frobenius(S);
+                    ++g_checks;
+                    if (d > 2e-6f) fail(label + " == ssyevd", "differ by " + std::to_string(d));
+                    else std::printf("  ok    %-44s |dw|=%.1e\n", (label + " == ssyevd").c_str(), d);
+                }
+            }
+        }
+        for (float scale : {1e30f, 1e-30f}) {
+            array A = multiply(random_symmetric(1, 256, 3300), array(scale));
+            EighResult r = detail::eigh_cpu(A, true, true);
+            eval({r.eigenvalues, r.eigenvectors});
+            char label[64];
+            std::snprintf(label, sizeof label, "steps 256 scaled by %.0e", scale);
+            check(label, A, r);
+        }
+        {
+            const int n = 200, batch = 2;
+            array S = random_symmetric(batch, n, 3400);
+            eval({S});
+            std::vector<float> data(S.data<float>(), S.data<float>() + (size_t)batch * n * n);
+            data[(size_t)n * n + 9 * n + 3] = NAN;   // matrix 1, lower triangle
+            EighResult r = detail::eigh_cpu(from_values(data, {batch, n, n}), true, true);
+            eval({r.eigenvalues, r.eigenvectors, r.info});
+            const float* wp = r.eigenvalues.data<float>();
+            bool ok = !detail::eigh_nonfinite(r.info.data<uint32_t>()[0]) && detail::eigh_nonfinite(r.info.data<uint32_t>()[1]);
+            for (int i = 0; i < 2 * n; ++i) ok = ok && (std::isnan(wp[i]) == (i >= n));
+            ++g_checks;
+            if (!ok) fail("steps NaN in matrix 1 of 2", "not isolated");
+            else std::printf("  ok    %-44s\n", "steps NaN in matrix 1 of 2 stays there");
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // CPU eigenvalues alone: the two-stage reduction from N = 128, the
     // one-stage one below. Each is checked against a known spectrum and
     // against the eigenvalues of the one-stage path with eigenvectors.

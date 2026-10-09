@@ -578,7 +578,15 @@ batch is spread over every CPU core, each core solving whole matrices with
 Accelerate's own threading off: on an M5 Pro 11-15x faster than one matrix at
 a time for batches of 8×8 to 128×128, 3-10x for larger ones. A lone matrix
 keeps Accelerate's threading; `set_cpu_threads()` or `METAL_LINALG_CPU_THREADS`
-caps the cores used. The tables below were measured against this CPU path.
+caps the cores used. With vectors, from k = 192, a batch of at most a quarter
+as many matrices as cores, which leaves cores idle, goes through `sgesdd`'s
+steps one by one instead (2.17.0): `sgebrd`, the divide and conquer of the
+`bidiag` backend on the idle cores (`sbdsdc` runs on one), `sormbr` on each
+side, the QR first where one side is at least twice the other. On an M5 Pro
+1.23x faster than `sgesdd` at 256, 1.28x at 512, 1.32x at 1024, 1.4x at 2048
+and 1.38x for four of 1024; 1.16-1.3x tall or wide. `SVD_CPU_DC=0` keeps
+`sgesdd`. The tables below were measured against this CPU path (before
+2.17.0, against `sgesdd` whole).
 
 As for QR and the eigensolver, the policy is a per-device table, keyed on the
 Metal device name and GPU core count:
@@ -636,6 +644,7 @@ with vectors too since 2.15.0; before, it meant `bidiag` there).
 where the policy leaves it 0. `SVD_GK_SIMD=0` keeps `golub_kahan` in
 threadgroup memory at every size (off: up to 32 × 32 in registers),
 `SVD_GK_RUN=0` keeps the register kernel's QR iterations a simdgroup each,
+`SVD_CPU_DC=0` has the CPU path call `sgesdd` whole,
 `SVD_BIDIAG_BATCH_QR=0` has `bidiag_batch` bidiagonalize a tall or wide
 matrix as it is rather than its R, and `SVD_BIDIAG_BATCH_BAND=0` has it
 reduce directly for the singular values alone rather than in two stages.

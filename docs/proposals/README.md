@@ -10,11 +10,6 @@ Apple M5 Pro's (20 GPU cores, 18 CPU cores).
 | proposal | affects | time at stake | effort | expected gain |
 |---|---|---|---|---|
 | [The blocked QR's fixed costs and panels](qr-fixed-costs.md#done-2026-10-07) (what is left) | QR, one matrix of 512-4096 | the TSQR's leaves, top and rebuild about 3.8 of 6.6 ms at 1024; updates inside aggregates 12% | 1-2 days | a few % each: the leaves and top as one dispatch, the in-aggregate updates as kernels of their own |
-| [The CPU path's divide and conquer](cpu-path-divide-and-conquer.md) | eigh and SVD with vectors on the CPU, one matrix | `sstedc` 43 of 239 ms, `sbdsdc` 133 of 439 at 2048 | about 2 days | eigh 1.15-1.25x, SVD ~1.34x at 1024-2048 (estimate) |
-
-The CPU path's divide and conquer matters less on the M5 Pro since 2.15.0,
-where the GPU takes single matrices from about 512, but more on Macs whose
-GPU is weaker against their CPU.
 
 **Not code, but open:**
 
@@ -37,6 +32,7 @@ In 2.17.0 (2026-10-09), eigh and the SVD:
 | singular values alone of batches in two stages | from k = 160: a band on the GPU (batched panels and products), bidiagonal on the CPU's cores: 1.5x at 512, 2-2.3x at 1024 (3.3x the CPU at 16 x 1024^2). The eigensolver's counterpart not built: its CPU path is LAPACK's own two-stage driver, whose band chase alone is two-thirds of its time (64 x 512^2: 15.8 of 23.2 ms), so a GPU first stage could reach about 1.3x |
 | a runner simdgroup for the register kernels' QR iterations (17-32 rows) | the SVD's: 1.1-1.35x; eigh's `ql`: 0.8-1.1x, not kept (its sweeps are cheap against a threadgroup barrier a sweep) |
 | one trailing product a SVD panel; the batch back-transformations | not built: removing a whole product saved 3-6%, the whole back-transformation 6-14% of the wall time (it overlaps the CPU's solve); what a rework would recover is a few % |
+| [the CPU path's divide and conquer](cpu-path-divide-and-conquer.md) | eigh and the SVD with vectors, a batch of at most a quarter as many matrices as cores, in the drivers' steps with the divide and conquer on the idle cores: eigh 1.17-1.26x `ssyevd` from 256 to 2048, the SVD 1.23-1.4x `sgesdd` (1.16-1.3x tall or wide); with fewer than 4 cores a matrix it lost (6 of 1024: 1.1x slower) |
 | the batch backends at 1024 | the SVD's panel with 1024 threads, 1.1x. With vectors, 8 matrices of 768-1024 still go to the CPU (1.3-1.5x ahead): a threadgroup a matrix leaves 12 of 20 cores idle. Singular values alone are solved by the two stages above (their products use every core); with vectors the same would need the band backend's transformations batched, a project of days |
 | a GPU solve for the batch backends; two matrices a threadgroup | not built: timed stage by stage, the batch backends were bound by the GPU's reduction (its memory traffic), not the CPU's solve, from 256; at 128 the two balance. Two matrices a threadgroup helps a latency-bound kernel, which these are not |
 | [the batch panels' own columns in registers](eigh-svd-mid-size.md#tried-the-panels-own-columns-in-registers) | tried on eigh's panel, three ways, and reverted: 10-17% slower at 128-512. The 64 registers a thread costs fewer simdgroups a core in a kernel bound by memory, and the reads it saved were mostly cache hits |

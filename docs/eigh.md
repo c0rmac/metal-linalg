@@ -26,7 +26,12 @@ large batches of matrices up to N = 48 (`batch * N >= 16384`; up to 64 from
 backend, and for the eigenvalues alone of one or two matrices from N = 1536
 on `tridiag` and from 4096 on `band`, the two-stage reduction. The boundary is
 part of the per-device policy (see [Tuning](#tuning));
-on the CPU, eigenvectors come from `ssyevd`, and eigenvalues alone
+on the CPU, eigenvectors come from `ssyevd`, or from N = 192, where a batch
+of at most a quarter as many matrices as cores leaves cores idle, from its
+steps one by one (`ssytrd`, the divide and conquer of the `tridiag` backend
+on the idle cores, `sormtr`; 2.17.0): on an M5 Pro 1.26x faster than
+`ssyevd` at 256, 1.2x at 1024 and four of 1024, 1.17x at 2048, with the same
+eigenvalues bit for bit (`EIGH_CPU_DC=0` keeps `ssyevd`). Eigenvalues alone
 (`eigvalsh`) from N = 128 come from `ssyevd_2stage`, the two-stage
 reduction (dense to band in matrix-matrix products, then band to
 tridiagonal), which on an M5 Pro is 1.2x faster at N = 1024, 3.8x at 4096
@@ -843,6 +848,7 @@ To probe another GPU without a rebuild:
 | `EIGH_BAND_MIN_N` | the band backend with eigenvectors from this N, within the same batch cap (0: never) |
 | `EIGH_TRIDIAG_BATCH_MIN_N`, `EIGH_TRIDIAG_BATCH_MAX_N`, `EIGH_TRIDIAG_BATCH_MIN_BATCH` | the tridiag_batch backend instead of the CPU for N in this window from this batch (`..._MAX_N=0`: never); `EIGH_VALUES_TRIDIAG_BATCH_*` the same for eigenvalues alone |
 | `EIGH_QL_SIMD=0` | the ql backend in threadgroup memory at every N (off: up to 32 in registers) |
+| `EIGH_CPU_DC=0` | the CPU path with eigenvectors calls `ssyevd` whole (off: its steps, the divide and conquer on idle cores, from N = 192) |
 | `EIGH_QL_MIN_N`, `EIGH_QL_MAX_N` | the ql backend on the GPU for N in this window (`EIGH_QL_MAX_N=0`: never) |
 | `METAL_LINALG_CPU_THREADS=<n>` | CPU threads a batch is spread over (default: every core; all three decompositions) |
 | `EIGH_DEVICE=gpu` / `cpu` / `tridiag` / `band` / `tridiag_batch` | bypass the GPU/CPU boundary; `tridiag`, `band` and `tridiag_batch` force that backend |
