@@ -589,25 +589,50 @@ inline void wy_merge(device float* tp, device const float* V, uint ldv, uint k0,
 
 // The panel's step J, rows t + T s (x[s]), the panel at column k: the
 // reflector of column J, applied to the columns right of it; T's column J on
-// lane i < J of every simdgroup (trow). red holds a slot a simdgroup and
-// alpha's at 32; red2 16 floats a simdgroup. Two barriers.
+// lane i < J of every simdgroup (trow). One barrier: the column's sum of
+// squares below the diagonal and its dot products there with every other
+// column of the panel in one reduction (the sum of squares is column J's
+// own), the diagonal row's entries published beside them; then, v being
+// [1; scale x's tail], v^T c = c(col) + scale D[c]. Two barriers a column,
+// the sum of squares first, were the panels' chain. A step's buffers
+// alternate with J's parity (red2's two halves of 16 S floats, the diagonal
+// row at red + 32 or + 48), so that the next step's writes cannot overtake
+// this one's reads.
 template <uint R, uint J>
 inline void wy_step(thread float (&x)[R][QW_B], thread float (&trow)[QW_B], uint k, uint mp, uint t, uint T,
                     uint sg, uint lane, uint S, threadgroup float* red, threadgroup float4* red2) {
     const uint col = k + J;
-    float ss = 0.0f;
-    QH_UNROLL(R, s, {
-        const uint row = t + T * s;
-        if (row > col && row < mp) ss = fma(x[s][J], x[s][J], ss);
-        if (row == col) red[32] = x[s][J];
+    threadgroup float* piv = red + 32 + 16 * (J & 1);
+    threadgroup float4* part = red2 + 4 * S * (J & 1);
+    float4 loc[4];
+    QH_UNROLL(4, f, {
+        loc[f] = 0.0f;
+        QH_UNROLL(4, e, {
+            QH_UNROLL(R, s, {
+                const uint row = t + T * s;
+                if (row > col && row < mp) loc[f][e] = fma(x[s][J], x[s][4 * f + e], loc[f][e]);
+            });
+        });
+        loc[f] = simd_sum(loc[f]);
     });
-    ss = simd_sum(ss);
-    if (lane == 0) red[sg] = ss;
+    QH_UNROLL(R, s, {
+        if (t + T * s == col) { QH_UNROLL(QW_B, c, { piv[c] = x[s][c]; }); }
+    });
+    if (lane < 4) {
+        float4 mine = loc[0];
+        QH_UNROLL(4, f, { if (f == lane) mine = loc[f]; });
+        part[sg * 4 + lane] = mine;
+    }
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    const float sumsq = simd_sum(lane < S ? red[lane] : 0.0f);
-    const float alpha = red[32];
+    float4 acc = 0.0f;
+    for (uint g = lane / 4; g < S; g += 8) acc += part[g * 4 + lane % 4];
+    acc += simd_shuffle_xor(acc, (ushort)4);
+    acc += simd_shuffle_xor(acc, (ushort)8);
+    acc += simd_shuffle_xor(acc, (ushort)16);
+    float4 D[4];
+    QH_UNROLL(4, f, { D[f] = simd_shuffle(acc, (ushort)f); });
     float beta, tau, scale;
-    reflector(alpha, sumsq, beta, tau, scale);
+    reflector(piv[J], D[J / 4][J % 4], beta, tau, scale);
     float v[R];
     QH_UNROLL(R, s, {
         const uint row = t + T * s;
@@ -615,45 +640,24 @@ inline void wy_step(thread float (&x)[R][QW_B], thread float (&trow)[QW_B], uint
         if (row == col) { x[s][J] = beta; v[s] = 1.0f; }
         else if (row > col && row < mp) { x[s][J] *= scale; v[s] = x[s][J]; }
     });
-    // v's dot products with every other column of the panel: right of J the
-    // update's, left of it V^T v for T
-    float4 loc[4];
-    QH_UNROLL(4, f, {
-        loc[f] = 0.0f;
-        QH_UNROLL(4, e, {
-            if (4 * f + e != J) { QH_UNROLL(R, s, { loc[f][e] = fma(v[s], x[s][4 * f + e], loc[f][e]); }); }
-        });
-        loc[f] = simd_sum(loc[f]);
-    });
-    if (lane < 4) {
-        float4 mine = loc[0];
-        QH_UNROLL(4, f, { if (f == lane) mine = loc[f]; });
-        red2[sg * 4 + lane] = mine;
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    float4 acc = 0.0f;
-    for (uint g = lane / 4; g < S; g += 8) acc += red2[g * 4 + lane % 4];
-    acc += simd_shuffle_xor(acc, (ushort)4);
-    acc += simd_shuffle_xor(acc, (ushort)8);
-    acc += simd_shuffle_xor(acc, (ushort)16);
-    float4 D[4];
-    QH_UNROLL(4, f, { D[f] = simd_shuffle(acc, (ushort)f); });
+    // v's dot products with every other column: right of J the update's, left
+    // of it V^T v for T
     if (tau != 0.0f) {   // uniform
         QH_UNROLL(4, f, {
             QH_UNROLL(4, e, {
                 if (4 * f + e > J) {
-                    const float d = tau * D[f][e];
+                    const float d = tau * fma(scale, D[f][e], piv[4 * f + e]);
                     QH_UNROLL(R, s, { x[s][4 * f + e] = fma(-d, v[s], x[s][4 * f + e]); });
                 }
             });
         });
     }
     float tij = 0.0f;
-    QH_UNROLL(4, f, { QH_UNROLL(4, e, { if (4 * f + e < J) tij = fma(trow[4 * f + e], D[f][e], tij); }); });
+    QH_UNROLL(4, f, { QH_UNROLL(4, e, { if (4 * f + e < J) tij = fma(trow[4 * f + e], fma(scale, D[f][e], piv[4 * f + e]), tij); }); });
     trow[J] = lane == J ? tau : (lane < J ? -tau * tij : 0.0f);
 }
 
-// Threadgroup memory, in floats: red 64, red2 16 S, vd 8 QW_NB (a block's
+// Threadgroup memory, in floats: red 64, red2 32 S, vd 8 QW_NB (a block's
 // diagonal tiles of V), eye 64 (the 8 x 8 identity), sc prm.sc (the merge's
 // scratch, the updates' partial sums). qr_householder.mm computes the same
 // size.
@@ -678,7 +682,7 @@ kernel void qr_householder_wy(
     const uint m = prm.m, n = prm.n, K = min(m, n), mp = prm.mp, np = prm.np, Kp = prm.Kp;
     threadgroup float*  red  = tg;
     threadgroup float4* red2 = (threadgroup float4*)(tg + 64);
-    threadgroup float*  vd   = tg + 64 + 16 * S;
+    threadgroup float*  vd   = tg + 64 + 32 * S;
     threadgroup float*  eye  = vd + 8 * QW_NB;
     threadgroup float*  sc   = eye + 64;
 

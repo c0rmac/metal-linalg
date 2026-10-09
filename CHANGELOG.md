@@ -100,6 +100,9 @@
   backends `bidiag_batch` and `bidiag_batch_vals` and stage 4 of
   `tuning/tune_svd.py` fit them; the SVD kernel version is 10, and the M5 Pro
   is re-measured.
+- **The QR kernel for batches of mid-size matrices: one barrier a column**
+  in its panels (the sum of squares and the dot products in one reduction):
+  1.05x at 64 x 512^2, level elsewhere.
 - **The blocked QR's panels 8 columns wide for up to 4 matrices of 768 to
   3072 rows** (16 elsewhere): a tall panel's TSQR top is a tree of chains
   whose cost grows as the width squared, a third of the call at 1024 x 1024.

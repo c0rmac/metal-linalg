@@ -130,3 +130,22 @@ finds the crossovers.
 threadgroup's memory. A lone matrix of 256-384 is still a little slower
 than the CPU (0.98 ms against 0.84 at 256): its panels' two barriers a
 column are the chain.
+
+**The two left, tried (2026-10-09).**
+
+- **One barrier a column.** The column's sum of squares below the diagonal
+  and its dot products with the panel's other columns there are one
+  reduction (the sum of squares is the column's own product), the diagonal
+  row's entries published beside them, and v^T c = c(col) + scale D[c]; the
+  step's buffers alternate by parity. Min of 8 alternating runs: lone
+  matrices unchanged (256 0.91 against 0.92 ms, 384 1.90 against 1.88), so
+  the barriers were not their chain; 64 x 512^2 1.05x (in two runs), the
+  rest level (0.96-1.01x). Kept, for that and for half the barriers.
+- **The matrix on chip.** A 128 x 128 matrix does not fit a threadgroup's
+  memory, but it would fit the threadgroup's registers (16 floats a thread
+  at 1024). The gain's bound, measured by pointing every matrix's device
+  traffic at one matrix's workspace (the wrong answer; the reads and writes
+  cache hits): 1024 x 128^2 6.17 to 5.47 ms (1.13x), 256 x 256^2 1.19x,
+  64 x 512^2 1.09x, 4096 x 64^2 1.22x. A kernel in registers would add
+  residency's cost to that (a thread holding 32 floats of A and Q), which
+  lost every time it was tried here. Not built.

@@ -165,7 +165,7 @@ WyShape wy_shape(uint32_t m, uint32_t n, uint32_t max_simdgroups, uint32_t batch
 
 // Threadgroup memory of the blocked kernel, as laid out in
 // QR_Householder.metal.
-size_t wy_tg_bytes(const WyShape& w) { return (64 + 16 * (size_t)w.s + 8 * kWyBlock + 64 + w.sc) * sizeof(float); }
+size_t wy_tg_bytes(const WyShape& w) { return (64 + 32 * (size_t)w.s + 8 * kWyBlock + 64 + w.sc) * sizeof(float); }
 
 // Cost model for chunking: core-milliseconds per matrix, about this times
 // m n min(m, n), generous (some 10x what an M5 Pro takes), so that a slower GPU
