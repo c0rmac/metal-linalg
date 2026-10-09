@@ -10,6 +10,7 @@ Apple M5 Pro's (20 GPU cores, 18 CPU cores).
 | proposal | affects | time at stake | effort | expected gain |
 |---|---|---|---|---|
 | [The blocked QR's fixed costs and panels](qr-fixed-costs.md#done-2026-10-07) (what is left) | QR, one matrix of 512-4096 | the TSQR's leaves, top and rebuild about 3.8 of 6.6 ms at 1024; updates inside aggregates 12% | 1-2 days | a few % each: the leaves and top as one dispatch, the in-aggregate updates as kernels of their own |
+| [Batches of a few large matrices with vectors in two stages](batched-two-stage-vectors.md) | eigh and the SVD with vectors, 4-32 matrices of 768-1024 | 8 x 1024^2 with vectors: `bidiag_batch` 0.87x the CPU path | 3-5 days | about 1.2-1.5x the CPU path (estimate) |
 
 **Not code, but open:**
 

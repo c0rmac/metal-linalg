@@ -31,7 +31,7 @@ marked stale, rather than an estimate. The library reports the state at run time
 and docs/measurements.md shows it for every chip.
 """
 
-KERNEL_EPOCHS = {"qr": 7, "eigh": 8, "svd": 10}
+KERNEL_EPOCHS = {"qr": 8, "eigh": 8, "svd": 10}
 # The versions from which the CPU path spreads a batch over every core (2.9.0).
 MIN_EPOCHS = {"qr": 2, "eigh": 2, "svd": 3}
 
@@ -117,7 +117,9 @@ HISTORY = [
      "and two new backends: "
      "tridiag_batch (a batch of mid-size matrices reduced together, its symmetric products from the lower "
      "triangle alone: 1.3-1.5x the CPU at 256-1024 matrices of 96-256, 1.55x at 16 of 1024) and band with "
-     "eigenvectors (the two-stage reduction, 1.36x tridiag at 4096)"),
+     "eigenvectors (the two-stage reduction, 1.36x tridiag at 4096); the CPU path with eigenvectors, for a "
+     "batch of at most a quarter as many matrices as cores, runs ssyevd's steps with the divide and conquer "
+     "on the idle cores from N = 192 (1.17-1.26x)"),
     ("svd", 9, "2.16.0", "2026-10-08",
      "the sweeps keep MLX's buffer cache on, as an MLX program has it, and MLX's own buffers are no "
      "longer wrapped again: the GPU backends' calls on large batches 10-40% cheaper; the QR-"
@@ -129,7 +131,12 @@ HISTORY = [
      "256-1024 matrices of 128-256), singular values alone from k = 160 in two stages (3.3x the CPU at "
      "16 x 1024^2); and golub_kahan in registers up to 32 x 32, four or two matrices a simdgroup up to "
      "8 or 16 rows, from 17 rows a runner simdgroup for the QR iterations (1.3-2.1x with vectors, "
-     "singular values alone by bisection 1.6-2.7x)"),
+     "singular values alone by bisection 1.6-2.7x); the CPU path with vectors, for a batch of at most a "
+     "quarter as many matrices as cores, runs sgesdd's steps with the divide and conquer on the idle cores "
+     "from k = 192 (1.2-1.4x)"),
+    ("qr", 8, "2.17.0", "2026-10-09",
+     "the register kernel packs small matrices, four a simdgroup up to 8 rows and two up to 16 (2.5x at "
+     "4 x 4, 1.7-2.5x at 8 x 8, 1.3-1.7x at 16 x 16 for large batches)"),
 ]
 
 REQUIRED = {
