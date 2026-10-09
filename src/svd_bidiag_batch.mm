@@ -803,11 +803,18 @@ void direct(const Matrices& a, float* u_out, float* s_out, float* vt_out, uint32
         return cb;
     };
     auto cnt_of = [&](size_t k) { return (uint32_t)std::min(chunk, total - k * chunk); };
+    // Each chunk's reduction waits for the previous chunk's: queued together
+    // they shared the GPU, and the first, which the CPU waits on, took twice
+    // as long (on an M5 Pro 1.15x for eigh at 16 x 1024^2 and 256 x 256^2,
+    // 1.04-1.1x for the SVD)
+    id<MTLEvent> order = [dev newEvent];
     auto reduce = [&](size_t k) {
         id<MTLCommandBuffer> cb = [cache.rt.queue commandBufferWithUnretainedReferences];
+        if (k > 0) [cb encodeWaitForEvent:order value:k];
         if (band || bandv)
             band_tail = encode_band(cache, cb, *ws[k % 2], cnt_of(k), src, index, scale, (uint32_t)(k * chunk), M, N, bandv);
         else      encode_reduce(cache, cb, *ws[k % 2], cnt_of(k), src, index, scale, (uint32_t)(k * chunk), M, N, threads);
+        [cb encodeSignalEvent:order value:k + 1];
         return commit(cb);
     };
     auto back = [&](size_t k) {
@@ -1355,9 +1362,16 @@ void eigh_band_batch(const Matrices& a, bool lower, float* w_out, float* v_out, 
     };
     auto cnt_of = [&](size_t k) { return (uint32_t)std::min(chunk, total - k * chunk); };
     uint32_t tail = 0;
+    // Each chunk's reduction waits for the previous chunk's: queued together
+    // they shared the GPU, and the first, which the CPU waits on, took twice
+    // as long (on an M5 Pro 1.15x for eigh at 16 x 1024^2 and 256 x 256^2,
+    // 1.04-1.1x for the SVD)
+    id<MTLEvent> order = [dev newEvent];
     auto reduce = [&](size_t k) {
         id<MTLCommandBuffer> cb = [cache.rt.queue commandBufferWithUnretainedReferences];
+        if (k > 0) [cb encodeWaitForEvent:order value:k];
         tail = encode_sym_band(cache, cb, *ws[k % 2], cnt_of(k), src, index, scale, (uint32_t)(k * chunk), lower);
+        [cb encodeSignalEvent:order value:k + 1];
         return commit(cb);
     };
     const unsigned solve_threads = metal_linalg::detail::cpu_threads_beside_gpu();
