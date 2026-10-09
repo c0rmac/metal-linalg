@@ -93,9 +93,12 @@ Spreading a matrix over several cores would help one matrix, not a batch:
 a batch already fills the cores, and the GPU's 20 cores at 11 ms of a core
 a matrix chase fewer matrices a second than the CPU's 14 free cores at 7 ms.
 What would change the verdict is a chase with fewer instructions a step,
-about a third of today's, for which this design (16 x 16 blocks on 32
-lanes, the band in device memory) leaves no obvious room; keeping the
-band's window in threadgroup memory (32 KB holds 240 columns of the 33-row
-band, the sweeps in tiles of columns as PLASMA's `ssb2st` groups them)
-would save the loads' issue slots, not the arithmetic's. A project of days
-for an uncertain gain.
+about a third of today's.
+
+**The band in threadgroup memory, measured (2026-10-09).** Tiles of columns
+in threadgroup memory (32 KB holds 240 columns of the 33-row band, the
+sweeps in tiles as PLASMA's `ssb2st` groups them) would save the loads'
+latency and the device fences. Their best case, every band access pointed
+at a threadgroup array (the wrong answer, with no tile ever loaded or
+stored): 1024 11.0 to 8.9 ms, 16 x 1024^2 11.3 to 8.6, 16 x 512^2 4.2 to
+3.1, 1.24-1.37x where 3x was needed. Not built.
