@@ -1822,12 +1822,13 @@ kernel void bd_make_t(device const float* G [[buffer(0)]], device const float* t
 // ldv apart and T's ldt (nb, or wider to write them straight into the
 // layout their products read: bidiag_batch with vectors). With dup, V again
 // at V + dup and, with V2 bound (ld2 nonzero), into V2 + j * s2, rows ld2
-// apart (the eigensolver's [V Y V] beside its kept V). With merge (the SVD's
-// row panels, nb = 16), the block's left update first, from Z = A^T V1 (Zp,
-// ld 16, sz apart): row r's w = z T1 (T1p, ld ldt1, st1 apart), x -= w V1t^T
-// (V1t the first 16 rows of V1p, ld ldv, s1 apart), w written to Wp (ld ldv,
-// sw apart) and to the panel's row at column ms (A's spare rows: the block's
-// W^T); and at the end v T (T this panel's), to Yp (ld 16, sy apart).
+// apart (the eigensolver's [V Y V] beside its kept V). nb = 16 for merge: its
+// bit 1 (the SVD's row panels), the block's left update first, from Z = A^T
+// V1 (Zp, ld 16, sz apart): row r's w = z T1 (T1p, ld ldt1, st1 apart), x -=
+// w V1t^T (V1t the first 16 rows of V1p, ld ldv, s1 apart), w written to Wp
+// (ld ldv, sw apart) and to the panel's row at column ms (A's spare rows: the
+// block's W^T); its bit 2 (those and the eigensolver's panels), at the end
+// v T (T this panel's), to Yp (ld 16, sy apart).
 // A threadgroup
 // a matrix and a thread a row, its nb entries in registers; per column, the
 // reflector's norm (one sum of squares) and then 32 sums at once, the remaining columns' products with v and the products of
@@ -1872,7 +1873,7 @@ kernel void bb_panel(device float* A [[buffer(0)]], device float* V [[buffer(1)]
         x[c] = row && c < nb ? Am[(ulong)r * q.rs + (ulong)c * q.cs] : 0.0f;
         v[c] = 0.0f;
     })
-    if (q.merge) {   // the block's left update of this row panel (nb = 16)
+    if (q.merge & 1u) {   // the block's left update of this row panel (nb = 16)
         threadgroup float (*T1)[17] = Ts;   // T1, then this panel's T
         threadgroup float* V1t = part;      // V1's first 16 rows, ld 17
         for (uint e = t; e < 256; e += nsg * 32) {
@@ -1957,7 +1958,7 @@ kernel void bb_panel(device float* A [[buffer(0)]], device float* V [[buffer(1)]
         device float* tm = T + (ulong)mat * q.st + (ulong)t * q.ldt;
         for (uint c = 0; c < nb; ++c) tm[c] = c >= t ? Ts[t][c] : 0.0f;
     }
-    if (q.merge && row) {   // v T, for the block's products
+    if ((q.merge & 2u) && row) {   // v T, for the block's products
         device float* ym = Yp + (ulong)mat * q.sy + (ulong)r * 16;
         BQ_U16({
             float s = 0.0f;
@@ -1982,3 +1983,53 @@ kernel void sb_load(device const float* src [[buffer(0)]], device float* A [[buf
     const float v = given ? m[(ulong)r * n + c] : m[(ulong)c * n + r];
     A[(ulong)j * p.sa + (ulong)c * p.lda + r] = v * scale[p.c0 + j];
 }
+
+// The eigensolver's batched band block (eigh_band_batch), between its two
+// products: in [V Y V] (n1 rows, ld ld, sv apart; X = A22 V T in Y's place),
+// Y = X - V M with M = T^T (V^T X) / 2 (T 16 x 16, ld ldt, st apart). A
+// threadgroup a matrix, a thread a row: V^T X summed across the rows two of
+// its rows at a time (each lane's 32 products summed across the simdgroup
+// by shuffles, then across the simdgroups), then M, then each row's Y.
+struct SsParams { uint n1, ld, sv, st, ldt; };
+kernel void sb_small(device float* VYV [[buffer(0)]], device const float* T [[buffer(1)]],
+                     constant SsParams& q [[buffer(2)]], uint mat [[threadgroup_position_in_grid]],
+                     uint t [[thread_index_in_threadgroup]], uint sg [[simdgroup_index_in_threadgroup]],
+                     uint lane [[thread_index_in_simdgroup]], uint nsg [[simdgroups_per_threadgroup]]) {
+    threadgroup float part[32 * 32];
+    threadgroup float S[16][17], Tm[16][17], M[16][17];
+    device float* base = VYV + (ulong)mat * q.sv;
+    for (uint e = t; e < 256; e += nsg * 32) Tm[e / 16][e % 16] = T[(ulong)mat * q.st + (e / 16) * q.ldt + e % 16];
+    const bool row = t < q.n1;
+    float v[16], x[16];
+    BQ_U16({ v[c] = row ? base[(ulong)t * q.ld + c] : 0.0f; x[c] = row ? base[(ulong)t * q.ld + 16 + c] : 0.0f; })
+#define SB_ROUND(I0)                                                                                  \
+    {                                                                                                 \
+        float w[32];                                                                                  \
+        BQ_U32({ w[c] = (c < 16 ? v[I0] : v[I0 + 1]) * x[c % 16]; })                                  \
+        BQ_TRANSPOSE_SUM                                                                              \
+        part[sg * 32 + lane] = w[0];                                                                  \
+        threadgroup_barrier(mem_flags::mem_threadgroup);                                              \
+        if (t < 32) {                                                                                 \
+            float a = 0.0f;                                                                           \
+            for (uint g = 0; g < nsg; ++g) a += part[g * 32 + t];                                     \
+            S[I0 + t / 16][t % 16] = a;                                                               \
+        }                                                                                             \
+        threadgroup_barrier(mem_flags::mem_threadgroup);                                              \
+    }
+    SB_ROUND(0) SB_ROUND(2) SB_ROUND(4) SB_ROUND(6) SB_ROUND(8) SB_ROUND(10) SB_ROUND(12) SB_ROUND(14)
+#undef SB_ROUND
+    for (uint e = t; e < 256; e += nsg * 32) {
+        const uint i = e / 16, j = e % 16;
+        float a = 0.0f;
+        for (uint l = 0; l <= i; ++l) a = fma(Tm[l][i], S[l][j], a);   // T upper triangular
+        M[i][j] = 0.5f * a;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (row)
+        BQ_U16({
+            float a = x[c];
+            BQ_J16({ a = fma(-v[j], M[j][c], a); })
+            base[(ulong)t * q.ld + 16 + c] = a;
+        })
+}
+

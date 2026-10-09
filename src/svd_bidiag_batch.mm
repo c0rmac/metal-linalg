@@ -89,6 +89,7 @@ struct BqParams { uint32_t p, nb, rs, cs, sa, sv, st, ldv, ldt, dup, s2, ld2, me
 struct MergeParams { uint32_t np, b, sg, stb, sta; };
 struct ChaseParams { uint32_t n, rs, cs, pmax, pass0, pass1; };
 struct SlParams { uint32_t n, lda, sa, lower, c0; };
+struct SsParams { uint32_t n1, ld, sv, st, ldt; };
 
 // Singular values alone from this k: every matrix to an upper band of width
 // kBand by blocks on the GPU (bb_panel and batched products), the bands to
@@ -119,7 +120,7 @@ struct Cache {
     // to 128, 256, 512 and 1024 rows
     id<MTLComputePipelineState> panels[4] = {nil, nil, nil, nil};
     id<MTLComputePipelineState> load = nil, store = nil, copy = nil, make_v = nil, make_t = nil, band_panel = nil;
-    id<MTLComputePipelineState> merge_t = nil, chase_wide = nil, chase_narrow = nil, sym_load = nil;
+    id<MTLComputePipelineState> merge_t = nil, chase_wide = nil, chase_narrow = nil, sym_load = nil, sym_small = nil;
 
     void ensure() {
         if (load) return;
@@ -138,6 +139,7 @@ struct Cache {
         chase_wide = mk(@"bd_chase_apply_4_4");
         chase_narrow = mk(@"bd_chase_apply_2_8");
         sym_load = mk(@"sb_load");
+        sym_small = mk(@"sb_small");
     }
 };
 
@@ -399,7 +401,7 @@ uint32_t encode_band(Cache& c, id<MTLCommandBuffer> cb, Work& w, uint32_t cnt, i
                      id<MTLBuffer> T, size_t toff, size_t st, uint32_t ldt, id<MTLBuffer> V2, size_t v2off,
                      size_t s2, bool merge, uint32_t ms, id<MTLBuffer> T1) {
         const BqParams q{p, b, rs, cs, w.sa, (uint32_t)sv, (uint32_t)st, 2 * b, ldt, 0, (uint32_t)s2, V2 ? n : 0u,
-                         merge ? 1u : 0u, w.sbz, ldt, (uint32_t)st, w.sb1, w.sb2, ms, w.sbz};
+                         merge ? 3u : 0u, w.sbz, ldt, (uint32_t)st, w.sb1, w.sb2, ms, w.sbz};
         [enc setComputePipelineState:c.band_panel];
         [enc setBuffer:w.A offset:off * 4 atIndex:0];
         [enc setBuffer:V offset:voff * 4 atIndex:1];
@@ -1004,9 +1006,10 @@ void qr_first(const Matrices& a, float* u_out, float* s_out, float* vt_out, uint
 // eigenvectors: every matrix (loaded from its triangle, mirrored, scaled:
 // sb_load) to a lower band of width kBand by blocks on the GPU, as
 // band_reduce_symmetric reduces one: per block the panel below the diagonal
-// block (bb_panel), then both sides of the trailing matrix as batched
-// products on the whole of it, X = A22 V T, Y = X - V (T^T V^T X) / 2,
-// A22 -= V Y^T + Y V^T, each block's reflectors kept as bidiag_batch's are;
+// block (bb_panel, which forms V T too), then both sides of the trailing
+// matrix on the whole of it, X = A22 V T (a batched product), Y = X - V (T^T
+// V^T X) / 2 (sb_small), A22 -= [V Y] [Y V]^T (one rank-2b product), each
+// block's reflectors kept as bidiag_batch's are;
 // on the CPU's cores, a matrix a core, the last columns by LAPACK's
 // ssytrd_sy2sb and Q = Q_tail, then (the GPU forming Q1 Q meanwhile) the band
 // chased to tridiagonal keeping the chase's reflectors and T = Z diag(w) Z^T
@@ -1017,7 +1020,7 @@ void qr_first(const Matrices& a, float* u_out, float* s_out, float* vt_out, uint
 struct EWork {
     uint32_t n = 0, capacity = 0, lda = 0, ldq = 0, blocks = 0;
     size_t sa = 0, sqy = 0, stq = 0, sq = 0, sz = 0, slv = 0, sb = 0, sza = 0;
-    id<MTLBuffer> A, QY, QT, VT, VYV, S, M, GA, TA, Q, Z, LV, OV, ZA, ZA2;
+    id<MTLBuffer> A, QY, QT, VT, VYV, GA, TA, Q, Z, LV, OV, ZA, ZA2;
     size_t svyv = 0;
 };
 
@@ -1060,8 +1063,6 @@ EWork& ework(Cache& c, uint32_t n, uint32_t capacity, int slot) {
     w.VT = make(C * w.sb, priv);
     w.svyv = (size_t)n * 3 * kBand;
     w.VYV = make(C * w.svyv, priv);
-    w.S = make(C * kBand * kBand, priv);
-    w.M = make(C * kBand * kBand, priv);
     w.QY = make(C * w.sqy, shared);
     std::memset(w.QY.contents, 0, C * w.sqy * 4);   // the zeros above each panel, never written
     w.GA = make(C * 128 * 128, priv);
@@ -1095,34 +1096,36 @@ uint32_t encode_sym_band(Cache& c, id<MTLCommandBuffer> cb, EWork& w, uint32_t c
     for (; k + 3 * b <= n; k += b) {
         const uint32_t n1 = n - k - b, j = k / b;
         // The panel A(k+b:, k:k+b): R in place (the band), V into [V Y V]
-        // (ld 3b) twice and into QY, T into QT
+        // (ld 3b) twice and into QY, T into QT, V T into VT
         const BqParams q{n1, b, 1, lda, (uint32_t)w.sa, (uint32_t)w.svyv, (uint32_t)w.stq, 3 * b, 32, 2 * b,
-                         (uint32_t)w.sqy, n};
+                         (uint32_t)w.sqy, n, 2u, 0, 0, 0, 0, 0, 0, (uint32_t)w.sb};
         [enc setComputePipelineState:c.band_panel];
         [enc setBuffer:w.A offset:((size_t)k * lda + k + b) * 4 atIndex:0];
         [enc setBuffer:w.VYV offset:0 atIndex:1];
         [enc setBuffer:w.QT offset:(size_t)j * 1024 * 4 atIndex:2];
         [enc setBytes:&q length:sizeof q atIndex:3];
         [enc setBuffer:w.QY offset:((size_t)(k + b) * n + k) * 4 atIndex:4];
-        for (NSUInteger i = 5; i <= 9; ++i) [enc setBuffer:w.VYV offset:0 atIndex:i];   // (merge's, unused)
+        for (NSUInteger i = 5; i <= 8; ++i) [enc setBuffer:w.VYV offset:0 atIndex:i];   // (merge's, unused)
+        [enc setBuffer:w.VT offset:0 atIndex:9];                                          // V T
         [enc dispatchThreadgroups:MTLSizeMake(cnt, 1, 1)
             threadsPerThreadgroup:MTLSizeMake(std::max<uint32_t>(32, (n1 + 31) / 32 * 32), 1, 1)];
         [enc endEncoding];
         // A22 <- H^T A22 H on the whole symmetric A22 (its row-major view is
-        // itself): X = A22 (V T) into Y's place, Y = X - V (T^T (V^T X)) / 2,
+        // itself): X = A22 (V T) into Y's place; Y = X - V (T^T (V^T X)) / 2
+        // (sb_small; as MPS products, four of them, it took 1.1-1.3x as long);
         // A22 -= [V Y] [Y V]^T, one product
-        MPSMatrix* V = mps(w.VYV, 0, n1, b, 3 * b, cnt, w.svyv);
-        MPSMatrix* T = mps(w.QT, (size_t)j * 1024, b, b, 32, cnt, w.stq);
-        MPSMatrix* VT = mps(w.VT, 0, n1, b, b, cnt, w.sb);
-        MPSMatrix* X = mps(w.VYV, b, n1, b, 3 * b, cnt, w.svyv);
-        MPSMatrix* S = mps(w.S, 0, b, b, b, cnt, b * b);
-        MPSMatrix* M = mps(w.M, 0, b, b, b, cnt, b * b);
         MPSMatrix* A22 = mps(w.A, (size_t)(k + b) * lda + k + b, n1, n1, lda, cnt, w.sa);
-        gemm(dev, cb, V, false, T, false, VT, n1, b, b, 1, 0, cnt);
-        gemm(dev, cb, A22, false, VT, false, X, n1, b, n1, 1, 0, cnt);
-        gemm(dev, cb, V, true, X, false, S, b, b, n1, 1, 0, cnt);
-        gemm(dev, cb, T, true, S, false, M, b, b, b, 0.5, 0, cnt);
-        gemm(dev, cb, V, false, M, false, X, n1, b, b, -1, 1, cnt);
+        gemm(dev, cb, A22, false, mps(w.VT, 0, n1, b, b, cnt, w.sb), false, mps(w.VYV, b, n1, b, 3 * b, cnt, w.svyv),
+             n1, b, n1, 1, 0, cnt);
+        const SsParams sp{n1, 3 * b, (uint32_t)w.svyv, (uint32_t)w.stq, 32};
+        enc = [cb computeCommandEncoder];
+        [enc setComputePipelineState:c.sym_small];
+        [enc setBuffer:w.VYV offset:0 atIndex:0];
+        [enc setBuffer:w.QT offset:(size_t)j * 1024 * 4 atIndex:1];
+        [enc setBytes:&sp length:sizeof sp atIndex:2];
+        [enc dispatchThreadgroups:MTLSizeMake(cnt, 1, 1)
+            threadsPerThreadgroup:MTLSizeMake(std::max<uint32_t>(32, (n1 + 31) / 32 * 32), 1, 1)];
+        [enc endEncoding];
         gemm(dev, cb, mps(w.VYV, 0, n1, 2 * b, 3 * b, cnt, w.svyv), false, mps(w.VYV, b, n1, 2 * b, 3 * b, cnt, w.svyv),
              true, A22, n1, n1, 2 * b, -1, 1, cnt);
         enc = [cb computeCommandEncoder];
