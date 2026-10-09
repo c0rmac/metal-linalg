@@ -430,10 +430,13 @@ void direct(const Matrices& a, float* u_out, float* s_out, float* vt_out, uint32
     // A thread a row, up to 1024 (on an M5 Pro 1.1x at 8 x 1024^2 against 512;
     // eigh's panel, with less work a column, gains nothing from it)
     const uint32_t threads = std::clamp((m + 31) / 32 * 32, 64u, 1024u);
-    // Chunks: four, to overlap the stages, each at least 8 MB of matrices, at
-    // most 2^25 floats (128 MB a slot)
+    // Chunks: four, to overlap the stages (eight for matrices of up to 128 x
+    // 128, whose pipeline's first and last stages, alone on the GPU, are a
+    // larger share: 1.1x at 1024 x 128^2; from 256 four were faster), each at
+    // least 8 MB of matrices, at most 2^25 floats (128 MB a slot)
     const size_t min_chunk = std::max<size_t>(16, ((size_t)1 << 21) / per);
-    const size_t chunks = std::clamp<size_t>(std::min<size_t>(4, total / std::max<size_t>(1, min_chunk)), 1, total);
+    const size_t max_chunks = per <= (size_t)128 * 128 ? 8 : 4;
+    const size_t chunks = std::clamp<size_t>(std::min<size_t>(max_chunks, total / std::max<size_t>(1, min_chunk)), 1, total);
     size_t chunk = (total + chunks - 1) / chunks;
     chunk = std::min(chunk, std::max<size_t>(1, ((size_t)1 << 25) / per));
     const size_t count = (total + chunk - 1) / chunk;

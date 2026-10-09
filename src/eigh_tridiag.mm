@@ -759,9 +759,12 @@ void eigh_tridiag_batch(const Matrices& a, bool lower, float* w_out, float* v_ou
     const size_t total = todo.size();
     // A thread a row, 64 to 512 threads
     const uint32_t threads = std::clamp((n + 31) / 32 * 32, 64u, 512u);
-    // Chunks: four, to overlap the stages, each large enough to fill the GPU,
-    // at most 2^25 floats of matrices (128 MB a slot)
-    size_t chunks = 4;
+    // Chunks: four, to overlap the stages (eight for matrices of up to 128 x
+    // 128, whose pipeline's first and last stages, alone on the GPU, are a
+    // larger share: 1.07-1.15x at 1024 x 96-128^2; from 256 four were
+    // faster), each large enough to fill the GPU, at most 2^25 floats of
+    // matrices (128 MB a slot)
+    size_t chunks = per <= (size_t)128 * 128 ? 8 : 4;
     const size_t min_chunk = std::max<size_t>(16, ((size_t)1 << 21) / per);   // 8 MB of matrices
     chunks = std::clamp<size_t>(std::min(chunks, total / std::max<size_t>(1, min_chunk)), 1, total);
     size_t chunk = (total + chunks - 1) / chunks;
