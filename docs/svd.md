@@ -534,7 +534,7 @@ Pro against the direct reduction: 1.05-1.1x at 160-256, 1.6x at 64 × 512²,
 CPU's chase is the longer stage. Against the CPU path: 1.33x at 256 × 256²,
 1.46x at 64 × 512², 3.8x at 16 × 1024².
 
-**With vectors, from $k = 288$ (from 160 for batches of up to as many
+**With vectors, from $k = 288$ (from 128 for batches of up to as many
 matrices as the CPU's solve has threads), in two stages too** (since
 2.17.0), `band`'s method with vectors for the batch at once, both stages'
 reflectors kept and applied:
@@ -700,7 +700,7 @@ threadgroup memory at every size (off: up to 32 × 32 in registers),
 `SVD_BIDIAG_BATCH_QR=0` has `bidiag_batch` bidiagonalize a tall or wide
 matrix as it is rather than its R, `SVD_BIDIAG_BATCH_BAND=0` has it
 reduce directly rather than in two stages (singular values alone from
-k = 160, with vectors from 288, or 160 for small batches), and
+k = 160, with vectors from 288, or 128 for small batches), and
 `SVD_BAND_BATCH=0` keeps a batch in
 `band` rather than handing it to `bidiag_batch`'s two stages.
 `svd_backend(m, n, batch)` and `svdvals_backend(m, n, batch)` say which of the

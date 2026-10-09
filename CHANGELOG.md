@@ -103,7 +103,7 @@
   simdgroup, up to 16 two (`QR_SIMD_PACK=0` turns it off): 2.5x at 4 x 4,
   1.7-2.5x at 8 x 8, 1.3-1.7x at 16 x 16 for large batches.
 - **The SVD with vectors for batches in two stages**: `bidiag_batch` from
-  k = 288 (from 160 for batches of up to the CPU's solve threads) reduces
+  k = 288 (from 128 for batches of up to the CPU's solve threads) reduces
   every matrix to a band by blocks of batched products, as
   for the singular values alone, keeping both stages' reflectors: the CPU's
   cores chase each band to bidiagonal (keeping the chase's) and solve it

@@ -885,7 +885,7 @@ int main() {
         // and the CPU's tail, wide, chunks (four of 1024 a slot), structured
         // and scaled matrices, a NaN, unaligned outputs; against the direct
         // reduction (SVD_BIDIAG_BATCH_BAND=0)
-        for (auto [b, M, N] : std::vector<std::tuple<int, int, int>>{{20, 300, 290}, {6, 170, 165}, {2, 384, 384}, {3, 400, 390}, {3, 433, 433},
+        for (auto [b, M, N] : std::vector<std::tuple<int, int, int>>{{20, 300, 290}, {6, 170, 165}, {4, 140, 130}, {2, 384, 384}, {3, 400, 390}, {3, 433, 433},
                                                                      {2, 700, 500}, {3, 400, 512}, {6, 1024, 1024},
                                                                      {2, 1024, 1000}}) {
             array A = random_matrix(b, M, N, 7000 + M + N);

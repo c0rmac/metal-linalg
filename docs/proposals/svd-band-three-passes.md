@@ -64,8 +64,8 @@ interleaved, the minimum of four rounds each, M5 Pro:
 | with vectors, 16 x 384^2 | 15.4 | 14.2 |
 
 With the reduction faster, two stages with vectors now pay from k = 288 at
-any batch (1.10-1.25x the direct reduction at 288-320) and from 160 for
-batches of up to the CPU's solve threads (1.3-1.8x at 2-16 matrices of
-160-256; level or behind from 32, where the CPU's chases bound it), against
+any batch (1.10-1.25x the direct reduction at 288-320) and from 128 for
+batches of up to the CPU's solve threads (1.05-1.8x at 2-16 matrices of
+128-256; level or behind from 32, where the CPU's chases bound it), against
 384 before.
 

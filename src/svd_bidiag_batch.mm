@@ -107,9 +107,10 @@ constexpr uint32_t kBandMinK = 160;
 // which the CPU's chases bound it. On an M5 Pro against the direct reduction:
 // 1.10-1.25x at 288-320 (16 to 256 matrices), 1.18x at 256 x 384^2, 1.6-2.1x
 // at 768, 2.7-3.4x at 1024; at 256, 1.29-1.46x for 2-16 matrices, 1.03x for
-// 32, 0.91x for 256; at 160, 1.09-1.83x for 1-8, 0.88x for 32.
+// 32, 0.91x for 256; at 160, 1.09-1.83x for 1-8, 0.88x for 32; at 128,
+// 1.05-1.23x for 2-8.
 constexpr uint32_t kBandVectorsMinK = 288;
-constexpr uint32_t kBandVectorsSmallMinK = 160;
+constexpr uint32_t kBandVectorsSmallMinK = 128;
 constexpr uint32_t kAgg = 8;
 
 using L = __LAPACK_int;
