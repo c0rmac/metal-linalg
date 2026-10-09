@@ -102,7 +102,9 @@
 - **The blocked QR's updates inside an aggregate in one kernel**
   (`qr_agg_apply`) for up to 4 matrices and panels of up to 3072 rows: one
   dispatch where two MPS products took two; 1.16x the call at 1024 x 1024,
-  1.06-1.12x at 512-3072 (`QR_AGG_KERNEL=0` keeps MPS).
+  1.06-1.12x at 512-3072 (`QR_AGG_KERNEL=0` keeps MPS). Where it uses the
+  input in place, its scan (the scale, and NaN) is the GPU's too: 1.01-1.03x
+  (`QR_GPU_SCAN=0`).
 - **QR's register kernel packs small matrices**: up to 8 rows four a
   simdgroup, up to 16 two (`QR_SIMD_PACK=0` turns it off): 2.5x at 4 x 4,
   1.7-2.5x at 8 x 8, 1.3-1.7x at 16 x 16 for large batches.

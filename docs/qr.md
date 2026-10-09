@@ -181,7 +181,10 @@ same Householder QR with the two-stage reduction's machinery
    and every row, $W$ summed across its row groups; one dispatch where MPS
    took two, 1.16x the call at 1024², 1.06-1.12x at 512-3072); taller panels
    and larger batches keep MPS's products, which spread them better
-   (`QR_AGG_KERNEL=0` keeps MPS throughout).
+   (`QR_AGG_KERNEL=0` keeps MPS throughout). Where the input is used in
+   place, its scan for the scale and for NaN is the GPU's too (`qr_scan`, an
+   atomic maximum of the magnitudes' bit patterns), so the GPU starts at
+   once: 1.01-1.03x (`QR_GPU_SCAN=0` keeps it on the CPU).
 2. **Aggregates of 128 columns.** Inside one, each panel's $H$ is applied to
    the aggregate's columns right of it, $W = (VT)^T C$ and $C \mathrel{-}= V W$;
    the aggregate's $T_a$ is merged from its panels' $T$'s and the Gram matrix

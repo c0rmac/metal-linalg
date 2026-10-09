@@ -91,9 +91,10 @@ LU and inverses 11.
   memory, wins at 512-3072 rows for up to 4 matrices (1.16x at 1024^2,
   1.06-1.12x elsewhere) and is used there; taller panels and larger batches
   keep MPS (the kernel 0.93-0.97x there).
-- **The input's scan on the GPU**: not built. Measured warm it is 0.1 of 6.3
-  ms at 1024 (1.7%), 0.54 of 20 at 16 x 1024² (2.7%), less than the GPU pass
-  that would replace it would save.
+- **The input's scan on the GPU**: built (`qr_scan`, `qr_scales`), where the
+  input is used in place: measured warm the host's scan was 0.1 of 6.3 ms at
+  1024 (1.7%) and 0.54 of 20 at 16 x 1024² (2.7%); on the GPU the call is
+  1.01-1.03x faster.
 - Found on the way: a constant matrix's Q far from orthogonal (5e4 at
   600 x 64), from sums of squares that underflowed in part; fixed in 2.17.0
   (CHANGELOG).

@@ -1241,6 +1241,43 @@ kernel void bd_scale_copy(device const float* src [[buffer(0)]], device float* d
         g.y < p.m && g.x < p.n ? s[g.z] * src[(ulong)g.z * p.m * p.n + (ulong)g.y * p.n + g.x] : 0.0f;
 }
 
+// The blocked QR's scan of its input on the GPU (qr_blocked.mm, where the
+// input is used in place): bits[j] <- the largest |x| of matrix j's per floats
+// as an IEEE bit pattern (an atomic maximum of the patterns: they order as the
+// magnitudes, NaN and infinity above every finite one); threadgroups take
+// 256 x 16 floats each. Then qr_scales: from those, down[j] and up[j], the
+// power of two that scales matrix j into [0.5, 1) and back (1 for a zero or
+// non-finite matrix, which the host gives NaN at the end).
+struct ScanParams { uint per; };
+kernel void qr_scan(device const float* src [[buffer(0)]], device atomic_uint* bits [[buffer(1)]],
+                    constant ScanParams& p [[buffer(2)]], uint3 tg [[threadgroup_position_in_grid]],
+                    uint t [[thread_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]]) {
+    device const float* m = src + (ulong)tg.z * p.per;
+    const ulong e0 = (ulong)tg.x * 4096;
+    uint best = 0;
+    for (uint q = 0; q < 16; ++q) {
+        const ulong e = e0 + q * 256 + t;
+        if (e < p.per) best = max(best, as_type<uint>(m[e]) & 0x7fffffffu);
+    }
+    best = simd_max(best);
+    if (lane == 0) atomic_fetch_max_explicit(bits + tg.z, best, memory_order_relaxed);
+}
+kernel void qr_scales(device const uint* bits [[buffer(0)]], device float* down [[buffer(1)]],
+                      device float* up [[buffer(2)]], constant uint& batch [[buffer(3)]],
+                      uint j [[thread_position_in_grid]]) {
+    if (j >= batch) return;
+    const uint b = bits[j];
+    float d = 1.0f, u = 1.0f;
+    if (b != 0 && b < 0x7f800000u) {
+        int e = 0;
+        frexp(as_type<float>(b), e);
+        d = ldexp(1.0f, -e);
+        u = ldexp(1.0f, e);
+    }
+    down[j] = d;
+    up[j] = u;
+}
+
 // =============================================================================
 // The two-stage SVD with vectors: the bulge chase's reflectors applied on the
 // GPU (svd_bidiag.mm), X <- Q^T X with X = M^T for M column-major: M <- M Q,

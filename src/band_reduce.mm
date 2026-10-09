@@ -77,7 +77,7 @@ struct State {
     Panels panels[3];
     Small  small;
     bool   have = false;
-    id<MTLComputePipelineState> scale_copy, merge_t, r_out, agg_apply[2];
+    id<MTLComputePipelineState> scale_copy, merge_t, r_out, agg_apply[2], scan, scales;
     Buffers buf;
 
     const Panels& kernels(uint32_t b) {
@@ -462,6 +462,29 @@ void qr_scale_copy(id<MTLCommandBuffer> cb, id<MTLBuffer> src, id<MTLBuffer> dst
     [enc setBytes:p length:sizeof p atIndex:2];
     [enc setBuffer:scale offset:0 atIndex:3];
     [enc dispatchThreads:MTLSizeMake(np, mp, batch) threadsPerThreadgroup:MTLSizeMake(32, 8, 1)];
+    [enc endEncoding];
+}
+
+void qr_scan_scales(id<MTLCommandBuffer> cb, id<MTLBuffer> src, id<MTLBuffer> bits, id<MTLBuffer> down,
+                    id<MTLBuffer> up, size_t per, uint32_t batch) {
+    State& s = State::shared();
+    if (!s.scan) {
+        s.scan = make_pipeline(s.rt.device, s.rt.library, @"qr_scan", nil);
+        s.scales = make_pipeline(s.rt.device, s.rt.library, @"qr_scales", nil);
+    }
+    const uint32_t p = (uint32_t)per;
+    id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+    [enc setComputePipelineState:s.scan];
+    [enc setBuffer:src offset:0 atIndex:0];
+    [enc setBuffer:bits offset:0 atIndex:1];
+    [enc setBytes:&p length:sizeof p atIndex:2];
+    [enc dispatchThreadgroups:MTLSizeMake((per + 4095) / 4096, 1, batch) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+    [enc setComputePipelineState:s.scales];
+    [enc setBuffer:bits offset:0 atIndex:0];
+    [enc setBuffer:down offset:0 atIndex:1];
+    [enc setBuffer:up offset:0 atIndex:2];
+    [enc setBytes:&batch length:sizeof batch atIndex:3];
+    [enc dispatchThreads:MTLSizeMake(batch, 1, 1) threadsPerThreadgroup:MTLSizeMake(std::min<uint32_t>(batch, 64), 1, 1)];
     [enc endEncoding];
 }
 

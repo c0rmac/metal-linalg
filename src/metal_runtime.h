@@ -430,6 +430,12 @@ void qr_r_out(id<MTLCommandBuffer> cb, id<MTLBuffer> A, id<MTLBuffer> R, uint32_
 // apart), zeros around it.
 void qr_scale_copy(id<MTLCommandBuffer> cb, id<MTLBuffer> src, id<MTLBuffer> dst, uint32_t m, uint32_t n,
                    uint32_t mp, uint32_t np, size_t sd, uint32_t batch, id<MTLBuffer> scale);
+// Each src matrix's (per floats, per apart) largest |x| as an IEEE bit
+// pattern into bits (zeroed by the caller; at least 0x7f800000 for a NaN or
+// infinity), then its scales into down and up (as qr_blocked.mm's host scan
+// would set them; 1 for a zero or non-finite matrix).
+void qr_scan_scales(id<MTLCommandBuffer> cb, id<MTLBuffer> src, id<MTLBuffer> bits, id<MTLBuffer> down,
+                    id<MTLBuffer> up, size_t per, uint32_t batch);
 id<MTLCommandQueue> qr_queue();
 id<MTLDevice> qr_device();
 

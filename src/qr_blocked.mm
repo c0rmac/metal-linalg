@@ -84,7 +84,7 @@ Shape shape(uint32_t m, uint32_t n, uint32_t batch) {
 // past the products' operands.
 struct Work {
     uint32_t      m = 0, n = 0, qc = 0, capacity = 0, b = 0;
-    id<MTLBuffer> A, Q, scale, up;   // shared: the CPU writes Q's start and reads R when they are not the caller's
+    id<MTLBuffer> A, Q, scale, up, bits;   // shared: the CPU writes Q's start and reads R when they are not the caller's
     QrStore       st{};
 };
 
@@ -131,6 +131,7 @@ Work& workspace(uint32_t m, uint32_t n, uint32_t qc, const Shape& sh, uint32_t b
     w.Q = buffer((size_t)(batch + 1) * m * qc, shared);
     w.scale = buffer(batch, shared);
     w.up = buffer(batch, shared);
+    w.bits = buffer(batch, shared);
     st.v = buffer((batch + 1) * st.sv, priv);
     st.vt = buffer((batch + 1) * st.svt, priv);
     st.t = buffer(batch * st.st, priv);
@@ -155,28 +156,36 @@ void run(const float* a, uint32_t batch, uint32_t m, uint32_t n, float* q_out, f
     const uint32_t QC = core::qr_q_cols(mode, m, n), RR = core::qr_r_rows(mode, m, n);
     const Shape sh = shape(m, n, batch);
     const size_t per = (size_t)m * n;
-    std::vector<float> amax(batch);
-    std::vector<char> finite(batch);
-    metal_linalg::detail::scan(Matrices{a, batch, m, n}, Part::all, amax.data(), finite.data());
     Work& w = workspace(m, n, QC, sh, batch);
     w.st.batch = batch;
     // Each matrix scaled by a power of two into [0.5, 1), as the panel
     // kernels' plain sums of squares need; R scaled back on the way out. A
     // matrix holding a NaN or an infinity gives NaN, written at the end.
+    // Where the input is used in place, its scan is the GPU's too (qr_scan):
+    // the GPU starts at once (QR_GPU_SCAN=0 keeps it on the CPU).
+    const size_t page = (size_t)getpagesize();
+    static const bool cpu_scan = std::getenv("QR_GPU_SCAN") && std::string(std::getenv("QR_GPU_SCAN")) == "0";
+    const bool gpu_scan = reinterpret_cast<uintptr_t>(a) % page == 0 && !cpu_scan;
+    std::vector<char> finite(batch, 1);
     float* down = static_cast<float*>(w.scale.contents);
     float* up = static_cast<float*>(w.up.contents);
-    for (uint32_t i = 0; i < batch; ++i) {
-        down[i] = up[i] = 1.0f;
-        if (finite[i] && amax[i] > 0.0f) {
-            int e = 0;
-            std::frexp(amax[i], &e);
-            down[i] = std::ldexp(1.0f, -e);
-            up[i] = std::ldexp(1.0f, e);
+    if (gpu_scan) {
+        std::memset(w.bits.contents, 0, batch * sizeof(uint32_t));
+    } else {
+        std::vector<float> amax(batch);
+        metal_linalg::detail::scan(Matrices{a, batch, m, n}, Part::all, amax.data(), finite.data());
+        for (uint32_t i = 0; i < batch; ++i) {
+            down[i] = up[i] = 1.0f;
+            if (finite[i] && amax[i] > 0.0f) {
+                int e = 0;
+                std::frexp(amax[i], &e);
+                down[i] = std::ldexp(1.0f, -e);
+                up[i] = std::ldexp(1.0f, e);
+            }
         }
     }
     id<MTLCommandQueue> queue = metal_linalg::detail::qr_queue();
     id<MTLDevice> dev = metal_linalg::detail::qr_device();
-    const size_t page = (size_t)getpagesize();
     float* A = static_cast<float*>(w.A.contents);
 
     // Q formed in the caller's memory if it is page-aligned and one matrix
@@ -193,6 +202,7 @@ void run(const float* a, uint32_t batch, uint32_t m, uint32_t n, float* q_out, f
                                                       length:((size_t)batch * per * 4 + page - 1) / page * page
                                                      options:MTLResourceStorageModeShared deallocator:nil];
             if (!in) throw std::runtime_error("[qr] blocked: could not wrap the input");
+            if (gpu_scan) metal_linalg::detail::qr_scan_scales(cb, in, w.bits, w.scale, w.up, per, batch);
             metal_linalg::detail::qr_scale_copy(cb, in, w.A, m, n, sh.mp, sh.np, w.st.sa, batch, w.scale);
         } else {
             metal_linalg::detail::for_each_rows(batch, sh.mp, sh.np, [&](uint32_t i, uint32_t r0, uint32_t r1) {
@@ -250,6 +260,10 @@ void run(const float* a, uint32_t batch, uint32_t m, uint32_t n, float* q_out, f
     }
     if (QC && Qh != q_out)
         std::memcpy(q_out, Qh, (size_t)batch * m * QC * 4);
+    if (gpu_scan) {
+        const uint32_t* bits = static_cast<const uint32_t*>(w.bits.contents);
+        for (uint32_t i = 0; i < batch; ++i) finite[i] = bits[i] < 0x7f800000u;
+    }
     for (uint32_t i = 0; i < batch; ++i)
         if (!finite[i]) {
             if (QC) std::fill(q_out + (size_t)i * m * QC, q_out + (size_t)(i + 1) * m * QC, NAN);
