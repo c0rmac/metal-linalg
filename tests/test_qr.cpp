@@ -384,6 +384,11 @@ int main() {
                 from_values(std::vector<float>((size_t)M * N, 1.0f), {M, N}));
         run("constant batch 4 x 600x64", detail::qr_blocked, full({4, 600, 64}, 1.0f));
     }
+    // Panels of 8 columns for up to 4 matrices of 768-3072 rows, 16 for more:
+    // one shape's workspace, kept between calls, must follow the width.
+    run("batch 2 x 1024x800 (8-wide panels)", detail::qr_blocked, random_matrix(2, 1024, 800, 56));
+    run("batch 6 x 1024x800 (16-wide panels)", detail::qr_blocked, random_matrix(6, 1024, 800, 57));
+    run("batch 2 x 1024x800 again (8-wide)", detail::qr_blocked, random_matrix(2, 1024, 800, 58));
     ++g_checks;
     {
         std::vector<float> v(300 * 300, 1.0f);

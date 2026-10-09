@@ -1,5 +1,5 @@
-// QR on the GPU by panels of b columns (16 up to 8192 rows, 8 up to 16384),
-// a batch at once, the work matrix products:
+// QR on the GPU by panels of b columns (8 or 16, see shape()), a batch at
+// once, the work matrix products:
 //
 //   1. each panel factored by the band reduction's kernels (in one
 //      simdgroup, or by TSQR for a tall one; shaders/Svd_Bidiag.metal), its
@@ -36,6 +36,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -56,10 +57,23 @@ struct Shape {
     uint32_t b = 0, Kp = 0, mp = 0, np = 0;
 };
 
-Shape shape(uint32_t m, uint32_t n) {
+// Panels of 8 columns for up to 4 matrices of 768 to 3072 rows and at least
+// 768 columns, else 16. A tall panel's TSQR top is a tree of b-step chains
+// whose steps are up to b long, a third of the call at 1024 x 1024 with 16;
+// with 8 its chains are a quarter as long, for twice as many panels and
+// in-aggregate updates. On an M5 Pro 8 took 1.05x less time at 768^2 and
+// 1024^2, 1.1x at 1536^2 and 2048^2, 1.04x at 3072^2, 1.08x at 2048 x 1024
+// and 1.06x for 4 of 1024^2; it lost at 512^2 (0.96x), 4096 x 2048 (0.98x),
+// 4096 x 512 (0.92x) and for batches of 16 or more (0.94x at 64 x 256^2).
+// (32 took 1.4-1.5x 16's time at 512-2048.)
+Shape shape(uint32_t m, uint32_t n, uint32_t batch) {
     const uint32_t K = std::min(m, n);
     Shape s;
-    s.b = 16;
+    s.b = batch <= 4 && K >= 768 && m <= 3072 ? 8 : 16;
+    if (const char* e = std::getenv("QR_PANEL_WIDTH")) {
+        const std::string w = e;
+        if (w == "8" || w == "16") s.b = (uint32_t)std::stoul(w);
+    }
     s.Kp = (K + s.b - 1) / s.b * s.b;
     s.mp = std::max(m, s.Kp + s.b);
     s.np = std::max(n, s.Kp);
@@ -69,7 +83,7 @@ Shape shape(uint32_t m, uint32_t n) {
 // The latest shape's buffers, for up to `capacity` matrices, a row of slack
 // past the products' operands.
 struct Work {
-    uint32_t      m = 0, n = 0, qc = 0, capacity = 0;
+    uint32_t      m = 0, n = 0, qc = 0, capacity = 0, b = 0;
     id<MTLBuffer> A, Q, scale, up;   // shared: the CPU writes Q's start and reads R when they are not the caller's
     QrStore       st{};
 };
@@ -86,7 +100,7 @@ size_t per_matrix(uint32_t m, uint32_t n, uint32_t qc, const Shape& sh) {
 // shape do not rebuild it each time.
 Work& workspace(uint32_t m, uint32_t n, uint32_t qc, const Shape& sh, uint32_t batch) {
     static Work w;
-    if (w.A && w.m == m && w.n == n && w.qc >= qc && w.capacity >= batch) return w;
+    if (w.A && w.m == m && w.n == n && w.qc >= qc && w.capacity >= batch && w.b == sh.b) return w;
     id<MTLDevice> dev = metal_linalg::detail::qr_device();
     const uint32_t K = std::min(m, n), blocks = sh.Kp / sh.b;
     auto buffer = [&](size_t floats, MTLResourceOptions opt) {
@@ -99,6 +113,7 @@ Work& workspace(uint32_t m, uint32_t n, uint32_t qc, const Shape& sh, uint32_t b
     w.n = n;
     w.qc = qc;
     w.capacity = batch;
+    w.b = sh.b;
     QrStore& st = w.st;
     st.ldv = sh.Kp;
     st.ldw = std::max(sh.np, qc);   // the products' scratch, as wide as Q's columns too
@@ -138,7 +153,7 @@ void run(const float* a, uint32_t batch, uint32_t m, uint32_t n, float* q_out, f
     const uint32_t K = std::min(m, n);
     // Q's columns (K, M, or none) and R's rows (K, or M with zeros below K)
     const uint32_t QC = core::qr_q_cols(mode, m, n), RR = core::qr_r_rows(mode, m, n);
-    const Shape sh = shape(m, n);
+    const Shape sh = shape(m, n, batch);
     const size_t per = (size_t)m * n;
     std::vector<float> amax(batch);
     std::vector<char> finite(batch);
@@ -244,7 +259,7 @@ void run(const float* a, uint32_t batch, uint32_t m, uint32_t n, float* q_out, f
 
 } // namespace
 
-bool qr_blocked_fits(uint32_t m, uint32_t n) { return std::min(m, n) >= 1 && shape(m, n).b != 0; }
+bool qr_blocked_fits(uint32_t m, uint32_t n) { return std::min(m, n) >= 1 && shape(m, n, 1).b != 0; }
 
 // A batch at once, the blocked QR beats the streaming kernels at every shape
 // and batch measured on an M5 Pro (1.8-3.5x: 16 x 1024 x 1024 in 25 ms
@@ -263,7 +278,7 @@ void qr_blocked(const Matrices& a, float* q, float* r, QrMode mode) {
         throw std::invalid_argument("[qr] blocked: " + std::to_string(M) + " rows is more than its panels take");
     const uint32_t QC = core::qr_q_cols(mode, M, N), RR = core::qr_r_rows(mode, M, N);
     // In chunks of at most about 1 GB of workspace
-    const size_t per = per_matrix(M, N, QC, shape(M, N));
+    const size_t per = per_matrix(M, N, QC, shape(M, N, 1));   // 8-wide panels: the larger
     const uint32_t chunk = (uint32_t)std::clamp<size_t>(((size_t)1 << 28) / per, 1, a.batch);
     for (uint32_t b0 = 0; b0 < a.batch; b0 += chunk) {
         const uint32_t count = std::min(chunk, a.batch - b0);

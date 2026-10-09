@@ -94,6 +94,11 @@
   backends `bidiag_batch` and `bidiag_batch_vals` and stage 4 of
   `tuning/tune_svd.py` fit them; the SVD kernel version is 10, and the M5 Pro
   is re-measured.
+- **The blocked QR's panels 8 columns wide for up to 4 matrices of 768 to
+  3072 rows** (16 elsewhere): a tall panel's TSQR top is a tree of chains
+  whose cost grows as the width squared, a third of the call at 1024 x 1024.
+  1.05x at 768-1024^2, 1.1x at 1536-2048^2, 1.06x for 4 of 1024^2
+  (`QR_PANEL_WIDTH=8` or `16` forces one).
 - **QR's register kernel packs small matrices**: up to 8 rows four a
   simdgroup, up to 16 two (`QR_SIMD_PACK=0` turns it off): 2.5x at 4 x 4,
   1.7-2.5x at 8 x 8, 1.3-1.7x at 16 x 16 for large batches.

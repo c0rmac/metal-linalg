@@ -156,7 +156,7 @@ $Y$ and $T$ are loaded into threadgroup memory (L1 cache) once per tile and reus
 
 **Kernel 4 — Haar fix.** Ensures the output $Q$ is a uniform sample from the Haar measure on $O(M)$ and that $R$ has non-negative diagonal. For each column $k$ where $R_{kk} < 0$, the signs of column $k$ in both $Q$ and $R$ are flipped. If the resulting $\det(Q) < 0$, the final column is negated to enforce $\det(Q) = +1$, placing $Q$ in $SO(M)$.
 
-### Algorithm: `qr_blocked` (since 2.15.0, block size $b = 16$, aggregates of 128)
+### Algorithm: `qr_blocked` (since 2.15.0, block size $b = 16$ or 8, aggregates of 128)
 
 The streaming kernels above factor each 32-column panel in one threadgroup
 and stream every panel's trailing update through threadgroups a tile at a
@@ -168,7 +168,13 @@ same Householder QR with the two-stage reduction's machinery
    a panel of up to 128 rows in one simdgroup, rows in registers; a taller
    one by TSQR (leaves of 128 rows a simdgroup each, their stacked
    triangles' QR a tree of pairs, the Householder vectors rebuilt from TSQR's
-   Q), so that every panel gives the compact $H = I - V T V^T$.
+   Q), so that every panel gives the compact $H = I - V T V^T$. For up to 4
+   matrices of 768 to 3072 rows and at least 768 columns, panels of 8
+   (2.17.0): there the TSQR's top, a tree of $b$-step chains whose steps are
+   up to $b$ long, is a third of the call at 1024×1024 with 16 columns, and
+   two panels of 8 take less (1.05x at 1024², 1.1x at 1536² and 2048²,
+   1.06x for 4 of 1024²); elsewhere 16, which kept the lead
+   (`QR_PANEL_WIDTH=8` or `16` forces one).
 2. **Aggregates of 128 columns.** Inside one, each panel's $H$ is applied to
    the aggregate's columns right of it, $W = (VT)^T C$ and $C \mathrel{-}= V W$;
    the aggregate's $T_a$ is merged from its panels' $T$'s and the Gram matrix

@@ -388,6 +388,7 @@ in the policy source.
 | `QR_SHARE_MIN_BATCH` | QR: a GPU batch shared with the CPU from this batch (0: never) |
 | `QR_GPU_LARGE_MIN_K`, `QR_GPU_LARGE_MAX_BATCH` | QR: the GPU also from this k, for batches up to this (0: never / any batch) |
 | `QR_DEVICE=gpu` or `cpu` | QR: bypass the GPU/CPU boundary |
+| `QR_PANEL_WIDTH=8` or `16` | QR: the blocked QR's panel width (default 8 for up to 4 matrices of 768-3072 rows and 768+ columns, else 16) |
 | `EIGH_SIMD_MAX_N`, `EIGH_BLOCK_MIN_N` | eigensolver: the GPU backend split |
 | `EIGH_BLOCK_MIN_N_BATCHED`, `EIGH_BLOCK_MIN_BATCH` | eigensolver: batch-dependent block crossover, 0 for off |
 | `EIGH_GPU_MAX_N`, `EIGH_GPU_MIN_BATCH_TIMES_N`, `EIGH_GPU_MIN_BATCH` | eigensolver: the GPU/CPU boundary |
