@@ -1307,23 +1307,47 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
             return "band"
         return "tridiag" if tridiag[i] and N >= tridiag[i] else "cpu"
 
-    # ---- stage 4c: the band backend with eigenvectors before tridiag ----
+    # ---- stage 4c: the band backend with eigenvectors before tridiag, and the
+    # batch cap with it: band takes a batch of two or more of up to 1024 in
+    # tridiag_batch's two stages, every matrix at once (since 2.17.0), so the
+    # cap that suited tridiag, a matrix at a time, need not suit band. Both
+    # fitted over band's points and tridiag's (where band was not timed and is
+    # picked, the model's estimate counts, flagged); with band never, stage
+    # 4's cap stands.
     band_vec = 0
     vfull_b = {p: {k: tv[k] for k in ("cpu", "tridiag", "band") if k in tv} for p, tv in times_full.items()
                if all(k in tv for k in ("cpu", "tridiag", "band")) and rule_choice(params, p[1], p[0]) == "cpu"}
     if vfull_b:
-        cands = [0] + sorted({N for (_, N) in vfull_b})
-        choice_c = lambda t, N, b: cpu_side(N, b, True, band_vec=t)
-        cscores = {t: _score3(evaluate(lambda N, b, t=t: choice_c(t, N, b), vfull_b)) for t in cands}
-        best_t = min(cscores, key=lambda t: cscores[t][0])
-        near_c = near_on_disagreement(cscores, lambda t, p: vfull_b[p][choice_c(t, p[1], p[0])], vfull_b, best_t, tol)
-        band_vec = (CURRENT_BAND_VEC if CURRENT_BAND_VEC in near_c
-                    else min(near_c, key=lambda t: (near_c[t][1], -t if t else 0)))
+        pts = {p: {k: v for k, v in tv.items() if k in ("cpu", "tridiag")}
+               for p, tv in tridiag_points(only(times_full, ("tridiag",))).items()
+               if rule_choice(params, p[1], p[0]) == "cpu" and "cpu" in tv}
+        for p, tv in vfull_b.items():
+            pts.setdefault(p, {}).update(tv)
+
+        def choice_c(c, N, b):
+            t, cap = c
+            if cap and b > cap:
+                return "cpu"
+            if t and N >= t:
+                return "band"
+            return "tridiag" if tridiag[0] and N >= tridiag[0] else "cpu"
+        caps = [0] + sorted({b for (b, _) in pts})
+        cands = [(0, tridiag_cap[0])] + [(t, cap) for t in sorted({N for (_, N) in vfull_b}) for cap in caps]
+        cscores = {c: _score3(evaluate(lambda N, b, c=c: choice_c(c, N, b), pts)) for c in cands}
+        best = min(v[0] for v in cscores.values())
+        near_c = {c: v for c, v in cscores.items() if v[0] <= best * (1 + tol)}
+        current = (CURRENT_BAND_VEC, CURRENT_TRIDIAG_CAP[0])
+        chosen = (current if current in near_c
+                  else min(near_c, key=lambda c: (near_c[c][1], -c[0] if c[0] else 0, c[1] if c[1] else INF)))
+        band_vec = chosen[0]
+        if band_vec:
+            tridiag_cap[0] = chosen[1]
         res["stage4c"] = {
-            "n_points": len(vfull_b), "chosen": band_vec, "current": CURRENT_BAND_VEC, "near": sorted(near_c),
-            "with": _strip(evaluate(lambda N, b: choice_c(band_vec, N, b), vfull_b)),
-            "without": _strip(evaluate(lambda N, b: choice_c(0, N, b), vfull_b)),
-            "curve": [[t, v[0], v[1]] for t, v in sorted(cscores.items())],
+            "n_points": len(pts), "band_points": len(vfull_b), "chosen": band_vec, "cap": chosen[1],
+            "current": list(current), "near": sorted([list(c) for c in near_c]),
+            "with": _strip(evaluate(lambda N, b: choice_c(chosen, N, b), pts)),
+            "without": _strip(evaluate(lambda N, b: choice_c((0, tridiag_cap[0]), N, b), pts)),
+            "curve": [[list(c), v[0], v[1]] for c, v in sorted(cscores.items())],
             "speedup_vs_tridiag": sorted([[N, b, tv["tridiag"] / tv["band"]] for (b, N), tv in vfull_b.items()]),
             "speedup_vs_cpu": sorted([[N, b, tv["cpu"] / tv["band"]] for (b, N), tv in vfull_b.items()]),
         }

@@ -747,6 +747,9 @@ int main() {
     run_band_vectors("band " + dims(3, 150, 120), random_matrix(3, 150, 120, 3100));
     run_band_vectors("band " + dims(2, 300, 80) + " (QR first)", random_matrix(2, 300, 80, 3101));
     run_band_vectors("band " + dims(2, 70, 200) + " (wide)", random_matrix(2, 70, 200, 3102));
+    // A batch of two or more from k = 384 goes to bidiag_batch's two stages
+    run_band_vectors("band " + dims(3, 500, 450) + " (batched)", random_matrix(3, 500, 450, 3103));
+    run_band_vectors("band " + dims(2, 1000, 400) + " (batched, QR first)", random_matrix(2, 1000, 400, 3104));
     for (float s : {1e-30f, 1e20f, 1e37f}) {
         char label[64];
         std::snprintf(label, sizeof label, "band scaled by %.0e 160x140", s);

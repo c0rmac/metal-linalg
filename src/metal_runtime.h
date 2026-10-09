@@ -375,6 +375,10 @@ void band_general_tail(float* A, uint32_t m, uint32_t n, uint32_t lda, uint32_t 
 // eigh with eigenvectors for a batch in two stages (svd_bidiag_batch.mm), the
 // tridiag_batch backend's from kEighBandMinN (eigh_tridiag.mm): n up to 1024.
 void eigh_band_batch(const core::Matrices& a, bool lower, float* w, float* v, uint32_t* info);
+// The smallest k (or N) from which bidiag_batch and tridiag_batch reduce in
+// two stages with vectors; the band backends with vectors hand them a batch
+// of two or more from there (svd_bidiag.mm).
+constexpr uint32_t kBatchBandVectorsMinK = 384;
 
 bool band_reduce_general(id<MTLBuffer> A, uint32_t m, uint32_t n, uint32_t lda, uint32_t b,
                          BandKeep* keep = nullptr, BandWatch* watch = nullptr);

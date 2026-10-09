@@ -1082,30 +1082,45 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
                                      key=lambda x: (min(x[0], x[1]), x[0], x[2])),
         }
     # ---- stage 3c: the band backend with vectors before bidiag, from its own
-    # threshold, within bidiag's batch cap
+    # threshold, and the batch cap with it: band takes a batch of two or more
+    # (k 384 to 1024) in bidiag_batch's two stages, every matrix at once (since
+    # 2.17.0), so the cap that suited bidiag, a matrix at a time, need not suit
+    # band. Both fitted over band's points and bidiag's (where band was not
+    # timed and is picked, the model's estimate counts, flagged); with band
+    # never, stage 3's cap stands.
     band_vec = 0
     vfull = {p: tv for p, tv in bvectimes.items() if rule_choice(params, *p[1:], p[0]) == "cpu"}
     if vfull:
-        def band_vec_choice(t, M, N, b):
+        pts = {p: {k: v for k, v in tv.items() if k in ("cpu", "bidiag")}
+               for p, tv in vtimes.items() if rule_choice(params, *p[1:], p[0]) == "cpu" and "bidiag" in tv}
+        for p, tv in vfull.items():
+            pts.setdefault(p, {}).update(tv)
+
+        def band_vec_choice(c, M, N, b):
+            t, cap = c
             k = min(M, N)
-            if bidiag_cap[0] and b > bidiag_cap[0]:
+            if cap and b > cap:
                 return "cpu"
             if t and k >= t:
                 return "band"
             return "bidiag" if bidiag[0] and k >= bidiag[0] else "cpu"
-        cands = [0] + sorted({min(M, N) for (_, M, N) in vfull})
-        vscores = {t: te._score3(evaluate(lambda M, N, b, t=t: band_vec_choice(t, M, N, b), vfull)) for t in cands}
-        best_t = min(vscores, key=lambda t: vscores[t][0])
-        near_v = te.near_on_disagreement(vscores, lambda t, p: vfull[p][band_vec_choice(t, p[1], p[2], p[0])],
-                                         vfull, best_t, tol)
-        band_vec = (CURRENT_BAND_VEC if CURRENT_BAND_VEC in near_v
-                    else min(near_v, key=lambda t: (near_v[t][1], -t if t else 0)))
+        caps = [0] + sorted({b for (b, _, _) in pts})
+        cands = [(0, bidiag_cap[0])] + [(t, cap) for t in sorted({min(M, N) for (_, M, N) in vfull}) for cap in caps]
+        vscores = {c: te._score3(evaluate(lambda M, N, b, c=c: band_vec_choice(c, M, N, b), pts)) for c in cands}
+        best = min(v[0] for v in vscores.values())
+        near_v = {c: v for c, v in vscores.items() if v[0] <= best * (1 + tol)}
+        current = (CURRENT_BAND_VEC, CURRENT_BIDIAG_CAP[0])
+        chosen = (current if current in near_v
+                  else min(near_v, key=lambda c: (near_v[c][1], -c[0] if c[0] else 0, c[1] if c[1] else INF)))
+        band_vec = chosen[0]
+        if band_vec:
+            bidiag_cap[0] = chosen[1]
         res["stage3c"] = {
-            "n_points": len(vfull), "chosen": band_vec, "current": CURRENT_BAND_VEC,
-            "near": sorted(near_v),
-            "with": _strip(evaluate(lambda M, N, b: band_vec_choice(band_vec, M, N, b), vfull)),
-            "without": _strip(evaluate(lambda M, N, b: band_vec_choice(0, M, N, b), vfull)),
-            "curve": [[t, v[0], v[1]] for t, v in sorted(vscores.items())],
+            "n_points": len(pts), "band_points": len(vfull), "chosen": band_vec, "cap": chosen[1],
+            "current": list(current), "near": sorted([list(c) for c in near_v]),
+            "with": _strip(evaluate(lambda M, N, b: band_vec_choice(chosen, M, N, b), pts)),
+            "without": _strip(evaluate(lambda M, N, b: band_vec_choice((0, bidiag_cap[0]), M, N, b), pts)),
+            "curve": [[list(c), v[0], v[1]] for c, v in sorted(vscores.items())],
             "speedup_vs_bidiag": sorted([[M, N, b, tv["bidiag"] / tv["band"]] for (b, M, N), tv in vfull.items()],
                                         key=lambda x: (min(x[0], x[1]), x[0], x[2])),
             "speedup_vs_cpu": sorted([[M, N, b, tv["cpu"] / tv["band"]] for (b, M, N), tv in vfull.items()],

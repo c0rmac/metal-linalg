@@ -921,6 +921,15 @@ int main() {
             check("band vectors upper, junk below 300x300", up, bv(up, false), false);
         }
         check("band vectors batch 3 x 200x200", random_symmetric(3, 200, 5200), bv(random_symmetric(3, 200, 5200), true));
+        // a batch of two or more from N = 384: tridiag_batch's two stages
+        check("band vectors batch 3 x 400x400 (batched)", random_symmetric(3, 400, 5210),
+              bv(random_symmetric(3, 400, 5210), true));
+        {
+            array S = random_symmetric(2, 450, 5220);
+            array junk = full({2, 450, 450}, 1e30f);
+            array up = add(triu(S), tril(junk, -1));
+            check("band vectors batched upper, junk below 2 x 450", up, bv(up, false), false);
+        }
         check("band vectors zero 200x200", zeros({200, 200}), bv(zeros({200, 200}), true));
         // Constant: the panels' columns fall to entries whose squares
         // underflow (orthogonality 0.16 at 300 before 2.17.0). Against the

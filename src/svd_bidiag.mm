@@ -1136,6 +1136,18 @@ void svd_band_vectors(const Matrices& a, float* u, float* s, float* vt, uint32_t
     // Width 16 (bd_chase_apply's blocks), or if the matrix is too tall for
     // the panel kernels at 16, the one-stage reduction.
     const uint32_t M = a.rows, N = a.cols, K = std::min(M, N), l = std::max(M, N);
+    // A batch of two or more that bidiag_batch takes in two stages goes there:
+    // the same method, every matrix's stages at once (on an M5 Pro 2 of 1024
+    // x 1024 in 36 ms against 55 a matrix at a time, 4 in 46 against 111); one
+    // matrix stays here, its chase under its reduction (28 ms against 31).
+    // SVD_BAND_BATCH=0 keeps a batch here.
+    if (a.batch >= 2 && K >= metal_linalg::detail::kBatchBandVectorsMinK && K <= 1024 && (l <= 1024 || l >= 2 * K)) {
+        const char* e = std::getenv("SVD_BAND_BATCH");
+        if (!(e && std::string(e) == "0")) {
+            svd_bidiag_batch(a, u, s, vt, info);
+            return;
+        }
+    }
     const uint32_t rows = l >= 2 * K && K >= kQrFirstMinK ? K : l;
     bidiag_impl(a, u, s, vt, info, metal_linalg::detail::band_fit(rows, 16) == 16 ? 16u : 0u);
 }
@@ -1149,6 +1161,17 @@ void eigh_band_vectors(const Matrices& a, bool lower, float* w_out, float* v_out
     if (n == 0 || batch == 0) {
         if (info_out) std::fill(info_out, info_out + batch, 0u);
         return;
+    }
+    // A batch of two or more up to 1024 goes to tridiag_batch's two stages, the
+    // same method for every matrix at once (on an M5 Pro 2 of 1024 x 1024 in
+    // 25 ms against 33 a matrix at a time, 4 in 33 against 68); one matrix
+    // stays here (18 ms against 21). EIGH_BAND_BATCH=0 keeps a batch here.
+    if (batch >= 2 && n >= metal_linalg::detail::kBatchBandVectorsMinK && n <= 1024) {
+        const char* e = std::getenv("EIGH_BAND_BATCH");
+        if (!(e && std::string(e) == "0")) {
+            metal_linalg::detail::eigh_band_batch(a, lower, w_out, v_out, info_out);
+            return;
+        }
     }
     constexpr uint32_t b = 16;
     if (n < 3 * b || metal_linalg::detail::band_fit(n, b) != b) {

@@ -104,7 +104,7 @@ constexpr uint32_t kBandMinK = 160;
 // panels at a time. On an M5 Pro against the direct reduction: 1.07x at
 // 16 x 384^2, 1.08-1.27x at 512, 1.6-2.1x at 768, 2.7-3.4x at 1024; 0.88-0.9x
 // at 256.
-constexpr uint32_t kBandVectorsMinK = 384;
+constexpr uint32_t kBandVectorsMinK = metal_linalg::detail::kBatchBandVectorsMinK;
 constexpr uint32_t kAgg = 8;
 
 using L = __LAPACK_int;

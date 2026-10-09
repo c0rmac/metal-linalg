@@ -106,7 +106,7 @@ constexpr uint32_t kPanelMaxN = 1024;   // must match PANEL_MAX_N
 // against the one-stage reduction: one 1024 x 1024 2.1x, 4 1.58x, 8 1.19x,
 // 12 0.98x; 8 of 768 1.14x, 12 0.91x; 8 of 640 1.09x; 4 of 512 1.11x, 8
 // 0.96x; 4 of 384 1.06x, 16 0.83x; at 256 0.92-0.99x.
-constexpr uint32_t kBandMinN = 384;
+constexpr uint32_t kBandMinN = metal_linalg::detail::kBatchBandVectorsMinK;
 constexpr uint32_t kBandHalfMinN = 640;
 
 // Buffers for one N, reused across the matrices of a batch and across calls.
