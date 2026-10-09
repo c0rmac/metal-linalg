@@ -17,6 +17,20 @@
 //      bd_make_t); then U and V^T out (bd_store, or bd_copy for a wide
 //      matrix, whose column-major factors are the outputs' layout already).
 //
+// From k = 160 for the singular values alone, and from 384 with vectors, the
+// reduction is in two stages instead, as the `band` backend reduces one
+// matrix: every matrix to an upper band of width 16 by blocks whose updates
+// are batched products (bb_panel for the panels), then the bands to
+// bidiagonal on the CPU's cores. With vectors both stages' reflectors are
+// kept: the GPU blocks' straight into the layout the back-transformation's
+// products read; the CPU, a matrix a core, applies the LAPACK tail's to
+// Q = [I; 0] and P = I (the GPU then forms Q1 Q and P1 P while the CPU
+// chases), chases keeping the chase's (bd_chase_apply's blocks) and solves
+// the bidiagonal problem; the GPU applies the chase's to Q and P, a dispatch
+// a matrix, and forms U = Q U_B and V^T = V_B^T P^T. On an M5 Pro 2-2.1x the
+// CPU path for 1-4 matrices of 1024 x 1024 with vectors (29 ms for one
+// against 57), 2.7x for 16, 2.7-3.4x the direct reduction.
+//
 // Why: for batches of mid-size matrices (about 96 to 512) every GPU backend
 // lost to the CPU path, which spreads a batch over every core. `bidiag` solves
 // a batch a matrix at a time, each reduction thousands of dispatches whose
@@ -469,17 +483,16 @@ void encode_back(Cache& c, id<MTLCommandBuffer> cb, Work& w, uint32_t cnt) {
 }
 
 // Step 3 with vectors in two stages, for `cnt` matrices whose `blocks` GPU
-// blocks were kept (encode_band) and whose CPU step left Q = Q_tail [I; 0],
-// P = P_tail, U_B, V_B^T and the chase's blocks in the slot: Q <- Q1 Q and
-// P <- P1 P, kAgg panels an aggregate, last first (I - Y Ta Y^T, Ta merged by
-// bd_merge_t from the Gram matrix Y^T Y and the panels' T's), on the
-// row-major views Q^T and P^T: Z <- Z - ((Z Y) Ta^T) Y^T; then Q <- Q Q2 and
-// P <- P P2 (bd_chase_apply, a dispatch a matrix, the matrices at once); then
-// the outputs: U = Q U_B and V^T = V_B^T P^T, or for a wide matrix's
-// transpose U = P V_B and V^T = U_B^T Q^T, row-major, copied to matrix
-// index[c0 + j].
-void encode_back_band(Cache& c, id<MTLCommandBuffer> cb, Work& w, uint32_t cnt, uint32_t blocks, bool wide,
-                      id<MTLBuffer> uo, id<MTLBuffer> vo, id<MTLBuffer> index, uint32_t c0) {
+// blocks were kept (encode_band). encode_q1_p1, once solve_tail has left Q =
+// Q_tail [I; 0] and P = P_tail in the slot: Q <- Q1 Q and P <- P1 P, kAgg
+// panels an aggregate, last first (I - Y Ta Y^T, Ta merged by bd_merge_t
+// from the Gram matrix Y^T Y and the panels' T's), on the row-major views Q^T
+// and P^T: Z <- Z - ((Z Y) Ta^T) Y^T. encode_back_band, once solve_chase has
+// left the chase's blocks, U_B and V_B^T: Q <- Q Q2 and P <- P P2
+// (bd_chase_apply, a dispatch a matrix, the matrices at once); then the
+// outputs: U = Q U_B and V^T = V_B^T P^T, or for a wide matrix's transpose
+// U = P V_B and V^T = U_B^T Q^T, row-major, copied to matrix index[c0 + j].
+void encode_q1_p1(Cache& c, id<MTLCommandBuffer> cb, Work& w, uint32_t cnt, uint32_t blocks) {
     id<MTLDevice> dev = c.rt.device;
     const uint32_t m = w.m, n = w.n, b = kBand, aggs = (blocks + kAgg - 1) / kAgg;
     for (int a = (int)aggs - 1; a >= 0; --a) {
@@ -509,6 +522,12 @@ void encode_back_band(Cache& c, id<MTLCommandBuffer> cb, Work& w, uint32_t cnt, 
             gemm(dev, cb, W2, false, Y, true, Zm, cols, len, wa, -1, 1, cnt);
         }
     }
+}
+
+void encode_back_band(Cache& c, id<MTLCommandBuffer> cb, Work& w, uint32_t cnt, bool wide, id<MTLBuffer> uo,
+                      id<MTLBuffer> vo, id<MTLBuffer> index, uint32_t c0) {
+    id<MTLDevice> dev = c.rt.device;
+    const uint32_t m = w.m, n = w.n;
     // Q <- Q Q2, P <- P P2: on X = Q^T (n rows, ldq columns) and P^T
     if (n >= 3) {
         const uint32_t pmax = (n - 2) / 16, groups = pmax + 1;
@@ -558,45 +577,25 @@ void encode_back_band(Cache& c, id<MTLCommandBuffer> cb, Work& w, uint32_t cnt, 
 
 // Step 2 with vectors in two stages, for the slot's `cnt` matrices on the
 // CPU's cores, a matrix a core (their threads shared out when there are
-// fewer matrices than threads): the last columns from `tail` on by LAPACK,
-// keeping their reflectors; the band chased to bidiagonal, the chase's
-// reflectors into the slot's blocks (bd_chase_apply's, Y built beside V);
-// Q = Q_tail [I; 0] and P = P_tail, column-major; B = U_B S V_B^T by the
-// divide and conquer. done(j, d) takes matrix j's singular values; which(j)
-// names it in errors.
-template <class Done, class Which>
-void solve_band_vectors(Work& w, uint32_t cnt, uint32_t tail, unsigned threads, const Done& done, const Which& which) {
-    const uint32_t m = w.m, n = w.n, b = kBand;
-    const size_t pmax = n >= 2 ? (n - 2) / 16 : 0, nblocks = (pmax + 1) * (pmax + 2) / 2;
-    const long groups = (long)pmax + 1;
-    const unsigned per = std::max(1u, threads / std::max(1u, std::min(cnt, threads)));
+// fewer matrices than threads), in two parts so that the GPU can form Q1
+// and P1 (encode_q1_p1) while the CPU chases:
+//   solve_tail: the last columns from `tail` on by LAPACK, keeping their
+//   reflectors, and Q = Q_tail [I; 0], P = P_tail, column-major;
+//   solve_chase: the band chased to bidiagonal, the chase's reflectors into
+//   the slot's blocks (bd_chase_apply's, Y built beside V), and B = U_B S
+//   V_B^T by the divide and conquer. done(j, d) takes matrix j's singular
+//   values; which(j) names it in errors.
+void solve_tail(Work& w, uint32_t cnt, uint32_t tail, unsigned threads) {
+    const uint32_t m = w.m, n = w.n;
     float* A = static_cast<float*>(w.A.contents);
     float* Q = static_cast<float*>(w.Q.contents);
     float* P = static_cast<float*>(w.P.contents);
-    float* UB = static_cast<float*>(w.UB.contents);
-    float* VTB = static_cast<float*>(w.VTB.contents);
-    float* LV = static_cast<float*>(w.LV.contents);
-    float* RV = static_cast<float*>(w.RV.contents);
     metal_linalg::detail::lapack_batches(cnt, (size_t)m * n, threads, [&](uint32_t b0, uint32_t b1) {
-        std::vector<float> dj(n), ej(n), ltau(nblocks * 16), rtau(nblocks * 16), work((size_t)std::max(m, n) * 64 + 64);
-        const size_t ld = 3 * (size_t)b + 1, ku = 2 * (size_t)b;
-        std::vector<float> ab(ld * n);
+        std::vector<float> work((size_t)std::max(m, n) * 64 + 64);
         for (uint32_t j = b0; j < b1; ++j) {
             float* Aj = A + (size_t)j * w.sa;
             metal_linalg::detail::BandKeep keep;
-            metal_linalg::detail::band_general_tail(Aj, m, n, w.lda, b, tail, &keep);
-            std::fill(ab.begin(), ab.end(), 0.0f);
-            for (uint32_t c = 0; c < n; ++c)
-                for (uint32_t r = c > b ? c - b : 0; r <= c; ++r) ab[(size_t)c * ld + ku + r - c] = Aj[(size_t)c * w.lda + r];
-            metal_linalg::detail::ChaseReflectors rec;
-            rec.L = LV + (size_t)j * w.slv;
-            rec.Ltau = ltau.data();
-            rec.R = RV + (size_t)j * w.slv;
-            rec.Rtau = rtau.data();
-            rec.pmax = pmax;
-            metal_linalg::detail::band_to_bidiagonal(n, b, ab.data(), ld, ku, dj.data(), ej.data(), per, &rec);
-            metal_linalg::detail::chase_build_blocks(rec.L, rec.Ltau, n, 0, groups);
-            metal_linalg::detail::chase_build_blocks(rec.R, rec.Rtau, n, 0, groups);
+            metal_linalg::detail::band_general_tail(Aj, m, n, w.lda, kBand, tail, &keep);
             // Q = [I; 0] and P = I, then the tail's reflectors, last step first:
             // Q(k:, k:) <- H Q(k:, k:), P(k+bk:, k+bk:) <- G P(k+bk:, k+bk:)
             float* Qj = Q + (size_t)j * w.sq;
@@ -620,6 +619,49 @@ void solve_band_vectors(Work& w, uint32_t cnt, uint32_t tail, unsigned threads, 
                 sormqr_("L", "N", &Mq, &Nq, &Kq, Aj + (size_t)st.k * w.lda + st.k, &LDA, const_cast<float*>(st.tq.data()),
                         Qj + (size_t)st.k * w.ldq + st.k, &LDQ, work.data(), &lw, &info);
             }
+        }
+    });
+}
+
+template <class Done, class Which>
+void solve_chase(Work& w, uint32_t cnt, unsigned threads, const Done& done, const Which& which) {
+    const uint32_t m = w.m, n = w.n, b = kBand;
+    const size_t pmax = n >= 2 ? (n - 2) / 16 : 0, nblocks = (pmax + 1) * (pmax + 2) / 2;
+    const long groups = (long)pmax + 1;
+    const unsigned per = std::max(1u, threads / std::max(1u, std::min(cnt, threads)));
+    float* A = static_cast<float*>(w.A.contents);
+    float* UB = static_cast<float*>(w.UB.contents);
+    float* VTB = static_cast<float*>(w.VTB.contents);
+    float* LV = static_cast<float*>(w.LV.contents);
+    float* RV = static_cast<float*>(w.RV.contents);
+    metal_linalg::detail::lapack_batches(cnt, (size_t)m * n, threads, [&](uint32_t b0, uint32_t b1) {
+        std::vector<float> dj(n), ej(n), ltau(nblocks * 16), rtau(nblocks * 16);
+        const size_t ld = 3 * (size_t)b + 1, ku = 2 * (size_t)b;
+        std::vector<float> ab(ld * n);
+        for (uint32_t j = b0; j < b1; ++j) {
+            const float* Aj = A + (size_t)j * w.sa;
+            std::fill(ab.begin(), ab.end(), 0.0f);
+            for (uint32_t c = 0; c < n; ++c)
+                for (uint32_t r = c > b ? c - b : 0; r <= c; ++r) ab[(size_t)c * ld + ku + r - c] = Aj[(size_t)c * w.lda + r];
+            metal_linalg::detail::ChaseReflectors rec;
+            rec.L = LV + (size_t)j * w.slv;
+            rec.Ltau = ltau.data();
+            rec.R = RV + (size_t)j * w.slv;
+            rec.Rtau = rtau.data();
+            rec.pmax = pmax;
+            metal_linalg::detail::band_to_bidiagonal(n, b, ab.data(), ld, ku, dj.data(), ej.data(), per, &rec);
+            // Both sides' blocks, by groups over the matrix's threads (single
+            // threaded, 3 ms of one 1024 x 1024's solve)
+            const long tasks = 2 * groups, chunks = std::min<long>(tasks, 4 * (long)per);
+            auto build = [&](size_t t) {
+                for (long g = tasks * (long)t / chunks; g < tasks * ((long)t + 1) / chunks; ++g) {
+                    const bool left = g < groups;
+                    const long G = left ? g : g - groups;
+                    metal_linalg::detail::chase_build_blocks(left ? rec.L : rec.R, left ? rec.Ltau : rec.Rtau, n, G, G + 1);
+                }
+            };
+            if (per > 1) metal_linalg::detail::parallel_for((size_t)chunks, build);
+            else for (long t = 0; t < chunks; ++t) build((size_t)t);
             const long dinfo = metal_linalg::detail::bidiagonal_svd(n, dj.data(), ej.data(), UB + (size_t)j * w.sub, n,
                                                                     VTB + (size_t)j * w.sub, n, per);
             if (dinfo != 0)
@@ -684,8 +726,10 @@ void direct(const Matrices& a, float* u_out, float* s_out, float* vt_out, uint32
     chunk = std::min(chunk, std::max<size_t>(1, ((size_t)1 << 25) / per));
     // With vectors in two stages a matrix takes about 13 of its own in a slot
     // (52 MB at 1024 x 1024): at most 2^26 floats (256 MB) a slot
-    if (vectors && n >= kBandVectorsMinK)
-        chunk = std::min(chunk, std::max<size_t>(1, ((size_t)1 << 26) / bandv_floats(m, n)));
+    if (vectors && n >= kBandVectorsMinK) {
+        const size_t most = std::max<size_t>(1, ((size_t)1 << 26) / bandv_floats(m, n));
+        if (chunk > most) chunk = (total + (total + most - 1) / most - 1) / ((total + most - 1) / most);   // balanced
+    }
     const size_t count = (total + chunk - 1) / chunk;
 
     id<MTLBuffer> src = metal_linalg::detail::input_buffer(dev, a);
@@ -741,7 +785,7 @@ void direct(const Matrices& a, float* u_out, float* s_out, float* vt_out, uint32
         const uint32_t cnt = cnt_of(k), c0 = (uint32_t)(k * chunk);
         id<MTLCommandBuffer> cb = [cache.rt.queue commandBufferWithUnretainedReferences];
         if (bandv) {
-            encode_back_band(cache, cb, w, cnt, band_tail / kBand, wide, uo, vo, index, c0);
+            encode_back_band(cache, cb, w, cnt, wide, uo, vo, index, c0);
             return commit(cb);
         }
         encode_back(cache, cb, w, cnt);
@@ -777,8 +821,12 @@ void direct(const Matrices& a, float* u_out, float* s_out, float* vt_out, uint32
     auto solve = [&](size_t k) {
         Work& w = *ws[k % 2];
         const uint32_t cnt = cnt_of(k);
-        if (bandv) {
-            solve_band_vectors(w, cnt, band_tail, solve_threads, [&](uint32_t j, const float* dj) {
+        if (bandv) {   // the tail and Q1 P1 queued, then the chase and the rest
+            solve_tail(w, cnt, band_tail, solve_threads);
+            id<MTLCommandBuffer> cq = [cache.rt.queue commandBufferWithUnretainedReferences];
+            encode_q1_p1(cache, cq, w, cnt, band_tail / kBand);
+            commit(cq);
+            solve_chase(w, cnt, solve_threads, [&](uint32_t j, const float* dj) {
                 const size_t at = k * chunk + j;
                 const float unscale = 1.0f / sc[at];
                 float* sb = s_out + (size_t)todo[at] * K;
