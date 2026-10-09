@@ -594,8 +594,8 @@ std::printf("%s, %u GPU cores, eigh policy from %s\n", metal_linalg::device_name
 // Apple M5 Pro, 20 GPU cores, eigh policy from tuned:Apple M5 Pro
 
 metal_linalg::eigh_backend(32, 4096);  // EighBackend::ql: a large batch of small matrices goes to the GPU
-metal_linalg::eigh_backend(512, 64);   // EighBackend::cpu: the CPU's cores win a batch of mid-size ones
-metal_linalg::eigh_backend(2048, 1);   // EighBackend::tridiag: one large matrix, mostly on the GPU
+metal_linalg::eigh_backend(512, 64);   // EighBackend::band: a batch of mid-size ones, reduced in two stages
+metal_linalg::eigh_backend(2048, 1);   // EighBackend::band: one large matrix, mostly on the GPU
 
 auto p = metal_linalg::eigh_policy();  // replace the measured policy at run time
 p.gpu_min_batch = 1;

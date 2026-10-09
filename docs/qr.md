@@ -484,7 +484,7 @@ the M5 Pro the second effect won.
 | GPU | cores | `m_crossover` | GPU or CPU | status |
 |---|---|---|---|---|
 | Apple M1 | 8 | — | — | measured before 2.9.0, out of date and no longer used since 2.14.0: estimated like any unmeasured Mac (the old row's study: [`studies/qr-routing-apple-m1.md`](studies/qr-routing-apple-m1.md)) |
-| Apple M5 Pro | 20 | k: 80 below batch 8, 768 from 8 | GPU iff `w <= 448` and `batch * w >= 1448` (w = floor(sqrt(M k))), or `sqrt(M k) >= 512`; no batch shared with the CPU | measured — run [`20261007-9f2589`](results/apple-m5-pro-20gpu/20261007-9f2589/qr/report.md) |
+| Apple M5 Pro | 20 | k: 80 below batch 8, 768 from 8 | GPU iff `w <= 448` and `batch * w >= 1448` (w = floor(sqrt(M k))), or `sqrt(M k) >= 512`; no batch shared with the CPU | measured — run [`20261009-b60ec0`](results/apple-m5-pro-20gpu/20261009-b60ec0/qr/report.md) |
 | anything else | — | estimated | estimated | **estimated** from the M5 Pro's timings ([how](tuning.md#macs-nobody-has-measured)) |
 
 The GPU-or-CPU boundary is measured by every run made since QR had a CPU path;

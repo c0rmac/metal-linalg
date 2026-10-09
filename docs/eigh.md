@@ -20,11 +20,13 @@ exception, as LAPACK does.
 [Dispatch](#dispatch)), but Accelerate's LAPACK on the CPU is quick (a single
 512×512 in 18 ms on an M1), and since 2.9.0 a batch is spread over every CPU
 core, so the public functions run on the GPU only where it was measured
-faster, and call LAPACK (Accelerate) on the CPU otherwise: on an M5 Pro for
-large batches of matrices up to N = 48 (`batch * N >= 16384`; up to 64 from
-1024 matrices), for up to four matrices from N = 1024 on the `tridiag`
-backend, and for the eigenvalues alone of one or two matrices from N = 1536
-on `tridiag` and from 4096 on `band`, the two-stage reduction. The boundary is
+faster, and call LAPACK (Accelerate) on the CPU otherwise: on an M5 Pro
+(2.17.0's row) for large batches of matrices up to N = 48 (`batch * N >=
+8192` up to N = 16, and from 256 matrices up to 48; the `ql` kernel to
+N = 64), for batches of 128 and more of N = 96-1024 on `tridiag_batch`,
+for up to 127 matrices from N = 512 on `band`, the two-stage reduction,
+and for the eigenvalues alone of one or two matrices from N = 1024 on
+`tridiag` and from 1536 on `band`. The boundary is
 part of the per-device policy (see [Tuning](#tuning));
 on the CPU, eigenvectors come from `ssyevd`, or from N = 192, where a batch
 of at most a quarter as many matrices as cores leaves cores idle, from its
@@ -782,12 +784,19 @@ rather than constants:
 | GPU | cores | simd up to | block from | ql for | GPU iff | tridiag | status |
 |---|---|---|---|---|---|---|---|
 | Apple M1 | 8 | — | — | — | — | — | measured before 2.9.0, out of date and no longer used since 2.14.0: estimated like any unmeasured Mac (the old row's study: [`studies/eigh-routing-apple-m1.md`](studies/eigh-routing-apple-m1.md)) |
-| Apple M5 Pro | 20 | never | N = 96 | N = 2-64, shared with the CPU from batch 4096 | N <= 16 and batch * N >= 8192, or N <= 48 in batches of 256+ (eigvalsh: N <= 48 and batch * N >= 16384) | from N = 1024, batch <= 4 (eigvalsh: from 1024, batch <= 2, and `band` from 2048) | measured — run [`20261007-9f2589`](results/apple-m5-pro-20gpu/20261007-9f2589/eigh/report.md) |
+| Apple M5 Pro | 20 | never | N = 256; N = 64 in batches of 64+ | N = 2-64 | N <= 16 and batch * N >= 8192, or N <= 48 in batches of 256+ (eigvalsh: N <= 32 and batch * N >= 8192) | `band` from N = 512, batches up to 128; `tridiag_batch` for N = 96-1024 in batches of 128+ (eigvalsh: `tridiag` from 1024, batch <= 2, `band` from 1536; `tridiag_batch` for N = 64-256 in batches of 512+) | measured — run [`20261009-b60ec0`](results/apple-m5-pro-20gpu/20261009-b60ec0/eigh/report.md) |
 | anything else | — | estimated | estimated | estimated | estimated | estimated | **estimated** from the M5 Pro's timings ([how](tuning.md#macs-nobody-has-measured)) |
 
-The M5 Pro row of 2.16.0 (run `9f2589`, timed with MLX's buffer cache on and
-MLX's own buffers passed to the GPU backends) scores 1.0231 geometric-mean
-regret against the best backend at each of 207 points, worst 1.82x. The M5
+The M5 Pro row of 2.17.0 (run `b60ec0`) scores 1.0291 geometric-mean regret
+against the best backend at each of the 132 points up to N = 256 where the
+one-stage backends are timed, worst 1.72x; the windows fitted on the larger
+points score 1.0116 for `band` with eigenvectors (1.147 without it), 1.0196
+for `tridiag_batch` (1.259 without) and 1.0054 for its eigenvalues alone
+(1.089 without). Since 2.17.0 eigh with eigenvectors goes to the two-stage
+`band` from N = 512, a batch of 2-127 handed to the batch backends' two
+stages, and larger batches of 96-1024 to `tridiag_batch`; a batch is no
+longer shared with the CPU (the `ql` kernel in registers alone is faster).
+The M5 Pro row of 2.16.0 (run `9f2589`) scored 1.0231 at 207 points. The M5
 Pro row of 2.9.0 was the first measured against the CPU path that spreads a
 batch over every core. Against it the GPU keeps two regions: large
 batches of matrices up to N = 48 (batch × N at least 16384, so 512 matrices of

@@ -645,10 +645,16 @@ Metal device name and GPU core count:
 
 | GPU | cores | GPU iff | golub_kahan | QR from | block from | else bidiag | status |
 |---|---|---|---|---|---|---|---|
-| Apple M5 Pro | 20 | k <= 8, l <= 2048 and batch * k >= 4096, or k <= 80 in batches of 256+ (svdvals: k <= 80, l <= 2048 and batch * k >= 16384) | k = 8 .. 80, shared with the CPU from batch 256 | 256 rows, k >= 16 | k = 192; k = 64 in batches of 64+ | from k = 1024 (svdvals too), batches up to 4 (svdvals 2); `band` from k = 1024 with vectors, from 768 for svdvals | measured — run [`20261007-9f2589`](results/apple-m5-pro-20gpu/20261007-9f2589/svd/report.md) (1.0170 geometric-mean regret against the best backend at each of 295 points, worst 1.75x) |
+| Apple M5 Pro | 20 | k <= 8, l <= 1024 and batch * k >= 2048, or k <= 48 in batches of 256+ (svdvals: k <= 32, l <= 1024 and batch * k >= 4096) | k = 4 .. 56 | 256 rows, k >= 16 | k = 256; k = 64 in batches of 64+ | `band` from k = 512 with vectors (batches up to 16), from 768 for svdvals; `bidiag_batch` for k = 64-1024 in batches of 64+ (svdvals likewise); `bidiag` from 1024 for svdvals' batches of 2 | measured — run [`20261009-b60ec0`](results/apple-m5-pro-20gpu/20261009-b60ec0/svd/report.md) |
 | anything else | — | estimated | estimated | estimated | estimated | estimated | **estimated** from the M5 Pro's timings ([how](tuning.md#macs-nobody-has-measured)) |
 
-On the M5 Pro large batches of small matrices, up to 56×56 and a long side
+The 2.17.0 row (run `b60ec0`): its windows, fitted on the larger points,
+score 1.0121 for `band` with vectors (1.115 without), 1.0709 for svdvals'
+`band` (1.359 without), 1.0334 for `bidiag_batch` (1.248 without) and
+1.0484 for its singular values alone (1.298 without); batches of 64 and more
+from k = 64 go to `bidiag_batch`, one or a few matrices from k = 512 to the
+two-stage `band`, and no batch is shared with the CPU. Before 2.17.0: on the
+M5 Pro large batches of small matrices, up to 56×56 and a long side
 of 256, go to `golub_kahan` on the GPU, shared with the CPU from 1024
 matrices, and so do batches of 1024 and more up to 80×80 (the large-batch
 clause, since 2.12.0); everything else in a batch goes to the CPU, and one
