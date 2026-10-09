@@ -9490,7 +9490,7 @@
   "routing": 462
  },
  "raw": [
-  "docs/results/apple-m5-pro-20gpu/20261009-b60ec0/eigh/raw.csv"
+  "/Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261009-b60ec0/eigh/raw.csv"
  ],
  "submissions": [
   "20261009-b60ec0"

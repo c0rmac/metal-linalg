@@ -213,6 +213,7 @@ int main(void) {
         p = measured;
         p.gpu_max_n = 0;
         p.tridiag_min_n = 256;
+        p.band_min_n = 0;   /* (a device's band threshold may be below 512) */
         metal_linalg_eigh_policy_set(&p);
         CHECK(strcmp(metal_linalg_eigh_backend(512, 1), "tridiag") == 0, "tridiag_min_n = 256: N=512 routes to %s",
               metal_linalg_eigh_backend(512, 1));
@@ -223,6 +224,7 @@ int main(void) {
         metal_linalg_svd_policy sp = svd_measured;
         sp.gpu_max_k = 0;
         sp.bidiag_min_k = 256;
+        sp.band_min_k = 0;   /* (as the eigensolver's band threshold above) */
         sp.values_bidiag_min_k = 0;
         metal_linalg_svd_policy_set(&sp);
         CHECK(strcmp(metal_linalg_svd_backend(512, 512, 1), "bidiag") == 0, "bidiag_min_k = 256: 512x512 routes to %s",

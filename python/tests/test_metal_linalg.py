@@ -156,7 +156,7 @@ class Routing(unittest.TestCase):
             ml.set_eigh_policy(values_gpu_min_batch=0)
             self.assertEqual(ml.eigvalsh_backend(8, 4096), "cpu")
             # the tridiag backend replaces the CPU from its threshold
-            ml.set_eigh_policy(tridiag_min_n=256, values_tridiag_min_n=0)
+            ml.set_eigh_policy(tridiag_min_n=256, values_tridiag_min_n=0, band_min_n=0)   # (a device's band threshold may be below 512)
             self.assertEqual(ml.eigh_backend(512, 1), "tridiag")
             self.assertEqual(ml.eigh_backend(128, 1), "cpu")
             a = mx.random.normal((300, 300)); s = (a + a.T) / 2
@@ -175,7 +175,7 @@ class Routing(unittest.TestCase):
             # the bidiag SVD backend, with svdvals' own threshold
             svd_measured = ml.svd_policy()
             try:
-                ml.set_svd_policy(gpu_max_k=0, bidiag_min_k=256, values_bidiag_min_k=0, values_band_min_k=0)
+                ml.set_svd_policy(gpu_max_k=0, bidiag_min_k=256, values_bidiag_min_k=0, values_band_min_k=0, band_min_k=0)
                 self.assertEqual(ml.svd_backend(400, 300), "bidiag")
                 self.assertEqual(ml.svdvals_backend(400, 300), "cpu")
                 # singular values alone by the two-stage reduction

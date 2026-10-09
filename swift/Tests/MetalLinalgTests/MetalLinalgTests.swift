@@ -80,6 +80,10 @@ final class MetalLinalgTests: XCTestCase {
         p.gpu_max_k = 0
         p.bidiag_min_k = 1
         p.values_bidiag_min_k = 1
+        p.band_min_k = 0             // neither the two stages nor the batch backend, whatever
+        p.values_band_min_k = 0      // the device's policy (an estimated one may reach these sizes)
+        p.bidiag_batch_max_k = 0
+        p.values_bidiag_batch_max_k = 0
         svdPolicy = p
         for (rows, cols) in [(70, 70), (300, 80), (60, 150)] {
             XCTAssertEqual(svdBackend(rows: rows, cols: cols), "bidiag")
@@ -165,6 +169,10 @@ final class MetalLinalgTests: XCTestCase {
         p.values_tridiag_min_n = 1
         p.tridiag_max_batch = 0      // at any batch (an estimated policy may cap it)
         p.values_tridiag_max_batch = 0
+        p.band_min_n = 0             // and neither the two stages nor the batch backend
+        p.values_band_min_n = 0
+        p.tridiag_batch_max_n = 0
+        p.values_tridiag_batch_max_n = 0
         eighPolicy = p
         for n in [3, 70, 150] {
             XCTAssertEqual(eighBackend(n: n, batch: 2), "tridiag")
