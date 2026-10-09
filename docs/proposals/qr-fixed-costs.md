@@ -82,9 +82,15 @@ LU and inverses 11.
   chains are a quarter as long for twice the panels. 1.05x at 1024², 1.1x at
   1536² and 2048², 1.06x for 4 of 1024²; 16 kept elsewhere (8 lost at 512²,
   very tall matrices and large batches).
-- **The updates inside aggregates as kernels of their own**: not built. They
-  are 11-14% of the call (0.68 ms at 1024: 112 products of about 6 us), each
-  near a dependent dispatch's floor; at best about 4%.
+- **The updates inside aggregates as a kernel of their own**: built
+  (`qr_agg_apply`). With 8-wide panels they had become 25% of a 1024 x 1024
+  call (1.5 of 6.0 ms, 256 MPS products) and 18% at 2048. A first kernel, a
+  simdgroup a column walking its rows alone, won at 512-1024 (1.03-1.07x) but
+  lost on tall panels (0.73x at 8192 x 512); the kept one, a threadgroup of 8
+  columns and up to 128 row groups, W summed across them in threadgroup
+  memory, wins at 512-3072 rows for up to 4 matrices (1.16x at 1024^2,
+  1.06-1.12x elsewhere) and is used there; taller panels and larger batches
+  keep MPS (the kernel 0.93-0.97x there).
 - **The input's scan on the GPU**: not built. Measured warm it is 0.1 of 6.3
   ms at 1024 (1.7%), 0.54 of 20 at 16 x 1024² (2.7%), less than the GPU pass
   that would replace it would save.

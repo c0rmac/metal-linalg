@@ -77,7 +77,7 @@ struct State {
     Panels panels[3];
     Small  small;
     bool   have = false;
-    id<MTLComputePipelineState> scale_copy, merge_t, r_out;
+    id<MTLComputePipelineState> scale_copy, merge_t, r_out, agg_apply[2];
     Buffers buf;
 
     const Panels& kernels(uint32_t b) {
@@ -378,11 +378,39 @@ uint32_t qr_blocks(id<MTLCommandBuffer> __strong& cb, id<MTLBuffer> A, uint32_t 
             pp.ss = (uint32_t)st.ssc;
             panel(pk, w, cb, A, akk, pp, st.v, (size_t)k * st.ldv + k, st.t, (size_t)j * 1024, nil, 0, 0, st.vt, 0,
                   B, st.sc);
-            if (nr > 0) {
+            // C <- H^T C inside the aggregate: for up to 4 matrices and panels
+            // of up to 3072 rows, qr_agg_apply, one dispatch (on an M5 Pro
+            // 1.16x the call at 1024 x 1024, 1.06-1.12x at 512-3072, 1.09x
+            // for 4 of 1024^2); else two MPS products, which spread taller
+            // panels and larger batches better (the kernel 0.93-0.97x at
+            // 4096-8192 rows, level at 8 matrices). QR_AGG_KERNEL=0: always MPS.
+            static const bool no_kernel = [] {
+                const char* e = std::getenv("QR_AGG_KERNEL");
+                return e && std::string(e) == "0";
+            }();
+            const bool own = (b == 8 || b == 16) && B <= 4 && m1 <= 3072 && !no_kernel;
+            if (nr > 0 && !own) {
                 gemm(dev, cb, mps(st.vt, 0, m1, b, 32, B, st.svt), true, Av(akk + b, m1, nr), false,
                      Zv(st.z, b, nr), b, nr, m1, 1, 0, B);
                 gemm(dev, cb, Vv((size_t)k * st.ldv + k, m1, b), false, Zv(st.z, b, nr), false, Av(akk + b, m1, nr),
                      m1, nr, b, -1, 1, B);
+            } else if (nr > 0) {
+                const int ai = b == 8 ? 0 : 1;
+                if (!s.agg_apply[ai])
+                    s.agg_apply[ai] = make_pipeline(s.rt.device, s.rt.library, b == 8 ? @"qr_agg_apply_8" : @"qr_agg_apply_16", nil);
+                id<MTLComputePipelineState> ps = s.agg_apply[ai];
+                const uint32_t ap[7] = {m1, nr, lda, st.ldv, (uint32_t)st.sa, (uint32_t)st.sv, (uint32_t)st.svt};
+                id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+                [enc setComputePipelineState:ps];
+                [enc setBuffer:A offset:(akk + b) * 4 atIndex:0];
+                [enc setBuffer:st.v offset:((size_t)k * st.ldv + k) * 4 atIndex:1];
+                [enc setBuffer:st.vt offset:0 atIndex:2];
+                [enc setBytes:ap length:sizeof ap atIndex:3];
+                // threads: 8 a row group, up to 128 row groups (fewer for short panels)
+                const uint32_t groups = std::clamp<uint32_t>((m1 + 7) / 8, 4u, 128u);
+                [enc dispatchThreadgroups:MTLSizeMake((nr + 7) / 8, 1, B)
+                    threadsPerThreadgroup:MTLSizeMake((groups * 8 + 31) / 32 * 32, 1, 1)];
+                [enc endEncoding];
             }
         }
         // The aggregate's T, from G = Y^T Y

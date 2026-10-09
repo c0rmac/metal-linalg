@@ -174,7 +174,14 @@ same Householder QR with the two-stage reduction's machinery
    up to $b$ long, is a third of the call at 1024×1024 with 16 columns, and
    two panels of 8 take less (1.05x at 1024², 1.1x at 1536² and 2048²,
    1.06x for 4 of 1024²); elsewhere 16, which kept the lead
-   (`QR_PANEL_WIDTH=8` or `16` forces one).
+   (`QR_PANEL_WIDTH=8` or `16` forces one). Inside an aggregate, a panel's
+   update of the aggregate's columns right of it, $W = (VT)^T C$ and
+   $C \mathrel{-}= V W$, is one kernel of its own for up to 4 matrices and
+   panels of up to 3072 rows (`qr_agg_apply`: a threadgroup takes 8 columns
+   and every row, $W$ summed across its row groups; one dispatch where MPS
+   took two, 1.16x the call at 1024², 1.06-1.12x at 512-3072); taller panels
+   and larger batches keep MPS's products, which spread them better
+   (`QR_AGG_KERNEL=0` keeps MPS throughout).
 2. **Aggregates of 128 columns.** Inside one, each panel's $H$ is applied to
    the aggregate's columns right of it, $W = (VT)^T C$ and $C \mathrel{-}= V W$;
    the aggregate's $T_a$ is merged from its panels' $T$'s and the Gram matrix

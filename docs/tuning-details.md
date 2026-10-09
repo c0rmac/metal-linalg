@@ -395,6 +395,7 @@ in the policy source.
 | `QR_SHARE_MIN_BATCH` | QR: a GPU batch shared with the CPU from this batch (0: never) |
 | `QR_GPU_LARGE_MIN_K`, `QR_GPU_LARGE_MAX_BATCH` | QR: the GPU also from this k, for batches up to this (0: never / any batch) |
 | `QR_DEVICE=gpu` or `cpu` | QR: bypass the GPU/CPU boundary |
+| `QR_AGG_KERNEL=0` | QR: the blocked QR's updates inside an aggregate as two MPS products throughout (default: a kernel of its own for up to 4 matrices and panels of up to 3072 rows) |
 | `QR_PANEL_WIDTH=8` or `16` | QR: the blocked QR's panel width (default 8 for up to 4 matrices of 768-3072 rows and 768+ columns, else 16) |
 | `EIGH_SIMD_MAX_N`, `EIGH_BLOCK_MIN_N` | eigensolver: the GPU backend split |
 | `EIGH_BLOCK_MIN_N_BATCHED`, `EIGH_BLOCK_MIN_BATCH` | eigensolver: batch-dependent block crossover, 0 for off |

@@ -1163,6 +1163,61 @@ kernel void bd_merge_t(device const float* G0 [[buffer(0)]], device const float*
     }
 }
 
+// The blocked QR's update inside an aggregate (qr_blocks): C <- H^T C for a
+// panel's H = I - V T V^T, C = A(k:, k+b:k+b+nr) (m1 rows, row-major, ld
+// lda), as W = (V T)^T C and C -= V W in one dispatch. A threadgroup takes 8
+// columns and every row, its threads a row group and a column (thread t:
+// column t % 8, rows t / 8, t / 8 + nt / 8, ...: a row's 8 columns read
+// together); a column's W summed over its row groups, first across the
+// simdgroup's lanes by shuffles, then across the simdgroups in threadgroup
+// memory; then each thread updates its rows. V (ld ldv) and V T (ld 32) as
+// the panel wrote them; matrices sa, sv and svt apart (the grid's z).
+struct AgParams { uint m1, nr, lda, ldv, sa, sv, svt; };
+template <uint B>
+kernel void qr_agg_apply(device float* C0 [[buffer(0)]], device const float* V0 [[buffer(1)]],
+                         device const float* VT0 [[buffer(2)]], constant AgParams& p [[buffer(3)]],
+                         uint3 tg [[threadgroup_position_in_grid]], uint t [[thread_index_in_threadgroup]],
+                         uint sg [[simdgroup_index_in_threadgroup]], uint lane [[thread_index_in_simdgroup]],
+                         uint nsg [[simdgroups_per_threadgroup]]) {
+    threadgroup float part[32][8][B];   // [simdgroup][column][i]
+    threadgroup float W[8][B];
+    const uint cl = t % 8, c = tg.x * 8 + cl, rg = t / 8, nrg = nsg * 4;
+    const bool live = c < p.nr;
+    device float* C = C0 + (ulong)tg.z * p.sa + c;
+    device const float* V = V0 + (ulong)tg.z * p.sv;
+    device const float* VT = VT0 + (ulong)tg.z * p.svt;
+    float w[B];
+    UNROLL(B, i, { w[i] = 0.0f; });
+    if (live)
+        for (uint r = rg; r < p.m1; r += nrg) {
+            const float x = C[(ulong)r * p.lda];
+            UNROLL(B, i, { w[i] = fma(VT[(ulong)r * 32 + i], x, w[i]); });
+        }
+    // lanes cl, cl + 8, cl + 16, cl + 24 hold the same column
+    UNROLL(B, i, { w[i] += simd_shuffle_xor(w[i], (ushort)8); w[i] += simd_shuffle_xor(w[i], (ushort)16); });
+    if (lane < 8) UNROLL(B, i, { part[sg][lane][i] = w[i]; });
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint e = t; e < 8 * B; e += nsg * 32) {
+        const uint cc = e / B, i = e % B;
+        float a = 0.0f;
+        for (uint g = 0; g < nsg; ++g) a += part[g][cc][i];
+        W[cc][i] = a;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (!live) return;
+    UNROLL(B, i, { w[i] = W[cl][i]; });
+    for (uint r = rg; r < p.m1; r += nrg) {
+        float x = C[(ulong)r * p.lda];
+        UNROLL(B, i, { x = fma(-V[(ulong)r * p.ldv + i], w[i], x); });
+        C[(ulong)r * p.lda] = x;
+    }
+}
+#define QR_AGG_APPLY(B) \
+    template [[host_name("qr_agg_apply_" #B)]] kernel void qr_agg_apply<B>(device float*, device const float*, \
+        device const float*, constant AgParams&, uint3, uint, uint, uint, uint);
+QR_AGG_APPLY(8)
+QR_AGG_APPLY(16)
+
 // The blocked QR's output R (k x n, row-major, sr apart) from A's upper
 // triangle (ld lda, sa apart), times the matrix's `up`, zeros below.
 struct QrROut { uint k, n, lda, sa, sr; };
