@@ -17,9 +17,9 @@ the curious. Contributors only need [`tuning.md`](tuning.md).
 
    | step | harness | measures | time on an M5 Pro |
    |---|---|---|---|
-   | QR | `tuning/tune_qr.py` | both GPU backends and the CPU on 185 shapes, square, tall, wide and near-square, batch 1 to 16384 | 4 min |
-   | eigh | `tuning/tune_eigh.py --max-n 4096` | CPU, the whole-matrix kernel in both modes and block Jacobi up to N = 96, ql, tridiag, tridiag_batch, band, each again for eigenvalues alone; N from 2 to 4096, batch 1 to 4096 (small batches above 1024) | 15 min |
-   | SVD | `tuning/tune_svd.py --max-k 4096` | CPU, both Jacobi kernels, each with and without QR, up to k = 128, square and tall shapes, batch 1 to 4096; golub_kahan up to its limit; bidiag_batch from k = 32; bidiag, band and the CPU, with and without vectors, from k = 128 up to 4096 (small batches above 1024) | 25 min |
+   | QR | `tuning/tune_qr.py` | both GPU backends and the CPU on 185 shapes, square, tall, wide and near-square, batch 1 to 16384 | 5 min |
+   | eigh | `tuning/tune_eigh.py --max-n 4096` | CPU, the whole-matrix kernel in both modes and block Jacobi up to N = 96, ql, tridiag, tridiag_batch, band, each again for eigenvalues alone; N from 2 to 4096, batch 1 to 4096 (small batches above 1024) | 12 min |
+   | SVD | `tuning/tune_svd.py --max-k 4096` | CPU, both Jacobi kernels, each with and without QR, up to k = 128, square and tall shapes, batch 1 to 4096; golub_kahan up to its limit; bidiag_batch from k = 32; bidiag, band and the CPU, with and without vectors, from k = 128 up to 4096 (small batches above 1024) | 22 min |
 
    Each runs a first pass over every point, then a second over the points
    whose choice the first left open, both in random order, so that thermal
@@ -33,8 +33,18 @@ the curious. Contributors only need [`tuning.md`](tuning.md).
    point above), and at a canary point beyond, 256 x 256 in batches of 1 and
    64: a report warns if one wins there. Re-analysed on the M5 Pro's earlier
    runs, the two cuts gave the full grid's routing, scored by the library's
-   own router (since 2.17.0, when they took a sweep from 75 minutes to about
-   40).
+   own router (since 2.17.0).
+
+   Within a point the backends are timed in two rounds
+   (`tuning/sweep_timing.h`): each its correctness run, a warm-up unless that
+   call took 100 ms or more, and one timed call; then the rest of the
+   samples, at least five (three over 300 ms) until 150 ms is spent. A
+   backend of 20 ms or more that took over 1.3x its mode's fastest first call
+   stops at two samples: only a point's winner and near-winners need tight
+   times. The CPU's reference for the values alone is computed once a point.
+   Large points take 1.3-2x less time for medians within 5% of the full
+   timing's. With the cuts above, a sweep on an M5 Pro took 38 minutes in
+   2.17.0, where 2.16.0's took 75.
 5. Writes `submission.json` and `summary.md`, and prints the rows and how to
    send them.
 

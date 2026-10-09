@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Measure this Mac for metal-linalg: all three decompositions, one command.
 
-    python3 tuning/run.py              # about 90 minutes; leave the Mac alone
+    python3 tuning/run.py              # about 40 minutes on an M5 Pro; leave the Mac alone
     python3 tuning/run.py --quick      # a 15-minute smoke test, not a submission
-    python3 tuning/run.py --only qr    # one decomposition (qr ~4 min, eigh ~25, svd ~50)
+    python3 tuning/run.py --only qr    # one decomposition (qr ~5 min, eigh ~12, svd ~22)
 
 Checks that the Mac is fit to measure, builds the tools, runs the correctness
 tests, then the QR, eigensolver and SVD sweeps one after another, and writes
@@ -296,7 +296,7 @@ def main():
     info.update({"status": "running", "conditions": {"start": conditions()}, "results": {}, "minutes": {}})
     json.dump(info, open(os.path.join(out, "submission.json"), "w"), indent=1)
 
-    minutes = {"qr": (2, 4), "eigh": (8, 15), "svd": (8, 25)}
+    minutes = {"qr": (2, 5), "eigh": (8, 12), "svd": (8, 22)}   # an M5 Pro's, 2.17.0
     total = str(sum(minutes[op][0 if args.quick else 1] for op in only))
     info["memory_budget_gb"] = round(sub.memory_budget_bytes() / 2 ** 30, 1)
     say(f"\nMemory: shapes are capped to {info['memory_budget_gb']} GB at peak "

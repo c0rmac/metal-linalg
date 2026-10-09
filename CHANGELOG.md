@@ -162,13 +162,19 @@
   back-transformations' T built in blocks (16 x 16 diagonal blocks a thread a
   row, then merged in pairs: five barriers where column by column took 128):
   1.04-1.05x for the SVD, 1.02-1.15x for eigh at 96-384 batches.
-- **The measurement takes half the time** (eigh and SVD about 40 minutes
+- **The measurement takes half the time** (`tuning/run.py` 38 minutes
   instead of 75 on an M5 Pro): the Jacobi kernels are timed only up to
   N = 96 and k = 128, where they can win, with a canary beyond that warns if
   they ever do (`--full-grid` times them everywhere); a second pass repeats
   only the points whose choice the first left open (`--full-passes` repeats
-  all); a call of 20 ms or more gets one warm-up instead of two. Re-analysed
-  on the earlier runs, the routing is the full grid's.
+  all). Within a point (`tuning/sweep_timing.h`) the eigh and SVD backends
+  are timed in two rounds: a backend of 20 ms or more and over 1.3x its
+  mode's fastest stops at two samples, a call of 100 ms or more needs no
+  warm-up after its correctness run, and the CPU's reference for the values
+  alone is computed once a point: large points 1.3-2x faster, medians within
+  5%. Re-analysed on the earlier runs, the routing is the full grid's.
+  Fixed on the way: the eigh sweep had dropped every point above N = 96 but
+  the canaries (no CPU, tridiag, tridiag_batch or band timings there).
 - **Fixed: Q and singular or eigen vectors far from orthogonal for some
   exactly rank-deficient matrices** on the GPU paths built on the band
   reduction's panel kernels: the blocked QR (one matrix from about 384 x 384,

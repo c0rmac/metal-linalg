@@ -28,8 +28,8 @@ spread over every core), by a policy measured on the device it runs on. MLX's ow
 > estimated from them and published benchmarks, which lean toward the CPU and
 > miss some of what its GPU can do.
 > If you have an Apple Silicon Mac,
-> one command measures it (`python3 tuning/run.py`, about an hour and a
-> half of the Mac's time) and produces a results folder to send as a pull request. Each
+> one command measures it (`python3 tuning/run.py`, about 40 minutes of the
+> Mac's time on an M5 Pro, longer on smaller chips) and produces a results folder to send as a pull request. Each
 > run improves the library for everyone with that Mac, and runs from several
 > people with the same Mac are combined. Contributions are what keep the
 > library up to date as Apple ships new chips: [how to contribute](CONTRIBUTING.md).
