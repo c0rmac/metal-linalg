@@ -237,7 +237,11 @@ alone: where the rules choose the CPU or `bidiag`, `band` from this k on,
 scored against the CPU, `bidiag` and `band` on the points where `band_vals`
 was timed (k >= 512). The report lists `band` over `bidiag` and over the CPU
 at each of them. **Stage 3c** (SVD, since 2.15.0) is the same with singular
-vectors: `band_min_k`, on the points where `band` was timed. **Stage 4b** (eigensolver) does the same for eigenvalues
+vectors: `band_min_k`, on the points where `band` was timed; since 2.17.0
+with the batch cap (`bidiag_max_batch`) fitted alongside, over `band`'s points
+and `bidiag`'s, its `chosen` and `cap` both reported, as `band` now takes
+batches through `bidiag_batch`'s two stages (stage 4c likewise for the
+eigensolver's `band_min_n` and `tridiag_max_batch`). **Stage 4b** (eigensolver) does the same for eigenvalues
 alone: `band` from this N where the rules choose the CPU or `tridiag`, scored
 against both on the points where `band_vals` was timed (N >= 512).
 

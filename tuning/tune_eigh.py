@@ -58,7 +58,9 @@ top of the finished rule; the
 earlier stages are scored without it, since no rule they choose between can
 pick it. Stage 4b fits the `band` backend's threshold for eigenvalues alone
 (values_band_min_n) and its width, stage 4c its threshold with eigenvectors
-(band_min_n), both before tridiag.
+(band_min_n) together with the batch cap with eigenvectors, which band shares
+with tridiag and, taking batches through tridiag_batch's two stages, may need
+wider; both before tridiag.
 
 The `tridiag_batch` backend (the tridiag method for a whole batch at once,
 since 2.17.0) replaces the CPU for batches of mid-size matrices: stage 5 fits

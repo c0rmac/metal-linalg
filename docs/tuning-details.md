@@ -219,7 +219,12 @@ stage 4b fits it, after `tridiag`'s thresholds, on the points where
 it first, from `band8_vals`, `band_vals` and `band32_vals` at those points,
 and fits the threshold on its times. Then (since 2.17.0; 0 in a run from
 before) `band_min_n`, the same backend with eigenvectors from this N, which
-stage 4c fits on the points where `band` was timed (N >= 512); and the
+stage 4c fits on the points where `band` was timed (N >= 512) together with
+`tridiag_max_batch`, which `band` shares: since 2.17.0 `band` takes a batch
+of two or more (384-1024) through `tridiag_batch`'s two stages, every matrix
+at once, so the cap that suits `tridiag`, a matrix at a time, need not suit
+it (scored over `band`'s points and `tridiag`'s; with `band` never, stage 4's
+cap stands); and the
 `tridiag_batch` windows, `tridiag_batch_min_n`, `tridiag_batch_max_n`,
 `tridiag_batch_min_batch` and the three `values_` ones: N in the window from
 that batch on, where the rules give the CPU, the `tridiag_batch` backend (a
@@ -264,8 +269,10 @@ points where `band_vals` was timed (k >= 512, where `bidiag_vals` is). Then
 eigensolver. And `band_min_k` (since 2.15.0): with singular vectors, from
 this k the `band` backend instead of `bidiag` or the CPU, within
 `bidiag_max_batch` (0: never, which a run from before 2.15.0 gives); stage 3c
-fits it as stage 3b does, on the points where `band` was timed with vectors
-(k >= 512). Then (since 2.17.0; 0 in a run from before) the `bidiag_batch`
+fits it on the points where `band` was timed with vectors (k >= 512),
+together with that cap since 2.17.0, as stage 4c does for the eigensolver
+(`band` takes a batch of two or more through `bidiag_batch`'s two stages).
+Then (since 2.17.0; 0 in a run from before) the `bidiag_batch`
 windows, `bidiag_batch_min_k`, `bidiag_batch_max_k`, `bidiag_batch_min_batch`,
 `bidiag_batch_max_l` and the four `values_` ones: k in the window, l up to the
 cap, from that batch on, where the rules give the CPU, the `bidiag_batch`
