@@ -26,7 +26,8 @@
 //          resolved for it
 //
 // One point per process, as in sweep_qr.cpp and sweep_eigh.cpp, so nothing
-// cached for an earlier shape can skew a later one. Every backend computes the
+// cached for an earlier shape can skew a later one; its backends timed as
+// sweep_timing.h says. Every backend computes the
 // same thing, the thin factors, so the comparison is like for like. The two
 // QR backends pin their kernel, so neither follows the policy in effect.
 
@@ -35,11 +36,14 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <optional>
 #include <random>
 #include <string>
 #include <vector>
 
 #include <mlx/mlx.h>
+
+#include "sweep_timing.h"
 
 #include <metal_linalg/device.h>
 #include <metal_linalg/eigh.h>   // device_name()
@@ -102,14 +106,27 @@ SvdResult vals_gk(const array& A)       { return gk(A, false); }
 SvdResult solve_gk_share(const array& A) { return detail::svd_golub_kahan_shared(A, true); }
 SvdResult vals_gk_share(const array& A)  { return detail::svd_golub_kahan_shared(A, false); }
 
+// MLX's CPU svd of the point's matrix (singular values alone), computed once
+// for every backend that needs it.
+const array& values_reference(const array& A) {
+    static std::optional<array> ref;
+    if (!ref) {
+        ref = linalg::svd(A, false, Device::cpu)[0];
+        eval({*ref});
+    }
+    return *ref;
+}
+
 // Singular values alone: the largest error against MLX's CPU svd, relative to S_max.
-float values_error(const Solver& s, const array& A) {
+float values_error(const Solver& s, const array& A, double& call_ms) {
     try {
+        const auto t0 = std::chrono::high_resolution_clock::now();
         array S = s.fn(A).S;
-        // The reference on its own first, as in sweep_eigh.cpp: queued behind
-        // it, the comparison's GPU work outlasted the GPU's watchdog.
-        array ref = linalg::svd(A, false, Device::cpu)[0];
-        eval({ref});
+        eval({S});
+        call_ms = sweep::ms_since(t0);
+        // The reference on its own, after the backend's work has finished: queued
+        // behind it, the comparison's GPU work outlasted the GPU's watchdog.
+        const array& ref = values_reference(A);
         array e = max(abs(subtract(S, ref)));
         array top = max(abs(ref));
         eval({e, top});
@@ -121,11 +138,13 @@ float values_error(const Solver& s, const array& A) {
 }
 
 // Relative reconstruction error, or infinity if the backend cannot run here.
-float correctness(const Solver& s, const array& A) {
-    if (!s.vectors) return values_error(s, A);
+float correctness(const Solver& s, const array& A, double& call_ms) {
+    if (!s.vectors) return values_error(s, A, call_ms);
     try {
+        const auto t0 = std::chrono::high_resolution_clock::now();
         SvdResult r = s.fn(A);
         eval({r.U, r.S, r.Vt});
+        call_ms = sweep::ms_since(t0);
         array bad = any(logical_or(isnan(r.U), isinf(r.U)));
         eval({bad});
         if (bad.item<bool>()) return INFINITY;
@@ -136,59 +155,6 @@ float correctness(const Solver& s, const array& A) {
     } catch (const std::exception&) {
         return INFINITY;
     }
-}
-
-struct Timing {
-    double median = 0, p25 = 0, p75 = 0;
-    int reps = 0;
-};
-
-double quantile(const std::vector<double>& sorted, double q) {
-    if (sorted.empty()) return 0.0;
-    const double pos = q * (sorted.size() - 1);
-    const size_t lo = (size_t)std::floor(pos), hi = (size_t)std::ceil(pos);
-    return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
-}
-
-Timing time_ms(const Solver& s, const array& A, double budget_ms = 150.0, int max_reps = 25) {
-    auto run = [&] {
-        SvdResult r = s.fn(A);
-        if (s.vectors) eval({r.U, r.S, r.Vt}); else eval({r.S});
-    };
-    // Warm-up after the correctness run (which compiled the pipelines and made
-    // the workspaces): two calls, or one where a call takes 20 ms or more,
-    // whose own length settles the GPU's clocks (2.17.0: a third of a sweep
-    // was its untimed calls)
-    {
-        const auto w0 = std::chrono::high_resolution_clock::now();
-        run();
-        if (std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - w0).count() < 20.0)
-            run();
-    }
-    std::vector<double> samples;
-    double total = 0.0;
-    int min_reps = 5;
-    while ((int)samples.size() < max_reps && (total < budget_ms || (int)samples.size() < min_reps)) {
-        auto t0 = std::chrono::high_resolution_clock::now();
-        run();
-        auto t1 = std::chrono::high_resolution_clock::now();
-        const double dt = std::chrono::duration<double, std::milli>(t1 - t0).count();
-        samples.push_back(dt);
-        total += dt;
-        if (dt > 300.0) min_reps = 3;
-    }
-    std::sort(samples.begin(), samples.end());
-    return Timing{quantile(samples, 0.50), quantile(samples, 0.25),
-                  quantile(samples, 0.75), (int)samples.size()};
-}
-
-void measure(const Solver& s, const array& A, int batch, int M, int N) {
-    const float err = correctness(s, A);
-    const bool ok = std::isfinite(err) && err <= 1e-3f;
-    const Timing t = ok ? time_ms(s, A) : Timing{};
-    std::printf("%d,%d,%d,%s,%d,%.6f,%.6f,%.6f,%d\n",
-                batch, M, N, s.name.c_str(), ok ? 1 : 0, t.median, t.p25, t.p75, t.reps);
-    std::fflush(stdout);
 }
 
 } // namespace
@@ -270,6 +236,20 @@ int main(int argc, char** argv) {
 
     array A = random_matrix(batch, M, N);
     eval({A});
-    for (const auto& s : solvers) measure(s, A, batch, M, N);
+    std::vector<sweep::Backend> bs;
+    for (const auto& s : solvers)
+        bs.push_back({[&s, &A](double& call_ms) { return correctness(s, A, call_ms); },
+                      [&s, &A] {
+                          SvdResult r = s.fn(A);
+                          if (s.vectors) eval({r.U, r.S, r.Vt}); else eval({r.S});
+                      },
+                      s.vectors ? 0 : 1});
+    const std::vector<sweep::Result> rs = sweep::measure_all(bs);
+    for (size_t i = 0; i < solvers.size(); ++i) {
+        const sweep::Timing& t = rs[i].t;
+        std::printf("%d,%d,%d,%s,%d,%.6f,%.6f,%.6f,%d\n",
+                    batch, M, N, solvers[i].name.c_str(), rs[i].ok ? 1 : 0, t.median, t.p25, t.p75, t.reps);
+    }
+    std::fflush(stdout);
     return 0;
 }

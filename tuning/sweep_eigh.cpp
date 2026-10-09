@@ -20,21 +20,24 @@
 //
 // One point per process, so cached pipelines and recycled workspaces from an
 // earlier shape cannot skew a later one. Within a point every backend sees the
-// same fresh process, which is the fair comparison. Timing conventions are
-// those of sweep_qr.cpp: median of adaptive repeats, quartiles for the
-// spread, a correctness gate before anything is timed.
+// same fresh process, which is the fair comparison. Medians of adaptive
+// repeats, quartiles for the spread, a correctness gate before anything is
+// timed: sweep_timing.h.
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <optional>
 #include <random>
 #include <string>
 #include <vector>
 
 #include <mlx/mlx.h>
 #include <mlx/linalg.h>
+
+#include "sweep_timing.h"
 
 #include <metal_linalg/device.h>
 #include <metal_linalg/eigh.h>
@@ -155,16 +158,29 @@ std::pair<array, array> vals_block(const array& A) {
     array w = detail::eigh_block_jacobi(A, false, true, o).eigenvalues; return {w, w};
 }
 
-// Eigenvalues alone: the largest error against MLX's CPU eigvalsh (LAPACK,
-// independent of every backend here), relative to ||A||.
-float values_error(const Solver& s, const array& A) {
+// MLX's CPU eigvalsh of the point's matrix (LAPACK, independent of every
+// backend here), computed once for every backend that needs it.
+const array& values_reference(const array& A) {
+    static std::optional<array> ref;
+    if (!ref) {
+        ref = linalg::eigvalsh(A, "L", Device::cpu);
+        eval({*ref});
+    }
+    return *ref;
+}
+
+// Eigenvalues alone: the largest error against the reference, relative to ||A||.
+float values_error(const Solver& s, const array& A, double& call_ms) {
     try {
+        const auto t0 = std::chrono::high_resolution_clock::now();
         array w = s.fn(A).first;
-        // The reference on its own first: queued behind it, the comparison's
-        // GPU work waits on the CPU, and from N ~ 6500 that wait outlasts the
-        // GPU's watchdog (a timeout error, which read as a failed gate).
-        array w_ref = linalg::eigvalsh(A, "L", Device::cpu);
-        eval({w_ref});
+        eval({w});
+        call_ms = sweep::ms_since(t0);
+        // The reference on its own, after the backend's work has finished:
+        // queued behind it, the comparison's GPU work waits on the CPU, and from
+        // N ~ 6500 that wait outlasts the GPU's watchdog (a timeout error, which
+        // read as a failed gate).
+        const array& w_ref = values_reference(A);
         array e  = max(abs(subtract(w, w_ref)));
         array nA = sqrt(sum(square(A)));
         eval({e, nA});
@@ -177,11 +193,13 @@ float values_error(const Solver& s, const array& A) {
 }
 
 // Relative eigen-residual, or infinity if the backend cannot run here.
-float correctness(const Solver& s, const array& A) {
-    if (!s.vectors) return values_error(s, A);
+float correctness(const Solver& s, const array& A, double& call_ms) {
+    if (!s.vectors) return values_error(s, A, call_ms);
     try {
+        const auto t0 = std::chrono::high_resolution_clock::now();
         auto [w, V] = s.fn(A);
         eval({w, V});
+        call_ms = sweep::ms_since(t0);
         array bad = any(logical_or(isnan(V), isinf(V)));
         eval({bad});
         if (bad.item<bool>()) return INFINITY;
@@ -193,56 +211,6 @@ float correctness(const Solver& s, const array& A) {
     } catch (const std::exception&) {
         return INFINITY;
     }
-}
-
-struct Timing {
-    double median = 0, p25 = 0, p75 = 0;
-    int reps = 0;
-};
-
-double quantile(const std::vector<double>& sorted, double q) {
-    if (sorted.empty()) return 0.0;
-    const double pos = q * (sorted.size() - 1);
-    const size_t lo = (size_t)std::floor(pos), hi = (size_t)std::ceil(pos);
-    return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
-}
-
-// Adaptive timing: at least `min_reps`, then until `budget_ms` is spent or
-// `max_reps` reached. Slow points settle for the minimum.
-Timing time_ms(const Solver& s, const array& A, double budget_ms = 150.0, int max_reps = 25) {
-    // Warm-up after the correctness run (which compiled the pipelines and made
-    // the workspaces): two calls, or one where a call takes 20 ms or more
-    for (int i = 0; i < 2; ++i) {
-        const auto w0 = std::chrono::high_resolution_clock::now();
-        auto [w, V] = s.fn(A);
-        eval({w, V});
-        if (std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - w0).count() >= 20.0) break;
-    }
-    std::vector<double> samples;
-    double total = 0.0;
-    int min_reps = 5;
-    while ((int)samples.size() < max_reps && (total < budget_ms || (int)samples.size() < min_reps)) {
-        auto t0 = std::chrono::high_resolution_clock::now();
-        auto [w, V] = s.fn(A);
-        eval({w, V});
-        auto t1 = std::chrono::high_resolution_clock::now();
-        const double dt = std::chrono::duration<double, std::milli>(t1 - t0).count();
-        samples.push_back(dt);
-        total += dt;
-        if (dt > 300.0) min_reps = 3;   // a slow call is its own evidence
-    }
-    std::sort(samples.begin(), samples.end());
-    return Timing{quantile(samples, 0.50), quantile(samples, 0.25),
-                  quantile(samples, 0.75), (int)samples.size()};
-}
-
-void measure(const Solver& s, const array& A, int batch, int N) {
-    const float err = correctness(s, A);
-    const bool ok = std::isfinite(err) && err <= 1e-3f;
-    const Timing t = ok ? time_ms(s, A) : Timing{};
-    std::printf("%d,%d,%s,%d,%.6f,%.6f,%.6f,%d\n",
-                batch, N, s.name.c_str(), ok ? 1 : 0, t.median, t.p25, t.p75, t.reps);
-    std::fflush(stdout);
 }
 
 } // namespace
@@ -324,6 +292,20 @@ int main(int argc, char** argv) {
     array A = random_symmetric(batch, N);
     eval({A});
 
-    for (const auto& s : solvers) measure(s, A, batch, N);
+    std::vector<sweep::Backend> bs;
+    for (const auto& s : solvers)
+        bs.push_back({[&s, &A](double& call_ms) { return correctness(s, A, call_ms); },
+                      [&s, &A] {
+                          auto [w, V] = s.fn(A);
+                          eval({w, V});
+                      },
+                      s.vectors ? 0 : 1});
+    const std::vector<sweep::Result> rs = sweep::measure_all(bs);
+    for (size_t i = 0; i < solvers.size(); ++i) {
+        const sweep::Timing& t = rs[i].t;
+        std::printf("%d,%d,%s,%d,%.6f,%.6f,%.6f,%d\n",
+                    batch, N, solvers[i].name.c_str(), rs[i].ok ? 1 : 0, t.median, t.p25, t.p75, t.reps);
+    }
+    std::fflush(stdout);
     return 0;
 }

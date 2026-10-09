@@ -455,13 +455,15 @@ def backends_for(N, b):
         ks.append("ql")
         if b >= SHARE_MIN_GRID_BATCH:   # and sharing the batch with the CPU
             ks.append("ql_share")
-    if not ks:
+    tridiag = N >= TRIDIAG_MIN_GRID_N and est_ms("tridiag", N, b) <= cap
+    tb = TB_MIN_GRID_N <= N <= TB_MAX_GRID_N and b >= TB_MIN_GRID_BATCH and est_ms("tridiag_batch", N, b) <= cap
+    if not ks and not tridiag and not tb:   # (no GPU backend timed here: nothing to compare the CPU with)
         return []
-    if est_ms("cpu", N, b) <= cap:
+    if tridiag or tb or est_ms("cpu", N, b) <= cap:   # the reference wherever tridiag(_batch) is timed
         ks.append("cpu")
-    if N >= TRIDIAG_MIN_GRID_N and est_ms("tridiag", N, b) <= cap:
+    if tridiag:
         ks.append("tridiag")
-    if TB_MIN_GRID_N <= N <= TB_MAX_GRID_N and b >= TB_MIN_GRID_BATCH and est_ms("tridiag_batch", N, b) <= cap:
+    if tb:
         ks.append("tridiag_batch")
     vals = [k + VALS for k in ks]        # each again for eigenvalues alone
     if "tridiag" in ks and N >= BAND_MIN_GRID_N:
