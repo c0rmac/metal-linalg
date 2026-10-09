@@ -302,6 +302,10 @@ void band_general_tail(float* A, uint32_t m, uint32_t n, uint32_t lda, uint32_t 
     general_tail(A, m, n, lda, b, k, nullptr);
 }
 
+void band_general_tail(float* A, uint32_t m, uint32_t n, uint32_t lda, uint32_t b, uint32_t k, BandKeep* keep) {
+    general_tail(A, m, n, lda, b, k, keep);
+}
+
 // 16: 32 took 1.4-1.5x its time at 512-2048 (its panels), the same at 4096.
 // The TSQR's top is a tree of up to 2^15 leaves of kLeafRows rows.
 uint32_t qr_block_width(uint32_t m) {

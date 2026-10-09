@@ -54,4 +54,12 @@ void band_to_bidiagonal(uint32_t n, uint32_t nb, float* W, size_t ld, size_t ku,
 void band_to_tridiagonal(uint32_t n, uint32_t kd, float* W, size_t ld, float* d, float* e, unsigned threads,
                          const ChaseReflectors* rec = nullptr);
 
+// bd_chase_apply's blocks of groups G0 .. G1 - 1 (16 sweeps a group) of an
+// order-n chase, their V written by it (ChaseReflectors' L or R, with its
+// taus): per block (G, p), T from V and the taus (slarft's recurrence), and
+// the kernel's Y = -T^T V^T (16 x 32) into the block's seven tiles after V's;
+// a column with no reflector (length 1, or past the last sweep) set to zero
+// with tau 0.
+void chase_build_blocks(float* blocks, float* taus, long n, long G0, long G1);
+
 } // namespace metal_linalg::detail

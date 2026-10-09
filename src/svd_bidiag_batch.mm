@@ -71,7 +71,9 @@ struct BlParams { uint32_t rows, cols, m, n, lda, sa, c0; };
 struct BsParams { uint32_t rows, cols, c0; };
 struct BcParams { uint32_t per, c0; };
 struct BwParams { uint32_t len, kb, bb, k0, lda, left, sa, sv, svb, stb; };
-struct BqParams { uint32_t p, nb, rs, cs, sa, sv, st; };
+struct BqParams { uint32_t p, nb, rs, cs, sa, sv, st, ldv, ldt; };
+struct MergeParams { uint32_t np, b, sg, stb, sta; };
+struct ChaseParams { uint32_t n, rs, cs, pmax, pass0, pass1; };
 
 // Singular values alone from this k: every matrix to an upper band of width
 // kBand by blocks on the GPU (bb_panel and batched products), the bands to
@@ -82,6 +84,14 @@ struct BqParams { uint32_t p, nb, rs, cs, sa, sv, st; };
 constexpr uint32_t kBand = 16;
 constexpr uint32_t kBandMinK = 160;
 
+// With vectors from this k: two stages too, both stages' reflectors kept and
+// applied (see direct()), the back-transformation's blocks aggregated kAgg
+// panels at a time. On an M5 Pro against the direct reduction: 1.07x at
+// 16 x 384^2, 1.08-1.27x at 512, 1.6-2.1x at 768, 2.7-3.4x at 1024; 0.88-0.9x
+// at 256.
+constexpr uint32_t kBandVectorsMinK = 384;
+constexpr uint32_t kAgg = 8;
+
 using L = __LAPACK_int;
 
 struct Cache {
@@ -90,6 +100,7 @@ struct Cache {
     // to 128, 256, 512 and 1024 rows
     id<MTLComputePipelineState> panels[4] = {nil, nil, nil, nil};
     id<MTLComputePipelineState> load = nil, store = nil, copy = nil, make_v = nil, make_t = nil, band_panel = nil;
+    id<MTLComputePipelineState> merge_t = nil, chase_wide = nil, chase_narrow = nil;
 
     void ensure() {
         if (load) return;
@@ -104,6 +115,9 @@ struct Cache {
         make_v = mk(@"bd_make_v");
         make_t = mk(@"bd_make_t");
         band_panel = mk(@"bb_panel");
+        merge_t = mk(@"bd_merge_t");
+        chase_wide = mk(@"bd_chase_apply_4_4");
+        chase_narrow = mk(@"bd_chase_apply_2_8");
     }
 };
 
@@ -160,12 +174,35 @@ struct Work {
     // kBand) and T, and two m x kBand products
     uint32_t sb1 = 0, sb2 = 0, sbz = 0;
     id<MTLBuffer> BV1, BV2, BT1, BT2, BZ, BZ2;
+    // with vectors in two stages: the blocks' reflectors, QY (m x n) and PY
+    // (n x n) row-major, a panel's V at its row and column (PY's a block's
+    // row panel at row k + kBand), zeros above, and their T's, 32 x 32 slots;
+    // the Gram matrix and aggregated T of the back-transformation's blocks;
+    // Q and P (column-major, ld ldq and ldp, multiples of 32 for
+    // bd_chase_apply); U_B and V_B^T (column-major n x n); the chase's blocks
+    // (bd_chase_apply's); the outputs; the products' scratch
+    bool bandv = false;
+    uint32_t blocks = 0, ldq = 0, ldp = 0;
+    size_t sqy = 0, spy = 0, stq = 0, sq = 0, sp = 0, sub = 0, slv = 0, so = 0, sza = 0;
+    id<MTLBuffer> QY, PY, QT, PT, GA, TA, Q, P, UB, VTB, LV, RV, OU, OV, ZA, ZA2;
 };
 
-Work& work(Cache& c, uint32_t m, uint32_t n, uint32_t capacity, bool vectors, int slot, bool band = false) {
+// Floats a matrix of the two-stage reduction with vectors takes in a slot.
+size_t bandv_floats(uint32_t m, uint32_t n) {
+    const size_t pmax = n >= 2 ? (n - 2) / 16 : 0, nblocks = (pmax + 1) * (pmax + 2) / 2;
+    const size_t ldq = (m + 31) / 32 * 32, ldp = (n + 31) / 32 * 32, blocks = n / kBand + 1;
+    return (size_t)m * n * 4 + (size_t)n * n * 3 + 2 * blocks * 1024 + ldq * n + ldp * n +
+           2 * nblocks * metal_linalg::detail::kChaseBlockFloats + 2 * (size_t)std::max(m, n) * kAgg * kBand +
+           2 * 128 * 128;
+}
+
+Work& work(Cache& c, uint32_t m, uint32_t n, uint32_t capacity, bool vectors, int slot, bool band = false,
+           bool bandv = false) {
     static Work ws[2];
     Work& w = ws[slot];
-    if (w.A && w.m == m && w.n == n && w.capacity >= capacity && (w.vectors || !vectors) && (w.band || !band)) return w;
+    if (w.A && w.m == m && w.n == n && w.capacity >= capacity && (w.vectors || !vectors) && (w.band || !band) &&
+        (w.bandv || !bandv))
+        return w;
     id<MTLDevice> dev = c.rt.device;
     auto make = [&](size_t floats, MTLResourceOptions opt) {
         id<MTLBuffer> b = [dev newBufferWithLength:std::max<size_t>(floats, 4) * 4 options:opt];
@@ -179,6 +216,7 @@ Work& work(Cache& c, uint32_t m, uint32_t n, uint32_t capacity, bool vectors, in
     w.capacity = capacity;
     w.vectors = vectors;
     w.band = band;
+    w.bandv = bandv;
     w.lda = (m + 7) / 8 * 8;
     w.sa = w.lda * n;
     w.sx = m * (kPanel + 1);
@@ -202,6 +240,39 @@ Work& work(Cache& c, uint32_t m, uint32_t n, uint32_t capacity, bool vectors, in
         w.BT2 = make(C * kBand * kBand, priv);
         w.BZ = make(C * w.sbz, priv);
         w.BZ2 = make(C * w.sbz, priv);
+    }
+    if (bandv) {
+        const size_t pmax = n >= 2 ? (n - 2) / 16 : 0;
+        w.blocks = n / kBand + 1;   // at least the GPU's blocks
+        w.ldq = (m + 31) / 32 * 32;
+        w.ldp = (n + 31) / 32 * 32;
+        w.sqy = (size_t)m * n;
+        w.spy = (size_t)n * n;
+        w.stq = (size_t)w.blocks * 1024;
+        w.sq = (size_t)w.ldq * n;
+        w.sp = (size_t)w.ldp * n;
+        w.sub = (size_t)n * n;
+        w.slv = (pmax + 1) * (pmax + 2) / 2 * metal_linalg::detail::kChaseBlockFloats;
+        w.so = (size_t)m * n;
+        w.sza = (size_t)std::max(m, n) * kAgg * kBand;
+        w.QY = make(C * w.sqy, shared);
+        w.PY = make(C * w.spy, shared);
+        std::memset(w.QY.contents, 0, C * w.sqy * 4);   // the zeros above each panel, never written
+        std::memset(w.PY.contents, 0, C * w.spy * 4);
+        w.QT = make(C * w.stq, priv);
+        w.PT = make(C * w.stq, priv);
+        w.GA = make(C * 128 * 128, priv);
+        w.TA = make(C * 128 * 128, priv);
+        w.Q = make(C * w.sq, shared);
+        w.P = make(C * w.sp, shared);
+        w.UB = make(C * w.sub, shared);
+        w.VTB = make(C * w.sub, shared);
+        w.LV = make(C * w.slv, shared);
+        w.RV = make(C * w.slv, shared);
+        w.OU = make(C * w.so, priv);
+        w.OV = make(C * w.so, priv);
+        w.ZA = make(C * w.sza, priv);
+        w.ZA2 = make(C * w.sza, priv);
     }
     if (vectors) {
         w.su = m * n;
@@ -274,9 +345,11 @@ void encode_reduce(Cache& c, id<MTLCommandBuffer> cb, Work& w, uint32_t cnt, id<
 // per block the column panel's QR (bb_panel) and Q^T applied to the columns
 // right of it, then the row panel's LQ (bb_panel on its transpose) and its Q
 // applied to the rows below, the products batched (on the row-major views of
-// the column-major matrices). Returns the first column left to the CPU.
+// the column-major matrices). Returns the first column left to the CPU. With
+// `keep` (vectors), each block's reflectors into QY, PY and their T's into QT,
+// PT, where the back-transformation reads them, instead of scratch.
 uint32_t encode_band(Cache& c, id<MTLCommandBuffer> cb, Work& w, uint32_t cnt, id<MTLBuffer> src, id<MTLBuffer> index,
-                     id<MTLBuffer> scale, uint32_t c0, uint32_t rows, uint32_t cols) {
+                     id<MTLBuffer> scale, uint32_t c0, uint32_t rows, uint32_t cols, bool keep = false) {
     id<MTLDevice> dev = c.rt.device;
     const uint32_t m = w.m, n = w.n, lda = w.lda, b = kBand;
     id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
@@ -288,27 +361,35 @@ uint32_t encode_band(Cache& c, id<MTLCommandBuffer> cb, Work& w, uint32_t cnt, i
     [enc setBuffer:scale offset:0 atIndex:3];
     [enc setBytes:&lp length:sizeof lp atIndex:4];
     [enc dispatchThreadgroups:MTLSizeMake((m + 31) / 32, (n + 31) / 32, cnt) threadsPerThreadgroup:MTLSizeMake(32, 8, 1)];
-    auto panel = [&](size_t off, uint32_t p, uint32_t rs, uint32_t cs, id<MTLBuffer> V, uint32_t sv, id<MTLBuffer> T) {
-        const BqParams q{p, b, rs, cs, w.sa, sv, b * b};
+    auto panel = [&](size_t off, uint32_t p, uint32_t rs, uint32_t cs, id<MTLBuffer> V, size_t voff, size_t sv,
+                     uint32_t ldv, id<MTLBuffer> T, size_t toff, size_t st, uint32_t ldt) {
+        const BqParams q{p, b, rs, cs, w.sa, (uint32_t)sv, (uint32_t)st, ldv, ldt};
         [enc setComputePipelineState:c.band_panel];
         [enc setBuffer:w.A offset:off * 4 atIndex:0];
-        [enc setBuffer:V offset:0 atIndex:1];
-        [enc setBuffer:T offset:0 atIndex:2];
+        [enc setBuffer:V offset:voff * 4 atIndex:1];
+        [enc setBuffer:T offset:toff * 4 atIndex:2];
         [enc setBytes:&q length:sizeof q atIndex:3];
         [enc dispatchThreadgroups:MTLSizeMake(cnt, 1, 1)
             threadsPerThreadgroup:MTLSizeMake(std::max<uint32_t>(32, (p + 31) / 32 * 32), 1, 1)];
     };
     uint32_t k = 0;
     for (; k + 3 * b <= n; k += b) {
-        const uint32_t p = m - k, n2 = n - k - b, m2 = m - k - b;
+        const uint32_t p = m - k, n2 = n - k - b, m2 = m - k - b, j = k / b;
+        // Where the panels' V and T go: scratch, or (keep) QY/PY and QT/PT
+        id<MTLBuffer> v1b = keep ? w.QY : w.BV1, t1b = keep ? w.QT : w.BT1;
+        id<MTLBuffer> v2b = keep ? w.PY : w.BV2, t2b = keep ? w.PT : w.BT2;
+        const size_t v1o = keep ? (size_t)k * n + k : 0, v2o = keep ? (size_t)(k + b) * n + k : 0;
+        const size_t t1o = keep ? (size_t)j * 1024 : 0, sv1 = keep ? w.sqy : w.sb1, sv2 = keep ? w.spy : w.sb2;
+        const size_t st = keep ? w.stq : (size_t)b * b;
+        const uint32_t ldv = keep ? n : b, ldt = keep ? 32 : b;
         // The column panel A(k:, k:k+b): R in place, V1, T1
-        panel((size_t)k * lda + k, p, 1, lda, w.BV1, w.sb1, w.BT1);
+        panel((size_t)k * lda + k, p, 1, lda, v1b, v1o, sv1, ldv, t1b, t1o, st, ldt);
         [enc endEncoding];
         // A(k:, k+b:) <- Q1^T A(k:, k+b:): on its transpose S (n2 x p),
         // S -= ((S V1) T1) V1^T
         MPSMatrix* S = mps(w.A, (size_t)(k + b) * lda + k, n2, p, lda, cnt, w.sa);
-        MPSMatrix* V1 = mps(w.BV1, 0, p, b, b, cnt, w.sb1);
-        MPSMatrix* T1 = mps(w.BT1, 0, b, b, b, cnt, b * b);
+        MPSMatrix* V1 = mps(v1b, v1o, p, b, ldv, cnt, sv1);
+        MPSMatrix* T1 = mps(t1b, t1o, b, b, ldt, cnt, st);
         MPSMatrix* Z = mps(w.BZ, 0, n2, b, b, cnt, w.sbz);
         MPSMatrix* Z2 = mps(w.BZ2, 0, n2, b, b, cnt, w.sbz);
         gemm(dev, cb, S, false, V1, false, Z, n2, b, p, 1, 0, cnt);
@@ -317,13 +398,13 @@ uint32_t encode_band(Cache& c, id<MTLCommandBuffer> cb, Work& w, uint32_t cnt, i
         // The row panel A(k:k+b, k+b:) through its transpose (n2 x b): L in
         // place, V2, T2
         enc = [cb computeCommandEncoder];
-        panel((size_t)(k + b) * lda + k, n2, lda, 1, w.BV2, w.sb2, w.BT2);
+        panel((size_t)(k + b) * lda + k, n2, lda, 1, v2b, v2o, sv2, ldv, t2b, t1o, st, ldt);
         [enc endEncoding];
         // A(k+b:, k+b:) <- A Q2, Q2 = I - V2 T2 V2^T: on its transpose S2
         // (n2 x m2), S2 -= V2 (T2^T (V2^T S2))
         MPSMatrix* S2 = mps(w.A, (size_t)(k + b) * lda + k + b, n2, m2, lda, cnt, w.sa);
-        MPSMatrix* V2 = mps(w.BV2, 0, n2, b, b, cnt, w.sb2);
-        MPSMatrix* T2 = mps(w.BT2, 0, b, b, b, cnt, b * b);
+        MPSMatrix* V2 = mps(v2b, v2o, n2, b, ldv, cnt, sv2);
+        MPSMatrix* T2 = mps(t2b, t1o, b, b, ldt, cnt, st);
         MPSMatrix* Y = mps(w.BZ, 0, b, m2, m, cnt, w.sbz);
         MPSMatrix* Y2 = mps(w.BZ2, 0, b, m2, m, cnt, w.sbz);
         gemm(dev, cb, V2, true, S2, false, Y, b, m2, n2, 1, 0, cnt);
@@ -387,6 +468,168 @@ void encode_back(Cache& c, id<MTLCommandBuffer> cb, Work& w, uint32_t cnt) {
     }
 }
 
+// Step 3 with vectors in two stages, for `cnt` matrices whose `blocks` GPU
+// blocks were kept (encode_band) and whose CPU step left Q = Q_tail [I; 0],
+// P = P_tail, U_B, V_B^T and the chase's blocks in the slot: Q <- Q1 Q and
+// P <- P1 P, kAgg panels an aggregate, last first (I - Y Ta Y^T, Ta merged by
+// bd_merge_t from the Gram matrix Y^T Y and the panels' T's), on the
+// row-major views Q^T and P^T: Z <- Z - ((Z Y) Ta^T) Y^T; then Q <- Q Q2 and
+// P <- P P2 (bd_chase_apply, a dispatch a matrix, the matrices at once); then
+// the outputs: U = Q U_B and V^T = V_B^T P^T, or for a wide matrix's
+// transpose U = P V_B and V^T = U_B^T Q^T, row-major, copied to matrix
+// index[c0 + j].
+void encode_back_band(Cache& c, id<MTLCommandBuffer> cb, Work& w, uint32_t cnt, uint32_t blocks, bool wide,
+                      id<MTLBuffer> uo, id<MTLBuffer> vo, id<MTLBuffer> index, uint32_t c0) {
+    id<MTLDevice> dev = c.rt.device;
+    const uint32_t m = w.m, n = w.n, b = kBand, aggs = (blocks + kAgg - 1) / kAgg;
+    for (int a = (int)aggs - 1; a >= 0; --a) {
+        const uint32_t j0 = (uint32_t)a * kAgg, np = std::min(kAgg, blocks - j0), wa = np * b;
+        for (int side = 0; side < 2; ++side) {
+            const bool left = side == 0;
+            const uint32_t r0 = j0 * b + (left ? 0 : b), len = (left ? m : n) - r0, cols = n - r0;
+            const uint32_t ld = left ? w.ldq : w.ldp;
+            MPSMatrix* Y = left ? mps(w.QY, (size_t)r0 * n + r0, len, wa, n, cnt, w.sqy)
+                                : mps(w.PY, (size_t)r0 * n + j0 * b, len, wa, n, cnt, w.spy);
+            gemm(dev, cb, Y, true, Y, false, mps(w.GA, 0, wa, wa, 128, cnt, 128 * 128), wa, wa, len, 1, 0, cnt);
+            const MergeParams mp{np, b, 128 * 128, (uint32_t)w.stq, 128 * 128};
+            id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+            [enc setComputePipelineState:c.merge_t];
+            [enc setBuffer:w.GA offset:0 atIndex:0];
+            [enc setBuffer:left ? w.QT : w.PT offset:(size_t)j0 * 1024 * 4 atIndex:1];
+            [enc setBuffer:w.TA offset:0 atIndex:2];
+            [enc setBytes:&mp length:sizeof mp atIndex:3];
+            [enc dispatchThreadgroups:MTLSizeMake(1, 1, cnt) threadsPerThreadgroup:MTLSizeMake(1024, 1, 1)];
+            [enc endEncoding];
+            MPSMatrix* Zm = mps(left ? w.Q : w.P, (size_t)r0 * ld + r0, cols, len, ld, cnt, left ? w.sq : w.sp);
+            MPSMatrix* Ta = mps(w.TA, 0, wa, wa, 128, cnt, 128 * 128);
+            MPSMatrix* W = mps(w.ZA, 0, cols, wa, kAgg * b, cnt, w.sza);
+            MPSMatrix* W2 = mps(w.ZA2, 0, cols, wa, kAgg * b, cnt, w.sza);
+            gemm(dev, cb, Zm, false, Y, false, W, cols, wa, len, 1, 0, cnt);
+            gemm(dev, cb, W, false, Ta, true, W2, cols, wa, wa, 1, 0, cnt);
+            gemm(dev, cb, W2, false, Y, true, Zm, cols, len, wa, -1, 1, cnt);
+        }
+    }
+    // Q <- Q Q2, P <- P P2: on X = Q^T (n rows, ldq columns) and P^T
+    if (n >= 3) {
+        const uint32_t pmax = (n - 2) / 16, groups = pmax + 1;
+        for (int side = 0; side < 2; ++side) {
+            const bool left = side == 0;
+            const uint32_t ld = left ? w.ldq : w.ldp;
+            const bool widek = ld / 32 >= 64;
+            const uint32_t C = widek ? 32 : 16, K = widek ? 4 : 8;
+            const ChaseParams q{n, ld, 1, pmax, 0, (groups + K - 1) / K};
+            id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoderWithDispatchType:MTLDispatchTypeConcurrent];
+            [enc setComputePipelineState:widek ? c.chase_wide : c.chase_narrow];
+            [enc setBytes:&q length:sizeof q atIndex:2];
+            for (uint32_t j = 0; j < cnt; ++j) {
+                [enc setBuffer:left ? w.Q : w.P offset:(size_t)j * (left ? w.sq : w.sp) * 4 atIndex:0];
+                [enc setBuffer:left ? w.LV : w.RV offset:(size_t)j * w.slv * 4 atIndex:1];
+                [enc dispatchThreadgroups:MTLSizeMake(ld / C, 1, 1) threadsPerThreadgroup:MTLSizeMake(32 * K, 1, 1)];
+            }
+            [enc endEncoding];
+        }
+    }
+    // The outputs, row-major, on the row-major views of the column-major
+    // factors: Q^T (n x m, ld ldq), P^T (n x n, ld ldp), U_B^T and V_B
+    MPSMatrix* Qr = mps(w.Q, 0, n, m, w.ldq, cnt, w.sq);
+    MPSMatrix* Pr = mps(w.P, 0, n, n, w.ldp, cnt, w.sp);
+    MPSMatrix* UBr = mps(w.UB, 0, n, n, n, cnt, w.sub);
+    MPSMatrix* VBr = mps(w.VTB, 0, n, n, n, cnt, w.sub);
+    const size_t pu = wide ? (size_t)n * n : (size_t)m * n, pv = wide ? (size_t)n * m : (size_t)n * n;
+    if (!wide) {
+        gemm(dev, cb, Qr, true, UBr, true, mps(w.OU, 0, m, n, n, cnt, pu), m, n, n, 1, 0, cnt);    // Q U_B
+        gemm(dev, cb, VBr, true, Pr, false, mps(w.OV, 0, n, n, n, cnt, pv), n, n, n, 1, 0, cnt);   // V_B^T P^T
+    } else {
+        gemm(dev, cb, Pr, true, VBr, false, mps(w.OU, 0, n, n, n, cnt, pu), n, n, n, 1, 0, cnt);   // P V_B
+        gemm(dev, cb, UBr, false, Qr, false, mps(w.OV, 0, n, m, m, cnt, pv), n, m, n, 1, 0, cnt);  // U_B^T Q^T
+    }
+    id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+    [enc setComputePipelineState:c.copy];
+    for (int f = 0; f < 2; ++f) {
+        const BcParams cp{(uint32_t)(f ? pv : pu), c0};
+        [enc setBuffer:f ? w.OV : w.OU offset:0 atIndex:0];
+        [enc setBuffer:f ? vo : uo offset:0 atIndex:1];
+        [enc setBuffer:index offset:0 atIndex:2];
+        [enc setBytes:&cp length:sizeof cp atIndex:3];
+        [enc dispatchThreads:MTLSizeMake(cp.per, cnt, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+    }
+    [enc endEncoding];
+}
+
+// Step 2 with vectors in two stages, for the slot's `cnt` matrices on the
+// CPU's cores, a matrix a core (their threads shared out when there are
+// fewer matrices than threads): the last columns from `tail` on by LAPACK,
+// keeping their reflectors; the band chased to bidiagonal, the chase's
+// reflectors into the slot's blocks (bd_chase_apply's, Y built beside V);
+// Q = Q_tail [I; 0] and P = P_tail, column-major; B = U_B S V_B^T by the
+// divide and conquer. done(j, d) takes matrix j's singular values; which(j)
+// names it in errors.
+template <class Done, class Which>
+void solve_band_vectors(Work& w, uint32_t cnt, uint32_t tail, unsigned threads, const Done& done, const Which& which) {
+    const uint32_t m = w.m, n = w.n, b = kBand;
+    const size_t pmax = n >= 2 ? (n - 2) / 16 : 0, nblocks = (pmax + 1) * (pmax + 2) / 2;
+    const long groups = (long)pmax + 1;
+    const unsigned per = std::max(1u, threads / std::max(1u, std::min(cnt, threads)));
+    float* A = static_cast<float*>(w.A.contents);
+    float* Q = static_cast<float*>(w.Q.contents);
+    float* P = static_cast<float*>(w.P.contents);
+    float* UB = static_cast<float*>(w.UB.contents);
+    float* VTB = static_cast<float*>(w.VTB.contents);
+    float* LV = static_cast<float*>(w.LV.contents);
+    float* RV = static_cast<float*>(w.RV.contents);
+    metal_linalg::detail::lapack_batches(cnt, (size_t)m * n, threads, [&](uint32_t b0, uint32_t b1) {
+        std::vector<float> dj(n), ej(n), ltau(nblocks * 16), rtau(nblocks * 16), work((size_t)std::max(m, n) * 64 + 64);
+        const size_t ld = 3 * (size_t)b + 1, ku = 2 * (size_t)b;
+        std::vector<float> ab(ld * n);
+        for (uint32_t j = b0; j < b1; ++j) {
+            float* Aj = A + (size_t)j * w.sa;
+            metal_linalg::detail::BandKeep keep;
+            metal_linalg::detail::band_general_tail(Aj, m, n, w.lda, b, tail, &keep);
+            std::fill(ab.begin(), ab.end(), 0.0f);
+            for (uint32_t c = 0; c < n; ++c)
+                for (uint32_t r = c > b ? c - b : 0; r <= c; ++r) ab[(size_t)c * ld + ku + r - c] = Aj[(size_t)c * w.lda + r];
+            metal_linalg::detail::ChaseReflectors rec;
+            rec.L = LV + (size_t)j * w.slv;
+            rec.Ltau = ltau.data();
+            rec.R = RV + (size_t)j * w.slv;
+            rec.Rtau = rtau.data();
+            rec.pmax = pmax;
+            metal_linalg::detail::band_to_bidiagonal(n, b, ab.data(), ld, ku, dj.data(), ej.data(), per, &rec);
+            metal_linalg::detail::chase_build_blocks(rec.L, rec.Ltau, n, 0, groups);
+            metal_linalg::detail::chase_build_blocks(rec.R, rec.Rtau, n, 0, groups);
+            // Q = [I; 0] and P = I, then the tail's reflectors, last step first:
+            // Q(k:, k:) <- H Q(k:, k:), P(k+bk:, k+bk:) <- G P(k+bk:, k+bk:)
+            float* Qj = Q + (size_t)j * w.sq;
+            float* Pj = P + (size_t)j * w.sp;
+            for (uint32_t c = 0; c < n; ++c) {
+                std::fill(Qj + (size_t)c * w.ldq, Qj + (size_t)(c + 1) * w.ldq, 0.0f);
+                Qj[(size_t)c * w.ldq + c] = 1.0f;
+                std::fill(Pj + (size_t)c * w.ldp, Pj + (size_t)(c + 1) * w.ldp, 0.0f);
+                Pj[(size_t)c * w.ldp + c] = 1.0f;
+            }
+            L lw = (L)work.size(), info = 0;
+            for (auto it = keep.steps.rbegin(); it != keep.steps.rend(); ++it) {
+                const auto& st = *it;
+                if (st.nr > 0) {
+                    L N = st.nr, Kt = (L)st.tp.size(), LD = st.bk, LDP = w.ldp;
+                    sormlq_("L", "T", &N, &N, &Kt, const_cast<float*>(st.lq.data()), &LD,
+                            const_cast<float*>(st.tp.data()), Pj + (size_t)(st.k + st.bk) * w.ldp + st.k + st.bk, &LDP,
+                            work.data(), &lw, &info);
+                }
+                L Mq = m - st.k, Nq = n - st.k, Kq = st.bk, LDA = w.lda, LDQ = w.ldq;
+                sormqr_("L", "N", &Mq, &Nq, &Kq, Aj + (size_t)st.k * w.lda + st.k, &LDA, const_cast<float*>(st.tq.data()),
+                        Qj + (size_t)st.k * w.ldq + st.k, &LDQ, work.data(), &lw, &info);
+            }
+            const long dinfo = metal_linalg::detail::bidiagonal_svd(n, dj.data(), ej.data(), UB + (size_t)j * w.sub, n,
+                                                                    VTB + (size_t)j * w.sub, n, per);
+            if (dinfo != 0)
+                throw std::runtime_error("[svd] bidiag_batch: the divide and conquer failed on matrix " +
+                                         std::to_string(which(j)) + ", info " + std::to_string(dinfo) + ".");
+            done(j, dj.data());
+        }
+    });
+}
+
 Cache& shared_cache() {
     static Cache cache;
     cache.ensure();
@@ -439,6 +682,10 @@ void direct(const Matrices& a, float* u_out, float* s_out, float* vt_out, uint32
     const size_t chunks = std::clamp<size_t>(std::min<size_t>(max_chunks, total / std::max<size_t>(1, min_chunk)), 1, total);
     size_t chunk = (total + chunks - 1) / chunks;
     chunk = std::min(chunk, std::max<size_t>(1, ((size_t)1 << 25) / per));
+    // With vectors in two stages a matrix takes about 13 of its own in a slot
+    // (52 MB at 1024 x 1024): at most 2^26 floats (256 MB) a slot
+    if (vectors && n >= kBandVectorsMinK)
+        chunk = std::min(chunk, std::max<size_t>(1, ((size_t)1 << 26) / bandv_floats(m, n)));
     const size_t count = (total + chunk - 1) / chunk;
 
     id<MTLBuffer> src = metal_linalg::detail::input_buffer(dev, a);
@@ -461,12 +708,15 @@ void direct(const Matrices& a, float* u_out, float* s_out, float* vt_out, uint32
     id<MTLBuffer> uo = vectors ? output(u_out, (size_t)batch * M * K) : nil;
     id<MTLBuffer> vo = vectors ? output(vt_out, (size_t)batch * K * N) : nil;
 
-    // Singular values alone from kBandMinK: in two stages, a band first
+    // Singular values alone from kBandMinK, and with vectors from
+    // kBandVectorsMinK: in two stages, a band first
     const char* band_env = std::getenv("SVD_BIDIAG_BATCH_BAND");
-    const bool band = !vectors && n >= kBandMinK && !(band_env && std::string(band_env) == "0");
+    const bool band_ok = !(band_env && std::string(band_env) == "0");
+    const bool band = !vectors && n >= kBandMinK && band_ok;
+    const bool bandv = vectors && n >= kBandVectorsMinK && band_ok;
     uint32_t band_tail = 0;   // the first column the CPU reduces (the same for every chunk)
-    Work* ws[2] = {&work(cache, m, n, (uint32_t)chunk, vectors, 0, band),
-                   count > 1 ? &work(cache, m, n, (uint32_t)chunk, vectors, 1, band) : nullptr};
+    Work* ws[2] = {&work(cache, m, n, (uint32_t)chunk, vectors && !bandv, 0, band || bandv, bandv),
+                   count > 1 ? &work(cache, m, n, (uint32_t)chunk, vectors && !bandv, 1, band || bandv, bandv) : nullptr};
     auto check = [](id<MTLCommandBuffer> cb) {
         [cb waitUntilCompleted];
         if (cb.error)
@@ -481,7 +731,8 @@ void direct(const Matrices& a, float* u_out, float* s_out, float* vt_out, uint32
     auto cnt_of = [&](size_t k) { return (uint32_t)std::min(chunk, total - k * chunk); };
     auto reduce = [&](size_t k) {
         id<MTLCommandBuffer> cb = [cache.rt.queue commandBufferWithUnretainedReferences];
-        if (band) band_tail = encode_band(cache, cb, *ws[k % 2], cnt_of(k), src, index, scale, (uint32_t)(k * chunk), M, N);
+        if (band || bandv)
+            band_tail = encode_band(cache, cb, *ws[k % 2], cnt_of(k), src, index, scale, (uint32_t)(k * chunk), M, N, bandv);
         else      encode_reduce(cache, cb, *ws[k % 2], cnt_of(k), src, index, scale, (uint32_t)(k * chunk), M, N, threads);
         return commit(cb);
     };
@@ -489,6 +740,10 @@ void direct(const Matrices& a, float* u_out, float* s_out, float* vt_out, uint32
         Work& w = *ws[k % 2];
         const uint32_t cnt = cnt_of(k), c0 = (uint32_t)(k * chunk);
         id<MTLCommandBuffer> cb = [cache.rt.queue commandBufferWithUnretainedReferences];
+        if (bandv) {
+            encode_back_band(cache, cb, w, cnt, band_tail / kBand, wide, uo, vo, index, c0);
+            return commit(cb);
+        }
         encode_back(cache, cb, w, cnt);
         id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
         if (!wide) {   // U (m x n) and V^T (n x n) column-major, transposed out
@@ -522,6 +777,16 @@ void direct(const Matrices& a, float* u_out, float* s_out, float* vt_out, uint32
     auto solve = [&](size_t k) {
         Work& w = *ws[k % 2];
         const uint32_t cnt = cnt_of(k);
+        if (bandv) {
+            solve_band_vectors(w, cnt, band_tail, solve_threads, [&](uint32_t j, const float* dj) {
+                const size_t at = k * chunk + j;
+                const float unscale = 1.0f / sc[at];
+                float* sb = s_out + (size_t)todo[at] * K;
+                for (uint32_t i = 0; i < n; ++i) sb[i] = dj[i] * unscale;   // descending
+                if (info_out) info_out[todo[at]] = 1u | (1u << 16);
+            }, [&](uint32_t j) { return todo[k * chunk + j]; });
+            return;
+        }
         const float* dg = static_cast<const float*>(w.d.contents);
         const float* eg = static_cast<const float*>(w.e.contents);
         float* U = vectors ? static_cast<float*>(w.U.contents) : nullptr;

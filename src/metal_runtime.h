@@ -367,6 +367,10 @@ struct BandKeep : BandWatch {
 // CPU (A column-major m x n, ld lda): the same block steps, so that A ends an
 // upper band of width b; the batch backend's tail (svd_bidiag_batch.mm).
 void band_general_tail(float* A, uint32_t m, uint32_t n, uint32_t lda, uint32_t b, uint32_t k);
+// The same keeping its reflectors as band_reduce_general's tail keeps them:
+// keep->tail = k and keep->steps (the QR's reflectors stay below the band in
+// A, the LQ's are copied out); only those two fields are touched.
+void band_general_tail(float* A, uint32_t m, uint32_t n, uint32_t lda, uint32_t b, uint32_t k, BandKeep* keep);
 
 bool band_reduce_general(id<MTLBuffer> A, uint32_t m, uint32_t n, uint32_t lda, uint32_t b,
                          BandKeep* keep = nullptr, BandWatch* watch = nullptr);

@@ -440,4 +440,45 @@ void band_to_tridiagonal(uint32_t n, uint32_t kd, float* W, size_t ld, float* d,
     }
 }
 
+void chase_build_blocks(float* Bp, float* taus, long n, long G0, long G1) {
+    constexpr size_t kb = kChaseBlockFloats;
+    const long pmax = (n - 2) / 16;
+    // V's tile (row, column) as a slot of the block; -1 for a zero tile.
+    auto vslot = [](long rt, long ct) -> long { return ct == 0 ? (rt <= 2 ? rt : -1) : (rt >= 1 ? rt + 2 : -1); };
+    for (long G = G0; G < G1; ++G) {
+        for (long p = G; p <= pmax; ++p) {
+            const long j = p - G, blk = G * (pmax + 1) - G * (G - 1) / 2 + j;
+            float* B = Bp + blk * (long)kb;
+            float* tau = taus + blk * 16;
+            for (long c = 0; c < 16; ++c) {
+                const long s = 16 * G + c, a = s + 1 + 16 * j, e = std::min(s + 16 * (j + 1), n - 1);
+                if (s <= n - 2 && e - a + 1 >= 2) continue;
+                for (long r = 8 * (c / 8); r < 8 * (c / 8) + 24; ++r) B[vslot(r / 8, c / 8) * 64 + (r % 8) * 8 + c % 8] = 0.0f;
+                tau[c] = 0.0f;
+            }
+            // Y = -T^T V^T, with T slarft's forward T, row by row: Y_i =
+            // -tau_i (V_i + sum_{m < i} (V_m . V_i) Y_m). Reflector c spans
+            // rows c .. c + 15 of the block (Y_i rows up to i + 15).
+            float Vt[16][32] = {}, Y[16][32] = {};   // a reflector a row
+            for (long c = 0; c < 16; ++c)
+                for (long r = c; r < c + 16; ++r) Vt[c][r] = B[vslot(r / 8, c / 8) * 64 + (r % 8) * 8 + c % 8];
+            for (long i = 0; i < 16; ++i) {
+                if (tau[i] == 0.0f) continue;
+                float* y = Y[i];
+                for (long r = i; r < i + 16; ++r) y[r] = Vt[i][r];
+                for (long m = std::max(0L, i - 15); m < i; ++m) {
+                    float z = 0.0f;
+                    for (long r = i; r <= m + 15; ++r) z += Vt[m][r] * Vt[i][r];
+                    for (long r = 0; r <= m + 15; ++r) y[r] += z * Y[m][r];
+                }
+                for (long r = 0; r < i + 16; ++r) y[r] *= -tau[i];
+            }
+            static constexpr long yt[7][2] = {{0, 0}, {0, 1}, {0, 2}, {1, 0}, {1, 1}, {1, 2}, {1, 3}};
+            for (long t = 0; t < 7; ++t)
+                for (long ii = 0; ii < 8; ++ii)
+                    for (long rr = 0; rr < 8; ++rr) B[(6 + t) * 64 + ii * 8 + rr] = Y[8 * yt[t][0] + ii][8 * yt[t][1] + rr];
+        }
+    }
+}
+
 } // namespace metal_linalg::detail

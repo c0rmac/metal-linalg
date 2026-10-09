@@ -1818,12 +1818,14 @@ kernel void bd_make_t(device const float* G [[buffer(0)]], device const float* t
 // matrix: p x nb (nb <= 16, p <= 1024), element (r, c) at r * rs + c * cs
 // from the buffer's offset, matrix j at j * sa; R in place, zeros below it;
 // V (p x nb, row-major, its unit diagonal explicit) to V + j * sv; T (nb x
-// nb, row-major, H(0) ... H(nb-1) = I - V T V^T) to T + j * st. A threadgroup
+// nb, row-major, H(0) ... H(nb-1) = I - V T V^T) to T + j * st; V's rows
+// ldv apart and T's ldt (nb, or wider to write them straight into the
+// layout their products read: bidiag_batch with vectors). A threadgroup
 // a matrix and a thread a row, its nb entries in registers; per column, the
 // reflector's norm (one sum of squares) and then 32 sums at once, the remaining columns' products with v and the products of
 // the earlier v's with it (for T), across the lanes by five shuffle stages.
 // The strides let a row panel be factored through its transpose.
-struct BqParams { uint p, nb, rs, cs, sa, sv, st; };
+struct BqParams { uint p, nb, rs, cs, sa, sv, st, ldv, ldt; };
 
 #define BQ_U16(...) { { constexpr uint c = 0; __VA_ARGS__ } { constexpr uint c = 1; __VA_ARGS__ } { constexpr uint c = 2; __VA_ARGS__ } { constexpr uint c = 3; __VA_ARGS__ } { constexpr uint c = 4; __VA_ARGS__ } { constexpr uint c = 5; __VA_ARGS__ } { constexpr uint c = 6; __VA_ARGS__ } { constexpr uint c = 7; __VA_ARGS__ } { constexpr uint c = 8; __VA_ARGS__ } { constexpr uint c = 9; __VA_ARGS__ } { constexpr uint c = 10; __VA_ARGS__ } { constexpr uint c = 11; __VA_ARGS__ } { constexpr uint c = 12; __VA_ARGS__ } { constexpr uint c = 13; __VA_ARGS__ } { constexpr uint c = 14; __VA_ARGS__ } { constexpr uint c = 15; __VA_ARGS__ } }
 #define BQ_U32(...) { { constexpr uint c = 0; __VA_ARGS__ } { constexpr uint c = 1; __VA_ARGS__ } { constexpr uint c = 2; __VA_ARGS__ } { constexpr uint c = 3; __VA_ARGS__ } { constexpr uint c = 4; __VA_ARGS__ } { constexpr uint c = 5; __VA_ARGS__ } { constexpr uint c = 6; __VA_ARGS__ } { constexpr uint c = 7; __VA_ARGS__ } { constexpr uint c = 8; __VA_ARGS__ } { constexpr uint c = 9; __VA_ARGS__ } { constexpr uint c = 10; __VA_ARGS__ } { constexpr uint c = 11; __VA_ARGS__ } { constexpr uint c = 12; __VA_ARGS__ } { constexpr uint c = 13; __VA_ARGS__ } { constexpr uint c = 14; __VA_ARGS__ } { constexpr uint c = 15; __VA_ARGS__ } { constexpr uint c = 16; __VA_ARGS__ } { constexpr uint c = 17; __VA_ARGS__ } { constexpr uint c = 18; __VA_ARGS__ } { constexpr uint c = 19; __VA_ARGS__ } { constexpr uint c = 20; __VA_ARGS__ } { constexpr uint c = 21; __VA_ARGS__ } { constexpr uint c = 22; __VA_ARGS__ } { constexpr uint c = 23; __VA_ARGS__ } { constexpr uint c = 24; __VA_ARGS__ } { constexpr uint c = 25; __VA_ARGS__ } { constexpr uint c = 26; __VA_ARGS__ } { constexpr uint c = 27; __VA_ARGS__ } { constexpr uint c = 28; __VA_ARGS__ } { constexpr uint c = 29; __VA_ARGS__ } { constexpr uint c = 30; __VA_ARGS__ } { constexpr uint c = 31; __VA_ARGS__ } }
@@ -1864,8 +1866,8 @@ kernel void bb_panel(device float* A [[buffer(0)]], device float* V [[buffer(1)]
         BQ_U16({ if (c == j) xj = x[c]; })
         if (r == j) tot[33] = xj;
         // The sum of squares below row j, unscaled: the matrices were scaled
-        // to a largest entry in [0.5, 1), so only entries below 1e-19 could
-        // underflow, a perturbation far below rounding
+        // to a largest entry in [0.5, 1), and a sum below 2^-80 is taken as
+        // zero (kTinySumsq)
         const float z = simd_sum(row && r > j ? xj * xj : 0.0f);
         if (lane == 0) part[sg] = z;
         threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -1906,11 +1908,11 @@ kernel void bb_panel(device float* A [[buffer(0)]], device float* V [[buffer(1)]
     }
     if (row) {
         BQ_U16({ if (c < nb) Am[(ulong)r * q.rs + (ulong)c * q.cs] = x[c]; })
-        device float* vm = V + (ulong)mat * q.sv + (ulong)r * nb;
+        device float* vm = V + (ulong)mat * q.sv + (ulong)r * q.ldv;
         BQ_U16({ if (c < nb) vm[c] = v[c]; })
     }
     if (t < nb) {
-        device float* tm = T + (ulong)mat * q.st + (ulong)t * nb;
+        device float* tm = T + (ulong)mat * q.st + (ulong)t * q.ldt;
         for (uint c = 0; c < nb; ++c) tm[c] = c >= t ? Ts[t][c] : 0.0f;
     }
 }

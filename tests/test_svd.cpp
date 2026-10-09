@@ -874,6 +874,74 @@ int main() {
                         array(info.data(), {b}, uint32)};
             check("bidiag_batch, unaligned outputs " + dims(b, M, N), A, r);
         }
+        // With vectors from k = 384 in two stages (a band on the GPU, both
+        // stages' reflectors kept and applied): sizes about its blocks (16)
+        // and the CPU's tail, wide, chunks (four of 1024 a slot), structured
+        // and scaled matrices, a NaN, unaligned outputs; against the direct
+        // reduction (SVD_BIDIAG_BATCH_BAND=0)
+        for (auto [b, M, N] : std::vector<std::tuple<int, int, int>>{{2, 384, 384}, {3, 400, 390}, {3, 433, 433},
+                                                                     {2, 700, 500}, {3, 400, 512}, {6, 1024, 1024},
+                                                                     {2, 1024, 1000}}) {
+            array A = random_matrix(b, M, N, 7000 + M + N);
+            SvdResult r = bb(A, true);
+            check("bidiag_batch two-stage " + dims(b, M, N), A, r);
+            setenv("SVD_BIDIAG_BATCH_BAND", "0", 1);
+            SvdResult d = bb(A, true);
+            unsetenv("SVD_BIDIAG_BATCH_BAND");
+            const float nA = std::max(frobenius(A) / std::sqrt((float)b), 1e-30f);
+            const float ds = max_abs(subtract(r.S, d.S)) / nA;
+            ++g_checks;
+            const std::string label = "bidiag_batch two-stage == direct " + dims(b, M, N);
+            if (!(ds < 2e-6f)) fail(label, "differ by " + std::to_string(ds));
+            else std::printf("  ok    %-44s |ds|=%.1e\n", label.c_str(), ds);
+        }
+        for (float sc : {1e-30f, 1e30f}) {
+            char label[64];
+            std::snprintf(label, sizeof label, "bidiag_batch two-stage scaled by %.0e 3 x 420x400", sc);
+            array A = multiply(random_matrix(3, 420, 400, 7100), array(sc / 5.0f));
+            check(label, A, bb(A, true));
+        }
+        {
+            const array se = ones_singular_values(2, 512, 512);
+            check("bidiag_batch two-stage constant 2 x 512x512", full({2, 512, 512}, 1.0f),
+                  bb(full({2, 512, 512}, 1.0f), true), &se, 5.0f);
+            check("bidiag_batch two-stage zero 2 x 400x400", zeros({2, 400, 400}), bb(zeros({2, 400, 400}), true));
+            std::vector<float> spec(400);
+            for (int i = 0; i < 400; ++i) spec[i] = i < 200 ? 3.0f : 1e-3f * (float)(400 - i);
+            array R = with_singular_values(450, 400, spec);
+            check("bidiag_batch two-stage repeated and tiny 450x400", R, bb(R, true));
+        }
+        {   // a NaN in one matrix of a batch
+            const int M = 400, N = 390;
+            array A = random_matrix(3, M, N, 7200);
+            eval({A});
+            std::vector<float> data(A.data<float>(), A.data<float>() + 3 * M * N);
+            data[(size_t)M * N + 17] = NAN;
+            SvdResult r = bb(from_values(data, {3, M, N}), true);
+            array info = reshape(r.info, {-1});
+            array s1 = slice(r.S, {1, 0}, {2, N});
+            array rest = concatenate({slice(r.S, {0, 0}, {1, N}), slice(r.S, {2, 0}, {3, N})});
+            eval({info, s1, rest});
+            ++g_checks;
+            const uint32_t* iw = info.data<uint32_t>();
+            const bool ok = all(isnan(s1)).item<bool>() && !has_non_finite(rest) && !detail::svd_converged(iw[1]) &&
+                            detail::svd_converged(iw[0]) && detail::svd_converged(iw[2]);
+            if (!ok) fail("bidiag_batch two-stage NaN in one matrix of 3", "not isolated");
+            else std::printf("  ok    %-44s\n", "bidiag_batch two-stage NaN in one matrix of 3");
+            // and the other two's factors, through the float API, outputs not page-aligned
+            const int b = 2;
+            array B = random_matrix(b, M, N, 7300);
+            eval({B});
+            std::vector<float> u((size_t)b * M * N + 1), s((size_t)b * N + 1), vt((size_t)b * N * N + 1);
+            std::vector<uint32_t> inf(b);
+            core::detail::svd_bidiag_batch(core::Matrices{B.data<float>(), (uint32_t)b, (uint32_t)M, (uint32_t)N},
+                                           u.data() + 1, s.data() + 1, vt.data() + 1, inf.data());
+            SvdResult ru{from_values(std::vector<float>(u.begin() + 1, u.end()), {b, M, N}),
+                         from_values(std::vector<float>(s.begin() + 1, s.end()), {b, N}),
+                         from_values(std::vector<float>(vt.begin() + 1, vt.end()), {b, N, N}),
+                         array(inf.data(), {b}, uint32)};
+            check("bidiag_batch two-stage, unaligned outputs " + dims(b, M, N), B, ru);
+        }
         // At least twice as tall as wide: R of the library's QR first, U = Q U_R;
         // the same results as bidiagonalizing the matrix itself
         // (SVD_BIDIAG_BATCH_QR=0), to rounding
