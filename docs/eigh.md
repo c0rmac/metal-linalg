@@ -525,21 +525,24 @@ from 256. Up to $N = 1024$ (the panel kernel's threadgroup memory). The
 routing sweep fits its windows (stage 5 of `tuning/tune_eigh.py`).
 
 **With eigenvectors in two stages** (`eigh_band_batch`, in
-`src/svd_bidiag_batch.mm` beside the SVD's counterpart), from $N = 384$ for
-batches of up to half as many matrices as the CPU's solve has threads (a
-quarter below 640; 8 and 4 on an M5 Pro): `band`'s method with eigenvectors
-for the batch at once, the one-stage reduction's memory-bound column steps
-replaced by matrix products.
+`src/svd_bidiag_batch.mm` beside the SVD's counterpart), from $N = 64$ for
+batches of up to half as many matrices as the CPU's solve has threads, as
+many from 640 and twice as many from 896 (8, 16 and 32 on an M5 Pro):
+`band`'s method with eigenvectors for the batch at once, the one-stage
+reduction's memory-bound column steps replaced by matrix products.
 
 1. **Every matrix to a band of width 16 by blocks**, as
    `band_reduce_symmetric` reduces one: per block, the panel below the
-   diagonal block factored by `bb_panel` (a threadgroup a matrix), then the
-   trailing matrix's two-sided update as batched products on the whole of
-   it: $X = A_{22} V T$, $Y = X - V (T^T V^T X)/2$, and
-   $A_{22} \mathrel{-}= [V\ Y][Y\ V]^T$, one rank-32 product (two rank-16
-   ones took 1.1x as long). The panel writes its $V$ into $[V\ Y\ V]$ and
-   into the layout the back-transformation reads; the matrices are loaded,
-   mirrored and scaled on the GPU (`sb_load`).
+   diagonal block factored by `bb_panel` (a threadgroup a matrix), which
+   also forms $VT$; then the trailing matrix's two-sided update on the whole
+   of it: $X = A_{22} V T$ (a batched product), $Y = X - V (T^T V^T X)/2$
+   (`sb_small`, a threadgroup a matrix: $V^T X$ summed across its rows by
+   shuffles, then $M$, then each row's $Y$), and $A_{22} \mathrel{-}=
+   [V\ Y][Y\ V]^T$, one rank-32 product. Four dispatches a block; with $VT$,
+   $V^T X$, $M$ and $Y$ as MPS products of their own, seven took 1.09-1.31x
+   as long, and two rank-16 updates 1.1x. The panel writes its $V$ into
+   $[V\ Y\ V]$ and into the layout the back-transformation reads; the
+   matrices are loaded, mirrored and scaled on the GPU (`sb_load`).
 2. **On the CPU's cores**, a matrix a core (its threads shared out when
    there are fewer matrices): the last columns by `ssytrd_sy2sb` and
    $Q = Q_{	ext{tail}}$; then, while the GPU forms $Q \leftarrow Q_1 Q$
@@ -550,10 +553,11 @@ replaced by matrix products.
 3. **On the GPU**: $Q \leftarrow Q Q_2$ (`bd_chase_apply`, a dispatch a
    matrix, the matrices at once) and $V = Q Z$, one batched product.
 
-On an M5 Pro, against the one-stage reduction: one 1024 × 1024 2.4x (20.8 ms
-against 49.3; 1.6x the CPU path), 4 1.73x, 8 1.32x; 8 of 768 1.2x, 4 of 512
-1.11x, 4 of 384 1.06x. For larger batches the CPU's chases bound it (12 of
-1024 0.98x, 16 of 768 0.92x), hence the batch limit. Eigenvalues within
+On an M5 Pro, against the one-stage reduction: one 1024 × 1024 2.6x (18.1 ms
+against 47.7; 1.86x the CPU path), 4 1.86x, 8 1.39x, 16 1.23x (1.85x the CPU),
+24 1.48x; 8 of 768 1.3x, 8 of 512 1.2x, 8 of 128-256 1.1-1.4x, 2-8 of 64-96
+1.4-2.4x. For larger batches the CPU's chases bound it (32 of 768 0.90x, 16
+of 512 level), hence the batch limits. Eigenvalues within
 $9 	imes 10^{-8}$ of the one-stage reduction's relative to $\|A\|_F$;
 residual and orthogonality about $3 	imes 10^{-6}$ at 1024.
 `EIGH_TRIDIAG_BATCH_BAND=0` keeps the one-stage reduction. For eigenvalues

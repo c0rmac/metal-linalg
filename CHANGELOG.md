@@ -117,11 +117,13 @@
   and forms V2 T2): 1.04-1.16x, the singular values alone 3.8x the CPU at
   16 x 1024^2 (was 3.3x).
 - **eigh with eigenvectors for small batches in two stages**:
-  `tridiag_batch` from N = 384, for batches of up to half as many matrices as
-  the CPU's solve has threads (a quarter below 640), the same for the
-  symmetric case (the two-sided update one rank-32 product a block). On an
-  M5 Pro 2.4x the one-stage reduction for one 1024 x 1024 (21 ms; 1.6x the
-  CPU), 1.73x for 4, 1.32x for 8; 1.2x for 8 of 768.
+  `tridiag_batch` from N = 64, for batches of up to half as many matrices as
+  the CPU's solve has threads (all of them from 640, twice from 896), the
+  same for the symmetric case: four dispatches a block (the panel kernel
+  forms V T, one kernel `Y = X - V (T^T V^T X) / 2`, the two-sided update one
+  rank-32 product). On an M5 Pro 2.6x the one-stage reduction for one
+  1024 x 1024 (18 ms; 1.86x the CPU), 1.86x for 4, 1.39x for 8, 1.48x for 24;
+  1.3x for 8 of 768, 1.4-2.4x for small batches of 64-96.
   `EIGH_TRIDIAG_BATCH_BAND=0` turns it off. For eigenvalues alone it lost to
   LAPACK's two-stage driver and is not used.
 - **The `band` backends with vectors hand a batch of two or more of 384-1024
