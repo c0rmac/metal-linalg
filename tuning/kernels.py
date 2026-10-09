@@ -120,8 +120,9 @@ HISTORY = [
      "eigenvectors (the two-stage reduction, 1.36x tridiag at 4096); the CPU path with eigenvectors, for a "
      "batch of at most a quarter as many matrices as cores, runs ssyevd's steps with the divide and conquer "
      "on the idle cores from N = 192 (1.17-1.26x); tridiag_batch with eigenvectors in two stages for small "
-     "batches from N = 384 (2.4x the one-stage reduction at 1 x 1024^2), and band with eigenvectors hands it "
-     "batches of two or more (4 x 1024^2 2x)"),
+     "batches from N = 64 (2.6x the one-stage reduction at 1 x 1024^2; four dispatches a band block), band "
+     "with eigenvectors hands it batches of two or more (4 x 1024^2 2x), and the batch back-transformations' "
+     "T is built in blocks (1.02-1.15x)"),
     ("svd", 9, "2.16.0", "2026-10-08",
      "the sweeps keep MLX's buffer cache on, as an MLX program has it, and MLX's own buffers are no "
      "longer wrapped again: the GPU backends' calls on large batches 10-40% cheaper; the QR-"
@@ -135,12 +136,15 @@ HISTORY = [
      "8 or 16 rows, from 17 rows a runner simdgroup for the QR iterations (1.3-2.1x with vectors, "
      "singular values alone by bisection 1.6-2.7x); the CPU path with vectors, for a batch of at most a "
      "quarter as many matrices as cores, runs sgesdd's steps with the divide and conquer on the idle cores "
-     "from k = 192 (1.2-1.4x); bidiag_batch with vectors in two stages from k = 384 (2.7-3.4x the direct "
-     "reduction at 1024), and band with vectors hands it batches of two or more (4 x 1024^2 2.4x)"),
+     "from k = 192 (1.2-1.4x); bidiag_batch with vectors in two stages from k = 288 (128 for small batches; "
+     "2.7-3.4x the direct reduction at 1024), its band blocks in three passes (1.04-1.16x), band with vectors "
+     "hands it batches of two or more (4 x 1024^2 2.4x), and the back-transformations' T in blocks "
+     "(1.04-1.05x)"),
     ("qr", 8, "2.17.0", "2026-10-09",
      "the register kernel packs small matrices, four a simdgroup up to 8 rows and two up to 16 (2.5x at "
      "4 x 4, 1.7-2.5x at 8 x 8, 1.3-1.7x at 16 x 16 for large batches); the blocked QR's panels 8 columns "
-     "wide for up to 4 matrices of 768-3072 rows (1.05-1.1x)"),
+     "wide for up to 4 matrices of 768-3072 rows (1.05-1.1x), its in-aggregate updates one kernel there "
+     "(1.16x at 1024^2), its input scanned on the GPU (1.01-1.03x)"),
 ]
 
 REQUIRED = {
