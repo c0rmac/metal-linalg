@@ -173,8 +173,6 @@
   warm-up after its correctness run, and the CPU's reference for the values
   alone is computed once a point: large points 1.3-2x faster, medians within
   5%. Re-analysed on the earlier runs, the routing is the full grid's.
-  Fixed on the way: the eigh sweep had dropped every point above N = 96 but
-  the canaries (no CPU, tridiag, tridiag_batch or band timings there).
 - **Fixed: Q and singular or eigen vectors far from orthogonal for some
   exactly rank-deficient matrices** on the GPU paths built on the band
   reduction's panel kernels: the blocked QR (one matrix from about 384 x 384,
