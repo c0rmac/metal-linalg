@@ -53,10 +53,13 @@ using namespace metal;
  * rank-deficient 600 x 16) and, before inputs were scaled, the whole matrix
  * whenever its entries were below about 1e-4. The host now scales every
  * matrix so its largest entry is in [0.5, 1) (prepare_input_scaled), which
- * makes an absolute threshold meaningful: 1e-30 is a tail of length 1e-15,
- * eight orders of magnitude below float32 rounding of a unit-scale matrix.
+ * makes an absolute threshold meaningful: 2^-80 is a tail of length 2^-40
+ * (9e-13), far below float32 rounding of a unit-scale matrix. It is that high
+ * (it was 1e-30) because below it the squares begin to underflow, some and
+ * not others, and a reflection whose norm misses some of its vector's entries
+ * is not orthogonal.
  */
-#define EPSILON 1e-30f
+#define EPSILON 8.271806e-25f   // 2^-80
 
 // Dynamic constants injected by MLX at compile time.
 // Matrices must be pre-padded to multiples of 32.

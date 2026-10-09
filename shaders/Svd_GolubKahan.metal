@@ -138,6 +138,14 @@ inline float sqrt_nr(float x) {
     return fma(fma(-s, s, x), 0.5f * y, s);
 }
 
+// A reflector's rest whose plain sum of squares is below this is taken as
+// zero (tau = 0, H = I): the matrix is scaled into [0.5, 1), so that is a
+// norm below 2^-40 of its largest entry, far under float's rounding. Below
+// it the squares begin to underflow, some and not others, and a reflector
+// whose norm misses some of its vector's entries is not orthogonal: a
+// constant 600 x 64 matrix's Q was off by 5e4 before 2.17.0.
+constant constexpr float kTinySumsq = 8.271806e-25f;   // 2^-80
+
 inline bool non_finite(float v) {
     return (as_type<uint>(v) & 0x7F800000u) == 0x7F800000u;
 }
@@ -523,7 +531,7 @@ kernel void svd_golub_kahan(
             const float sumsq = group_sum(t, red + 32 * (k & 1u), sg, lane, nsg);
             const float alpha = a[k * ld + k];
             float tv = 0.0f, beta = alpha;
-            if (sumsq > 0.0f) {
+            if (sumsq >= kTinySumsq) {
                 beta = -copysign(sqrt_nr(alpha * alpha + sumsq), alpha);
                 tv = div_nr(beta - alpha, beta);
                 const float scal = div_nr(1.0f, alpha - beta);
@@ -567,7 +575,7 @@ kernel void svd_golub_kahan(
                 const float sumsq_r = s0 + s1;
                 const float alpha_r = w[k + 1];
                 float tu = 0.0f, beta_r = alpha_r;
-                if (sumsq_r > 0.0f) {
+                if (sumsq_r >= kTinySumsq) {
                     beta_r = -copysign(sqrt_nr(alpha_r * alpha_r + sumsq_r), alpha_r);
                     tu = div_nr(beta_r - alpha_r, beta_r);
                     const float scal = div_nr(1.0f, alpha_r - beta_r);
@@ -972,7 +980,7 @@ kernel void svd_gk_simd(
         const float sumsq = lanes_sum<G>(below ? x * x : 0.0f);
         const float alpha = simd_shuffle(x, (ushort)(gb + k));
         float tv = 0.0f, beta = alpha, v = i == k ? 1.0f : 0.0f;
-        if (sumsq > 0.0f) {
+        if (sumsq >= kTinySumsq) {
             beta = -copysign(sqrt_nr(alpha * alpha + sumsq), alpha);
             tv = div_nr(beta - alpha, beta);
             if (below) v = x * div_nr(1.0f, alpha - beta);
@@ -1003,7 +1011,7 @@ kernel void svd_gk_simd(
             if (c >= k + 2 && c < n) ss = fma(uk[c], uk[c], ss);
         })
         float tu = 0.0f, beta_r = alpha_r, scal = 0.0f;
-        if (ss > 0.0f) {
+        if (ss >= kTinySumsq) {
             beta_r = -copysign(sqrt_nr(alpha_r * alpha_r + ss), alpha_r);
             tu = div_nr(beta_r - alpha_r, beta_r);
             scal = div_nr(1.0f, alpha_r - beta_r);

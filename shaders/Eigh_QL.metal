@@ -114,6 +114,14 @@ inline float sqrt_nr(float x) {
     return fma(fma(-s, s, x), 0.5f * y, s);   // s + (x - s^2) / (2 s)
 }
 
+// A reflector's rest whose plain sum of squares is below this is taken as
+// zero (tau = 0, H = I): the matrix is scaled into [0.5, 1), so that is a
+// norm below 2^-40 of its largest entry, far under float's rounding. Below
+// it the squares begin to underflow, some and not others, and a reflector
+// whose norm misses some of its vector's entries is not orthogonal: a
+// constant 600 x 64 matrix's Q was off by 5e4 before 2.17.0.
+constant constexpr float kTinySumsq = 8.271806e-25f;   // 2^-80
+
 // NaN or infinity, from the bits: fast math may assume neither exists.
 inline bool non_finite(float v) {
     return (as_type<uint>(v) & 0x7F800000u) == 0x7F800000u;
@@ -298,7 +306,7 @@ kernel void eigh_ql(
         const float sumsq = group_sum(t, red, sg, lane, nsg);
         const float alpha = a[(k + 1) * ld + k];
         float tv = 0.0f, beta = alpha;
-        if (sumsq > 0.0f) {
+        if (sumsq >= kTinySumsq) {
             beta = -copysign(sqrt_nr(alpha * alpha + sumsq), alpha);
             tv = div_nr(beta - alpha, beta);
             const float scal = div_nr(1.0f, alpha - beta);
@@ -608,7 +616,7 @@ kernel void eigh_ql_simd(
         const float alpha = simd_shuffle(x, (ushort)(gb + k + 1));
         const float dk = simd_shuffle(x, (ushort)(gb + k));   // A(k, k)
         float tv = 0.0f, beta = alpha, v = 0.0f;
-        if (sumsq > 0.0f) {
+        if (sumsq >= kTinySumsq) {
             beta = -copysign(sqrt_nr(alpha * alpha + sumsq), alpha);
             tv = div_nr(beta - alpha, beta);
             if (row && i >= k + 2) v = x * div_nr(1.0f, alpha - beta);

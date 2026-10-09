@@ -120,13 +120,21 @@ struct QsParams {
     uint q_cols;   // Q's columns: K, or 0 for R alone (Q not formed)
 };
 
+// A reflector's rest whose plain sum of squares is below this is taken as
+// zero (tau = 0, H = I): the matrix is scaled into [0.5, 1), so that is a
+// norm below 2^-40 of its largest entry, far under float's rounding. Below
+// it the squares begin to underflow, some and not others, and a reflector
+// whose norm misses some of its vector's entries is not orthogonal: a
+// constant 600 x 64 matrix's Q was off by 5e4 before 2.17.0.
+constant constexpr float kTinySumsq = 8.271806e-25f;   // 2^-80
+
 // slarfg's reflector from alpha and the tail's sum of squares: beta, tau and
 // the scale of the tail, to about half an ulp (div_nr, sqrt_nr).
 inline void reflector(float alpha, float sumsq, thread float& beta, thread float& tau, thread float& scale) {
     beta = alpha;
     tau = 0.0f;
     scale = 1.0f;
-    if (sumsq > 0.0f) {
+    if (sumsq >= kTinySumsq) {
         beta = -copysign(sqrt_nr(alpha * alpha + sumsq), alpha);
         tau = div_nr(beta - alpha, beta);
         scale = div_nr(1.0f, alpha - beta);

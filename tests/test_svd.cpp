@@ -27,6 +27,15 @@ using namespace metal_linalg;
 
 namespace {
 
+// A constant matrix of ones, batch x M x N, and its exact singular values:
+// sqrt(M N), then zeros.
+array ones_singular_values(int batch, int M, int N) {
+    const int K = std::min(M, N);
+    std::vector<float> s((size_t)batch * K, 0.0f);
+    for (int b = 0; b < batch; ++b) s[(size_t)b * K] = std::sqrt((float)M * (float)N);
+    return batch == 1 ? array(s.begin(), Shape{K}) : array(s.begin(), Shape{batch, K});
+}
+
 // Relative Frobenius bounds, float32. One-sided Jacobi is backward stable
 // with a modest constant; these hold with a wide margin up to 512.
 constexpr float kReconTol = 2e-5f;
@@ -82,7 +91,11 @@ void fail(const std::string& label, const std::string& what) {
 }
 
 // The full battery on one result.
-void check(const std::string& label, const array& A_in, const SvdResult& r_in) {
+// s_exact: the singular values known exactly (then not LAPACK's); slack
+// scales the tolerances, for pathological matrices whose rounding exceeds
+// them.
+void check(const std::string& label, const array& A_in, const SvdResult& r_in, const array* s_exact = nullptr,
+           float slack = 1.0f) {
     ++g_checks;
     array A = astype(A_in, float32);
     const auto& shape = A.shape();
@@ -149,8 +162,7 @@ void check(const std::string& label, const array& A_in, const SvdResult& r_in) {
 
     float sval_err = 0.0f;
     {
-        std::vector<array> ref = linalg::svd(A, false, Device::cpu);
-        array s_ref = ref.back();
+        array s_ref = s_exact ? *s_exact : linalg::svd(A, false, Device::cpu).back();
         eval({s_ref});
         sval_err = max_abs(subtract(r.S, s_ref)) / scale;
     }
@@ -158,9 +170,9 @@ void check(const std::string& label, const array& A_in, const SvdResult& r_in) {
     // Orthogonality is limited by float32 inner products of length max(M, N),
     // whose rounding grows like the square root of their length; the bound is
     // flat up to 256 and follows that growth beyond.
-    const float ortho_tol = kOrthoTol * std::max(1.0f, std::sqrt((float)std::max(M, N) / 256.0f));
-    const bool ok = smin >= 0.0f && order <= 0.0f && recon <= kReconTol &&
-                    orthoU <= ortho_tol && orthoV <= ortho_tol && sval_err <= kSvalTol;
+    const float ortho_tol = slack * kOrthoTol * std::max(1.0f, std::sqrt((float)std::max(M, N) / 256.0f));
+    const bool ok = smin >= 0.0f && order <= 0.0f && recon <= slack * kReconTol &&
+                    orthoU <= ortho_tol && orthoV <= ortho_tol && sval_err <= slack * kSvalTol;
     std::printf("  %s  %-44s recon=%.1e orthoU=%.1e orthoV=%.1e |S-lapack|=%.1e sweeps=%u\n",
                 ok ? "ok  " : "FAIL", label.c_str(), recon, orthoU, orthoV, sval_err, max_sweeps);
     if (smin < 0.0f)  std::printf("        negative singular value %.3e\n", smin);
@@ -592,6 +604,12 @@ int main() {
     // to be divided several times.
     run_bidiag("bidiag rank one 500x400", matmul(random_matrix(1, 500, 1, 1310), random_matrix(1, 1, 400, 1311)));
     run_bidiag("bidiag zero 320x300", zeros({320, 300}));
+    {
+        SvdResult r = detail::svd_bidiag(full({2048, 256}, 1.0f), true);
+        eval({r.U, r.S, r.Vt, r.info});
+        const array se = ones_singular_values(1, 2048, 256);
+        check("bidiag constant 2048x256 (QR first)", full({2048, 256}, 1.0f), r, &se, 5.0f);
+    }
     run_bidiag("bidiag identity 300x300", eye(300));
     {
         std::vector<float> spec(400), close(350);
@@ -678,6 +696,7 @@ int main() {
             else std::printf("  ok    %-44s\n", label.c_str());
         }
         run_band("band zero 120x100", zeros({120, 100}), 8);
+        for (uint32_t w : {8u, 16u, 32u}) run_band("band constant b=" + std::to_string(w) + " 600x500", full({600, 500}, 1.0f), w);
         run_band("band identity 100x100", eye(100), 16);
         run_band("band rank one 200x150",
                  matmul(random_matrix(1, 200, 1, 2200), random_matrix(1, 1, 150, 2201)), 8);
@@ -735,6 +754,15 @@ int main() {
     }
     run_band_vectors("band rank one 500x400", matmul(random_matrix(1, 500, 1, 3300), random_matrix(1, 1, 400, 3301)));
     run_band_vectors("band zero 320x300", zeros({320, 300}));
+    // Constant: the panels' columns fall to entries whose squares underflow
+    // (orthogonality 22 at 300x200, 3e7 at 1024x1024 before 2.17.0)
+    // Against the exact values, with slack (LAPACK's own on 1024x1024 has NaNs).
+    for (auto [M, N] : std::vector<std::pair<int, int>>{{300, 200}, {200, 300}, {1024, 1024}}) {
+        SvdResult r = detail::svd_band_vectors(full({M, N}, 1.0f));
+        eval({r.U, r.S, r.Vt, r.info});
+        const array se = ones_singular_values(1, M, N);
+        check("band constant " + dims(1, M, N), full({M, N}, 1.0f), r, &se, 5.0f);
+    }
     run_band_vectors("band identity 300x300", eye(300));
     {
         std::vector<float> spec(400), close(350);
@@ -806,6 +834,9 @@ int main() {
             check("bidiag_batch identity 3 x 100x100", I, bb(I, true));
             array R1 = matmul(random_matrix(4, 140, 1, 6400), random_matrix(4, 1, 120, 6401));
             check("bidiag_batch rank one 4 x 140x120", R1, bb(R1, true));
+            const array se = ones_singular_values(4, 600, 150);
+            check("bidiag_batch constant 4 x 600x150 (QR first)", full({4, 600, 150}, 1.0f),
+                  bb(full({4, 600, 150}, 1.0f), true), &se, 5.0f);
             std::vector<float> spec(120);
             for (int i = 0; i < 120; ++i) spec[i] = i < 60 ? 3.0f : 1e-3f * (float)(120 - i);
             array R = with_singular_values(150, 120, spec);

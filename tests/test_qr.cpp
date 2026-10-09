@@ -257,6 +257,8 @@ int main() {
             run("zeros 100x60",     detail::qr_householder, from_values(std::vector<float>(100 * 60, 0.0f), {100, 60}));
             run("constant 50x10",   detail::qr_householder, from_values(std::vector<float>(50 * 10, 0.5f), {50, 10}));
             run("constant 90x70",   detail::qr_householder, from_values(std::vector<float>(90 * 70, 0.5f), {90, 70}));
+            run("constant 600x64",  detail::qr_householder, from_values(std::vector<float>(600 * 64, 1.0f), {600, 64}));
+            run("constant 2048x96", detail::qr_householder, from_values(std::vector<float>(2048 * 96, 1.0f), {2048, 96}));
         }
         for (bool simd : {true, false}) {   // NaN in one matrix of a batch: that matrix NaN, the others not
             if (!simd) setenv("QR_HOUSEHOLDER_SIMD", "0", 1);   // the blocked kernel
@@ -373,6 +375,14 @@ int main() {
         run("identity 256x256",     detail::qr_blocked, from_values(eye, {256, 256}));
         run("zeros 256x256",        detail::qr_blocked, from_values(std::vector<float>(256 * 256, 0.0f), {256, 256}));
         run("constant 300x200",     detail::qr_blocked, from_values(std::vector<float>(300 * 200, 0.5f), {300, 200}));
+        // A constant matrix's trailing columns are rounding noise, then noise
+        // of that, down to entries whose squares underflow some and not
+        // others: before 2.17.0 the panels' reflectors there were not
+        // orthogonal (Q off by 5e4 at 600x64).
+        for (auto [M, N] : std::vector<std::pair<int, int>>{{600, 64}, {200, 100}, {1024, 1024}, {2048, 256}})
+            run("constant " + std::to_string(M) + "x" + std::to_string(N), detail::qr_blocked,
+                from_values(std::vector<float>((size_t)M * N, 1.0f), {M, N}));
+        run("constant batch 4 x 600x64", detail::qr_blocked, full({4, 600, 64}, 1.0f));
     }
     ++g_checks;
     {

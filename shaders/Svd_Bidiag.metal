@@ -88,6 +88,14 @@ __attribute__((always_inline)) static float sqrt1(float x) {
     return fma(fma(-s, s, x), fast::divide(0.5f, s), s);
 }
 
+// A reflector's rest whose plain sum of squares is below this is taken as
+// zero (tau = 0, H = I): the matrix is scaled into [0.5, 1), so that is a
+// norm below 2^-40 of its largest entry, far under float's rounding. Below
+// it the squares begin to underflow, some and not others, and a reflector
+// whose norm misses some of its vector's entries is not orthogonal: a
+// constant 600 x 64 matrix's Q was off by 5e4 before 2.17.0.
+constant constexpr float kTinySumsq = 8.271806e-25f;   // 2^-80
+
 // A Householder reflector from alpha and the norm of the rest, as LAPACK's
 // slarfg: beta (alpha's replacement), tau, and the rest's scale
 // 1 / (alpha - beta); tau = 0 for a zero rest.
@@ -445,7 +453,8 @@ __attribute__((always_inline)) static void qr_simd(thread float (&x)[R][B], uint
             const float y = row > j && row < rows ? x[s][0] : 0.0f;
             ss = fma(y, y, ss);
         });
-        const float alpha = simd_shuffle(x[0][0], (ushort)j), xnorm = sqrt1(simd_sum(ss));
+        const float alpha = simd_shuffle(x[0][0], (ushort)j), sumsq = simd_sum(ss),
+                    xnorm = sumsq < kTinySumsq ? 0.0f : sqrt1(sumsq);
         float beta, tau, scale;
         householder(alpha, xnorm, beta, tau, scale);
         float v[R];
@@ -615,7 +624,7 @@ __attribute__((always_inline)) static void pair_qr(thread float (&a)[B], thread 
             float ss = 0.0f;
             UNROLL(B, k, { if (k <= j) ss = fma(bt[k], bt[k], ss); });
             float beta, scale;
-            householder(a[j], sqrt1(ss), beta, t, scale);
+            householder(a[j], ss < kTinySumsq ? 0.0f : sqrt1(ss), beta, t, scale);
             a[j] = beta;
             UNROLL(B, k, { if (k <= j) bt[k] *= scale; });
             tau = t;
@@ -1864,7 +1873,7 @@ kernel void bb_panel(device float* A [[buffer(0)]], device float* V [[buffer(1)]
         for (uint g = 0; g < nsg; ++g) ss += part[g];
         const float alpha = tot[33];
         float beta, tau, sc;
-        householder(alpha, sqrt1(ss), beta, tau, sc);
+        householder(alpha, ss < kTinySumsq ? 0.0f : sqrt1(ss), beta, tau, sc);
         const float vr = row && r > j ? xj * sc : (r == j ? 1.0f : 0.0f);
         BQ_U16({ if (c == j) { v[c] = vr; if (r >= j) x[c] = r == j ? beta : 0.0f; } })
         // w[c] = v^T x(:, c), c > j; w[16 + c] = v^T v(:, c), c < j

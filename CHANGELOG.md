@@ -117,6 +117,23 @@
   only the points whose choice the first left open (`--full-passes` repeats
   all); a call of 20 ms or more gets one warm-up instead of two. Re-analysed
   on the earlier runs, the routing is the full grid's.
+- **Fixed: Q and singular or eigen vectors far from orthogonal for some
+  exactly rank-deficient matrices** on the GPU paths built on the band
+  reduction's panel kernels: the blocked QR (one matrix from about 384 x 384,
+  and batches of large ones), the `band` backends of eigh and the SVD, and
+  the SVD's QR-first reductions. A constant matrix of ones, 600 x 64, had a
+  Q off by 5e4 (`Q^T Q - I`), one of 1024 x 1024 by 3e5; the SVD's `band`
+  at 1024 x 1024 by 3e7; eigh's `band` at 1024 by 0.56. Such a matrix's
+  trailing columns become rounding noise, then noise of that, down to
+  entries near 1e-19 of the largest, whose squares underflow, some and not
+  others: the kernels' plain sums of squares then missed part of the vector
+  they normalized, and the reflector was not orthogonal. A rest whose sum of
+  squares is below 2^-80 (a norm below 2^-40 of the matrix's largest entry,
+  each matrix being scaled into [0.5, 1)) is now taken as zero in every
+  kernel that sums squares plainly (the panels, the TSQR's tree, the
+  register and threadgroup Householder kernels of QR, eigh and the SVD, and
+  the streaming QR, whose threshold was 1e-30). Orthogonality on those
+  matrices is now 1e-5 or better, as LAPACK's; tests added for each path.
 - `benchmark_qr --modes` times the three modes against each other.
 - **README**: the introduction states the measured gains (one large matrix
   1.6-10x against LAPACK on every CPU core, 11.7x at 8192; batches of

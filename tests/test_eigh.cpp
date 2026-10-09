@@ -113,8 +113,10 @@ array symmetrised(const array& A, bool lower) {
 
 // The full battery on one result. `lower` says which triangle the solver was
 // asked to read, so the reference is built the same way.
+// w_exact: the eigenvalues known exactly (then not LAPACK's); slack scales
+// the tolerances, for pathological matrices whose rounding exceeds them.
 void check(const std::string& label, const array& A_in, const EighResult& r_in,
-           bool lower = true, bool vectors = true) {
+           bool lower = true, bool vectors = true, const array* w_exact = nullptr, float slack = 1.0f) {
     ++g_checks;
     array A = symmetrised(A_in, lower);
     const auto& shape = A.shape();
@@ -179,12 +181,13 @@ void check(const std::string& label, const array& A_in, const EighResult& r_in,
     // Independent reference: LAPACK through MLX's CPU eigh.
     float eig_err = 0.0f;
     {
-        array w_ref = linalg::eigvalsh(A, lower ? "L" : "U", Device::cpu);
+        array w_ref = w_exact ? *w_exact : linalg::eigvalsh(A, lower ? "L" : "U", Device::cpu);
         eval({w_ref});
         eig_err = max_abs(subtract(r.eigenvalues, w_ref)) / scale;
     }
 
-    const bool ok = order <= 0.0f && resid <= kResidTol && ortho <= kOrthoTol && eig_err <= kEigTol;
+    const bool ok = order <= 0.0f && resid <= slack * kResidTol && ortho <= slack * kOrthoTol &&
+                    eig_err <= slack * kEigTol;
     std::printf("  %s  %-44s resid=%.1e ortho=%.1e |w-lapack|=%.1e sweeps=%u\n",
                 ok ? "ok  " : "FAIL", label.c_str(), resid, ortho, eig_err, max_sweeps);
     if (order > 0.0f) std::printf("        eigenvalues not ascending (max drop %.3e)\n", order);
@@ -844,6 +847,17 @@ int main() {
         }
         check("band vectors batch 3 x 200x200", random_symmetric(3, 200, 5200), bv(random_symmetric(3, 200, 5200), true));
         check("band vectors zero 200x200", zeros({200, 200}), bv(zeros({200, 200}), true));
+        // Constant: the panels' columns fall to entries whose squares
+        // underflow (orthogonality 0.16 at 300 before 2.17.0). Against the
+        // exact eigenvalues (0, ..., 0, n), with slack: a rank-one matrix's
+        // rounding is above random ones'.
+        for (int n : {300, 1024}) {
+            std::vector<float> w(n, 0.0f);
+            w[n - 1] = (float)n;
+            const array we = from_values(w, {n});
+            check("band vectors constant " + std::to_string(n) + "x" + std::to_string(n), full({n, n}, 1.0f),
+                  bv(full({n, n}, 1.0f), true), true, true, &we, 5.0f);
+        }
         check("band vectors identity 600x600", eye(600), bv(eye(600), true));
         {
             std::vector<float> spec(600), close(500);
