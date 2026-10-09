@@ -48,7 +48,9 @@ final class MetalLinalgTests: XCTestCase {
             let qcb = qc[(b * m * m)..<((b + 1) * m * m)]
             let qr = multiply(qcb, rc[(b * m * n)..<((b + 1) * m * n)], m, m, n)
             for i in 0..<(m * n) { XCTAssertEqual(qr[i], Double(a[b * m * n + i]), accuracy: 1e-5) }
-            let qtq = multiply(ArraySlice((0..<(m * m)).map { qcb[b * m * m + ($0 % m) * m + $0 / m] }), qcb, m, m, m)
+            var qt = [Float](repeating: 0, count: m * m)   // Q^T (one expression timed out older type checkers)
+            for i in 0..<m { for j in 0..<m { qt[i * m + j] = qcb[b * m * m + j * m + i] } }
+            let qtq = multiply(ArraySlice(qt), qcb, m, m, m)
             for i in 0..<m { for j in 0..<m { XCTAssertEqual(qtq[i * m + j], i == j ? 1 : 0, accuracy: 1e-5) } }
             for i in 0..<m { for j in 0..<n { XCTAssertEqual(qcb[b * m * m + i * m + j], q[b * m * n + i * n + j], accuracy: 1e-5) } }
             for i in n..<m { for j in 0..<n { XCTAssertEqual(rc[b * m * n + i * n + j], 0) } }

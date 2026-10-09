@@ -142,7 +142,9 @@ def _qr_shapes(shape, mode):
     raise ValueError(f"metal_linalg::qr: mode must be 'reduced', 'r' or 'complete', got {mode!r}")
 
 
-@torch.library.custom_op("metal_linalg::qr", mutates_args=())
+# The schema written out: torch 2.4's inference takes no str default.
+@torch.library.custom_op("metal_linalg::qr", mutates_args=(),
+                         schema='(Tensor a, str mode="reduced") -> (Tensor, Tensor)')
 def qr(a: Tensor, mode: str = "reduced") -> tuple[Tensor, Tensor]:
     lead, batch, m, n = _dims(a, "qr")
     q_shape, r_shape = _qr_shapes(a.shape, mode)

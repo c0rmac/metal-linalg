@@ -31,12 +31,13 @@ RESULTS = os.path.join(ROOT, "docs", "results")
 OPS = {"qr": (["pass", "batch", "M", "N", "backend", "ok", "ms", "p25", "p75", "reps"],
               {"cpu", "unblocked", "reduced", "complete", "share"}),
        "eigh": (["pass", "batch", "N", "backend", "ok", "ms", "p25", "p75", "reps"],
-                {"cpu", "simd", "tg", "block", "tridiag", "ql", "ql_share",
+                {"cpu", "simd", "tg", "block", "tridiag", "ql", "ql_share", "band", "tridiag_batch",
                  "cpu_vals", "simd_vals", "tg_vals", "block_vals", "tridiag_vals", "ql_vals", "ql_share_vals",
-                 "band_vals", "band8_vals", "band32_vals"}),
+                 "band_vals", "band8_vals", "band32_vals", "tridiag_batch_vals"}),
        "svd": (["pass", "batch", "M", "N", "backend", "ok", "ms", "p25", "p75", "reps"],
                {"cpu", "jacobi", "block", "qr", "qrblock", "bidiag", "band", "gk", "cpu_vals", "bidiag_vals",
-                "gk_vals", "gk_share", "gk_share_vals", "band_vals", "band8_vals", "band32_vals"})}
+                "gk_vals", "gk_share", "gk_share_vals", "band_vals", "band8_vals", "band32_vals",
+                "bidiag_batch", "bidiag_batch_vals"})}
 TOP_FILES = {"submission.json", "summary.md", "qr.log", "eigh.log", "svd.log"}
 OP_FILES = {"raw.csv", "results.json", "report.md", "policy.json"}
 ID = re.compile(r"^\d{8}-[0-9a-f]{6}$")
