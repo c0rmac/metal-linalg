@@ -1875,7 +1875,7 @@ kernel void bd_make_t(device const float* G [[buffer(0)]], device const float* t
                       device float* T [[buffer(2)]], constant BwParams& p [[buffer(3)]],
                       uint mat [[threadgroup_position_in_grid]], uint i [[thread_index_in_threadgroup]],
                       uint nt [[threads_per_threadgroup]]) {
-    threadgroup float Ts[64][64], Gs[64][64];   // 32 KB: G staged, T built (bb <= 64)
+    threadgroup float Ts[BW_MAX][BW_MAX], Gs[BW_MAX][BW_MAX];   // 32 KB: G staged, T built (bb <= 64)
     const ulong mt = mat;
     G += mt * p.stb; T += mt * p.stb; tau += mt * p.sv + p.k0;
     const uint bb = p.bb, kb = p.kb;
@@ -2152,4 +2152,3 @@ kernel void sb_small(device float* VYV [[buffer(0)]], device const float* T [[bu
             base[(ulong)t * q.ld + 16 + c] = a;
         })
 }
-
