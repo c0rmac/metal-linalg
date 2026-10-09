@@ -192,10 +192,11 @@ GK_LIMIT = 0
 # The gk window gpu_choice applies: (0, 0) while stage 1 is fitted, the fitted
 # one from stage 1b on.
 GK = (0, 0)
-# The batch from which gk shares a batch with the CPU path: in effect, and the
-# one gpu_choice applies (0 = never; fitted in stage 1c).
-CURRENT_SHARE = 0
-SHARE = 0
+# (share_min_batch, share_min_k): from which batch, and for which k, gk shares
+# a batch with the CPU path: in effect, and the one gpu_choice applies (batch
+# 0 = never; fitted in stage 1c).
+CURRENT_SHARE = (0, 0)
+SHARE = (0, 0)
 # The large-batch clause, (max_k, min_batch): in effect, and the one
 # rule_choice applies ((0, 0) = never; fitted in stage 2 after the product rule,
 # which is then refitted with it in effect).
@@ -449,7 +450,7 @@ def _cxx_bb(w):
     return f'{lo}, {hi}, {mb}, {"kSvdNoLimit" if ml >= INF else ml}'
 
 
-def tuned_row(device, params, bidiag=(0, 0), bidiag_cap=(0, 0), gk=(0, 0), values=(0, 0, 0, INF), share=0,
+def tuned_row(device, params, bidiag=(0, 0), bidiag_cap=(0, 0), gk=(0, 0), values=(0, 0, 0, INF), share=(0, 0),
               big=(0, 0), band=0, band_width=0, band_vec=0, bb=NO_BB):
     """The line for kTuned[] in svd.mm; `bidiag` the two bidiag thresholds (0: never),
     `bidiag_cap` their batch caps (0: any batch), `gk` the gk window (0, 0: never),
@@ -462,11 +463,11 @@ def tuned_row(device, params, bidiag=(0, 0), bidiag_cap=(0, 0), gk=(0, 0), value
     vgm, vmb, vmbatch, vml = _cxx_values(values)
     return (f'{{"{device["name"]}", {device["gpu_cores"]},   {r}, {a},   {bm}, {lo}, {bh},   '
             f'{gm}, {mb}, {mbatch}, {ml},   {vgm}, {vmb}, {vmbatch}, {vml},   {bidiag[0]}, {bidiag[1]}, {bidiag_cap[0]}, {bidiag_cap[1]},   '
-            f'{gk[0]}, {gk[1]},   {share},   {big[0]}, {big[1]},   {band}, {band_width},   {band_vec},   '
-            f'{_cxx_bb(bb[0])},   {_cxx_bb(bb[1])}}},')
+            f'{gk[0]}, {gk[1]},   {share[0]},   {big[0]}, {big[1]},   {band}, {band_width},   {band_vec},   '
+            f'{_cxx_bb(bb[0])},   {_cxx_bb(bb[1])},   {share[1]}}},')
 
 
-def env_line(params, bidiag=(0, 0), bidiag_cap=(0, 0), gk=(0, 0), values=(0, 0, 0, INF), share=0,
+def env_line(params, bidiag=(0, 0), bidiag_cap=(0, 0), gk=(0, 0), values=(0, 0, 0, INF), share=(0, 0),
              big=(0, 0), band=0, band_width=0, band_vec=0, bb=NO_BB):
     r, a, bm, lo, bh, gm, mb, mbatch, ml = _cxx(params)
     vgm, vmb, vmbatch, vml = values
@@ -477,7 +478,7 @@ def env_line(params, bidiag=(0, 0), bidiag_cap=(0, 0), gk=(0, 0), values=(0, 0, 
             f"SVD_GPU_MAX_K={gm} SVD_GPU_MIN_BATCH_TIMES_K={mb} SVD_GPU_MIN_BATCH={mbatch} SVD_GPU_MAX_L={ml} "
             f"SVD_BIDIAG_MIN_K={bidiag[0]} SVD_VALUES_BIDIAG_MIN_K={bidiag[1]} "
             f"SVD_BIDIAG_MAX_BATCH={bidiag_cap[0]} SVD_VALUES_BIDIAG_MAX_BATCH={bidiag_cap[1]} "
-            f"SVD_GK_MIN_K={gk[0]} SVD_GK_MAX_K={gk[1]} SVD_SHARE_MIN_BATCH={share} "
+            f"SVD_GK_MIN_K={gk[0]} SVD_GK_MAX_K={gk[1]} SVD_SHARE_MIN_BATCH={share[0]} SVD_SHARE_MIN_K={share[1]} "
             f"SVD_GPU_BIG_BATCH_MAX_K={big[0]} SVD_GPU_BIG_BATCH_MIN={big[1]} SVD_VALUES_BAND_MIN_K={band} "
             f"SVD_VALUES_BAND_WIDTH={band_width} SVD_BAND_MIN_K={band_vec} "
             f"SVD_VALUES_GPU_MAX_K={vgm} SVD_VALUES_GPU_MIN_BATCH_TIMES_K={vmb} "
@@ -494,14 +495,14 @@ def env_line(params, bidiag=(0, 0), bidiag_cap=(0, 0), gk=(0, 0), values=(0, 0, 
 
 def gpu_choice(split, M, N, b, gk=None, share=None):
     """The GPU backend: gk inside its window (GK unless `gk` is given; clipped
-    to the device's limit), gk_share from the batch SHARE (or `share`; 0 =
-    never), else the Jacobi split."""
+    to the device's limit), gk_share from the batch and k of SHARE (or `share`,
+    (min_batch, min_k); batch 0 = never), else the Jacobi split."""
     rows, min_k, block_min, block_lo, batch_hi = split
     l, k = max(M, N), min(M, N)
     lo, hi = GK if gk is None else gk
     if hi and lo <= k <= (min(hi, GK_LIMIT) if GK_LIMIT else hi):
-        sh = SHARE if share is None else share
-        return "gk_share" if sh and b >= sh else "gk"
+        sb, sk = SHARE if share is None else share
+        return "gk_share" if sb and b >= sb and k >= sk else "gk"
     pre = l >= rows and k >= min_k and l >= 2 * k
     blk = k >= block_min or (k >= block_lo and b >= batch_hi)
     if pre:
@@ -703,7 +704,7 @@ def values_choice(values, M, N, b, vec_params):
     singular values alone, so `values` is only scored where gk is the GPU's
     choice), else the CPU; as with vectors while values_gpu_min_batch is 0."""
     vgm, vmb, vmbatch, vml = values
-    gpu = "gk_share" if SHARE and b >= SHARE else "gk"
+    gpu = "gk_share" if SHARE[0] and b >= SHARE[0] and min(M, N) >= SHARE[1] else "gk"
     if not vmbatch:
         return gpu if rule_choice(vec_params, M, N, b) != "cpu" else "cpu"
     k, l = min(M, N), max(M, N)
@@ -803,7 +804,7 @@ def configure_grids(times, pruned=False):
 
 def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
     global GK, SHARE, BIG
-    GK, SHARE, BIG = (0, 0), 0, (0, 0)    # stage 1 is the Jacobi split alone
+    GK, SHARE, BIG = (0, 0), (0, 0), (0, 0)    # stage 1 is the Jacobi split alone
     times_all = times
     times, vtimes, valtimes, gvaltimes, bandtimes, bvectimes = split_bidiag(times)
     if not times:
@@ -910,14 +911,17 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
     res["gk_chosen"] = list(gk)
     res["current_gk"] = list(CURRENT_GK)
 
-    # ---- stage 1c: from which batch gk shares the batch with the CPU path,
-    # against the best GPU backend, the shared one included, on the points
-    # where it was timed and gk is the GPU's choice
-    share = 0
+    # ---- stage 1c: from which batch, and for which k, gk shares the batch
+    # with the CPU path, against the best GPU backend, the shared one
+    # included, on the points where it was timed and gk is the GPU's choice.
+    # Both: since 2.17.0 gk in registers alone wins the small k that sharing
+    # takes at larger k, so a batch threshold alone shared nowhere
+    share = (0, 0)
     sht = {p: tv for p, tv in gpu_with_gk_share(times).items()
            if "gk_share" in tv and gpu_choice(split, *p[1:], p[0]) == "gk"}
     if sht:
-        cands = [0] + sorted({b for (b, _, _) in sht})
+        cands = [(0, 0)] + [(b, k) for b in sorted({b for (b, _, _) in sht})
+                            for k in [0] + sorted({min(M, N) for (_, M, N) in sht})]
         scs = {c: te._score3(evaluate(lambda M, N, b, c=c: gpu_choice(split, M, N, b, share=c), sht))
                for c in cands}
         bests, nears = te.near_optimal(scs, tol)
@@ -925,16 +929,16 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
                           scs.get(CURRENT_SHARE) or te._score3(evaluate(
                               lambda M, N, b: gpu_choice(split, M, N, b, share=CURRENT_SHARE), sht)), bests, tol)
         res["stage1c"] = {
-            "n_points": len(sht), "chosen": share, "current": CURRENT_SHARE,
+            "n_points": len(sht), "chosen": list(share), "current": list(CURRENT_SHARE),
             "with": _strip(evaluate(lambda M, N, b: gpu_choice(split, M, N, b, share=share), sht)),
-            "without": _strip(evaluate(lambda M, N, b: gpu_choice(split, M, N, b, share=0), sht)),
-            "curve": [[c, v[0], v[1]] for c, v in sorted(scs.items())],
+            "without": _strip(evaluate(lambda M, N, b: gpu_choice(split, M, N, b, share=(0, 0)), sht)),
+            "curve": [[c[0], c[1], v[0], v[1]] for c, v in sorted(scs.items())],
             "speedup_vs_gk": sorted([[M, N, b, tv["gk"] / tv["gk_share"]] for (b, M, N), tv in sht.items()],
                                     key=lambda x: (x[1], x[0], x[2])),
         }
     SHARE = share
-    res["share_chosen"] = share
-    if share:
+    res["share_chosen"] = list(share)
+    if share[0]:
         # The window again, with sharing in effect: gk shared with the CPU can
         # lead the Jacobi backends where gk alone did not.
         scg2 = fit_gk(split, gpu_with_gk_share(times))
@@ -1459,13 +1463,15 @@ def write_report(res, path):
 
     s1c = res.get("stage1c")
     if s1c:
+        sb_, sk_ = s1c["chosen"] if isinstance(s1c["chosen"], list) else (s1c["chosen"], 0)
         L += ["## Stage 1c: sharing a batch with the CPU", "",
-              "From a batch on, `gk_share`: gk and the CPU path at once on one batch, the GPU taking chunks "
+              "From a batch and a k on, `gk_share`: gk and the CPU path at once on one batch, the GPU taking chunks "
               "from the front and the CPU from the back. Fitted against the best GPU backend, the shared one "
               f"included, on the {s1c['n_points']} points where it was timed and gk is the GPU's choice. "
-              "Chosen: " + (f"from batch {s1c['chosen']}." if s1c["chosen"] else "never."), ""] + hdr
+              "Chosen: " + (f"from batch {sb_}" + (f" and k = {sk_}." if sk_ else ".") if sb_ else "never."), ""] + hdr
         L += [te._stats_row("gk alone", s1c["without"]),
-              te._stats_row(f"shared from batch {s1c['chosen'] or 'never'}", s1c["with"]), "",
+              te._stats_row(f"shared from batch {sb_}" + (f", k >= {sk_}" if sk_ else "") if sb_ else "shared never",
+                            s1c["with"]), "",
               "gk_share over gk alone, M x N x batch: " +
               ", ".join(f"{M}x{N}x{b} {r:.2f}x" for M, N, b, r in s1c["speedup_vs_gk"]), ""]
 
@@ -1715,7 +1721,7 @@ def main():
                                 pol.get(f"{pre}bidiag_batch_min_batch", 0),
                                 _cap(pol.get(f"{pre}bidiag_batch_max_l", NO_LIMIT))) for pre in ("", "values_"))
             CURRENT_GK = (pol.get("gk_min_k", 0), pol.get("gk_max_k", 0))
-            CURRENT_SHARE = pol.get("share_min_batch", 0)
+            CURRENT_SHARE = (pol.get("share_min_batch", 0), pol.get("share_min_k", 0))
             CURRENT_BIG = (pol.get("gpu_big_batch_max_k", 0), pol.get("gpu_big_batch_min", 0))
             CURRENT_VALUES = (pol.get("values_gpu_max_k", 0), pol.get("values_gpu_min_batch_times_k", 0),
                               pol.get("values_gpu_min_batch", 0), _cap(pol.get("values_gpu_max_l", NO_LIMIT)))
@@ -1755,7 +1761,8 @@ def main():
               f"worst {b1['with']['worst']:.2f}x; without {b1['without']['geomean']:.4f}x)")
     if res.get("stage1c"):
         c1 = res["stage1c"]
-        print(f"share with the CPU: {'from batch ' + str(c1['chosen']) if c1['chosen'] else 'never'}   "
+        sb_, sk_ = c1["chosen"] if isinstance(c1["chosen"], list) else (c1["chosen"], 0)
+        print(f"share with the CPU: {('from batch ' + str(sb_) + (f', k >= {sk_}' if sk_ else '')) if sb_ else 'never'}   "
               f"({c1['with']['geomean']:.4f}x vs best GPU backend; gk alone {c1['without']['geomean']:.4f}x)")
     if res.get("stage2b"):
         b2 = res["stage2b"]

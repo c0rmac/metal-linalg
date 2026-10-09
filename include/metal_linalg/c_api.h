@@ -185,6 +185,7 @@ typedef struct metal_linalg_eigh_policy {
     uint32_t values_tridiag_batch_min_n;         /* the same for eigenvalues alone */
     uint32_t values_tridiag_batch_max_n;
     uint32_t values_tridiag_batch_min_batch;
+    uint32_t share_min_n;            /* ... share_min_batch only for N of at least this (0: any N); 2.17.0 */
 } metal_linalg_eigh_policy;
 
 typedef struct metal_linalg_svd_policy {
@@ -222,6 +223,7 @@ typedef struct metal_linalg_svd_policy {
     uint32_t values_bidiag_batch_max_k;
     uint32_t values_bidiag_batch_min_batch;
     uint32_t values_bidiag_batch_max_l;
+    uint32_t share_min_k;           /* ... share_min_batch only for k of at least this (0: any k); 2.17.0 */
 } metal_linalg_svd_policy;
 
 metal_linalg_qr_policy   metal_linalg_qr_policy_get(void);

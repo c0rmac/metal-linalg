@@ -70,7 +70,8 @@ const char* name(ml::SvdBackend b) {
                        X(gpu_big_batch_max_n) X(gpu_big_batch_min) X(values_band_min_n) X(values_band_width) \
                        X(tridiag_max_batch) X(values_tridiag_max_batch) X(band_min_n) \
                        X(tridiag_batch_min_n) X(tridiag_batch_max_n) X(tridiag_batch_min_batch) \
-                       X(values_tridiag_batch_min_n) X(values_tridiag_batch_max_n) X(values_tridiag_batch_min_batch)
+                       X(values_tridiag_batch_min_n) X(values_tridiag_batch_max_n) X(values_tridiag_batch_min_batch) \
+                       X(share_min_n)
 #define SVD_FIELDS(X) X(qr_min_rows) X(qr_min_k) X(block_min_k) X(block_min_k_batched)       \
                       X(block_min_batch) X(gpu_max_k) X(gpu_min_batch_times_k) X(gpu_min_batch) \
                       X(gpu_cores) X(bidiag_min_k) X(values_bidiag_min_k)  \
@@ -79,7 +80,7 @@ const char* name(ml::SvdBackend b) {
                       X(share_min_batch) X(gpu_big_batch_max_k) X(gpu_big_batch_min) X(values_band_min_k) X(values_band_width) \
                       X(band_min_k) X(bidiag_batch_min_k) X(bidiag_batch_max_k) X(bidiag_batch_min_batch) \
                       X(bidiag_batch_max_l) X(values_bidiag_batch_min_k) X(values_bidiag_batch_max_k) \
-                      X(values_bidiag_batch_min_batch) X(values_bidiag_batch_max_l)
+                      X(values_bidiag_batch_min_batch) X(values_bidiag_batch_max_l) X(share_min_k)
 
 #define TO_DICT(f) d[#f] = p.f;
 #define FROM_DICT(f) if (key == #f) { p.f = nb::cast<unsigned>(value); return; }

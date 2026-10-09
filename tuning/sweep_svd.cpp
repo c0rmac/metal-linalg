@@ -175,7 +175,7 @@ int main(int argc, char** argv) {
                     "\"values_band_width\": %u, \"band_min_k\": %u, \"bidiag_batch_min_k\": %u, "
                     "\"bidiag_batch_max_k\": %u, \"bidiag_batch_min_batch\": %u, \"bidiag_batch_max_l\": %u, "
                     "\"values_bidiag_batch_min_k\": %u, \"values_bidiag_batch_max_k\": %u, "
-                    "\"values_bidiag_batch_min_batch\": %u, \"values_bidiag_batch_max_l\": %u}\n",
+                    "\"values_bidiag_batch_min_batch\": %u, \"values_bidiag_batch_max_l\": %u, \"share_min_k\": %u}\n",
                     device_name(), p.gpu_cores, svd_policy_source(),
                     p.qr_min_rows, p.qr_min_k,
                     p.block_min_k, p.block_min_k_batched, p.block_min_batch,
@@ -187,7 +187,7 @@ int main(int argc, char** argv) {
                     p.values_band_min_k, p.values_band_width, p.band_min_k, p.bidiag_batch_min_k,
                     p.bidiag_batch_max_k, p.bidiag_batch_min_batch, p.bidiag_batch_max_l,
                     p.values_bidiag_batch_min_k, p.values_bidiag_batch_max_k, p.values_bidiag_batch_min_batch,
-                    p.values_bidiag_batch_max_l);
+                    p.values_bidiag_batch_max_l, p.share_min_k);
         return 0;
     }
     if (argc != 5) {

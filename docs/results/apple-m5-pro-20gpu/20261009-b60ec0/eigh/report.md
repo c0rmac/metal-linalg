@@ -16,25 +16,24 @@ Row for `kTuned[]` in `src/eigh.mm`:
 
 ```cpp
 // device, GPU cores,   simd_max_n, block_min_n, block_min_n_batched, block_min_batch,   gpu_max_n, gpu_min_batch_times_n, gpu_min_batch,   values_gpu_max_n, values_gpu_min_batch_times_n, values_gpu_min_batch,   tridiag_min_n, values_tridiag_min_n, tridiag_max_batch, values_tridiag_max_batch,   ql_min_n, ql_max_n,   share_min_batch,   gpu_big_batch_max_n, gpu_big_batch_min,   values_band_min_n, values_band_width
-{"Apple M5 Pro", 20,   0, 256, 64, 64,   16, 8192, 1,   32, 8192, 1,   1024, 1024, 128, 2,   2, 64,   0,   48, 256,   1536, 16,   512,   96, 1024, 128,   64, 256, 512},
+{"Apple M5 Pro", 20,   0, 256, 64, 64,   16, 8192, 1,   48, 8192, 1,   1024, 1024, 128, 2,   2, 64,   256,   64, 256,   1536, 16,   512,   96, 1024, 128,   96, 256, 256,   48},
 ```
 
 To try it without rebuilding:
 
 ```sh
-EIGH_SIMD_MAX_N=0 EIGH_BLOCK_MIN_N=256 EIGH_BLOCK_MIN_N_BATCHED=64 EIGH_BLOCK_MIN_BATCH=64 EIGH_GPU_MAX_N=16 EIGH_GPU_MIN_BATCH_TIMES_N=8192 EIGH_GPU_MIN_BATCH=1 EIGH_TRIDIAG_MIN_N=1024 EIGH_VALUES_TRIDIAG_MIN_N=1024 EIGH_TRIDIAG_MAX_BATCH=128 EIGH_VALUES_TRIDIAG_MAX_BATCH=2 EIGH_QL_MIN_N=2 EIGH_QL_MAX_N=64 EIGH_SHARE_MIN_BATCH=0 EIGH_GPU_BIG_BATCH_MAX_N=48 EIGH_GPU_BIG_BATCH_MIN=256 EIGH_VALUES_BAND_MIN_N=1536 EIGH_VALUES_BAND_WIDTH=16 EIGH_BAND_MIN_N=512 EIGH_TRIDIAG_BATCH_MIN_N=96 EIGH_TRIDIAG_BATCH_MAX_N=1024 EIGH_TRIDIAG_BATCH_MIN_BATCH=128 EIGH_VALUES_TRIDIAG_BATCH_MIN_N=64 EIGH_VALUES_TRIDIAG_BATCH_MAX_N=256 EIGH_VALUES_TRIDIAG_BATCH_MIN_BATCH=512 EIGH_VALUES_GPU_MAX_N=32 EIGH_VALUES_GPU_MIN_BATCH_TIMES_N=8192 EIGH_VALUES_GPU_MIN_BATCH=1
+EIGH_SIMD_MAX_N=0 EIGH_BLOCK_MIN_N=256 EIGH_BLOCK_MIN_N_BATCHED=64 EIGH_BLOCK_MIN_BATCH=64 EIGH_GPU_MAX_N=16 EIGH_GPU_MIN_BATCH_TIMES_N=8192 EIGH_GPU_MIN_BATCH=1 EIGH_TRIDIAG_MIN_N=1024 EIGH_VALUES_TRIDIAG_MIN_N=1024 EIGH_TRIDIAG_MAX_BATCH=128 EIGH_VALUES_TRIDIAG_MAX_BATCH=2 EIGH_QL_MIN_N=2 EIGH_QL_MAX_N=64 EIGH_SHARE_MIN_BATCH=256 EIGH_SHARE_MIN_N=48 EIGH_GPU_BIG_BATCH_MAX_N=64 EIGH_GPU_BIG_BATCH_MIN=256 EIGH_VALUES_BAND_MIN_N=1536 EIGH_VALUES_BAND_WIDTH=16 EIGH_BAND_MIN_N=512 EIGH_TRIDIAG_BATCH_MIN_N=96 EIGH_TRIDIAG_BATCH_MAX_N=1024 EIGH_TRIDIAG_BATCH_MIN_BATCH=128 EIGH_VALUES_TRIDIAG_BATCH_MIN_N=96 EIGH_VALUES_TRIDIAG_BATCH_MAX_N=256 EIGH_VALUES_TRIDIAG_BATCH_MIN_BATCH=256 EIGH_VALUES_GPU_MAX_N=48 EIGH_VALUES_GPU_MIN_BATCH_TIMES_N=8192 EIGH_VALUES_GPU_MIN_BATCH=1
 ```
 
 The policy in effect on this device came from `tuned:Apple M5 Pro`. It differs from the fitted one; see the warnings.
 
-Against the best measured backend at every point the whole rule scores 1.0291 geometric-mean regret, worst 1.72x, 10 of 132 points losing more than 10%, and 1.130x the oracle's total time. The decision is fitted in two stages, below, because the CPU routing would otherwise hide the GPU backend crossover.
+Against the best measured backend at every point the whole rule scores 1.0031 geometric-mean regret, worst 1.22x, 1 of 132 points losing more than 10%, and 1.002x the oracle's total time. The decision is fitted in two stages, below, because the CPU routing would otherwise hide the GPU backend crossover.
 
 ## Warnings
 
-- chosen rule loses more than 25% at N=64 batch=4096 (cpu, 1.72x), N=64 batch=2048 (cpu, 1.63x), N=48 batch=256 (ql, 1.61x), N=64 batch=1024 (cpu, 1.59x), N=48 batch=4096 (ql, 1.45x), N=48 batch=2048 (ql, 1.34x), N=48 batch=1024 (ql, 1.31x), N=64 batch=512 (cpu, 1.29x) ...
 - GPU split loses more than 25% against the best GPU backend at N=32 batch=2 (ql, 1.44x), N=8 batch=2 (ql, 1.42x), N=32 batch=1 (ql, 1.36x), N=32 batch=16 (ql, 1.36x), N=2 batch=1 (ql, 1.34x), N=12 batch=1 (ql, 1.32x), N=24 batch=16 (ql, 1.29x), N=32 batch=4 (ql, 1.28x) ...
 - the fitted policy differs from the one in effect (tuned:Apple M5 Pro): update this device's row in kTuned[] in src/eigh.mm
-- eigenvalues alone: the chosen boundary loses more than 25% at N=48 batch=4096 (ql, 1.81x), N=48 batch=256 (ql, 1.79x), N=48 batch=2048 (ql, 1.77x), N=48 batch=1024 (ql, 1.58x), N=64 batch=4096 (cpu, 1.39x), N=64 batch=2048 (cpu, 1.35x)
+- eigenvalues alone: the chosen boundary loses more than 25% at N=64 batch=256 (ql_share, 1.96x)
 
 ## Stage 1: which GPU backend
 
@@ -134,8 +133,8 @@ Best GPU backend per point (`s` simd, `t` threadgroup, `B` block, `q` ql, `Q` ql
          16     q     q     q     q     q     q     q     q     q     q     q     q     q
          24     q     q     q     q     q     q     q     q     q     q     q     q     q
          32     q     q     q     q     q     q     q     q     q     q     q     q     q
-         48     q     q     q     q     q     q     q     q     q     q     q     q     q
-         64     q     q     q     q     q     q     q     q     q     q     q     q     q
+         48     q     q     q     q     q     q     q     q     Q     Q     Q     Q     Q
+         64     q     q     q     q     q     q     q     q     Q     Q     Q     Q     Q
          96     t     t     t     t     t     t     B     B     B     B     B     B     B
         256     B     .     .     .     .     .     B     .     .     .     .     .     .
 ```
@@ -157,12 +156,12 @@ ql over the best Jacobi backend, N x batch: 2x1 0.75x, 2x2 0.95x, 2x4 0.91x, 2x8
 
 ## Stage 1c: sharing a batch with the CPU
 
-From a batch on, `ql_share`: ql and the CPU path at once on one batch, the GPU taking chunks from the front and the CPU from the back. Fitted against the best GPU backend, the shared one included, on the 63 points where it was timed and ql is the GPU's choice. Chosen: never.
+From a batch and an N on, `ql_share`: ql and the CPU path at once on one batch, the GPU taking chunks from the front and the CPU from the back. Fitted against the best GPU backend, the shared one included, on the 63 points where it was timed and ql is the GPU's choice. Chosen: from batch 256 and N = 48.
 
 | rule | geomean regret | worst | >10% | total time / oracle | est. picks |
 |---|---|---|---|---|---|
 | ql alone | 1.0894 | 1.88x | 15 | 1.464 | 0 |
-| shared from batch never | 1.0894 | 1.88x | 15 | 1.464 | 0 |
+| shared from batch 256, N >= 48 | 1.0201 | 1.20x | 5 | 1.006 | 0 |
 
 ql_share over ql alone, N x batch: 2x64 0.92x, 2x128 0.91x, 2x256 0.54x, 2x512 0.58x, 2x1024 0.49x, 2x2048 0.48x, 2x4096 0.46x, 4x64 1.20x, 4x128 0.59x, 4x256 0.62x, 4x512 0.48x, 4x1024 0.50x, 4x2048 0.55x, 4x4096 0.39x, 8x64 1.20x, 8x128 0.69x, 8x256 0.57x, 8x512 0.49x, 8x1024 0.53x, 8x2048 0.41x, 8x4096 0.55x, 12x64 0.67x, 12x128 0.67x, 12x256 0.62x, 12x512 0.58x, 12x1024 0.48x, 12x2048 0.68x, 12x4096 0.93x, 16x64 0.70x, 16x128 0.70x, 16x256 0.63x, 16x512 0.61x, 16x1024 0.61x, 16x2048 0.93x, 16x4096 0.93x, 24x64 0.74x, 24x128 0.72x, 24x256 0.72x, 24x512 0.66x, 24x1024 0.98x, 24x2048 0.99x, 24x4096 1.07x, 32x64 0.82x, 32x128 0.78x, 32x256 0.86x, 32x512 0.82x, 32x1024 0.97x, 32x2048 0.96x, 32x4096 1.06x, 48x64 0.89x, 48x128 0.86x, 48x256 1.61x, 48x512 1.27x, 48x1024 1.31x, 48x2048 1.34x, 48x4096 1.45x, 64x64 0.92x, 64x128 0.95x, 64x256 1.35x, 64x512 1.50x, 64x1024 1.74x, 64x2048 1.84x, 64x4096 1.88x
 
@@ -173,58 +172,58 @@ Given the split above, GPU iff `N <= gpu_max_n`, `batch * N >= gpu_min_batch_tim
 | rule | geomean regret | worst | >10% | total time / oracle | est. picks |
 |---|---|---|---|---|---|
 | oracle (best per point) | 1.0000 | 1.00x | 0 | 1.000 | 0 |
-| policy in effect ('16', '8192', '1') | 1.0291 | 1.72x | 10 | 1.130 | 0 |
-| fitted ('16', '8192', '1') | 1.0291 | 1.72x | 10 | 1.130 | 0 |
+| policy in effect ('16', '8192', '1') | 1.0165 | 1.72x | 5 | 1.099 | 0 |
+| fitted ('16', '8192', '1') | 1.0031 | 1.22x | 1 | 1.002 | 0 |
 
-Large batches: the GPU also for N above gpu_max_n up to 48 in a batch of at least 256, fitted with the product rule (per cap, the rule, the clause over it and the rule again given the clause, the best kept) (product rule alone 1.0869, worst 2.53x; chosen 1.0291, worst 1.72x).
+Large batches: the GPU also for N above gpu_max_n up to 64 in a batch of at least 256, fitted with the product rule (per cap, the rule, the clause over it and the rule again given the clause, the best kept) (product rule alone 1.0869, worst 2.53x; chosen 1.0031, worst 1.22x).
 
-12 of 462 combinations are within 0.5% of the best geomean: gpu_max_n 48 .. 48, gpu_min_batch_times_n 4096 .. 8192, gpu_min_batch 1 .. 32.
+6 of 462 combinations are within 0.5% of the best geomean: gpu_max_n 64 .. 64, gpu_min_batch_times_n 8192 .. 8192, gpu_min_batch 1 .. 32.
 
 ```mermaid
 xychart-beta
     title "Regret by gpu_min_batch_times_n"
     x-axis "gpu_min_batch_times_n" [0, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, none]
-    y-axis "geometric-mean regret" 1.0 --> 1.97
-    line [1.9584, 1.2824, 1.1800, 1.1169, 1.0820, 1.0605, 1.0441, 1.0309, 1.0291, 1.0401, 1.0812]
+    y-axis "geometric-mean regret" 1.0 --> 1.92
+    line [1.9088, 1.2499, 1.1501, 1.0886, 1.0546, 1.0337, 1.0177, 1.0048, 1.0031, 1.0137, 1.0538]
 ```
 
 | gpu_min_batch_times_n | 0 | 64 | 128 | 256 | 512 | 1024 | 2048 | 4096 | 8192 | 16384 | none |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| geomean | 1.9584 | 1.2824 | 1.1800 | 1.1169 | 1.0820 | 1.0605 | 1.0441 | 1.0309 | 1.0291 | 1.0401 | 1.0812 |
-| worst | 151.31x | 12.95x | 7.14x | 2.97x | 2.97x | 2.15x | 1.72x | 1.72x | 1.72x | 1.72x | 2.44x |
+| geomean | 1.9088 | 1.2499 | 1.1501 | 1.0886 | 1.0546 | 1.0337 | 1.0177 | 1.0048 | 1.0031 | 1.0137 | 1.0538 |
+| worst | 151.31x | 12.95x | 7.14x | 2.97x | 2.97x | 2.15x | 1.63x | 1.22x | 1.22x | 1.39x | 2.44x |
 
 ```mermaid
 xychart-beta
     title "Regret by gpu_min_batch"
     x-axis "gpu_min_batch" [1, 2, 4, 8, 16, 32]
-    y-axis "geometric-mean regret" 1.0 --> 1.04
-    line [1.0291, 1.0291, 1.0291, 1.0291, 1.0291, 1.0291]
+    y-axis "geometric-mean regret" 1.0 --> 1.02
+    line [1.0031, 1.0031, 1.0031, 1.0031, 1.0031, 1.0031]
 ```
 
 | gpu_min_batch | 1 | 2 | 4 | 8 | 16 | 32 |
 |---|---|---|---|---|---|---|
-| geomean | 1.0291 | 1.0291 | 1.0291 | 1.0291 | 1.0291 | 1.0291 |
-| worst | 1.72x | 1.72x | 1.72x | 1.72x | 1.72x | 1.72x |
+| geomean | 1.0031 | 1.0031 | 1.0031 | 1.0031 | 1.0031 | 1.0031 |
+| worst | 1.22x | 1.22x | 1.22x | 1.22x | 1.22x | 1.22x |
 
 ```mermaid
 xychart-beta
     title "Regret by gpu_max_n"
     x-axis "gpu_max_n" [16, 24, 32, 48, 64, 96, 256]
-    y-axis "geometric-mean regret" 1.0 --> 1.13
-    line [1.0291, 1.0310, 1.0310, 1.0310, 1.0419, 1.1024, 1.1171]
+    y-axis "geometric-mean regret" 1.0 --> 1.10
+    line [1.0031, 1.0049, 1.0049, 1.0049, 1.0098, 1.0683, 1.0826]
 ```
 
 | gpu_max_n | 16 | 24 | 32 | 48 | 64 | 96 | 256 |
 |---|---|---|---|---|---|---|---|
-| geomean | 1.0291 | 1.0310 | 1.0310 | 1.0310 | 1.0419 | 1.1024 | 1.1171 |
-| worst | 1.72x | 1.72x | 1.72x | 1.72x | 1.89x | 3.93x | 5.75x |
+| geomean | 1.0031 | 1.0049 | 1.0049 | 1.0049 | 1.0098 | 1.0683 | 1.0826 |
+| worst | 1.22x | 1.28x | 1.28x | 1.28x | 1.89x | 3.93x | 5.75x |
 
 Held-out check of a per-N boundary (a lookup table of the smallest batch at which the GPU wins, per N) against the product rule. Fitted on 71 points, scored on the other 61.
 
 | rule | fitted on train | train geomean | test geomean | test worst | verdict |
 |---|---|---|---|---|---|
-| product rule | [16, 8192, 1] | 1.0186 | 1.0416 | 1.63x | baseline |
-| per-N table | {"min_batch_by_n": {"2": 512, "4": 2048, "8": 1024, "12": 2048, "16": 512, "24": 512, "32": 512, "48": 512, "64": null, "96": null, "256": null}} | 1.0163 | 1.0587 | 1.63x | rejected (better in 1% of resamples, median gain -1.6%) |
+| product rule | [16, 8192, 1] | 1.0037 | 1.0023 | 1.08x | baseline |
+| per-N table | {"min_batch_by_n": {"2": 512, "4": 2048, "8": 1024, "12": 2048, "16": 512, "24": 512, "32": 512, "48": 512, "64": 4096, "96": null, "256": null}} | 1.0015 | 1.0474 | 1.63x | rejected (better in 0% of resamples, median gain -4.2%) |
 
 Best backend per point (`c` CPU, `s` simd, `t` threadgroup, `B` block, `q` ql, `Q` ql shared with the CPU, `.` not measured), what the whole rule picks, and the speedup of the best GPU backend over the CPU:
 
@@ -252,8 +251,8 @@ Best backend per point (`c` CPU, `s` simd, `t` threadgroup, `B` block, `q` ql, `
          16     c     c     c     c     c     c     c     c     c     q     q     q     q
          24     c     c     c     c     c     c     c     c     q     q     q     q     q
          32     c     c     c     c     c     c     c     c     q     q     q     q     q
-         48     c     c     c     c     c     c     c     c     q     q     q     q     q
-         64     c     c     c     c     c     c     c     c     c     c     c     c     c
+         48     c     c     c     c     c     c     c     c     Q     Q     Q     Q     Q
+         64     c     c     c     c     c     c     c     c     Q     Q     Q     Q     Q
          96     c     c     c     c     c     c     c     c     c     c     c     c     c
         256     c     .     .     .     .     .     c     .     .     .     .     .     .
 ```
@@ -279,13 +278,13 @@ The same rule for `eigvalsh`, with its own thresholds (`values_gpu_max_n`, `valu
 
 | rule | geomean regret | worst | >10% | total time / oracle | est. picks |
 |---|---|---|---|---|---|
-| policy in effect | 1.0305 | 1.81x | 13 | 1.108 | 0 |
-| eigh's fitted boundary | 1.0267 | 1.81x | 9 | 1.110 | 0 |
-| fitted ('32', '8192', '1') | 1.0198 | 1.54x | 8 | 1.088 | 0 |
+| policy in effect | 1.0171 | 1.41x | 9 | 1.049 | 0 |
+| eigh's fitted boundary | 1.0090 | 1.96x | 3 | 1.008 | 0 |
+| fitted ('48', '8192', '1') | 1.0112 | 1.39x | 5 | 1.048 | 0 |
 
-6 combinations are within 0.5% of the best geomean: values_gpu_max_n 32 .. 32, values_gpu_min_batch_times_n 8192 .. 8192, values_gpu_min_batch 1 .. 32.
+12 combinations are within 0.5% of the best geomean: values_gpu_max_n 48 .. 64, values_gpu_min_batch_times_n 8192 .. 16384, values_gpu_min_batch 1 .. 32.
 
-Held out: fitted on 71 points ('32', '8192', '1'), scored on the other 61: geomean 1.0275x, worst 1.54x, against 1.0828x, worst 3.22x for eigh's boundary on the same points.
+Held out: fitted on 71 points ('64', '16384', '1'), scored on the other 61: geomean 1.0246x, worst 1.96x, against 1.0828x, worst 3.22x for eigh's boundary on the same points.
 
 ## Stage 4: the tridiag backend instead of the CPU
 
@@ -330,13 +329,13 @@ band over the CPU, N x batch: 512x1 1.10x, 512x2 1.04x, 512x4 0.94x, 512x8 1.17x
 
 Where the rules above choose the CPU, the `tridiag_batch` backend (the tridiag method for a whole batch at once: the reduction of every matrix by the same dispatches, the tridiagonal problems on the CPU's cores, the back-transformation as batched products) for N in a window from a batch on, fitted on the points where it was timed (N 48-1024, batches from 16) against the CPU and whatever else the CPU's side would pick. Inside the flat region the window in effect stays; otherwise the smallest worst case, then the largest batch and the narrowest window.
 
-**With eigenvectors** (73 points): N 96-1024 from batch 128 (in effect: N 96-256 from batch 256): 1.0196 geometric-mean regret, worst 1.33x; without it 1.2590, worst 1.98x. Held out: the window fitted on half the points, [96, 768, 128], scores 1.0839 on the other half, against 1.2178 without it.
+**With eigenvectors** (68 points): N 96-1024 from batch 128 (in effect: N 96-256 from batch 256): 1.0132 geometric-mean regret, worst 1.32x; without it 1.2707, worst 1.98x. Held out: the window fitted on half the points, [96, 1024, 64], scores 1.0317 on the other half, against 1.1883 without it.
 
-tridiag_batch over the CPU, N x batch: 48x16 0.24x, 48x32 0.32x, 48x64 0.36x, 48x128 0.57x, 64x16 0.26x, 64x32 0.38x, 64x64 0.51x, 64x128 0.72x, 64x256 0.78x, 64x512 0.87x, 64x1024 1.05x, 64x2048 1.21x, 64x4096 1.33x, 96x16 0.33x, 96x32 0.48x, 96x64 0.66x, 96x128 0.86x, 96x256 0.87x, 96x512 1.16x, 96x1024 1.35x, 96x2048 1.42x, 96x4096 1.45x, 128x16 0.57x, 128x32 0.64x, 128x64 0.86x, 128x128 0.94x, 128x256 1.23x, 128x512 1.41x, 128x1024 1.56x, 128x2048 1.86x, 128x4096 1.63x, 192x16 0.74x, 192x32 0.86x, 192x64 0.95x, 192x128 1.28x, 192x256 1.43x, 192x512 1.59x, 192x1024 1.59x, 192x2048 1.45x, 192x4096 1.52x, 256x16 0.76x, 256x32 1.00x, 256x64 1.32x, 256x128 1.47x, 256x256 1.55x, 256x512 1.76x, 256x1024 1.65x, 256x2048 1.71x, 256x4096 1.98x, 384x16 0.88x, 384x32 1.06x, 384x64 1.11x, 384x128 1.34x, 384x256 1.31x, 384x512 1.46x, 384x1024 1.49x, 384x2048 1.47x, 512x16 1.06x, 512x32 1.24x, 512x64 1.33x, 512x128 1.40x, 512x256 1.38x, 512x512 1.48x, 512x1024 1.52x, 768x16 1.13x, 768x32 1.20x, 768x64 1.29x, 768x128 1.20x, 768x256 1.21x, 1024x16 1.89x, 1024x32 2.17x, 1024x64 1.78x, 1024x128 2.01x
+tridiag_batch over the CPU, N x batch: 48x16 0.24x, 48x32 0.32x, 48x64 0.36x, 48x128 0.57x, 64x16 0.26x, 64x32 0.38x, 64x64 0.51x, 64x128 0.72x, 96x16 0.33x, 96x32 0.48x, 96x64 0.66x, 96x128 0.86x, 96x256 0.87x, 96x512 1.16x, 96x1024 1.35x, 96x2048 1.42x, 96x4096 1.45x, 128x16 0.57x, 128x32 0.64x, 128x64 0.86x, 128x128 0.94x, 128x256 1.23x, 128x512 1.41x, 128x1024 1.56x, 128x2048 1.86x, 128x4096 1.63x, 192x16 0.74x, 192x32 0.86x, 192x64 0.95x, 192x128 1.28x, 192x256 1.43x, 192x512 1.59x, 192x1024 1.59x, 192x2048 1.45x, 192x4096 1.52x, 256x16 0.76x, 256x32 1.00x, 256x64 1.32x, 256x128 1.47x, 256x256 1.55x, 256x512 1.76x, 256x1024 1.65x, 256x2048 1.71x, 256x4096 1.98x, 384x16 0.88x, 384x32 1.06x, 384x64 1.11x, 384x128 1.34x, 384x256 1.31x, 384x512 1.46x, 384x1024 1.49x, 384x2048 1.47x, 512x16 1.06x, 512x32 1.24x, 512x64 1.33x, 512x128 1.40x, 512x256 1.38x, 512x512 1.48x, 512x1024 1.52x, 768x16 1.13x, 768x32 1.20x, 768x64 1.29x, 768x128 1.20x, 768x256 1.21x, 1024x16 1.89x, 1024x32 2.17x, 1024x64 1.78x, 1024x128 2.01x
 
-**Eigenvalues alone** (73 points): N 64-256 from batch 512 (in effect: N 96-128 from batch 128): 1.0054 geometric-mean regret, worst 1.23x; without it 1.0891, worst 1.74x. Held out: the window fitted on half the points, [64, 256, 512], scores 1.0045 on the other half, against 1.0562 without it.
+**Eigenvalues alone** (68 points): N 96-256 from batch 256 (in effect: N 96-128 from batch 128): 1.0003 geometric-mean regret, worst 1.02x; without it 1.0864, worst 1.74x. Held out: the window fitted on half the points, [96, 256, 256], scores 1.0000 on the other half, against 1.0866 without it.
 
-tridiag_batch over the CPU, N x batch: 48x16 0.29x, 48x32 0.32x, 48x64 0.40x, 48x128 0.55x, 64x16 0.28x, 64x32 0.34x, 64x64 0.41x, 64x128 0.64x, 64x256 0.77x, 64x512 0.96x, 64x1024 1.14x, 64x2048 1.21x, 64x4096 1.31x, 96x16 0.32x, 96x32 0.46x, 96x64 0.65x, 96x128 0.94x, 96x256 1.08x, 96x512 1.30x, 96x1024 1.51x, 96x2048 1.48x, 96x4096 1.74x, 128x16 0.33x, 128x32 0.49x, 128x64 0.74x, 128x128 0.94x, 128x256 1.23x, 128x512 1.41x, 128x1024 1.55x, 128x2048 1.62x, 128x4096 1.52x, 192x16 0.56x, 192x32 0.63x, 192x64 0.88x, 192x128 0.97x, 192x256 1.08x, 192x512 1.22x, 192x1024 1.30x, 192x2048 1.49x, 192x4096 1.44x, 256x16 0.65x, 256x32 0.82x, 256x64 0.81x, 256x128 0.90x, 256x256 0.98x, 256x512 1.13x, 256x1024 1.16x, 256x2048 1.16x, 256x4096 1.41x, 384x16 0.61x, 384x32 0.68x, 384x64 0.64x, 384x128 0.80x, 384x256 0.82x, 384x512 0.91x, 384x1024 0.92x, 384x2048 0.88x, 512x16 0.68x, 512x32 0.73x, 512x64 0.66x, 512x128 0.72x, 512x256 0.68x, 512x512 0.79x, 512x1024 0.76x, 768x16 0.71x, 768x32 0.66x, 768x64 0.63x, 768x128 0.59x, 768x256 0.56x, 1024x16 0.58x, 1024x32 0.62x, 1024x64 0.56x, 1024x128 0.56x
+tridiag_batch over the CPU, N x batch: 48x16 0.29x, 48x32 0.32x, 48x64 0.40x, 48x128 0.55x, 64x16 0.28x, 64x32 0.34x, 64x64 0.41x, 64x128 0.64x, 96x16 0.32x, 96x32 0.46x, 96x64 0.65x, 96x128 0.94x, 96x256 1.08x, 96x512 1.30x, 96x1024 1.51x, 96x2048 1.48x, 96x4096 1.74x, 128x16 0.33x, 128x32 0.49x, 128x64 0.74x, 128x128 0.94x, 128x256 1.23x, 128x512 1.41x, 128x1024 1.55x, 128x2048 1.62x, 128x4096 1.52x, 192x16 0.56x, 192x32 0.63x, 192x64 0.88x, 192x128 0.97x, 192x256 1.08x, 192x512 1.22x, 192x1024 1.30x, 192x2048 1.49x, 192x4096 1.44x, 256x16 0.65x, 256x32 0.82x, 256x64 0.81x, 256x128 0.90x, 256x256 0.98x, 256x512 1.13x, 256x1024 1.16x, 256x2048 1.16x, 256x4096 1.41x, 384x16 0.61x, 384x32 0.68x, 384x64 0.64x, 384x128 0.80x, 384x256 0.82x, 384x512 0.91x, 384x1024 0.92x, 384x2048 0.88x, 512x16 0.68x, 512x32 0.73x, 512x64 0.66x, 512x128 0.72x, 512x256 0.68x, 512x512 0.79x, 512x1024 0.76x, 768x16 0.71x, 768x32 0.66x, 768x64 0.63x, 768x128 0.59x, 768x256 0.56x, 1024x16 0.58x, 1024x32 0.62x, 1024x64 0.56x, 1024x128 0.56x
 
 ## Noise floor
 

@@ -213,7 +213,8 @@ they did before these backends existed.
 
 **Stage 1c** fits `share_min_batch`: from which batch a batch that goes to
 `ql` (eigh) or `gk` (SVD) is shared with the CPU path, the two solving it at
-once. It is scored against the best GPU backend, the shared one (`ql_share`,
+once; and with it (since 2.17.0) `share_min_n` or `share_min_k`, the smallest
+matrices shared, since the kernels in registers alone win the smallest. It is scored against the best GPU backend, the shared one (`ql_share`,
 `gk_share`) included, on the points where that was timed (batches from 64)
 and the backend is the GPU's choice. Sharing only pays from a batch large
 enough to keep both busy; below it the threads cost more than they save.

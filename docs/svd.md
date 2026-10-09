@@ -645,15 +645,18 @@ Metal device name and GPU core count:
 
 | GPU | cores | GPU iff | golub_kahan | QR from | block from | else bidiag | status |
 |---|---|---|---|---|---|---|---|
-| Apple M5 Pro | 20 | k <= 8, l <= 1024 and batch * k >= 2048, or k <= 48 in batches of 256+ (svdvals: k <= 32, l <= 1024 and batch * k >= 4096) | k = 4 .. 56 | 256 rows, k >= 16 | k = 256; k = 64 in batches of 64+ | `band` from k = 512 with vectors (batches up to 16), from 768 for svdvals; `bidiag_batch` for k = 64-1024 in batches of 64+ (svdvals likewise); `bidiag` from 1024 for svdvals' batches of 2 | measured — run [`20261009-b60ec0`](results/apple-m5-pro-20gpu/20261009-b60ec0/svd/report.md) |
+| Apple M5 Pro | 20 | k <= 8, l <= 2048 and batch * k >= 4096, or k <= 80 in batches of 256+ (svdvals: k <= 80, l <= 2048 and batch * k >= 8192) | k = 4 .. 80, shared with the CPU from batch 256 for k >= 32 | 256 rows, k >= 16 | k = 256; k = 64 in batches of 64+ | `band` from k = 512 with vectors (batches up to 16), from 768 for svdvals; `bidiag_batch` for k = 96-1024 in batches of 64+ (svdvals likewise); `bidiag` from 1024 for svdvals' batches of 2 | measured — run [`20261009-b60ec0`](results/apple-m5-pro-20gpu/20261009-b60ec0/svd/report.md) |
 | anything else | — | estimated | estimated | estimated | estimated | estimated | **estimated** from the M5 Pro's timings ([how](tuning.md#macs-nobody-has-measured)) |
 
-The 2.17.0 row (run `b60ec0`): its windows, fitted on the larger points,
-score 1.0121 for `band` with vectors (1.115 without), 1.0709 for svdvals'
-`band` (1.359 without), 1.0334 for `bidiag_batch` (1.248 without) and
-1.0484 for its singular values alone (1.298 without); batches of 64 and more
-from k = 64 go to `bidiag_batch`, one or a few matrices from k = 512 to the
-two-stage `band`, and no batch is shared with the CPU. Before 2.17.0: on the
+The 2.17.0 row (run `b60ec0`) scores 1.0215 geometric-mean regret, worst
+1.61x, on the 253 points where the one-stage backends are timed; its windows,
+fitted on the larger points, score 1.0121 for `band` with vectors (1.115
+without), 1.0709 for svdvals' `band` (1.359 without), 1.0139 for
+`bidiag_batch` (1.244 without) and 1.0289 for its singular values alone
+(1.323 without), and sharing 1.047 against `golub_kahan` alone's 1.115.
+Batches of 64 and more from k = 96 go to `bidiag_batch`, one or a few
+matrices from k = 512 to the two-stage `band`, and `golub_kahan` batches
+are shared with the CPU from 256 matrices of k = 32 and more. Before 2.17.0: on the
 M5 Pro large batches of small matrices, up to 56×56 and a long side
 of 256, go to `golub_kahan` on the GPU, shared with the CPU from 1024
 matrices, and so do batches of 1024 and more up to 80×80 (the large-batch
@@ -691,7 +694,7 @@ entry, remain only for a Mac with nothing to estimate from
 `SVD_VALUES_GPU_MIN_BATCH_TIMES_K`, `SVD_VALUES_GPU_MIN_BATCH`,
 `SVD_VALUES_GPU_MAX_L`, `SVD_BIDIAG_MIN_K`, `SVD_VALUES_BIDIAG_MIN_K`,
 `SVD_BIDIAG_MAX_BATCH`, `SVD_VALUES_BIDIAG_MAX_BATCH`, `SVD_GK_MIN_K`,
-`SVD_GK_MAX_K`, `SVD_SHARE_MIN_BATCH`, `SVD_GPU_BIG_BATCH_MAX_K`,
+`SVD_GK_MAX_K`, `SVD_SHARE_MIN_BATCH`, `SVD_SHARE_MIN_K`, `SVD_GPU_BIG_BATCH_MAX_K`,
 `SVD_GPU_BIG_BATCH_MIN`, `SVD_VALUES_BAND_MIN_K`, `SVD_BAND_MIN_K`,
 `SVD_BIDIAG_BATCH_MIN_K`, `SVD_BIDIAG_BATCH_MAX_K`, `SVD_BIDIAG_BATCH_MIN_BATCH`,
 `SVD_BIDIAG_BATCH_MAX_L` (and the same with `SVD_VALUES_` for singular values
@@ -739,8 +742,11 @@ a few matrices at a time from the back, and they meet wherever their speeds
 put them. On an M5 Pro, against the faster of the two alone: 1.41x for 4096
 matrices of 16×16, 1.45x for 4096 of 40×40, 1.43x for 1024 of 48×48, 1.71x for
 1024 of 56×56 and 1.62x for 1024 of 64×64 (with vectors), 1.45x for 1024 of
-48×48 (singular values alone). `svd_shares_batch()` and
-`svdvals_shares_batch()` report it.
+48×48 (singular values alone). Since 2.17.0 sharing also needs k of at
+least `share_min_k` (0: any k), as the eigensolver's `share_min_n`: on an M5
+Pro from 256 matrices of k = 32 and more (256 of 128×64 1.5x, 1024 of 64×64
+1.8x), `golub_kahan` in registers alone being faster below. `svd_shares_batch()`
+and `svdvals_shares_batch()` report it.
 
 ## Accuracy
 

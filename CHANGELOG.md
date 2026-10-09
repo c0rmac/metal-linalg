@@ -100,6 +100,16 @@
   backends `bidiag_batch` and `bidiag_batch_vals` and stage 4 of
   `tuning/tune_svd.py` fit them; the SVD kernel version is 10, and the M5 Pro
   is re-measured.
+- **Sharing a batch with the CPU from a size on**: `share_min_n` in the
+  eigh policy and `share_min_k` in the SVD's (`EIGH_SHARE_MIN_N`,
+  `SVD_SHARE_MIN_K`; at the end of the C API's structs, and in Python's,
+  PyTorch's and Swift's policies). The kernels in registers made the GPU
+  alone the faster for the smallest matrices, where sharing now loses (eigh
+  up to N = 32, the SVD at 32×32 and below), so one batch threshold for
+  every size could share nowhere. Stage 1c of the tuners fits the two
+  together; on an M5 Pro sharing from 256 matrices of N = 48 (eigh) and of
+  k = 32 (the SVD): 256 SVDs of 128×64 in 5.1 ms rather than 7.2, 1024 of
+  64×64 1.8x. A row without the field shares at any size, as before.
 - **The QR kernel for batches of mid-size matrices: one barrier a column**
   in its panels (the sum of squares and the dot products in one reduction):
   1.05x at 64 x 512^2, level elsewhere.

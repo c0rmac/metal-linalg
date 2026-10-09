@@ -173,7 +173,8 @@ metal_linalg_eigh_policy metal_linalg_eigh_policy_get(void) {
             p.tridiag_max_batch, p.values_tridiag_max_batch, p.share_min_batch,
             p.gpu_big_batch_max_n, p.gpu_big_batch_min, p.values_band_min_n, p.values_band_width,
             p.band_min_n, p.tridiag_batch_min_n, p.tridiag_batch_max_n, p.tridiag_batch_min_batch,
-            p.values_tridiag_batch_min_n, p.values_tridiag_batch_max_n, p.values_tridiag_batch_min_batch};
+            p.values_tridiag_batch_min_n, p.values_tridiag_batch_max_n, p.values_tridiag_batch_min_batch,
+            p.share_min_n};
 }
 
 metal_linalg_svd_policy metal_linalg_svd_policy_get(void) {
@@ -186,7 +187,7 @@ metal_linalg_svd_policy metal_linalg_svd_policy_get(void) {
             p.share_min_batch, p.gpu_big_batch_max_k, p.gpu_big_batch_min, p.values_band_min_k, p.values_band_width,
             p.band_min_k, p.bidiag_batch_min_k, p.bidiag_batch_max_k, p.bidiag_batch_min_batch, p.bidiag_batch_max_l,
             p.values_bidiag_batch_min_k, p.values_bidiag_batch_max_k, p.values_bidiag_batch_min_batch,
-            p.values_bidiag_batch_max_l};
+            p.values_bidiag_batch_max_l, p.share_min_k};
 }
 
 // The informational fields keep the detected values.
@@ -237,6 +238,7 @@ void metal_linalg_eigh_policy_set(const metal_linalg_eigh_policy* c) {
     p.values_tridiag_batch_min_n     = c->values_tridiag_batch_min_n;
     p.values_tridiag_batch_max_n     = c->values_tridiag_batch_max_n;
     p.values_tridiag_batch_min_batch = c->values_tridiag_batch_min_batch;
+    p.share_min_n                    = c->share_min_n;
     set_eigh_policy(p);
 }
 
@@ -276,6 +278,7 @@ void metal_linalg_svd_policy_set(const metal_linalg_svd_policy* c) {
     p.values_bidiag_batch_max_k     = c->values_bidiag_batch_max_k;
     p.values_bidiag_batch_min_batch = c->values_bidiag_batch_min_batch;
     p.values_bidiag_batch_max_l     = c->values_bidiag_batch_max_l;
+    p.share_min_k                   = c->share_min_k;
     set_svd_policy(p);
 }
 

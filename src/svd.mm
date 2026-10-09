@@ -235,6 +235,7 @@ struct TunedEntry {
     unsigned    values_bidiag_batch_max_k;
     unsigned    values_bidiag_batch_min_batch;
     unsigned    values_bidiag_batch_max_l;
+    unsigned    share_min_k;   // 0 = any k, which rows from before 2.17.0 leave
     unsigned    calibration;   // kCalibration* (calibration.h); rows without it are current
 };
 
@@ -295,6 +296,7 @@ void apply(const TunedEntry& e, SvdPolicy& p) {
     p.values_bidiag_batch_max_k     = e.values_bidiag_batch_max_k;
     p.values_bidiag_batch_min_batch = e.values_bidiag_batch_min_batch;
     p.values_bidiag_batch_max_l     = e.values_bidiag_batch_max_k ? e.values_bidiag_batch_max_l : kSvdNoLimit;
+    p.share_min_k                   = e.share_min_k;
 }
 
 struct ResolvedPolicy {
@@ -383,6 +385,7 @@ ResolvedPolicy resolve_policy() {
     over("SVD_VALUES_BIDIAG_BATCH_MAX_K",     r.policy.values_bidiag_batch_max_k);
     over("SVD_VALUES_BIDIAG_BATCH_MIN_BATCH", r.policy.values_bidiag_batch_min_batch);
     over("SVD_VALUES_BIDIAG_BATCH_MAX_L",     r.policy.values_bidiag_batch_max_l);
+    over("SVD_SHARE_MIN_K",                   r.policy.share_min_k);
     if (!env.empty()) r.source = "env:" + env;
     return r;
 }
@@ -994,9 +997,11 @@ SvdBackend svdvals_backend(unsigned m, unsigned n, unsigned batch) { return rout
 
 namespace {
 
-bool shares(SvdBackend b, unsigned batch) {
-    const unsigned from = policy_state().policy.share_min_batch;
-    return from != 0 && batch >= from && (b == SvdBackend::golub_kahan || b == SvdBackend::qr_golub_kahan);
+// From share_min_batch, for k from share_min_k.
+bool shares(SvdBackend b, unsigned k, unsigned batch) {
+    const SvdPolicy& p = policy_state().policy;
+    return p.share_min_batch != 0 && batch >= p.share_min_batch && k >= p.share_min_k &&
+           (b == SvdBackend::golub_kahan || b == SvdBackend::qr_golub_kahan);
 }
 
 // The smallest GPU chunk worth a dispatch: eight matrices per core. The CPU's
@@ -1007,10 +1012,12 @@ uint32_t gpu_share_chunk(uint32_t) {
 
 } // namespace
 
-bool svd_shares_batch(unsigned m, unsigned n, unsigned batch) { return shares(svd_backend(m, n, batch), batch); }
+bool svd_shares_batch(unsigned m, unsigned n, unsigned batch) {
+    return shares(svd_backend(m, n, batch), std::min(m, n), batch);
+}
 
 bool svdvals_shares_batch(unsigned m, unsigned n, unsigned batch) {
-    return shares(svdvals_backend(m, n, batch), batch);
+    return shares(svdvals_backend(m, n, batch), std::min(m, n), batch);
 }
 
 void core::detail::svd_golub_kahan_shared(const Matrices& a, float* u, float* s, float* vt, uint32_t* info) {
@@ -1051,7 +1058,7 @@ void core::svd(const Matrices& a, float* u, float* s, float* vt, uint32_t* info)
     }
     SvdOptions opt;
     const SvdBackend backend = route(m, n, batch, u || vt);
-    if (shares(backend, batch)) {
+    if (shares(backend, std::min(m, n), batch)) {
         core::detail::svd_golub_kahan_shared(a, u, s, vt, info);
         return;
     }

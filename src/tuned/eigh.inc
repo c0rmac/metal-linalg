@@ -3,4 +3,4 @@
 // kCalibrationStale / kCalibrationIncomplete says the runs are not current
 // (tuning/kernels.py, docs/measurements.md).
 // apple-m5-pro-20gpu: 1 run (20261009-b60ec0), current
-{"Apple M5 Pro", 20,   0, 256, 64, 64,   16, 8192, 1,   32, 8192, 1,   1024, 1024, 128, 2,   2, 64,   0,   48, 256,   1536, 16,   512,   96, 1024, 128,   64, 256, 512},
+{"Apple M5 Pro", 20,   0, 256, 64, 64,   16, 8192, 1,   48, 8192, 1,   1024, 1024, 128, 2,   2, 64,   256,   64, 256,   1536, 16,   512,   96, 1024, 128,   96, 256, 256,   48},

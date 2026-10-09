@@ -194,6 +194,7 @@ struct TunedEntry {
     unsigned    values_tridiag_batch_min_n;
     unsigned    values_tridiag_batch_max_n;
     unsigned    values_tridiag_batch_min_batch;
+    unsigned    share_min_n;   // 0 = any N, which rows from before 2.17.0 leave
     unsigned    calibration;   // kCalibration* (calibration.h); rows without it are current
 };
 
@@ -248,6 +249,7 @@ void apply(const TunedEntry& e, EighPolicy& p) {
     p.values_tridiag_batch_min_n     = e.values_tridiag_batch_min_n;
     p.values_tridiag_batch_max_n     = e.values_tridiag_batch_max_n;
     p.values_tridiag_batch_min_batch = e.values_tridiag_batch_min_batch;
+    p.share_min_n                    = e.share_min_n;
 }
 
 struct ResolvedPolicy {
@@ -335,6 +337,7 @@ ResolvedPolicy resolve_policy() {
     over("EIGH_VALUES_TRIDIAG_BATCH_MIN_N",     r.policy.values_tridiag_batch_min_n);
     over("EIGH_VALUES_TRIDIAG_BATCH_MAX_N",     r.policy.values_tridiag_batch_max_n);
     over("EIGH_VALUES_TRIDIAG_BATCH_MIN_BATCH", r.policy.values_tridiag_batch_min_batch);
+    over("EIGH_SHARE_MIN_N",                  r.policy.share_min_n);
     if (!env.empty()) r.source = "env:" + env;
     return r;
 }
@@ -857,14 +860,23 @@ EighBackend eigh_backend(unsigned n, unsigned batch) { return route(n, batch, tr
 
 EighBackend eigvalsh_backend(unsigned n, unsigned batch) { return route(n, batch, false); }
 
+namespace {
+
+// Whether a ql batch is shared with the CPU path: from share_min_batch, for N
+// from share_min_n.
+bool ql_shared(unsigned n, unsigned batch) {
+    const EighPolicy& p = policy_state().policy;
+    return p.share_min_batch != 0 && batch >= p.share_min_batch && n >= p.share_min_n;
+}
+
+} // namespace
+
 bool eigh_shares_batch(unsigned n, unsigned batch) {
-    const unsigned from = policy_state().policy.share_min_batch;
-    return from != 0 && batch >= from && eigh_backend(n, batch) == EighBackend::ql;
+    return ql_shared(n, batch) && eigh_backend(n, batch) == EighBackend::ql;
 }
 
 bool eigvalsh_shares_batch(unsigned n, unsigned batch) {
-    const unsigned from = policy_state().policy.share_min_batch;
-    return from != 0 && batch >= from && eigvalsh_backend(n, batch) == EighBackend::ql;
+    return ql_shared(n, batch) && eigvalsh_backend(n, batch) == EighBackend::ql;
 }
 
 void core::detail::eigh_ql_shared(const Matrices& a, bool lower, float* w, float* v, uint32_t* info) {
@@ -919,8 +931,7 @@ void core::eigh(const Matrices& a, bool lower, float* w, float* v, uint32_t* inf
         return;
     }
     if (backend == EighBackend::ql) {
-        const unsigned from = policy_state().policy.share_min_batch;
-        if (from != 0 && batch >= from) core::detail::eigh_ql_shared(a, lower, w, v, info);
+        if (ql_shared(n, batch)) core::detail::eigh_ql_shared(a, lower, w, v, info);
         else                            core::detail::eigh_ql(a, lower, w, v, info);
         return;
     }

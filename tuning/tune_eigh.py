@@ -227,10 +227,11 @@ QL_LIMIT = 0
 # The ql window the GPU choice applies: (0, 0) while stage 1 is fitted, the
 # chosen one after stage 1b.
 QL = (0, 0)
-# The batch from which ql shares a batch with the CPU path (ql_share): in
-# effect, and the one gpu_choice applies (0 = never; fitted in stage 1c).
-CURRENT_SHARE = 0
-SHARE = 0
+# (share_min_batch, share_min_n): from which batch, and for which N, ql shares
+# a batch with the CPU path (ql_share): in effect, and the one gpu_choice
+# applies (batch 0 = never; fitted in stage 1c).
+CURRENT_SHARE = (0, 0)
+SHARE = (0, 0)
 # The large-batch clause, (max_n, min_batch): the GPU also for N above
 # gpu_max_n up to max_n in a batch of at least min_batch; in effect, and the
 # one rule_choice applies ((0, 0) = never; fitted in stage 2 after the product
@@ -375,7 +376,7 @@ def _route_fields(gm, mb, mbatch):
     return f"{'kEighNoLimit' if gm >= INF else gm}, {mb}, {mbatch}"
 
 
-def tuned_row(device, params, values=None, tridiag=(0, 0), ql=(0, 0), tridiag_cap=(0, 0), share=0, big=(0, 0),
+def tuned_row(device, params, values=None, tridiag=(0, 0), ql=(0, 0), tridiag_cap=(0, 0), share=(0, 0), big=(0, 0),
               band=0, band_width=0, band_vec=0, tb=((0, 0, 0), (0, 0, 0))):
     """The line to paste into kTuned[] in eigh.mm. `values` is the
     eigenvalues-alone boundary, or None (written as 0, 0, 0: as for eigenvectors);
@@ -388,17 +389,17 @@ def tuned_row(device, params, values=None, tridiag=(0, 0), ql=(0, 0), tridiag_ca
     v = _route_fields(*values) if values else "0, 0, 0"
     return (f'{{"{device["name"]}", {device["gpu_cores"]},   {s}, {bm_s}, {lo}, {bh},   '
             f'{_route_fields(gm, mb, mbatch)},   {v},   {tridiag[0]}, {tridiag[1]}, '
-            f'{tridiag_cap[0]}, {tridiag_cap[1]},   {ql[0]}, {ql[1]},   {share},   {big[0]}, {big[1]},   '
+            f'{tridiag_cap[0]}, {tridiag_cap[1]},   {ql[0]}, {ql[1]},   {share[0]},   {big[0]}, {big[1]},   '
             f'{band}, {band_width},   {band_vec},   {tb[0][0]}, {tb[0][1]}, {tb[0][2]},   '
-            f'{tb[1][0]}, {tb[1][1]}, {tb[1][2]}}},')
+            f'{tb[1][0]}, {tb[1][1]}, {tb[1][2]},   {share[1]}}},')
 
 
-def env_line(params, values=None, tridiag=(0, 0), ql=(0, 0), tridiag_cap=(0, 0), share=0, big=(0, 0), band=0,
+def env_line(params, values=None, tridiag=(0, 0), ql=(0, 0), tridiag_cap=(0, 0), share=(0, 0), big=(0, 0), band=0,
              band_width=0, band_vec=0, tb=((0, 0, 0), (0, 0, 0))):
     s, bm, lo, bh, gm, mb, mbatch = params
     extra = (f" EIGH_TRIDIAG_MIN_N={tridiag[0]} EIGH_VALUES_TRIDIAG_MIN_N={tridiag[1]}"
              f" EIGH_TRIDIAG_MAX_BATCH={tridiag_cap[0]} EIGH_VALUES_TRIDIAG_MAX_BATCH={tridiag_cap[1]}"
-             f" EIGH_QL_MIN_N={ql[0]} EIGH_QL_MAX_N={ql[1]} EIGH_SHARE_MIN_BATCH={share}"
+             f" EIGH_QL_MIN_N={ql[0]} EIGH_QL_MAX_N={ql[1]} EIGH_SHARE_MIN_BATCH={share[0]} EIGH_SHARE_MIN_N={share[1]}"
              f" EIGH_GPU_BIG_BATCH_MAX_N={big[0]} EIGH_GPU_BIG_BATCH_MIN={big[1]} EIGH_VALUES_BAND_MIN_N={band}"
              f" EIGH_VALUES_BAND_WIDTH={band_width} EIGH_BAND_MIN_N={band_vec}"
              f" EIGH_TRIDIAG_BATCH_MIN_N={tb[0][0]} EIGH_TRIDIAG_BATCH_MAX_N={tb[0][1]}"
@@ -672,12 +673,12 @@ def load_sidecar(raw_paths):
 
 def gpu_choice(split, N, b, ql=None, share=None):
     """The GPU backend: ql inside its window (QL unless `ql` is given),
-    ql_share from the batch SHARE (or `share`; 0 = never), else the Jacobi
-    split."""
+    ql_share from the batch and N of SHARE (or `share`, (min_batch, min_n);
+    batch 0 = never), else the Jacobi split."""
     lo, hi = QL if ql is None else ql
     if hi and lo <= N <= (min(hi, QL_LIMIT) if QL_LIMIT else hi):
-        sh = SHARE if share is None else share
-        return "ql_share" if sh and b >= sh else "ql"
+        sb, sn = SHARE if share is None else share
+        return "ql_share" if sb and b >= sb and N >= sn else "ql"
     simd_max, block_min, block_lo, batch_hi = split
     if N >= block_min or (N >= block_lo and b >= batch_hi):
         return "block"
@@ -1030,7 +1031,7 @@ def fit_tridiag(params, times, current, tol):
 
 def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
     global QL, SHARE, BIG
-    QL, SHARE, BIG = (0, 0), 0, (0, 0)    # stage 1 is the Jacobi split alone
+    QL, SHARE, BIG = (0, 0), (0, 0), (0, 0)    # stage 1 is the Jacobi split alone
     btimes = band_values(times)            # stage 4b's, before the _vals names go
     times_full, vtimes_full = split_values(times)
     times, vtimes = without_tridiag(times_full), without_tridiag(vtimes_full)
@@ -1139,28 +1140,30 @@ def analyse(times, repeats, device, tol=0.005, drift_info=None, states=None):
     res["ql_chosen"] = list(ql)
     res["current_ql"] = list(CURRENT_QL)
 
-    # ---- stage 1c: from which batch ql shares the batch with the CPU path,
-    # against the best GPU backend, the shared one included, on the points
-    # where it was timed and ql is the GPU's choice
-    share = 0
+    # ---- stage 1c: from which batch, and for which N, ql shares the batch with
+    # the CPU path, against the best GPU backend, the shared one included, on
+    # the points where it was timed and ql is the GPU's choice. Both: since
+    # 2.17.0 the ql kernel in registers alone wins the small N that sharing
+    # takes at large N, so a batch threshold alone shared nowhere
+    share = (0, 0)
     sht = {p: tv for p, tv in gpu_only(times, GPU_BACKENDS + ("ql_share",)).items()
            if "ql_share" in tv and gpu_choice(split, p[1], p[0]) == "ql"}
     if sht:
-        cands = [0] + sorted({b for (b, _) in sht})
+        cands = [(0, 0)] + [(b, n) for b in sorted({b for (b, _) in sht}) for n in [0] + sorted({N for (_, N) in sht})]
         scs = {c: _score3(evaluate(lambda N, b, c=c: gpu_choice(split, N, b, share=c), sht)) for c in cands}
         bests, nears = near_optimal(scs, tol)
         cur_s = _score3(evaluate(lambda N, b: gpu_choice(split, N, b, share=CURRENT_SHARE), sht))
         share = choose(nears, CURRENT_SHARE, cur_s, bests, tol)
         res["stage1c"] = {
-            "n_points": len(sht), "chosen": share, "current": CURRENT_SHARE,
+            "n_points": len(sht), "chosen": list(share), "current": list(CURRENT_SHARE),
             "with": _strip(evaluate(lambda N, b: gpu_choice(split, N, b, share=share), sht)),
-            "without": _strip(evaluate(lambda N, b: gpu_choice(split, N, b, share=0), sht)),
-            "curve": [[c, v[0], v[1]] for c, v in sorted(scs.items())],
+            "without": _strip(evaluate(lambda N, b: gpu_choice(split, N, b, share=(0, 0)), sht)),
+            "curve": [[c[0], c[1], v[0], v[1]] for c, v in sorted(scs.items())],
             "speedup_vs_ql": sorted([[N, b, tv["ql"] / tv["ql_share"]] for (b, N), tv in sht.items()
                                      if "ql" in tv], key=lambda x: (x[0], x[1])),
         }
     SHARE = share
-    res["share_chosen"] = share
+    res["share_chosen"] = list(share)
 
     # ---- stage 2: CPU routing given the split ----
     cur_route = CURRENT[4:]
@@ -1775,15 +1778,17 @@ def write_report(res, path):
     if s1c:
         L.append("## Stage 1c: sharing a batch with the CPU")
         L.append("")
-        L.append("From a batch on, `ql_share`: ql and the CPU path at once on one batch, the GPU taking chunks "
-                 "from the front and the CPU from the back. Fitted against the best GPU backend, the shared one "
-                 f"included, on the {s1c['n_points']} points where it was timed and ql is the GPU's choice. "
-                 "Chosen: " + (f"from batch {s1c['chosen']}." if s1c["chosen"] else "never."))
+        sb_, sn_ = s1c["chosen"] if isinstance(s1c["chosen"], list) else (s1c["chosen"], 0)
+        L.append("From a batch and an N on, `ql_share`: ql and the CPU path at once on one batch, the GPU taking "
+                 "chunks from the front and the CPU from the back. Fitted against the best GPU backend, the shared "
+                 f"one included, on the {s1c['n_points']} points where it was timed and ql is the GPU's choice. "
+                 "Chosen: " + (f"from batch {sb_}" + (f" and N = {sn_}." if sn_ else ".") if sb_ else "never."))
         L.append("")
         L.append("| rule | geomean regret | worst | >10% | total time / oracle | est. picks |")
         L.append("|---|---|---|---|---|---|")
         L.append(_stats_row("ql alone", s1c["without"]))
-        L.append(_stats_row(f"shared from batch {s1c['chosen'] or 'never'}", s1c["with"]))
+        L.append(_stats_row(f"shared from batch {sb_}" + (f", N >= {sn_}" if sn_ else "") if sb_ else "shared never",
+                            s1c["with"]))
         L.append("")
         if s1c["speedup_vs_ql"]:
             L.append("ql_share over ql alone, N x batch: " +
@@ -2070,7 +2075,7 @@ def main():
                            pol.get("values_tridiag_batch_min_batch", 0)))
             CURRENT_TRIDIAG_CAP = (pol.get("tridiag_max_batch", 0), pol.get("values_tridiag_max_batch", 0))
             CURRENT_QL = (pol.get("ql_min_n", 0), pol.get("ql_max_n", 0))
-            CURRENT_SHARE = pol.get("share_min_batch", 0)
+            CURRENT_SHARE = (pol.get("share_min_batch", 0), pol.get("share_min_n", 0))
             CURRENT_BIG = (pol.get("gpu_big_batch_max_n", 0), pol.get("gpu_big_batch_min", 0))
             QL_LIMIT = pol.get("ql_limit", 0)
         calibration = side.get("calibration")
@@ -2116,7 +2121,8 @@ def main():
               f"from batch {res['big_chosen'][1]}")
     if res.get("stage1c"):
         c1 = res["stage1c"]
-        print(f"share with the CPU: {'from batch ' + str(c1['chosen']) if c1['chosen'] else 'never'}   "
+        sb_, sn_ = c1["chosen"] if isinstance(c1["chosen"], list) else (c1["chosen"], 0)
+        print(f"share with the CPU: {('from batch ' + str(sb_) + (f', N >= {sn_}' if sn_ else '')) if sb_ else 'never'}   "
               f"({c1['with']['geomean']:.4f}x vs best GPU backend; ql alone {c1['without']['geomean']:.4f}x)")
     for which, s4 in (res.get("stage4") or {}).items():
         print(f"tridiag ({which}): {_fmt_td((s4['chosen'], s4.get('cap', 0)))}   ({s4['with']['geomean']:.4f}x, worst "

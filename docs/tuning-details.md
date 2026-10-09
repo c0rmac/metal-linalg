@@ -213,8 +213,9 @@ split, against the best GPU backend, on the points where `ql` was timed (N up
 to the device's limit, 87 with 32 KB of threadgroup memory). The very last is
 `share_min_batch`: from this batch, a batch that goes to `ql` is shared with
 the CPU path, the GPU and the CPU solving it at once (0: never, which a run
-from before 2.11.0 gives); stage 1c fits it against the best GPU backend, the
-shared one (`ql_share`, timed from batch 64) included. After it,
+from before 2.11.0 gives), for N from `share_min_n` (0: any, since 2.17.0;
+the row's last field); stage 1c fits the two together against the best GPU
+backend, the shared one (`ql_share`, timed from batch 64) included. After it,
 `gpu_big_batch_max_n` and `gpu_big_batch_min`: the GPU also for N above
 `gpu_max_n` up to the first in a batch of at least the second (0, 0: never,
 which a run from before 2.12.0 gives), fitted in stage 2 together with the
@@ -420,6 +421,7 @@ in the policy source.
 | `EIGH_TRIDIAG_BATCH_BAND=0` | eigensolver, with eigenvectors: tridiag_batch reduces in one stage, not two for small batches from N = 384 |
 | `EIGH_BAND_BATCH=0` | eigensolver, with eigenvectors: the band backend solves a batch a matrix at a time, not through tridiag_batch's two stages |
 | `EIGH_SHARE_MIN_BATCH` | eigensolver: a ql batch shared with the CPU from this batch (0: never) |
+| `EIGH_SHARE_MIN_N` | ... for N from this (0: any N; since 2.17.0) |
 | `EIGH_GPU_BIG_BATCH_MAX_N`, `EIGH_GPU_BIG_BATCH_MIN` | eigensolver: the GPU also for N above `gpu_max_n` up to this, in batches of at least this (0: never) |
 | `EIGH_VALUES_BAND_MIN_N` | eigenvalues alone: the `band` backend (the two-stage reduction) from this N (0: never) |
 | `EIGH_VALUES_BAND_WIDTH` | eigenvalues alone: the `band` backend's band width, 8, 16 or 32 (0: 16) |
@@ -439,6 +441,7 @@ in the policy source.
 | `SVD_BIDIAG_MAX_BATCH`, `SVD_VALUES_BIDIAG_MAX_BATCH` | SVD: the bidiag backend only for batches up to this (0: any) |
 | `SVD_GK_MIN_K`, `SVD_GK_MAX_K` | SVD: the golub_kahan backend on the GPU for k in this window (`SVD_GK_MAX_K=0`: never) |
 | `SVD_SHARE_MIN_BATCH` | SVD: a golub_kahan batch shared with the CPU from this batch (0: never) |
+| `SVD_SHARE_MIN_K` | ... for k = min(M, N) from this (0: any k; since 2.17.0) |
 | `SVD_GPU_BIG_BATCH_MAX_K`, `SVD_GPU_BIG_BATCH_MIN` | SVD: the GPU also for k above `gpu_max_k` up to this, in batches of at least this (0: never) |
 | `SVD_VALUES_BAND_MIN_K` | singular values alone: the `band` backend (the two-stage reduction) from this k (0: never) |
 | `SVD_VALUES_BAND_WIDTH` | singular values alone: the `band` backend's band width, 8, 16 or 32 (0: 16) |

@@ -281,6 +281,11 @@ namespace metal_linalg {
         // faster than either alone where they are close). 0 means never,
         // which is what a device without measurements has.
         unsigned share_min_batch = 0;
+
+        // ... and only for N of at least this (0: any N, as before 2.17.0).
+        // The ql kernel in registers alone is the faster up to N = 32 or so,
+        // where the CPU's share costs more than it saves (since 2.17.0).
+        unsigned share_min_n = 0;
     };
 
     // The policy in effect. Resolved once, on first use.
@@ -521,6 +526,10 @@ namespace metal_linalg {
         // with the CPU path, as EighPolicy::share_min_batch describes. 0 means
         // never, which is what a device without measurements has.
         unsigned share_min_batch = 0;
+
+        // ... and only for k of at least this (0: any k, as before 2.17.0),
+        // as EighPolicy::share_min_n.
+        unsigned share_min_k = 0;
     };
 
     constexpr unsigned kSvdNoLimit = 0xFFFFFFFFu;

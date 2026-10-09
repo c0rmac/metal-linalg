@@ -16,21 +16,21 @@ Row for `kTuned[]` in `src/svd.mm`:
 
 ```cpp
 // device, GPU cores,   qr_min_rows, qr_min_k,   block_min_k, block_min_k_batched, block_min_batch,   gpu_max_k, gpu_min_batch_times_k, gpu_min_batch, gpu_max_l,   values_gpu_max_k, values_gpu_min_batch_times_k, values_gpu_min_batch, values_gpu_max_l,   bidiag_min_k, values_bidiag_min_k, bidiag_max_batch, values_bidiag_max_batch,   gk_min_k, gk_max_k,   share_min_batch,   gpu_big_batch_max_k, gpu_big_batch_min,   values_band_min_k, values_band_width,   band_min_k
-{"Apple M5 Pro", 20,   256, 16,   256, 64, 64,   8, 2048, 1, 1024,   32, 4096, 1, 1024,   1024, 1024, 16, 2,   4, 56,   0,   48, 256,   768, 16,   512,   64, 1024, 64, kSvdNoLimit,   64, 1024, 64, kSvdNoLimit},
+{"Apple M5 Pro", 20,   256, 16,   256, 64, 64,   8, 4096, 1, 2048,   80, 8192, 1, 2048,   1024, 1024, 16, 2,   4, 80,   256,   80, 256,   768, 16,   512,   96, 1024, 64, kSvdNoLimit,   96, 1024, 64, kSvdNoLimit,   32},
 ```
 
 To try it without rebuilding:
 
 ```sh
-SVD_QR_MIN_ROWS=256 SVD_QR_MIN_K=16 SVD_BLOCK_MIN_K=256 SVD_BLOCK_MIN_K_BATCHED=64 SVD_BLOCK_MIN_BATCH=64 SVD_GPU_MAX_K=8 SVD_GPU_MIN_BATCH_TIMES_K=2048 SVD_GPU_MIN_BATCH=1 SVD_GPU_MAX_L=1024 SVD_BIDIAG_MIN_K=1024 SVD_VALUES_BIDIAG_MIN_K=1024 SVD_BIDIAG_MAX_BATCH=16 SVD_VALUES_BIDIAG_MAX_BATCH=2 SVD_GK_MIN_K=4 SVD_GK_MAX_K=56 SVD_SHARE_MIN_BATCH=0 SVD_GPU_BIG_BATCH_MAX_K=48 SVD_GPU_BIG_BATCH_MIN=256 SVD_VALUES_BAND_MIN_K=768 SVD_VALUES_BAND_WIDTH=16 SVD_BAND_MIN_K=512 SVD_VALUES_GPU_MAX_K=32 SVD_VALUES_GPU_MIN_BATCH_TIMES_K=4096 SVD_VALUES_GPU_MIN_BATCH=1 SVD_VALUES_GPU_MAX_L=1024 SVD_BIDIAG_BATCH_MIN_K=64 SVD_BIDIAG_BATCH_MAX_K=1024 SVD_BIDIAG_BATCH_MIN_BATCH=64 SVD_BIDIAG_BATCH_MAX_L=4294967295 SVD_VALUES_BIDIAG_BATCH_MIN_K=64 SVD_VALUES_BIDIAG_BATCH_MAX_K=1024 SVD_VALUES_BIDIAG_BATCH_MIN_BATCH=64 SVD_VALUES_BIDIAG_BATCH_MAX_L=4294967295
+SVD_QR_MIN_ROWS=256 SVD_QR_MIN_K=16 SVD_BLOCK_MIN_K=256 SVD_BLOCK_MIN_K_BATCHED=64 SVD_BLOCK_MIN_BATCH=64 SVD_GPU_MAX_K=8 SVD_GPU_MIN_BATCH_TIMES_K=4096 SVD_GPU_MIN_BATCH=1 SVD_GPU_MAX_L=2048 SVD_BIDIAG_MIN_K=1024 SVD_VALUES_BIDIAG_MIN_K=1024 SVD_BIDIAG_MAX_BATCH=16 SVD_VALUES_BIDIAG_MAX_BATCH=2 SVD_GK_MIN_K=4 SVD_GK_MAX_K=80 SVD_SHARE_MIN_BATCH=256 SVD_SHARE_MIN_K=32 SVD_GPU_BIG_BATCH_MAX_K=80 SVD_GPU_BIG_BATCH_MIN=256 SVD_VALUES_BAND_MIN_K=768 SVD_VALUES_BAND_WIDTH=16 SVD_BAND_MIN_K=512 SVD_VALUES_GPU_MAX_K=80 SVD_VALUES_GPU_MIN_BATCH_TIMES_K=8192 SVD_VALUES_GPU_MIN_BATCH=1 SVD_VALUES_GPU_MAX_L=2048 SVD_BIDIAG_BATCH_MIN_K=96 SVD_BIDIAG_BATCH_MAX_K=1024 SVD_BIDIAG_BATCH_MIN_BATCH=64 SVD_BIDIAG_BATCH_MAX_L=4294967295 SVD_VALUES_BIDIAG_BATCH_MIN_K=96 SVD_VALUES_BIDIAG_BATCH_MAX_K=1024 SVD_VALUES_BIDIAG_BATCH_MIN_BATCH=64 SVD_VALUES_BIDIAG_BATCH_MAX_L=4294967295
 ```
 
-The policy in effect on this device came from `tuned-stale:Apple M5 Pro`. Against the best measured backend at every point the fitted rule scores 1.0747 geometric-mean regret, worst 1.87x, 50 of 253 points losing more than 10%, and 1.100x the oracle's total time.
+The policy in effect on this device came from `tuned-stale:Apple M5 Pro`. Against the best measured backend at every point the fitted rule scores 1.0215 geometric-mean regret, worst 1.61x, 16 of 253 points losing more than 10%, and 1.269x the oracle's total time.
 
 ## Warnings
 
-- chosen rule loses more than 25% at 1024x64 batch=256 (cpu, 1.87x), 2048x64 batch=256 (cpu, 1.87x), 56x56 batch=4096 (cpu, 1.78x), 512x64 batch=4096 (cpu, 1.72x), 2048x64 batch=1024 (cpu, 1.71x), 1024x64 batch=1024 (cpu, 1.71x), 128x32 batch=4096 (gk, 1.71x), 56x56 batch=1024 (cpu, 1.71x) ...
-- GPU split loses more than 25% against the best GPU backend at 80x80 batch=64 (block, 1.54x), 64x64 batch=64 (block, 1.37x), 256x64 batch=64 (qrblock, 1.27x), 128x64 batch=64 (block, 1.26x)
+- chosen rule loses more than 25% at 256x16 batch=4096 (gk, 1.61x), 256x16 batch=1024 (gk, 1.47x), 2048x64 batch=64 (cpu, 1.28x)
+- chosen rule picks a backend that was not timed at 1 points; the cost model's guess counts in the geomean and is kept out of the worst case: 2048x64 batch=4096 (gk_share, est 3.89x)
 - the fitted policy differs from the one in effect (tuned-stale:Apple M5 Pro)
 
 ## Stage 1: which GPU backend
@@ -177,22 +177,22 @@ Best GPU backend per point (`J` whole-matrix kernel, `B` block kernel, `j` and `
     256 x 16              g     g     g     g     g     g     g
     512 x 16              g     g     g     g     g     g     g
      24 x 24              g     g     g     g     g     g     g
-     32 x 32              g     g     g     g     g     g     g
-     64 x 32              g     g     g     g     g     g     g
-    128 x 32              g     g     g     g     g     g     g
-    256 x 32              g     g     g     g     g     g     g
-    512 x 32              g     g     g     g     g     g     g
-   1024 x 32              g     g     g     g     g     g     g
-     40 x 40              g     g     g     g     g     g     g
-     48 x 48              g     g     g     g     g     g     g
-     56 x 56              g     g     g     g     g     g     g
-     64 x 64              J     J     J     B     B     B     B
-    128 x 64              J     J     J     B     B     B     B
-    256 x 64              j     j     j     b     b     b     b
-    512 x 64              j     j     j     b     b     b     b
-   1024 x 64              j     j     j     b     b     b     b
-   2048 x 64              j     j     j     b     b     b     b
-     80 x 80              J     J     J     B     B     B     B
+     32 x 32              g     g     g     g     G     G     G
+     64 x 32              g     g     g     g     G     G     G
+    128 x 32              g     g     g     g     G     G     G
+    256 x 32              g     g     g     g     G     G     G
+    512 x 32              g     g     g     g     G     G     G
+   1024 x 32              g     g     g     g     G     G     G
+     40 x 40              g     g     g     g     G     G     G
+     48 x 48              g     g     g     g     G     G     G
+     56 x 56              g     g     g     g     G     G     G
+     64 x 64              g     g     g     g     G     G     G
+    128 x 64              g     g     g     g     G     G     G
+    256 x 64              g     g     g     g     G     G     G
+    512 x 64              g     g     g     g     G     G     G
+   1024 x 64              g     g     g     g     G     G     G
+   2048 x 64              g     g     g     g     G     G     G
+     80 x 80              g     g     g     g     G     G     G
      96 x 96              J     J     J     B     B     B     B
     128 x 128             J     J     J     B     B     B     B
     256 x 128             j     j     j     b     b     b     b
@@ -211,6 +211,8 @@ Inside a window of k = min(M, N), `gk` (Householder bidiagonalization and implic
 | without gk (the split alone) | 1.2574 | 4.18x | 119 | 1.099 | 0 |
 | with gk for k in (4, 56) | 1.1443 | 2.47x | 82 | 1.060 | 0 |
 
+Refitted once stage 1c chose to share batches with the CPU (gk shared leads the Jacobi backends where gk alone did not): k = 4 .. 56 became k = 4 .. 80, the window in the row.
+
 2 windows are within 0.5% of the best geomean: gk_min_k 4 .. 8, gk_max_k 56 .. 56.
 
 Held out: fitted on 144 points (window (4, 56)), scored on the other 109: geomean 1.1512x, worst 2.47x, against 1.2853x, worst 4.18x without gk.
@@ -221,12 +223,12 @@ gk over the CPU, M x N x batch: 4x4x1 0.02x, 4x4x4 0.08x, 4x4x16 0.20x, 4x4x64 0
 
 ## Stage 1c: sharing a batch with the CPU
 
-From a batch on, `gk_share`: gk and the CPU path at once on one batch, the GPU taking chunks from the front and the CPU from the back. Fitted against the best GPU backend, the shared one included, on the 92 points where it was timed and gk is the GPU's choice. Chosen: never.
+From a batch and a k on, `gk_share`: gk and the CPU path at once on one batch, the GPU taking chunks from the front and the CPU from the back. Fitted against the best GPU backend, the shared one included, on the 92 points where it was timed and gk is the GPU's choice. Chosen: from batch 256 and k = 32.
 
 | rule | geomean regret | worst | >10% | total time / oracle | est. picks |
 |---|---|---|---|---|---|
 | gk alone | 1.1150 | 1.81x | 33 | 1.230 | 0 |
-| shared from batch never | 1.1150 | 1.81x | 33 | 1.230 | 0 |
+| shared from batch 256, k >= 32 | 1.0470 | 1.63x | 16 | 1.031 | 0 |
 
 gk_share over gk alone, M x N x batch: 4x4x64 0.63x, 4x4x256 0.51x, 4x4x1024 0.47x, 4x4x4096 0.53x, 8x8x64 0.68x, 8x8x256 0.55x, 8x8x1024 0.42x, 8x8x4096 0.44x, 16x8x64 0.63x, 16x8x256 0.55x, 16x8x1024 0.45x, 16x8x4096 0.58x, 32x8x64 0.62x, 32x8x256 0.55x, 32x8x1024 0.55x, 32x8x4096 0.69x, 64x8x64 0.64x, 64x8x256 0.66x, 64x8x1024 0.82x, 64x8x4096 0.96x, 128x8x64 0.63x, 128x8x256 0.75x, 128x8x1024 1.08x, 128x8x4096 1.10x, 256x8x64 0.73x, 256x8x256 0.92x, 256x8x1024 1.14x, 256x8x4096 1.21x, 16x16x64 0.68x, 16x16x256 0.65x, 16x16x1024 0.63x, 16x16x4096 0.43x, 32x16x64 0.67x, 32x16x256 0.69x, 32x16x1024 0.58x, 32x16x4096 0.50x, 64x16x64 0.74x, 64x16x256 0.84x, 64x16x1024 1.03x, 64x16x4096 1.05x, 128x16x64 0.74x, 128x16x256 1.08x, 128x16x1024 1.12x, 128x16x4096 1.22x, 256x16x64 0.80x, 256x16x256 1.22x, 256x16x1024 1.47x, 256x16x4096 1.61x, 512x16x64 0.86x, 512x16x256 1.02x, 512x16x1024 0.92x, 512x16x4096 0.90x, 24x24x64 0.75x, 24x24x256 0.79x, 24x24x1024 0.96x, 24x24x4096 1.06x, 32x32x64 0.85x, 32x32x256 0.89x, 32x32x1024 0.93x, 32x32x4096 0.99x, 64x32x64 0.83x, 64x32x256 1.53x, 64x32x1024 1.22x, 64x32x4096 1.34x, 128x32x64 0.87x, 128x32x256 1.25x, 128x32x1024 1.57x, 128x32x4096 1.71x, 256x32x64 0.84x, 256x32x256 1.13x, 256x32x1024 1.09x, 256x32x4096 1.00x, 512x32x64 0.92x, 512x32x256 1.11x, 512x32x1024 0.94x, 512x32x4096 1.00x, 1024x32x64 0.94x, 1024x32x256 1.20x, 1024x32x1024 0.94x, 1024x32x4096 1.12x, 40x40x64 0.88x, 40x40x256 1.57x, 40x40x1024 1.10x, 40x40x4096 1.42x, 48x48x64 0.88x, 48x48x256 1.61x, 48x48x1024 1.38x, 48x48x4096 1.58x, 56x56x64 0.93x, 56x56x256 1.10x, 56x56x1024 1.74x, 56x56x4096 1.81x
 
@@ -237,71 +239,71 @@ GPU iff `k <= gpu_max_k`, `l <= gpu_max_l` (l = max(M, N)), `batch * k >= gpu_mi
 | rule | geomean regret | worst | >10% | total time / oracle | est. picks |
 |---|---|---|---|---|---|
 | oracle (best per point) | 1.0000 | 1.00x | 0 | 1.000 | 0 |
-| policy in effect ('8', '4096', '1', '2048') | 1.1089 | 4.85x | 52 | 1.188 | 0 |
-| fitted ('8', '2048', '1', '1024') | 1.0747 | 1.87x | 50 | 1.100 | 0 |
+| policy in effect ('8', '4096', '1', '2048') | 1.0215 | 1.61x | 16 | 1.269 | 1 |
+| fitted ('8', '4096', '1', '2048') | 1.0215 | 1.61x | 16 | 1.269 | 1 |
 
-33 of 4125 combinations are within 0.5% of the best geomean: gpu_max_k 40 .. 56, gpu_min_batch_times_k 4096 .. 4096, gpu_min_batch 1 .. 16, gpu_max_l 512 .. none.
+36 of 4125 combinations are within 0.5% of the best geomean: gpu_max_k 64 .. 80, gpu_min_batch_times_k 4096 .. 8192, gpu_min_batch 1 .. 16, gpu_max_l 1024 .. none.
 
-Large batches: the GPU also for k above gpu_max_k up to 48 (and l <= gpu_max_l) in a batch of at least 256, fitted with the product rule (per cap, the rule, the clause over it and the rule again given the clause, the best kept) (product rule alone 1.1586, worst 3.84x; chosen 1.0747, worst 1.87x).
+Large batches: the GPU also for k above gpu_max_k up to 80 (and l <= gpu_max_l) in a batch of at least 256, fitted with the product rule (per cap, the rule, the clause over it and the rule again given the clause, the best kept) (product rule alone 1.1598, worst 3.84x; chosen 1.0215, worst 1.61x).
 
 ```mermaid
 xychart-beta
     title "Regret by gpu_min_batch_times_k"
     x-axis "gpu_min_batch_times_k" [0, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, none]
-    y-axis "geometric-mean regret" 1.0 --> 1.32
-    line [1.3037, 1.1137, 1.1067, 1.0865, 1.0851, 1.0759, 1.0747, 1.0759, 1.0771, 1.0895, 1.1159]
+    y-axis "geometric-mean regret" 1.0 --> 1.25
+    line [1.2378, 1.0575, 1.0508, 1.0316, 1.0303, 1.0215, 1.0204, 1.0215, 1.0227, 1.0344, 1.0596]
 ```
 
 | gpu_min_batch_times_k | 0 | 64 | 128 | 256 | 512 | 1024 | 2048 | 4096 | 8192 | 16384 | none |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| geomean | 1.3037 | 1.1137 | 1.1067 | 1.0865 | 1.0851 | 1.0759 | 1.0747 | 1.0759 | 1.0771 | 1.0895 | 1.1159 |
-| worst | 57.20x | 4.96x | 2.86x | 1.87x | 1.87x | 1.87x | 1.87x | 1.87x | 1.87x | 2.13x | 4.01x |
+| geomean | 1.2378 | 1.0575 | 1.0508 | 1.0316 | 1.0303 | 1.0215 | 1.0204 | 1.0215 | 1.0227 | 1.0344 | 1.0596 |
+| worst | 57.20x | 4.96x | 2.86x | 1.69x | 1.69x | 1.61x | 1.61x | 1.61x | 1.61x | 2.13x | 4.01x |
 
 ```mermaid
 xychart-beta
     title "Regret by gpu_max_l"
     x-axis "gpu_max_l" [16, 24, 32, 40, 48, 56, 64, 80, 96, 128, 256, 512, 1024, 2048, none]
     y-axis "geometric-mean regret" 1.0 --> 1.18
-    line [1.1658, 1.1567, 1.1228, 1.1193, 1.1163, 1.1163, 1.1015, 1.1015, 1.1015, 1.0948, 1.0868, 1.0792, 1.0747, 1.0747, 1.0747]
+    line [1.1659, 1.1568, 1.1247, 1.1173, 1.1088, 1.1041, 1.0809, 1.0770, 1.0770, 1.0607, 1.0464, 1.0327, 1.0207, 1.0215, 1.0215]
 ```
 
 | gpu_max_l | 16 | 24 | 32 | 40 | 48 | 56 | 64 | 80 | 96 | 128 | 256 | 512 | 1024 | 2048 | none |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| geomean | 1.1658 | 1.1567 | 1.1228 | 1.1193 | 1.1163 | 1.1163 | 1.1015 | 1.1015 | 1.1015 | 1.0948 | 1.0868 | 1.0792 | 1.0747 | 1.0747 | 1.0747 |
-| worst | 3.84x | 3.84x | 2.16x | 2.16x | 2.13x | 2.13x | 1.90x | 1.90x | 1.90x | 1.87x | 1.87x | 1.87x | 1.87x | 1.87x | 1.87x |
+| geomean | 1.1659 | 1.1568 | 1.1247 | 1.1173 | 1.1088 | 1.1041 | 1.0809 | 1.0770 | 1.0770 | 1.0607 | 1.0464 | 1.0327 | 1.0207 | 1.0215 | 1.0215 |
+| worst | 3.84x | 3.84x | 2.16x | 2.16x | 2.13x | 2.13x | 1.90x | 1.90x | 1.90x | 1.87x | 1.87x | 1.87x | 1.87x | 1.61x | 1.61x |
 
 ```mermaid
 xychart-beta
     title "Regret by gpu_min_batch"
     x-axis "gpu_min_batch" [1, 4, 16]
-    y-axis "geometric-mean regret" 1.0 --> 1.09
-    line [1.0747, 1.0747, 1.0747]
+    y-axis "geometric-mean regret" 1.0 --> 1.04
+    line [1.0215, 1.0215, 1.0215]
 ```
 
 | gpu_min_batch | 1 | 4 | 16 |
 |---|---|---|---|
-| geomean | 1.0747 | 1.0747 | 1.0747 |
-| worst | 1.87x | 1.87x | 1.87x |
+| geomean | 1.0215 | 1.0215 | 1.0215 |
+| worst | 1.61x | 1.61x | 1.61x |
 
 ```mermaid
 xychart-beta
     title "Regret by gpu_max_k"
     x-axis "gpu_max_k" [8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 128, 256]
-    y-axis "geometric-mean regret" 1.0 --> 1.23
-    line [1.0747, 1.0747, 1.0747, 1.0856, 1.0879, 1.0904, 1.0940, 1.1277, 1.1490, 1.1643, 1.2082, 1.2152]
+    y-axis "geometric-mean regret" 1.0 --> 1.09
+    line [1.0215, 1.0215, 1.0215, 1.0215, 1.0215, 1.0215, 1.0215, 1.0262, 1.0293, 1.0431, 1.0714, 1.0775]
 ```
 
 | gpu_max_k | 8 | 16 | 24 | 32 | 40 | 48 | 56 | 64 | 80 | 96 | 128 | 256 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| geomean | 1.0747 | 1.0747 | 1.0747 | 1.0856 | 1.0879 | 1.0904 | 1.0940 | 1.1277 | 1.1490 | 1.1643 | 1.2082 | 1.2152 |
-| worst | 1.87x | 1.87x | 1.87x | 1.87x | 1.87x | 1.87x | 1.93x | 3.81x | 4.85x | 4.85x | 4.85x | 4.85x |
+| geomean | 1.0215 | 1.0215 | 1.0215 | 1.0215 | 1.0215 | 1.0215 | 1.0215 | 1.0262 | 1.0293 | 1.0431 | 1.0714 | 1.0775 |
+| worst | 1.61x | 1.61x | 1.61x | 1.61x | 1.61x | 1.61x | 1.61x | 1.90x | 2.17x | 2.79x | 2.79x | 4.25x |
 
 Held-out check of a per-k boundary against the product rule, fitted on 144 points and scored on the other 109; the verdict is a bootstrap.
 
 | rule | fitted on train | train geomean | test geomean | test worst | verdict |
 |---|---|---|---|---|---|
-| product rule | [8, 4096, 1, 2048] | 1.0666 | 1.0883 | 1.87x | baseline |
-| per-k table | {"min_batch_by_k": {"4": 1024, "8": 256, "16": 256, "24": 4096, "32": 256, "40": 4096, "48": 256, "56": null, "64": 16, "80": null, "96": null, "128": 16, "256": null}} | 1.1498 | 1.1930 | 3.81x | rejected (better in 0% of resamples, median gain -8.7%) |
+| product rule | [8, 2048, 1, 1024] | 1.0148 | 1.0261 | 1.87x | baseline |
+| per-k table | {"min_batch_by_k": {"4": 1024, "8": 256, "16": 256, "24": 4096, "32": 256, "40": 4096, "48": 256, "56": 1024, "64": 256, "80": 256, "96": null, "128": 16, "256": null}} | 1.0561 | 1.0804 | 2.58x | rejected (better in 0% of resamples, median gain -5.0%) |
 
 Best backend per point (`c` CPU, `J` whole-matrix kernel, `B` block kernel, `j` and `b` the same after QR, `g` gk, `G` gk shared with the CPU, `.` not measured), what the rule picks, and the speedup of the best GPU backend over the CPU:
 
@@ -349,12 +351,12 @@ Best backend per point (`c` CPU, `J` whole-matrix kernel, `B` block kernel, `j` 
 ```
       M x N  \ batch     1     4    16    64   256  1024  4096
       4 x 4               c     c     c     c     c     g     g
-      8 x 8               c     c     c     c     g     g     g
-     16 x 8               c     c     c     c     g     g     g
-     32 x 8               c     c     c     c     g     g     g
-     64 x 8               c     c     c     c     g     g     g
-    128 x 8               c     c     c     c     g     g     g
-    256 x 8               c     c     c     c     g     g     g
+      8 x 8               c     c     c     c     c     g     g
+     16 x 8               c     c     c     c     c     g     g
+     32 x 8               c     c     c     c     c     g     g
+     64 x 8               c     c     c     c     c     g     g
+    128 x 8               c     c     c     c     c     g     g
+    256 x 8               c     c     c     c     c     g     g
      16 x 16              c     c     c     c     g     g     g
      32 x 16              c     c     c     c     g     g     g
      64 x 16              c     c     c     c     g     g     g
@@ -362,22 +364,22 @@ Best backend per point (`c` CPU, `J` whole-matrix kernel, `B` block kernel, `j` 
     256 x 16              c     c     c     c     g     g     g
     512 x 16              c     c     c     c     g     g     g
      24 x 24              c     c     c     c     g     g     g
-     32 x 32              c     c     c     c     g     g     g
-     64 x 32              c     c     c     c     g     g     g
-    128 x 32              c     c     c     c     g     g     g
-    256 x 32              c     c     c     c     g     g     g
-    512 x 32              c     c     c     c     g     g     g
-   1024 x 32              c     c     c     c     g     g     g
-     40 x 40              c     c     c     c     g     g     g
-     48 x 48              c     c     c     c     g     g     g
-     56 x 56              c     c     c     c     c     c     c
-     64 x 64              c     c     c     c     c     c     c
-    128 x 64              c     c     c     c     c     c     c
-    256 x 64              c     c     c     c     c     c     c
-    512 x 64              c     c     c     c     c     c     c
-   1024 x 64              c     c     c     c     c     c     c
-   2048 x 64              c     c     c     c     c     c     c
-     80 x 80              c     c     c     c     c     c     c
+     32 x 32              c     c     c     c     G     G     G
+     64 x 32              c     c     c     c     G     G     G
+    128 x 32              c     c     c     c     G     G     G
+    256 x 32              c     c     c     c     G     G     G
+    512 x 32              c     c     c     c     G     G     G
+   1024 x 32              c     c     c     c     G     G     G
+     40 x 40              c     c     c     c     G     G     G
+     48 x 48              c     c     c     c     G     G     G
+     56 x 56              c     c     c     c     G     G     G
+     64 x 64              c     c     c     c     G     G     G
+    128 x 64              c     c     c     c     G     G     G
+    256 x 64              c     c     c     c     G     G     G
+    512 x 64              c     c     c     c     G     G     G
+   1024 x 64              c     c     c     c     G     G     G
+   2048 x 64              c     c     c     c     G     G     G
+     80 x 80              c     c     c     c     G     G     G
      96 x 96              c     c     c     c     c     c     c
     128 x 128             c     c     c     c     c     c     c
     256 x 128             c     c     c     c     c     c     c
@@ -430,17 +432,17 @@ Best backend per point (`c` CPU, `J` whole-matrix kernel, `B` block kernel, `j` 
 
 ## Stage 2b: GPU or CPU for singular values alone
 
-The rule of stage 2 again, with constants of its own, for `svdvals`: both sides skip the vectors, by different amounts. Fitted on the 161 points where `gk` and the CPU were timed for singular values alone and `gk` is the GPU's choice. Chosen: GPU iff k <= 32, l <= 1024, batch * k >= 4096 and batch >= 1.
+The rule of stage 2 again, with constants of its own, for `svdvals`: both sides skip the vectors, by different amounts. Fitted on the 209 points where `gk` and the CPU were timed for singular values alone and `gk` is the GPU's choice. Chosen: GPU iff k <= 80, l <= 2048, batch * k >= 8192 and batch >= 1.
 
 | rule | geomean regret | worst | >10% | total time / oracle | est. picks |
 |---|---|---|---|---|---|
-| CPU always | 1.2150 | 3.75x | 56 | 1.631 | 0 |
-| as with vectors (stage 2's rule) | 1.0603 | 2.15x | 25 | 1.283 | 0 |
-| fitted ('32', '4096', '1', '1024') | 1.0556 | 2.15x | 23 | 1.278 | 0 |
+| CPU always | 1.2033 | 3.75x | 73 | 1.638 | 0 |
+| as with vectors (stage 2's rule) | 1.0236 | 1.61x | 15 | 1.012 | 0 |
+| fitted ('80', '8192', '1', '2048') | 1.0294 | 1.61x | 18 | 1.014 | 0 |
 
-Held out: fitted on 92 points (('32', '4096', '1', '1024')), scored on the other 69: geomean 1.0615x, worst 2.15x, against 1.0635x, worst 2.15x as with vectors.
+Held out: fitted on 119 points (('80', '8192', '1', '1024')), scored on the other 90: geomean 1.0387x, worst 1.75x, against 1.0239x, worst 1.52x as with vectors.
 
-gk over the CPU for singular values alone, M x N x batch: 4x4x1 0.02x, 4x4x4 0.08x, 4x4x16 0.17x, 4x4x64 0.65x, 4x4x256 1.40x, 4x4x1024 1.16x, 4x4x4096 2.69x, 8x8x1 0.02x, 8x8x4 0.07x, 8x8x16 0.17x, 8x8x64 0.59x, 8x8x256 0.84x, 8x8x1024 1.69x, 8x8x4096 3.20x, 16x8x1 0.03x, 16x8x4 0.12x, 16x8x16 0.24x, 16x8x64 0.76x, 16x8x256 1.00x, 16x8x1024 2.03x, 16x8x4096 3.75x, 32x8x1 0.03x, 32x8x4 0.12x, 32x8x16 0.39x, 32x8x64 1.51x, 32x8x256 1.13x, 32x8x1024 1.81x, 32x8x4096 2.82x, 64x8x1 0.02x, 64x8x4 0.13x, 64x8x16 0.38x, 64x8x64 0.55x, 64x8x256 1.07x, 64x8x1024 1.53x, 64x8x4096 2.40x, 128x8x1 0.04x, 128x8x4 0.11x, 128x8x16 0.44x, 128x8x64 0.90x, 128x8x256 1.00x, 128x8x1024 1.84x, 128x8x4096 2.01x, 256x8x1 0.03x, 256x8x4 0.16x, 256x8x16 0.62x, 256x8x64 0.83x, 256x8x256 1.01x, 256x8x1024 1.29x, 256x8x4096 1.51x, 16x16x1 0.03x, 16x16x4 0.10x, 16x16x16 0.46x, 16x16x64 0.68x, 16x16x256 1.10x, 16x16x1024 1.96x, 16x16x4096 3.56x, 32x16x1 0.04x, 32x16x4 0.08x, 32x16x16 0.41x, 32x16x64 0.75x, 32x16x256 1.46x, 32x16x1024 2.17x, 32x16x4096 2.91x, 64x16x1 0.04x, 64x16x4 0.10x, 64x16x16 0.27x, 64x16x64 0.59x, 64x16x256 1.06x, 64x16x1024 1.27x, 64x16x4096 1.78x, 128x16x1 0.05x, 128x16x4 0.12x, 128x16x16 0.33x, 128x16x64 0.67x, 128x16x256 0.94x, 128x16x1024 1.59x, 128x16x4096 1.39x, 256x16x1 0.07x, 256x16x4 0.17x, 256x16x16 0.48x, 256x16x64 0.72x, 256x16x256 0.90x, 256x16x1024 1.24x, 256x16x4096 1.05x, 512x16x1 0.13x, 512x16x4 0.21x, 512x16x16 0.45x, 512x16x64 0.64x, 512x16x256 1.60x, 512x16x1024 1.52x, 512x16x4096 1.55x, 24x24x1 0.05x, 24x24x4 0.10x, 24x24x16 0.68x, 24x24x64 0.58x, 24x24x256 1.22x, 24x24x1024 1.68x, 24x24x4096 2.23x, 32x32x1 0.07x, 32x32x4 0.13x, 32x32x16 0.36x, 32x32x64 0.72x, 32x32x256 1.40x, 32x32x1024 2.00x, 32x32x4096 2.68x, 64x32x1 0.05x, 64x32x4 0.08x, 64x32x16 0.27x, 64x32x64 0.46x, 64x32x256 0.69x, 64x32x1024 1.09x, 64x32x4096 0.97x, 128x32x1 0.06x, 128x32x4 0.11x, 128x32x16 0.32x, 128x32x64 0.47x, 128x32x256 0.58x, 128x32x1024 0.78x, 128x32x4096 0.69x, 256x32x1 0.16x, 256x32x4 0.23x, 256x32x16 0.43x, 256x32x64 0.66x, 256x32x256 1.44x, 256x32x1024 1.52x, 256x32x4096 1.78x, 512x32x1 0.19x, 512x32x4 0.29x, 512x32x16 0.48x, 512x32x64 0.97x, 512x32x256 1.33x, 512x32x1024 1.53x, 512x32x4096 1.60x, 1024x32x1 0.25x, 1024x32x4 0.35x, 1024x32x16 0.58x, 1024x32x64 0.92x, 1024x32x256 1.33x, 1024x32x1024 1.41x, 1024x32x4096 1.37x, 40x40x1 0.04x, 40x40x4 0.06x, 40x40x16 0.23x, 40x40x64 0.33x, 40x40x256 0.65x, 40x40x1024 1.13x, 40x40x4096 1.05x, 48x48x1 0.04x, 48x48x4 0.07x, 48x48x16 0.19x, 48x48x64 0.38x, 48x48x256 0.66x, 48x48x1024 0.98x, 48x48x4096 0.95x, 56x56x1 0.05x, 56x56x4 0.07x, 56x56x16 0.17x, 56x56x64 0.30x, 56x56x256 0.69x, 56x56x1024 0.76x, 56x56x4096 0.79x
+gk over the CPU for singular values alone, M x N x batch: 4x4x1 0.02x, 4x4x4 0.08x, 4x4x16 0.17x, 4x4x64 0.65x, 4x4x256 1.40x, 4x4x1024 1.16x, 4x4x4096 2.69x, 8x8x1 0.02x, 8x8x4 0.07x, 8x8x16 0.17x, 8x8x64 0.59x, 8x8x256 0.84x, 8x8x1024 1.69x, 8x8x4096 3.20x, 16x8x1 0.03x, 16x8x4 0.12x, 16x8x16 0.24x, 16x8x64 0.76x, 16x8x256 1.00x, 16x8x1024 2.03x, 16x8x4096 3.75x, 32x8x1 0.03x, 32x8x4 0.12x, 32x8x16 0.39x, 32x8x64 1.51x, 32x8x256 1.13x, 32x8x1024 1.81x, 32x8x4096 2.82x, 64x8x1 0.02x, 64x8x4 0.13x, 64x8x16 0.38x, 64x8x64 0.55x, 64x8x256 1.07x, 64x8x1024 1.53x, 64x8x4096 2.40x, 128x8x1 0.04x, 128x8x4 0.11x, 128x8x16 0.44x, 128x8x64 0.90x, 128x8x256 1.00x, 128x8x1024 1.84x, 128x8x4096 2.01x, 256x8x1 0.03x, 256x8x4 0.16x, 256x8x16 0.62x, 256x8x64 0.83x, 256x8x256 1.01x, 256x8x1024 1.29x, 256x8x4096 1.51x, 16x16x1 0.03x, 16x16x4 0.10x, 16x16x16 0.46x, 16x16x64 0.68x, 16x16x256 1.10x, 16x16x1024 1.96x, 16x16x4096 3.56x, 32x16x1 0.04x, 32x16x4 0.08x, 32x16x16 0.41x, 32x16x64 0.75x, 32x16x256 1.46x, 32x16x1024 2.17x, 32x16x4096 2.91x, 64x16x1 0.04x, 64x16x4 0.10x, 64x16x16 0.27x, 64x16x64 0.59x, 64x16x256 1.06x, 64x16x1024 1.27x, 64x16x4096 1.78x, 128x16x1 0.05x, 128x16x4 0.12x, 128x16x16 0.33x, 128x16x64 0.67x, 128x16x256 0.94x, 128x16x1024 1.59x, 128x16x4096 1.39x, 256x16x1 0.07x, 256x16x4 0.17x, 256x16x16 0.48x, 256x16x64 0.72x, 256x16x256 0.90x, 256x16x1024 1.24x, 256x16x4096 1.05x, 512x16x1 0.13x, 512x16x4 0.21x, 512x16x16 0.45x, 512x16x64 0.64x, 512x16x256 1.60x, 512x16x1024 1.52x, 512x16x4096 1.55x, 24x24x1 0.05x, 24x24x4 0.10x, 24x24x16 0.68x, 24x24x64 0.58x, 24x24x256 1.22x, 24x24x1024 1.68x, 24x24x4096 2.23x, 32x32x1 0.07x, 32x32x4 0.13x, 32x32x16 0.36x, 32x32x64 0.72x, 32x32x256 1.40x, 32x32x1024 2.00x, 32x32x4096 2.68x, 64x32x1 0.05x, 64x32x4 0.08x, 64x32x16 0.27x, 64x32x64 0.46x, 64x32x256 0.69x, 64x32x1024 1.09x, 64x32x4096 0.97x, 128x32x1 0.06x, 128x32x4 0.11x, 128x32x16 0.32x, 128x32x64 0.47x, 128x32x256 0.58x, 128x32x1024 0.78x, 128x32x4096 0.69x, 256x32x1 0.16x, 256x32x4 0.23x, 256x32x16 0.43x, 256x32x64 0.66x, 256x32x256 1.44x, 256x32x1024 1.52x, 256x32x4096 1.78x, 512x32x1 0.19x, 512x32x4 0.29x, 512x32x16 0.48x, 512x32x64 0.97x, 512x32x256 1.33x, 512x32x1024 1.53x, 512x32x4096 1.60x, 1024x32x1 0.25x, 1024x32x4 0.35x, 1024x32x16 0.58x, 1024x32x64 0.92x, 1024x32x256 1.33x, 1024x32x1024 1.41x, 1024x32x4096 1.37x, 40x40x1 0.04x, 40x40x4 0.06x, 40x40x16 0.23x, 40x40x64 0.33x, 40x40x256 0.65x, 40x40x1024 1.13x, 40x40x4096 1.05x, 48x48x1 0.04x, 48x48x4 0.07x, 48x48x16 0.19x, 48x48x64 0.38x, 48x48x256 0.66x, 48x48x1024 0.98x, 48x48x4096 0.95x, 56x56x1 0.05x, 56x56x4 0.07x, 56x56x16 0.17x, 56x56x64 0.30x, 56x56x256 0.69x, 56x56x1024 0.76x, 56x56x4096 0.79x, 64x64x1 0.05x, 64x64x4 0.07x, 64x64x16 0.16x, 64x64x64 0.31x, 64x64x256 0.55x, 64x64x1024 0.66x, 64x64x4096 0.64x, 128x64x1 0.07x, 128x64x4 0.10x, 128x64x16 0.16x, 128x64x64 0.37x, 128x64x256 0.67x, 128x64x1024 0.74x, 128x64x4096 0.79x, 256x64x1 0.08x, 256x64x4 0.12x, 256x64x16 0.20x, 256x64x64 0.49x, 256x64x256 0.84x, 256x64x1024 0.87x, 256x64x4096 0.85x, 512x64x1 0.10x, 512x64x4 0.16x, 512x64x16 0.27x, 512x64x64 0.73x, 512x64x256 1.08x, 512x64x1024 1.16x, 512x64x4096 1.16x, 1024x64x1 0.14x, 1024x64x4 0.22x, 1024x64x16 0.41x, 1024x64x64 0.84x, 1024x64x256 1.13x, 1024x64x1024 1.16x, 1024x64x4096 0.96x, 2048x64x1 0.19x, 2048x64x4 0.39x, 2048x64x16 0.67x, 2048x64x64 0.88x, 2048x64x256 1.03x, 2048x64x1024 0.98x, 80x80x1 0.10x, 80x80x4 0.13x, 80x80x16 0.19x, 80x80x64 0.40x, 80x80x256 0.86x, 80x80x1024 0.87x, 80x80x4096 0.87x
 
 ## Stage 3: the bidiag backend instead of the CPU
 
@@ -485,13 +487,13 @@ band over the CPU, M x N x batch: 512x512x1 1.12x, 512x512x4 1.02x, 512x512x16 1
 
 Where the rules above choose the CPU, the `bidiag_batch` backend (bidiag's method for a whole batch at once: the bidiagonalization of every matrix by the same dispatches, the bidiagonal problems on the CPU's cores, the back-transformations as batched products) for k in a window, l up to a cap, from a batch on, fitted on the points where it was timed (k from 32, l up to 1024, batches from 16) against the CPU and whatever else the CPU's side would pick. Inside the flat region the window in effect stays; otherwise the smallest worst case, then the largest batch, the narrowest window and the lowest cap on l.
 
-**With singular vectors** (116 points): k 64-1024, from batch 64 (in effect: never): 1.0334 geometric-mean regret, worst 2.03x; without it 1.2483, worst 3.05x. Held out: the window fitted on half the points, k 64-768, from batch 64, scores 1.0606 on the other half, against 1.2602 without it.
+**With singular vectors** (92 points): k 96-1024, from batch 64 (in effect: never): 1.0139 geometric-mean regret, worst 1.38x; without it 1.2444, worst 3.05x. Held out: the window fitted on half the points, k 96-1024, from batch 64, scores 1.0093 on the other half, against 1.2136 without it.
 
-bidiag_batch over the CPU, M x N x batch: 32x32x16 0.20x, 32x32x64 0.33x, 64x32x16 0.18x, 64x32x64 0.29x, 128x32x16 0.20x, 128x32x64 0.31x, 256x32x16 0.22x, 256x32x64 0.38x, 512x32x16 0.27x, 512x32x64 0.55x, 1024x32x16 0.37x, 1024x32x64 0.77x, 40x40x16 0.20x, 40x40x64 0.37x, 48x48x16 0.22x, 48x48x64 0.41x, 56x56x16 0.24x, 56x56x64 0.45x, 56x56x256 0.63x, 56x56x1024 0.74x, 56x56x4096 1.17x, 64x64x16 0.24x, 64x64x64 0.49x, 64x64x256 0.63x, 64x64x1024 0.94x, 64x64x4096 1.20x, 128x64x16 0.26x, 128x64x64 0.58x, 128x64x256 0.76x, 128x64x1024 1.08x, 128x64x4096 1.32x, 256x64x16 0.29x, 256x64x64 0.83x, 256x64x256 0.94x, 256x64x1024 1.26x, 256x64x4096 1.41x, 512x64x16 0.47x, 512x64x64 1.01x, 512x64x256 1.33x, 512x64x1024 1.51x, 512x64x4096 1.68x, 1024x64x16 0.79x, 1024x64x64 1.25x, 1024x64x256 1.44x, 1024x64x1024 1.65x, 1024x64x4096 1.67x, 2048x64x16 1.01x, 2048x64x64 1.33x, 2048x64x256 1.46x, 2048x64x1024 1.46x, 2048x64x4096 1.44x, 80x80x16 0.30x, 80x80x64 0.63x, 80x80x256 0.87x, 80x80x1024 1.25x, 80x80x4096 1.49x, 96x96x16 0.39x, 96x96x64 0.83x, 96x96x256 1.05x, 96x96x1024 1.57x, 96x96x4096 1.69x, 128x128x16 0.73x, 128x128x64 1.11x, 128x128x256 1.74x, 128x128x1024 1.97x, 128x128x4096 1.99x, 256x128x16 0.72x, 256x128x64 1.20x, 256x128x256 1.76x, 256x128x1024 2.10x, 256x128x4096 2.12x, 512x128x16 0.99x, 512x128x64 1.37x, 512x128x256 1.99x, 512x128x1024 2.10x, 512x128x4096 2.04x, 1024x128x16 1.11x, 1024x128x64 1.52x, 1024x128x256 1.93x, 1024x128x1024 2.04x, 1024x128x4096 1.54x, 2048x128x16 1.38x, 2048x128x64 1.55x, 2048x128x256 1.72x, 2048x128x1024 1.71x, 192x192x16 0.73x, 192x192x64 0.95x, 192x192x256 1.45x, 192x192x1024 1.45x, 256x256x16 0.86x, 256x256x64 1.24x, 256x256x256 1.55x, 256x256x1024 1.49x, 256x256x4096 1.66x, 512x256x16 0.87x, 512x256x64 1.32x, 512x256x256 1.52x, 512x256x1024 1.51x, 1024x256x16 0.95x, 1024x256x64 1.33x, 1024x256x256 1.55x, 1024x256x1024 1.48x, 2048x256x16 1.08x, 2048x256x64 1.26x, 2048x256x256 1.29x, 384x384x16 0.89x, 384x384x64 1.10x, 384x384x256 1.25x, 384x384x1024 1.22x, 512x512x16 1.01x, 512x512x64 1.34x, 512x512x256 1.14x, 768x768x16 1.49x, 768x768x64 1.66x, 1024x1024x16 2.71x, 1024x1024x64 3.05x
+bidiag_batch over the CPU, M x N x batch: 32x32x16 0.20x, 32x32x64 0.33x, 64x32x16 0.18x, 64x32x64 0.29x, 128x32x16 0.20x, 128x32x64 0.31x, 256x32x16 0.22x, 256x32x64 0.38x, 512x32x16 0.27x, 512x32x64 0.55x, 1024x32x16 0.37x, 1024x32x64 0.77x, 40x40x16 0.20x, 40x40x64 0.37x, 48x48x16 0.22x, 48x48x64 0.41x, 56x56x16 0.24x, 56x56x64 0.45x, 64x64x16 0.24x, 64x64x64 0.49x, 128x64x16 0.26x, 128x64x64 0.58x, 256x64x16 0.29x, 256x64x64 0.83x, 512x64x16 0.47x, 512x64x64 1.01x, 1024x64x16 0.79x, 1024x64x64 1.25x, 2048x64x16 1.01x, 2048x64x64 1.33x, 80x80x16 0.30x, 80x80x64 0.63x, 96x96x16 0.39x, 96x96x64 0.83x, 96x96x256 1.05x, 96x96x1024 1.57x, 96x96x4096 1.69x, 128x128x16 0.73x, 128x128x64 1.11x, 128x128x256 1.74x, 128x128x1024 1.97x, 128x128x4096 1.99x, 256x128x16 0.72x, 256x128x64 1.20x, 256x128x256 1.76x, 256x128x1024 2.10x, 256x128x4096 2.12x, 512x128x16 0.99x, 512x128x64 1.37x, 512x128x256 1.99x, 512x128x1024 2.10x, 512x128x4096 2.04x, 1024x128x16 1.11x, 1024x128x64 1.52x, 1024x128x256 1.93x, 1024x128x1024 2.04x, 1024x128x4096 1.54x, 2048x128x16 1.38x, 2048x128x64 1.55x, 2048x128x256 1.72x, 2048x128x1024 1.71x, 192x192x16 0.73x, 192x192x64 0.95x, 192x192x256 1.45x, 192x192x1024 1.45x, 256x256x16 0.86x, 256x256x64 1.24x, 256x256x256 1.55x, 256x256x1024 1.49x, 256x256x4096 1.66x, 512x256x16 0.87x, 512x256x64 1.32x, 512x256x256 1.52x, 512x256x1024 1.51x, 1024x256x16 0.95x, 1024x256x64 1.33x, 1024x256x256 1.55x, 1024x256x1024 1.48x, 2048x256x16 1.08x, 2048x256x64 1.26x, 2048x256x256 1.29x, 384x384x16 0.89x, 384x384x64 1.10x, 384x384x256 1.25x, 384x384x1024 1.22x, 512x512x16 1.01x, 512x512x64 1.34x, 512x512x256 1.14x, 768x768x16 1.49x, 768x768x64 1.66x, 1024x1024x16 2.71x, 1024x1024x64 3.05x
 
-**Singular values alone** (123 points): k 64-1024, from batch 64 (in effect: never): 1.0484 geometric-mean regret, worst 4.17x; without it 1.2984, worst 5.66x. Held out: the window fitted on half the points, k 64-1024, from batch 64, scores 1.0644 on the other half, against 1.2969 without it.
+**Singular values alone** (93 points): k 96-1024, from batch 64 (in effect: never): 1.0289 geometric-mean regret, worst 4.17x; without it 1.3226, worst 5.66x. Held out: the window fitted on half the points, k 96-1024, from batch 64, scores 1.0543 on the other half, against 1.3080 without it.
 
-bidiag_batch over the CPU, M x N x batch: 32x32x16 0.20x, 32x32x64 0.37x, 64x32x16 0.23x, 64x32x64 0.31x, 128x32x16 0.26x, 128x32x64 0.32x, 256x32x16 0.31x, 256x32x64 0.47x, 512x32x16 0.38x, 512x32x64 0.76x, 1024x32x16 0.51x, 1024x32x64 0.87x, 40x40x16 0.28x, 40x40x64 0.35x, 40x40x256 0.50x, 40x40x1024 0.70x, 40x40x4096 0.71x, 48x48x16 0.26x, 48x48x64 0.44x, 48x48x256 0.54x, 48x48x1024 0.61x, 48x48x4096 0.78x, 56x56x16 0.23x, 56x56x64 0.33x, 56x56x256 0.59x, 56x56x1024 0.61x, 56x56x4096 0.82x, 64x64x16 0.21x, 64x64x64 0.35x, 64x64x256 0.62x, 64x64x1024 0.82x, 64x64x4096 0.85x, 128x64x16 0.24x, 128x64x64 0.47x, 128x64x256 0.83x, 128x64x1024 0.98x, 128x64x4096 1.17x, 256x64x16 0.28x, 256x64x64 0.63x, 256x64x256 1.02x, 256x64x1024 1.18x, 256x64x4096 1.31x, 512x64x16 0.40x, 512x64x64 1.01x, 512x64x256 1.42x, 512x64x1024 1.68x, 512x64x4096 1.80x, 1024x64x16 0.62x, 1024x64x64 1.13x, 1024x64x256 1.58x, 1024x64x1024 1.76x, 1024x64x4096 1.89x, 2048x64x16 0.98x, 2048x64x64 1.29x, 2048x64x256 1.49x, 2048x64x1024 1.50x, 2048x64x4096 1.52x, 80x80x16 0.34x, 80x80x64 0.77x, 80x80x256 1.28x, 80x80x1024 1.48x, 80x80x4096 1.69x, 96x96x16 0.39x, 96x96x64 1.01x, 96x96x256 1.53x, 96x96x1024 1.83x, 96x96x4096 1.88x, 128x128x16 0.64x, 128x128x64 1.64x, 128x128x256 2.42x, 128x128x1024 2.56x, 128x128x4096 2.57x, 256x128x16 0.68x, 256x128x64 1.40x, 256x128x256 2.12x, 256x128x1024 2.38x, 256x128x4096 2.36x, 512x128x16 0.81x, 512x128x64 1.58x, 512x128x256 2.26x, 512x128x1024 2.44x, 512x128x4096 2.47x, 1024x128x16 0.92x, 1024x128x64 1.45x, 1024x128x256 1.93x, 1024x128x1024 2.03x, 1024x128x4096 1.90x, 2048x128x16 1.05x, 2048x128x64 1.21x, 2048x128x256 1.37x, 2048x128x1024 1.34x, 192x192x16 0.66x, 192x192x64 1.02x, 192x192x256 1.21x, 192x192x1024 1.29x, 192x192x4096 1.22x, 256x256x16 0.83x, 256x256x64 1.25x, 256x256x256 1.44x, 256x256x1024 1.50x, 256x256x4096 1.63x, 512x256x16 0.92x, 512x256x64 1.29x, 512x256x256 1.49x, 512x256x1024 1.56x, 1024x256x16 0.94x, 1024x256x64 1.20x, 1024x256x256 1.36x, 1024x256x1024 1.35x, 2048x256x16 1.04x, 2048x256x64 1.04x, 2048x256x256 1.07x, 384x384x16 1.02x, 384x384x64 1.27x, 384x384x256 1.69x, 384x384x1024 1.64x, 512x512x16 1.27x, 512x512x64 1.71x, 512x512x256 2.03x, 768x768x16 1.63x, 768x768x64 2.64x, 1024x1024x16 4.17x, 1024x1024x64 5.66x
+bidiag_batch over the CPU, M x N x batch: 32x32x16 0.20x, 32x32x64 0.37x, 64x32x16 0.23x, 64x32x64 0.31x, 128x32x16 0.26x, 128x32x64 0.32x, 256x32x16 0.31x, 256x32x64 0.47x, 512x32x16 0.38x, 512x32x64 0.76x, 1024x32x16 0.51x, 1024x32x64 0.87x, 40x40x16 0.28x, 40x40x64 0.35x, 48x48x16 0.26x, 48x48x64 0.44x, 56x56x16 0.23x, 56x56x64 0.33x, 64x64x16 0.21x, 64x64x64 0.35x, 128x64x16 0.24x, 128x64x64 0.47x, 256x64x16 0.28x, 256x64x64 0.63x, 512x64x16 0.40x, 512x64x64 1.01x, 1024x64x16 0.62x, 1024x64x64 1.13x, 2048x64x16 0.98x, 2048x64x64 1.29x, 80x80x16 0.34x, 80x80x64 0.77x, 96x96x16 0.39x, 96x96x64 1.01x, 96x96x256 1.53x, 96x96x1024 1.83x, 96x96x4096 1.88x, 128x128x16 0.64x, 128x128x64 1.64x, 128x128x256 2.42x, 128x128x1024 2.56x, 128x128x4096 2.57x, 256x128x16 0.68x, 256x128x64 1.40x, 256x128x256 2.12x, 256x128x1024 2.38x, 256x128x4096 2.36x, 512x128x16 0.81x, 512x128x64 1.58x, 512x128x256 2.26x, 512x128x1024 2.44x, 512x128x4096 2.47x, 1024x128x16 0.92x, 1024x128x64 1.45x, 1024x128x256 1.93x, 1024x128x1024 2.03x, 1024x128x4096 1.90x, 2048x128x16 1.05x, 2048x128x64 1.21x, 2048x128x256 1.37x, 2048x128x1024 1.34x, 192x192x16 0.66x, 192x192x64 1.02x, 192x192x256 1.21x, 192x192x1024 1.29x, 192x192x4096 1.22x, 256x256x16 0.83x, 256x256x64 1.25x, 256x256x256 1.44x, 256x256x1024 1.50x, 256x256x4096 1.63x, 512x256x16 0.92x, 512x256x64 1.29x, 512x256x256 1.49x, 512x256x1024 1.56x, 1024x256x16 0.94x, 1024x256x64 1.20x, 1024x256x256 1.36x, 1024x256x1024 1.35x, 2048x256x16 1.04x, 2048x256x64 1.04x, 2048x256x256 1.07x, 384x384x16 1.02x, 384x384x64 1.27x, 384x384x256 1.69x, 384x384x1024 1.64x, 512x512x16 1.27x, 512x512x64 1.71x, 512x512x256 2.03x, 768x768x16 1.63x, 768x768x64 2.64x, 1024x1024x16 4.17x, 1024x1024x64 5.66x
 
 ## Noise floor
 

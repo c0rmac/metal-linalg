@@ -1029,13 +1029,19 @@
  ],
  "stage1c": {
   "n_points": 63,
-  "chosen": 0,
-  "current": 4096,
+  "chosen": [
+   256,
+   48
+  ],
+  "current": [
+   4096,
+   0
+  ],
   "with": {
-   "geomean": 1.08936748953,
-   "worst": 1.88097053832,
-   "over10": 15,
-   "total_ratio": 1.46365399578,
+   "geomean": 1.02010450565,
+   "worst": 1.20173160173,
+   "over10": 5,
+   "total_ratio": 1.00593850797,
    "estimated_picks": 0,
    "n": 63
   },
@@ -1050,43 +1056,429 @@
   "curve": [
    [
     0,
+    0,
     1.08936748953,
     1.88097053832
    ],
    [
     64,
+    0,
     1.3742800902,
     2.54908156132
    ],
    [
+    64,
+    2,
+    1.3742800902,
+    2.54908156132
+   ],
+   [
+    64,
+    4,
+    1.29863335382,
+    2.54908156132
+   ],
+   [
+    64,
+    8,
+    1.22315247067,
+    2.42660680978
+   ],
+   [
+    64,
+    12,
+    1.15564122583,
+    2.06561265594
+   ],
+   [
+    64,
+    16,
+    1.10199440737,
+    1.66629090909
+   ],
+   [
+    64,
+    24,
+    1.0625031641,
+    1.51789690886
+   ],
+   [
+    64,
+    32,
+    1.04009240451,
+    1.28186447173
+   ],
+   [
+    64,
+    48,
+    1.02680237062,
+    1.20173160173
+   ],
+   [
+    64,
+    64,
+    1.04929450292,
+    1.60517616258
+   ],
+   [
     128,
+    0,
     1.34883490046,
     2.54908156132
    ],
    [
+    128,
+    2,
+    1.34883490046,
+    2.54908156132
+   ],
+   [
+    128,
+    4,
+    1.27618424269,
+    2.54908156132
+   ],
+   [
+    128,
+    8,
+    1.19854934622,
+    2.42660680978
+   ],
+   [
+    128,
+    12,
+    1.12909780547,
+    2.06561265594
+   ],
+   [
+    128,
+    16,
+    1.08352332849,
+    1.64604965067
+   ],
+   [
+    128,
+    24,
+    1.05059182169,
+    1.51789690886
+   ],
+   [
+    128,
+    32,
+    1.03344303014,
+    1.28186447173
+   ],
+   [
+    128,
+    48,
+    1.02347775635,
+    1.20173160173
+   ],
+   [
+    128,
+    64,
+    1.04787814648,
+    1.60517616258
+   ],
+   [
     256,
+    0,
     1.29587810833,
     2.54908156132
    ],
    [
+    256,
+    2,
+    1.29587810833,
+    2.54908156132
+   ],
+   [
+    256,
+    4,
+    1.22783359836,
+    2.54908156132
+   ],
+   [
+    256,
+    8,
+    1.16272344356,
+    2.42660680978
+   ],
+   [
+    256,
+    12,
+    1.10193671044,
+    2.06561265594
+   ],
+   [
+    256,
+    16,
+    1.06414911663,
+    1.64604965067
+   ],
+   [
+    256,
+    24,
+    1.0376902974,
+    1.51789690886
+   ],
+   [
+    256,
+    32,
+    1.02598501662,
+    1.21292020967
+   ],
+   [
+    256,
+    48,
+    1.02010450565,
+    1.20173160173
+   ],
+   [
+    256,
+    64,
+    1.04694271196,
+    1.60517616258
+   ],
+   [
     512,
+    0,
     1.24905903223,
     2.54908156132
    ],
    [
+    512,
+    2,
+    1.24905903223,
+    2.54908156132
+   ],
+   [
+    512,
+    4,
+    1.19514867998,
+    2.54908156132
+   ],
+   [
+    512,
+    8,
+    1.14038695984,
+    2.42660680978
+   ],
+   [
+    512,
+    12,
+    1.09055608773,
+    2.06561265594
+   ],
+   [
+    512,
+    16,
+    1.06129781491,
+    1.64604965067
+   ],
+   [
+    512,
+    24,
+    1.04257122812,
+    1.60517616258
+   ],
+   [
+    512,
+    32,
+    1.03614030915,
+    1.60517616258
+   ],
+   [
+    512,
+    48,
+    1.0327334585,
+    1.60517616258
+   ],
+   [
+    512,
+    64,
+    1.05197213116,
+    1.60517616258
+   ],
+   [
     1024,
+    0,
     1.19096484917,
     2.54908156132
    ],
    [
+    1024,
+    2,
+    1.19096484917,
+    2.54908156132
+   ],
+   [
+    1024,
+    4,
+    1.14961043672,
+    2.54908156132
+   ],
+   [
+    1024,
+    8,
+    1.10972618297,
+    2.42660680978
+   ],
+   [
+    1024,
+    12,
+    1.07329574848,
+    2.06561265594
+   ],
+   [
+    1024,
+    16,
+    1.05343241129,
+    1.62684125148
+   ],
+   [
+    1024,
+    24,
+    1.0430634891,
+    1.60517616258
+   ],
+   [
+    1024,
+    32,
+    1.04351918831,
+    1.60517616258
+   ],
+   [
+    1024,
+    48,
+    1.04327977376,
+    1.60517616258
+   ],
+   [
+    1024,
+    64,
+    1.05875112844,
+    1.60517616258
+   ],
+   [
     2048,
+    0,
     1.1449085558,
     2.54908156132
    ],
    [
+    2048,
+    2,
+    1.1449085558,
+    2.54908156132
+   ],
+   [
+    2048,
+    4,
+    1.11786530711,
+    2.54908156132
+   ],
+   [
+    2048,
+    8,
+    1.09096653161,
+    2.42660680978
+   ],
+   [
+    2048,
+    12,
+    1.06570008722,
+    1.73618740143
+   ],
+   [
+    2048,
+    16,
+    1.05809105896,
+    1.73618740143
+   ],
+   [
+    2048,
+    24,
+    1.05580033972,
+    1.73618740143
+   ],
+   [
+    2048,
+    32,
+    1.05660917241,
+    1.73618740143
+   ],
+   [
+    2048,
+    48,
+    1.05693541626,
+    1.73618740143
+   ],
+   [
+    2048,
+    64,
+    1.06806333552,
+    1.73618740143
+   ],
+   [
     4096,
+    0,
     1.11226760297,
     2.54908156132
+   ],
+   [
+    4096,
+    2,
+    1.11226760297,
+    2.54908156132
+   ],
+   [
+    4096,
+    4,
+    1.09871439159,
+    2.54908156132
+   ],
+   [
+    4096,
+    8,
+    1.08251588449,
+    1.84499172555
+   ],
+   [
+    4096,
+    12,
+    1.07242999723,
+    1.84499172555
+   ],
+   [
+    4096,
+    16,
+    1.0711960646,
+    1.84499172555
+   ],
+   [
+    4096,
+    24,
+    1.07005367848,
+    1.84499172555
+   ],
+   [
+    4096,
+    32,
+    1.07112825155,
+    1.84499172555
+   ],
+   [
+    4096,
+    48,
+    1.07218097044,
+    1.84499172555
+   ],
+   [
+    4096,
+    64,
+    1.07849749461,
+    1.84499172555
    ]
   ],
   "speedup_vs_ql": [
@@ -1407,11 +1799,14 @@
    ]
   ]
  },
- "share_chosen": 0,
+ "share_chosen": [
+  256,
+  48
+ ],
  "stage2": {
   "big": {
    "chosen": [
-    48,
+    64,
     256
    ],
    "current": [
@@ -1427,27 +1822,27 @@
     "n": 132
    },
    "with": {
-    "geomean": 1.02914512308,
-    "worst": 1.71920918359,
-    "over10": 10,
-    "total_ratio": 1.13031258215,
+    "geomean": 1.0030503167,
+    "worst": 1.22258948376,
+    "over10": 1,
+    "total_ratio": 1.0015301465,
     "estimated_picks": 0,
     "n": 132
    }
   },
   "current": {
-   "geomean": 1.02914512308,
+   "geomean": 1.01646825097,
    "worst": 1.71920918359,
-   "over10": 10,
-   "total_ratio": 1.13031258215,
+   "over10": 5,
+   "total_ratio": 1.09932203227,
    "estimated_picks": 0,
    "n": 132
   },
   "chosen": {
-   "geomean": 1.02914512308,
-   "worst": 1.71920918359,
-   "over10": 10,
-   "total_ratio": 1.13031258215,
+   "geomean": 1.0030503167,
+   "worst": 1.22258948376,
+   "over10": 1,
+   "total_ratio": 1.0015301465,
    "estimated_picks": 0,
    "n": 132
   },
@@ -1457,13 +1852,13 @@
    1
   ],
   "band": {
-   "n_near_optimal": 12,
+   "n_near_optimal": 6,
    "gpu_max_n": [
-    48,
-    48
+    64,
+    64
    ],
    "min_bn": [
-    4096,
+    8192,
     8192
    ],
    "min_batch": [
@@ -1476,151 +1871,151 @@
    "gpu_max_n": [
     {
      "value": 16,
-     "geomean": 1.02914512308,
-     "worst": 1.71920918359,
-     "over10": 10
+     "geomean": 1.0030503167,
+     "worst": 1.22258948376,
+     "over10": 1
     },
     {
      "value": 24,
-     "geomean": 1.03104427088,
-     "worst": 1.71920918359,
-     "over10": 11
+     "geomean": 1.00490131007,
+     "worst": 1.2755323561,
+     "over10": 2
     },
     {
      "value": 32,
-     "geomean": 1.03104427088,
-     "worst": 1.71920918359,
-     "over10": 11
+     "geomean": 1.00490131007,
+     "worst": 1.2755323561,
+     "over10": 2
     },
     {
      "value": 48,
-     "geomean": 1.03104427088,
-     "worst": 1.71920918359,
-     "over10": 11
+     "geomean": 1.00490131007,
+     "worst": 1.2755323561,
+     "over10": 2
     },
     {
      "value": 64,
-     "geomean": 1.04191995735,
+     "geomean": 1.00975936051,
      "worst": 1.89003893267,
-     "over10": 13
+     "over10": 3
     },
     {
      "value": 96,
-     "geomean": 1.10236988857,
+     "geomean": 1.06834340381,
      "worst": 3.93445820881,
-     "over10": 19
+     "over10": 9
     },
     {
      "value": 256,
-     "geomean": 1.117078794,
+     "geomean": 1.08259829435,
      "worst": 5.75245801969,
-     "over10": 20
+     "over10": 10
     }
    ],
    "min_bn": [
     {
      "value": 0,
-     "geomean": 1.95842529933,
+     "geomean": 1.90876784302,
      "worst": 151.313624679,
-     "over10": 57
+     "over10": 48
     },
     {
      "value": 64,
-     "geomean": 1.2824183013,
+     "geomean": 1.24990154879,
      "worst": 12.9459364666,
-     "over10": 40
+     "over10": 31
     },
     {
      "value": 128,
-     "geomean": 1.18002681126,
+     "geomean": 1.15010627773,
      "worst": 7.14229054484,
-     "over10": 35
+     "over10": 26
     },
     {
      "value": 256,
-     "geomean": 1.11689985832,
+     "geomean": 1.0885799597,
      "worst": 2.97347727273,
-     "over10": 30
+     "over10": 21
     },
     {
      "value": 512,
-     "geomean": 1.08200517401,
+     "geomean": 1.05457005832,
      "worst": 2.97347727273,
-     "over10": 25
+     "over10": 16
     },
     {
      "value": 1024,
-     "geomean": 1.06054289131,
+     "geomean": 1.03365196914,
      "worst": 2.15294952699,
-     "over10": 20
+     "over10": 11
     },
     {
      "value": 2048,
-     "geomean": 1.04414358661,
-     "worst": 1.71920918359,
-     "over10": 17
+     "geomean": 1.01766848206,
+     "worst": 1.62933748056,
+     "over10": 8
     },
     {
      "value": 4096,
-     "geomean": 1.03091183754,
-     "worst": 1.71920918359,
-     "over10": 12
+     "geomean": 1.00477223469,
+     "worst": 1.22258948376,
+     "over10": 3
     },
     {
      "value": 8192,
-     "geomean": 1.02914512308,
-     "worst": 1.71920918359,
-     "over10": 10
+     "geomean": 1.0030503167,
+     "worst": 1.22258948376,
+     "over10": 1
     },
     {
      "value": 16384,
-     "geomean": 1.04006745763,
-     "worst": 1.71920918359,
-     "over10": 15
+     "geomean": 1.01369570663,
+     "worst": 1.38725548503,
+     "over10": 6
     },
     {
      "value": null,
-     "geomean": 1.08123322604,
+     "geomean": 1.05381768371,
      "worst": 2.44407327227,
-     "over10": 23
+     "over10": 14
     }
    ],
    "min_batch": [
     {
      "value": 1,
-     "geomean": 1.02914512308,
-     "worst": 1.71920918359,
-     "over10": 10
+     "geomean": 1.0030503167,
+     "worst": 1.22258948376,
+     "over10": 1
     },
     {
      "value": 2,
-     "geomean": 1.02914512308,
-     "worst": 1.71920918359,
-     "over10": 10
+     "geomean": 1.0030503167,
+     "worst": 1.22258948376,
+     "over10": 1
     },
     {
      "value": 4,
-     "geomean": 1.02914512308,
-     "worst": 1.71920918359,
-     "over10": 10
+     "geomean": 1.0030503167,
+     "worst": 1.22258948376,
+     "over10": 1
     },
     {
      "value": 8,
-     "geomean": 1.02914512308,
-     "worst": 1.71920918359,
-     "over10": 10
+     "geomean": 1.0030503167,
+     "worst": 1.22258948376,
+     "over10": 1
     },
     {
      "value": 16,
-     "geomean": 1.02914512308,
-     "worst": 1.71920918359,
-     "over10": 10
+     "geomean": 1.0030503167,
+     "worst": 1.22258948376,
+     "over10": 1
     },
     {
      "value": 32,
-     "geomean": 1.02914512308,
-     "worst": 1.71920918359,
-     "over10": 10
+     "geomean": 1.0030503167,
+     "worst": 1.22258948376,
+     "over10": 1
     }
    ]
   },
@@ -1634,18 +2029,18 @@
      1
     ],
     "train": {
-     "geomean": 1.01860314482,
-     "worst": 1.71920918359,
-     "over10": 4,
-     "total_ratio": 1.3142487833,
+     "geomean": 1.00372279928,
+     "worst": 1.22258948376,
+     "over10": 1,
+     "total_ratio": 1.00469222378,
      "estimated_picks": 0,
      "n": 71
     },
     "test": {
-     "geomean": 1.04155277049,
-     "worst": 1.63072779862,
-     "over10": 6,
-     "total_ratio": 1.08557023647,
+     "geomean": 1.00226815847,
+     "worst": 1.07784821351,
+     "over10": 0,
+     "total_ratio": 1.00076097353,
      "estimated_picks": 0,
      "n": 61
     }
@@ -1661,31 +2056,31 @@
       "24": 512,
       "32": 512,
       "48": 512,
-      "64": null,
+      "64": 4096,
       "96": null,
       "256": null
      }
     },
     "train": {
-     "geomean": 1.01630280466,
-     "worst": 1.71920918359,
-     "over10": 3,
-     "total_ratio": 1.31380261532,
+     "geomean": 1.00145606381,
+     "worst": 1.06384193177,
+     "over10": 0,
+     "total_ratio": 1.00424605579,
      "estimated_picks": 0,
      "n": 71
     },
     "test": {
-     "geomean": 1.05874424478,
+     "geomean": 1.04735370508,
      "worst": 1.63072779862,
-     "over10": 10,
-     "total_ratio": 1.08689158095,
+     "over10": 8,
+     "total_ratio": 1.05755509217,
      "estimated_picks": 0,
      "n": 61
     },
     "bootstrap": {
-     "p_better": 0.011,
-     "gain_median": -0.0156897799613,
-     "gain_p05": -0.0303279321636
+     "p_better": 0.0,
+     "gain_median": -0.0422788466622,
+     "gain_p05": -0.0672278611169
     },
     "justified": false
    }
@@ -1694,44 +2089,44 @@
  "stage3": {
   "n_points": 132,
   "current": {
-   "geomean": 1.03050876974,
-   "worst": 1.80654567424,
-   "over10": 13,
-   "total_ratio": 1.10785705873,
+   "geomean": 1.01706469549,
+   "worst": 1.41431560171,
+   "over10": 9,
+   "total_ratio": 1.04906678297,
    "estimated_picks": 0,
    "n": 132
   },
   "current_is_eigh_boundary": false,
   "eigh_boundary": {
-   "geomean": 1.02672874238,
-   "worst": 1.80654567424,
-   "over10": 9,
-   "total_ratio": 1.10967051558,
+   "geomean": 1.00896544964,
+   "worst": 1.9639791641,
+   "over10": 3,
+   "total_ratio": 1.00839902016,
    "estimated_picks": 0,
    "n": 132
   },
   "chosen": {
-   "geomean": 1.01979906833,
-   "worst": 1.54395907846,
-   "over10": 8,
-   "total_ratio": 1.08807042898,
+   "geomean": 1.01117776973,
+   "worst": 1.39359020397,
+   "over10": 5,
+   "total_ratio": 1.04849458474,
    "estimated_picks": 0,
    "n": 132
   },
   "chosen_params": [
-   32,
+   48,
    8192,
    1
   ],
   "band": {
-   "n_near_optimal": 6,
+   "n_near_optimal": 12,
    "gpu_max_n": [
-    32,
-    32
+    48,
+    64
    ],
    "min_bn": [
     8192,
-    8192
+    16384
    ],
    "min_batch": [
     1,
@@ -1742,15 +2137,15 @@
    "train_points": 71,
    "test_points": 61,
    "params": [
-    32,
-    8192,
+    64,
+    16384,
     1
    ],
    "test": {
-    "geomean": 1.02753786736,
-    "worst": 1.54395907846,
-    "over10": 5,
-    "total_ratio": 1.06419673067,
+    "geomean": 1.02458495301,
+    "worst": 1.9639791641,
+    "over10": 4,
+    "total_ratio": 1.01011302714,
     "estimated_picks": 0,
     "n": 61
    },
@@ -1765,7 +2160,7 @@
   }
  },
  "values_chosen": [
-  32,
+  48,
   8192,
   1
  ],
@@ -6443,7 +6838,7 @@
  "current_band_vec": 2560,
  "stage5": {
   "vectors": {
-   "n_points": 73,
+   "n_points": 68,
    "chosen": [
     96,
     1024,
@@ -6455,45 +6850,45 @@
     256
    ],
    "with": {
-    "geomean": 1.01960730476,
-    "worst": 1.33227548861,
-    "over10": 6,
-    "total_ratio": 1.00501241939,
+    "geomean": 1.01321121754,
+    "worst": 1.3155740573,
+    "over10": 4,
+    "total_ratio": 1.00276629672,
     "estimated_picks": 0,
-    "n": 73
+    "n": 68
    },
    "without": {
-    "geomean": 1.25899624067,
+    "geomean": 1.27065062143,
     "worst": 1.9839627824,
-    "over10": 36,
-    "total_ratio": 2.22027376054,
+    "over10": 34,
+    "total_ratio": 2.23103366516,
     "estimated_picks": 2,
-    "n": 73
+    "n": 68
    },
    "n_near_optimal": 2,
    "holdout": {
-    "train_points": 40,
-    "test_points": 33,
+    "train_points": 37,
+    "test_points": 31,
     "fitted": [
      96,
-     768,
-     128
+     1024,
+     64
     ],
     "test": {
-     "geomean": 1.0839414209,
-     "worst": 1.3155740573,
-     "over10": 5,
-     "total_ratio": 2.14386582568,
-     "estimated_picks": 1,
-     "n": 33
+     "geomean": 1.03167150787,
+     "worst": 1.52151606129,
+     "over10": 3,
+     "total_ratio": 1.0254646286,
+     "estimated_picks": 0,
+     "n": 31
     },
     "without_test": {
-     "geomean": 1.21784588084,
-     "worst": 1.76251633044,
-     "over10": 13,
-     "total_ratio": 2.40761388671,
-     "estimated_picks": 1,
-     "n": 33
+     "geomean": 1.18834671577,
+     "worst": 1.9839627824,
+     "over10": 14,
+     "total_ratio": 1.41129783035,
+     "estimated_picks": 0,
+     "n": 31
     }
    },
    "speedup_vs_cpu": [
@@ -6536,31 +6931,6 @@
      64,
      128,
      0.723233294417
-    ],
-    [
-     64,
-     256,
-     0.777596767887
-    ],
-    [
-     64,
-     512,
-     0.865776673911
-    ],
-    [
-     64,
-     1024,
-     1.04560808764
-    ],
-    [
-     64,
-     2048,
-     1.21350688147
-    ],
-    [
-     64,
-     4096,
-     1.33227548861
     ],
     [
      96,
@@ -6865,11 +7235,11 @@
    ]
   },
   "values": {
-   "n_points": 73,
+   "n_points": 68,
    "chosen": [
-    64,
+    96,
     256,
-    512
+    256
    ],
    "current": [
     96,
@@ -6877,45 +7247,45 @@
     128
    ],
    "with": {
-    "geomean": 1.00540858028,
-    "worst": 1.22906905084,
-    "over10": 1,
-    "total_ratio": 1.0006258952,
+    "geomean": 1.00030270163,
+    "worst": 1.0207938368,
+    "over10": 0,
+    "total_ratio": 1.00012853549,
     "estimated_picks": 0,
-    "n": 73
+    "n": 68
    },
    "without": {
-    "geomean": 1.0890515571,
+    "geomean": 1.08639129976,
     "worst": 1.73947932806,
-    "over10": 20,
-    "total_ratio": 1.10334573101,
+    "over10": 17,
+    "total_ratio": 1.10245104774,
     "estimated_picks": 0,
-    "n": 73
+    "n": 68
    },
-   "n_near_optimal": 5,
+   "n_near_optimal": 7,
    "holdout": {
-    "train_points": 40,
-    "test_points": 33,
+    "train_points": 37,
+    "test_points": 31,
     "fitted": [
-     64,
+     96,
      256,
-     512
+     256
     ],
     "test": {
-     "geomean": 1.0044978123,
-     "worst": 1.07803299256,
+     "geomean": 1.0,
+     "worst": 1.0,
      "over10": 0,
-     "total_ratio": 1.00070500549,
+     "total_ratio": 1.0,
      "estimated_picks": 0,
-     "n": 33
+     "n": 31
     },
     "without_test": {
-     "geomean": 1.05618987957,
-     "worst": 1.55082772952,
+     "geomean": 1.08663853155,
+     "worst": 1.73947932806,
      "over10": 7,
-     "total_ratio": 1.06590659007,
+     "total_ratio": 1.13387222743,
      "estimated_picks": 0,
-     "n": 33
+     "n": 31
     }
    },
    "speedup_vs_cpu": [
@@ -6958,31 +7328,6 @@
      64,
      128,
      0.63571621196
-    ],
-    [
-     64,
-     256,
-     0.773882714468
-    ],
-    [
-     64,
-     512,
-     0.961356036572
-    ],
-    [
-     64,
-     1024,
-     1.1350022495
-    ],
-    [
-     64,
-     2048,
-     1.21452502706
-    ],
-    [
-     64,
-     4096,
-     1.31239927673
     ],
     [
      96,
@@ -7294,9 +7639,9 @@
    128
   ],
   [
-   64,
+   96,
    256,
-   512
+   256
   ]
  ],
  "current_tb": [
@@ -7346,18 +7691,18 @@
  ],
  "rules": {
   "current": {
-   "geomean": 1.02914512308,
+   "geomean": 1.01646825097,
    "worst": 1.71920918359,
-   "over10": 10,
-   "total_ratio": 1.13031258215,
+   "over10": 5,
+   "total_ratio": 1.09932203227,
    "estimated_picks": 0,
    "n": 132
   },
   "chosen": {
-   "geomean": 1.02914512308,
-   "worst": 1.71920918359,
-   "over10": 10,
-   "total_ratio": 1.13031258215,
+   "geomean": 1.0030503167,
+   "worst": 1.22258948376,
+   "over10": 1,
+   "total_ratio": 1.0015301465,
    "estimated_picks": 0,
    "n": 132
   }
@@ -8734,8 +9079,8 @@
     "ql_share": 0.991584,
     "cpu": 1.495417
    },
-   "rule": "ql",
-   "rule_gpu": "ql",
+   "rule": "ql_share",
+   "rule_gpu": "ql_share",
    "gpu_speedup": 0.939528808476
   },
   {
@@ -8750,8 +9095,8 @@
     "ql_share": 2.698333,
     "cpu": 2.708791
    },
-   "rule": "cpu",
-   "rule_gpu": "ql",
+   "rule": "ql_share",
+   "rule_gpu": "ql_share",
    "gpu_speedup": 0.74226162014
   },
   {
@@ -8893,8 +9238,8 @@
     "ql_share": 1.847083,
     "cpu": 3.401042
    },
-   "rule": "ql",
-   "rule_gpu": "ql",
+   "rule": "ql_share",
+   "rule_gpu": "ql_share",
    "gpu_speedup": 1.45506904113
   },
   {
@@ -8909,8 +9254,8 @@
     "ql_share": 4.042833,
     "cpu": 5.22875
    },
-   "rule": "cpu",
-   "rule_gpu": "ql",
+   "rule": "ql_share",
+   "rule_gpu": "ql_share",
    "gpu_speedup": 0.862907068106
   },
   {
@@ -9052,8 +9397,8 @@
     "ql_share": 3.347959,
     "cpu": 5.540333
    },
-   "rule": "ql",
-   "rule_gpu": "ql",
+   "rule": "ql_share",
+   "rule_gpu": "ql_share",
    "gpu_speedup": 1.26633780433
   },
   {
@@ -9068,8 +9413,8 @@
     "ql_share": 6.251521,
     "cpu": 9.923583
    },
-   "rule": "cpu",
-   "rule_gpu": "ql",
+   "rule": "ql_share",
+   "rule_gpu": "ql_share",
    "gpu_speedup": 0.91429471968
   },
   {
@@ -9211,8 +9556,8 @@
     "ql_share": 6.041187,
     "cpu": 11.37075
    },
-   "rule": "ql",
-   "rule_gpu": "ql",
+   "rule": "ql_share",
+   "rule_gpu": "ql_share",
    "gpu_speedup": 1.4087167177
   },
   {
@@ -9227,8 +9572,8 @@
     "ql_share": 11.589291,
     "cpu": 18.898979
    },
-   "rule": "cpu",
-   "rule_gpu": "ql",
+   "rule": "ql_share",
+   "rule_gpu": "ql_share",
    "gpu_speedup": 0.88386726945
   },
   {
@@ -9370,8 +9715,8 @@
     "ql_share": 10.555853,
     "cpu": 21.711438
    },
-   "rule": "ql",
-   "rule_gpu": "ql",
+   "rule": "ql_share",
+   "rule_gpu": "ql_share",
    "gpu_speedup": 1.42062475737
   },
   {
@@ -9386,8 +9731,8 @@
     "ql_share": 22.007333,
     "cpu": 37.835209
    },
-   "rule": "cpu",
-   "rule_gpu": "ql",
+   "rule": "ql_share",
+   "rule_gpu": "ql_share",
    "gpu_speedup": 0.914001122595
   },
   {
@@ -9405,10 +9750,9 @@
   }
  ],
  "warnings": [
-  "chosen rule loses more than 25% at N=64 batch=4096 (cpu, 1.72x), N=64 batch=2048 (cpu, 1.63x), N=48 batch=256 (ql, 1.61x), N=64 batch=1024 (cpu, 1.59x), N=48 batch=4096 (ql, 1.45x), N=48 batch=2048 (ql, 1.34x), N=48 batch=1024 (ql, 1.31x), N=64 batch=512 (cpu, 1.29x) ...",
   "GPU split loses more than 25% against the best GPU backend at N=32 batch=2 (ql, 1.44x), N=8 batch=2 (ql, 1.42x), N=32 batch=1 (ql, 1.36x), N=32 batch=16 (ql, 1.36x), N=2 batch=1 (ql, 1.34x), N=12 batch=1 (ql, 1.32x), N=24 batch=16 (ql, 1.29x), N=32 batch=4 (ql, 1.28x) ...",
   "the fitted policy differs from the one in effect (tuned:Apple M5 Pro): update this device's row in kTuned[] in src/eigh.mm",
-  "eigenvalues alone: the chosen boundary loses more than 25% at N=48 batch=4096 (ql, 1.81x), N=48 batch=256 (ql, 1.79x), N=48 batch=2048 (ql, 1.77x), N=48 batch=1024 (ql, 1.58x), N=64 batch=4096 (cpu, 1.39x), N=64 batch=2048 (cpu, 1.35x)"
+  "eigenvalues alone: the chosen boundary loses more than 25% at N=64 batch=256 (ql_share, 1.96x)"
  ],
  "noise": {
   "overall": {
@@ -9479,10 +9823,10 @@
    "busy_processes": 0
   }
  },
- "tuned_row": "{\"Apple M5 Pro\", 20,   0, 256, 64, 64,   16, 8192, 1,   32, 8192, 1,   1024, 1024, 128, 2,   2, 64,   0,   48, 256,   1536, 16,   512,   96, 1024, 128,   64, 256, 512},",
- "env_line": "EIGH_SIMD_MAX_N=0 EIGH_BLOCK_MIN_N=256 EIGH_BLOCK_MIN_N_BATCHED=64 EIGH_BLOCK_MIN_BATCH=64 EIGH_GPU_MAX_N=16 EIGH_GPU_MIN_BATCH_TIMES_N=8192 EIGH_GPU_MIN_BATCH=1 EIGH_TRIDIAG_MIN_N=1024 EIGH_VALUES_TRIDIAG_MIN_N=1024 EIGH_TRIDIAG_MAX_BATCH=128 EIGH_VALUES_TRIDIAG_MAX_BATCH=2 EIGH_QL_MIN_N=2 EIGH_QL_MAX_N=64 EIGH_SHARE_MIN_BATCH=0 EIGH_GPU_BIG_BATCH_MAX_N=48 EIGH_GPU_BIG_BATCH_MIN=256 EIGH_VALUES_BAND_MIN_N=1536 EIGH_VALUES_BAND_WIDTH=16 EIGH_BAND_MIN_N=512 EIGH_TRIDIAG_BATCH_MIN_N=96 EIGH_TRIDIAG_BATCH_MAX_N=1024 EIGH_TRIDIAG_BATCH_MIN_BATCH=128 EIGH_VALUES_TRIDIAG_BATCH_MIN_N=64 EIGH_VALUES_TRIDIAG_BATCH_MAX_N=256 EIGH_VALUES_TRIDIAG_BATCH_MIN_BATCH=512 EIGH_VALUES_GPU_MAX_N=32 EIGH_VALUES_GPU_MIN_BATCH_TIMES_N=8192 EIGH_VALUES_GPU_MIN_BATCH=1",
+ "tuned_row": "{\"Apple M5 Pro\", 20,   0, 256, 64, 64,   16, 8192, 1,   48, 8192, 1,   1024, 1024, 128, 2,   2, 64,   256,   64, 256,   1536, 16,   512,   96, 1024, 128,   96, 256, 256,   48},",
+ "env_line": "EIGH_SIMD_MAX_N=0 EIGH_BLOCK_MIN_N=256 EIGH_BLOCK_MIN_N_BATCHED=64 EIGH_BLOCK_MIN_BATCH=64 EIGH_GPU_MAX_N=16 EIGH_GPU_MIN_BATCH_TIMES_N=8192 EIGH_GPU_MIN_BATCH=1 EIGH_TRIDIAG_MIN_N=1024 EIGH_VALUES_TRIDIAG_MIN_N=1024 EIGH_TRIDIAG_MAX_BATCH=128 EIGH_VALUES_TRIDIAG_MAX_BATCH=2 EIGH_QL_MIN_N=2 EIGH_QL_MAX_N=64 EIGH_SHARE_MIN_BATCH=256 EIGH_SHARE_MIN_N=48 EIGH_GPU_BIG_BATCH_MAX_N=64 EIGH_GPU_BIG_BATCH_MIN=256 EIGH_VALUES_BAND_MIN_N=1536 EIGH_VALUES_BAND_WIDTH=16 EIGH_BAND_MIN_N=512 EIGH_TRIDIAG_BATCH_MIN_N=96 EIGH_TRIDIAG_BATCH_MAX_N=1024 EIGH_TRIDIAG_BATCH_MIN_BATCH=128 EIGH_VALUES_TRIDIAG_BATCH_MIN_N=96 EIGH_VALUES_TRIDIAG_BATCH_MAX_N=256 EIGH_VALUES_TRIDIAG_BATCH_MIN_BATCH=256 EIGH_VALUES_GPU_MAX_N=48 EIGH_VALUES_GPU_MIN_BATCH_TIMES_N=8192 EIGH_VALUES_GPU_MIN_BATCH=1",
  "big_chosen": [
-  48,
+  64,
   256
  ],
  "n_candidates": {

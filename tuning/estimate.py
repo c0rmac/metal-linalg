@@ -260,7 +260,7 @@ ROW_FIELDS = {
              "values_tridiag_max_batch", "ql_min_n", "ql_max_n", "share_min_batch", "gpu_big_batch_max_n",
              "gpu_big_batch_min", "values_band_min_n", "values_band_width", "band_min_n", "tridiag_batch_min_n",
              "tridiag_batch_max_n", "tridiag_batch_min_batch", "values_tridiag_batch_min_n",
-             "values_tridiag_batch_max_n", "values_tridiag_batch_min_batch"],
+             "values_tridiag_batch_max_n", "values_tridiag_batch_min_batch", "share_min_n"],
     "svd": ["qr_min_rows", "qr_min_k", "block_min_k", "block_min_k_batched", "block_min_batch", "gpu_max_k",
             "gpu_min_batch_times_k", "gpu_min_batch", "gpu_max_l", "values_gpu_max_k",
             "values_gpu_min_batch_times_k", "values_gpu_min_batch", "values_gpu_max_l", "bidiag_min_k",
@@ -268,7 +268,8 @@ ROW_FIELDS = {
             "share_min_batch", "gpu_big_batch_max_k", "gpu_big_batch_min", "values_band_min_k",
             "values_band_width", "band_min_k", "bidiag_batch_min_k", "bidiag_batch_max_k",
             "bidiag_batch_min_batch", "bidiag_batch_max_l", "values_bidiag_batch_min_k",
-            "values_bidiag_batch_max_k", "values_bidiag_batch_min_batch", "values_bidiag_batch_max_l"],
+            "values_bidiag_batch_max_k", "values_bidiag_batch_min_batch", "values_bidiag_batch_max_l",
+            "share_min_k"],
     "qr": ["m_crossover_small_batch", "m_crossover_large_batch", "batch_threshold", "gpu_max_k",
            "gpu_min_batch_times_k", "gpu_min_batch", "gpu_min_k", "gpu_large_min_k", "gpu_large_max_batch",
            "share_min_batch"],
@@ -282,7 +283,8 @@ DEFAULTS = {   # the untuned default (include/metal_linalg/core.h, and qr.mm's c
                  values_band_width=0, band_min_n=0, tridiag_batch_min_n=0, tridiag_batch_max_n=0,
                  tridiag_batch_min_batch=0, values_tridiag_batch_min_n=0, values_tridiag_batch_max_n=0,
                  values_tridiag_batch_min_batch=0,
-                 gpu_big_batch_max_n=0, gpu_big_batch_min=0, ql_min_n=0, ql_max_n=0, share_min_batch=0),
+                 gpu_big_batch_max_n=0, gpu_big_batch_min=0, ql_min_n=0, ql_max_n=0, share_min_batch=0,
+                 share_min_n=0),
     "svd": dict(qr_min_rows=512, qr_min_k=64, block_min_k=192, block_min_k_batched=0, block_min_batch=0,
                 gpu_max_k=64, gpu_min_batch_times_k=1024, gpu_min_batch=1, gpu_max_l=NO_LIMIT,
                 gpu_big_batch_max_k=0, gpu_big_batch_min=0, values_gpu_max_k=0, values_gpu_min_batch_times_k=0,
@@ -291,7 +293,7 @@ DEFAULTS = {   # the untuned default (include/metal_linalg/core.h, and qr.mm's c
                 band_min_k=0, gk_min_k=0, gk_max_k=0, bidiag_batch_min_k=0, bidiag_batch_max_k=0,
                 bidiag_batch_min_batch=0, bidiag_batch_max_l=NO_LIMIT, values_bidiag_batch_min_k=0,
                 values_bidiag_batch_max_k=0, values_bidiag_batch_min_batch=0, values_bidiag_batch_max_l=NO_LIMIT,
-                share_min_batch=0),
+                share_min_batch=0, share_min_k=0),
     "qr": dict(m_crossover_small_batch=384, m_crossover_large_batch=384, batch_threshold=16,
                gpu_max_k=NO_LIMIT, gpu_min_batch_times_k=1024, gpu_min_batch=1, gpu_min_k=0,
                gpu_large_min_k=0, gpu_large_max_batch=0, share_min_batch=0),
@@ -367,14 +369,15 @@ def _column(lib, op, values, m, n, batch):
     if op == "eigh":
         name = lib.text((lib.eigvalsh_backend if values else lib.eigh_backend)(n, batch))
         col = {"cpu": "cpu", "simd": "simd", "threadgroup": "tg", "block": "block", "tridiag": "tridiag",
-               "ql": "ql_share" if pol["share_min_batch"] and batch >= pol["share_min_batch"] else "ql",
+               "ql": "ql_share" if (pol["share_min_batch"] and batch >= pol["share_min_batch"]
+                                    and n >= pol.get("share_min_n", 0)) else "ql",
                # with eigenvectors the band is 16 wide
                "band": BAND_COLUMN.get(pol.get("values_band_width", 0), "band") if values else "band",
                "tridiag_batch": "tridiag_batch"}[name]
         return col + "_vals" if values else col
     if op == "svd":
         name = lib.text((lib.svdvals_backend if values else lib.svd_backend)(m, n, batch))
-        share = pol["share_min_batch"] and batch >= pol["share_min_batch"]
+        share = pol["share_min_batch"] and batch >= pol["share_min_batch"] and min(m, n) >= pol.get("share_min_k", 0)
         col = {"cpu": "cpu", "jacobi": "jacobi", "block_jacobi": "block", "qr_jacobi": "qr",
                "qr_block_jacobi": "qrblock", "bidiag": "bidiag",
                # with vectors the band is 16 wide

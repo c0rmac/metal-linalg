@@ -1555,6 +1555,11 @@ int main() {
             expect("share_min_batch = 256: N=30 b256 shared, b255 not; eigvalsh too",
                    eigh_shares_batch(30, 256) && !eigh_shares_batch(30, 255) && eigvalsh_shares_batch(30, 256));
             api("routed to ql, shared with the CPU (300 x 30x30)", random_symmetric(300, 30, 842));
+            q.share_min_n = 24;   // and only from N = 24
+            set_eigh_policy(q);
+            expect("share_min_n = 24: N=24 b256 shared, N=16 not; eigvalsh too",
+                   eigh_shares_batch(24, 256) && !eigh_shares_batch(16, 256) && !eigvalsh_shares_batch(16, 4096));
+            api("routed to ql, below share_min_n not shared (300 x 16x16)", random_symmetric(300, 16, 843));
             set_eigh_policy(known);
             expect("share_min_batch unset -> never", !eigh_shares_batch(30, 1 << 20));
         }

@@ -1674,6 +1674,12 @@ int main() {
             eval({U, S, Vt});
             check("routed, shared with the CPU (700 x 24x24)", A, SvdResult{U, S, Vt, full({700}, (uint32_t)(1u | (1u << 16)))});
         }
+        p.share_min_k = 24;   // and only from k = 24, k being min(M, N)
+        set_svd_policy(p);
+        expect("share_min_k = 24: 32x32 b512 shared, 16x16 and 64x16 not; svdvals too",
+               svd_shares_batch(32, 32, 512) && !svd_shares_batch(16, 16, 4096) && !svd_shares_batch(64, 16, 4096) &&
+               !svdvals_shares_batch(16, 16, 4096));
+        p.share_min_k = 0;
         p.share_min_batch = 0;
         set_svd_policy(p);
         expect("share_min_batch = 0 -> never", !svd_shares_batch(32, 32, 1 << 20));

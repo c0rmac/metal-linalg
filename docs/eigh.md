@@ -21,9 +21,9 @@ exception, as LAPACK does.
 512×512 in 18 ms on an M1), and since 2.9.0 a batch is spread over every CPU
 core, so the public functions run on the GPU only where it was measured
 faster, and call LAPACK (Accelerate) on the CPU otherwise: on an M5 Pro
-(2.17.0's row) for large batches of matrices up to N = 48 (`batch * N >=
-8192` up to N = 16, and from 256 matrices up to 48; the `ql` kernel to
-N = 64), for batches of 128 and more of N = 96-1024 on `tridiag_batch`,
+(2.17.0's row) for large batches of matrices up to N = 64 (`batch * N >=
+8192` up to N = 16, and from 256 matrices up to 64; the `ql` kernel, shared
+with the CPU from N = 48), for batches of 128 and more of N = 96-1024 on `tridiag_batch`,
 for up to 127 matrices from N = 512 on `band`, the two-stage reduction,
 and for the eigenvalues alone of one or two matrices from N = 1024 on
 `tridiag` and from 1536 on `band`. The boundary is
@@ -637,8 +637,13 @@ worker on every core the GPU's chunks took 5-7x their time alone. On an M5 Pro,
 against the faster of the two alone: 1.37x for 4096 matrices of 16×16, 1.47x
 for 256 of 48×48, 1.51x for 1024 of 64×64. Below a few hundred matrices the
 threads cost more than they save, which is what the fitted threshold
-(stage 1c of `tuning/tune_eigh.py`) says. `eigh_shares_batch(n, batch)` and
-`eigvalsh_shares_batch` report it; `EIGH_SHARE_MIN_BATCH` overrides it.
+(stage 1c of `tuning/tune_eigh.py`) says. Since 2.17.0 sharing also needs N
+of at least `share_min_n` (0: any N): the `ql` kernel in registers alone is
+faster up to N = 32 or so, where the CPU's share costs more than it saves
+(on an M5 Pro sharing from 256 matrices of N = 48 and more; at 64×64 1.35x
+for 256 matrices, 1.88x for 4096). `eigh_shares_batch(n, batch)` and
+`eigvalsh_shares_batch` report it; `EIGH_SHARE_MIN_BATCH` and
+`EIGH_SHARE_MIN_N` override it.
 
 All three split large batches across command buffers. macOS kills a
 command buffer that monopolises the GPU for more than a couple of seconds
@@ -784,18 +789,20 @@ rather than constants:
 | GPU | cores | simd up to | block from | ql for | GPU iff | tridiag | status |
 |---|---|---|---|---|---|---|---|
 | Apple M1 | 8 | — | — | — | — | — | measured before 2.9.0, out of date and no longer used since 2.14.0: estimated like any unmeasured Mac (the old row's study: [`studies/eigh-routing-apple-m1.md`](studies/eigh-routing-apple-m1.md)) |
-| Apple M5 Pro | 20 | never | N = 256; N = 64 in batches of 64+ | N = 2-64 | N <= 16 and batch * N >= 8192, or N <= 48 in batches of 256+ (eigvalsh: N <= 32 and batch * N >= 8192) | `band` from N = 512, batches up to 128; `tridiag_batch` for N = 96-1024 in batches of 128+ (eigvalsh: `tridiag` from 1024, batch <= 2, `band` from 1536; `tridiag_batch` for N = 64-256 in batches of 512+) | measured — run [`20261009-b60ec0`](results/apple-m5-pro-20gpu/20261009-b60ec0/eigh/report.md) |
+| Apple M5 Pro | 20 | never | N = 256; N = 64 in batches of 64+ | N = 2-64, shared with the CPU from batch 256 for N >= 48 | N <= 16 and batch * N >= 8192, or N <= 64 in batches of 256+ (eigvalsh: N <= 48 and batch * N >= 8192) | `band` from N = 512, batches up to 128; `tridiag_batch` for N = 96-1024 in batches of 128+ (eigvalsh: `tridiag` from 1024, batch <= 2, `band` from 1536; `tridiag_batch` for N = 96-256 in batches of 256+) | measured — run [`20261009-b60ec0`](results/apple-m5-pro-20gpu/20261009-b60ec0/eigh/report.md) |
 | anything else | — | estimated | estimated | estimated | estimated | estimated | **estimated** from the M5 Pro's timings ([how](tuning.md#macs-nobody-has-measured)) |
 
-The M5 Pro row of 2.17.0 (run `b60ec0`) scores 1.0291 geometric-mean regret
+The M5 Pro row of 2.17.0 (run `b60ec0`) scores 1.0031 geometric-mean regret
 against the best backend at each of the 132 points up to N = 256 where the
-one-stage backends are timed, worst 1.72x; the windows fitted on the larger
-points score 1.0116 for `band` with eigenvectors (1.147 without it), 1.0196
-for `tridiag_batch` (1.259 without) and 1.0054 for its eigenvalues alone
-(1.089 without). Since 2.17.0 eigh with eigenvectors goes to the two-stage
-`band` from N = 512, a batch of 2-127 handed to the batch backends' two
-stages, and larger batches of 96-1024 to `tridiag_batch`; a batch is no
-longer shared with the CPU (the `ql` kernel in registers alone is faster).
+one-stage backends are timed, worst 1.22x; the windows fitted on the larger
+points score 1.0116 for `band` with eigenvectors (1.147 without it), 1.0132
+for `tridiag_batch` (1.271 without) and 1.0003 for its eigenvalues alone
+(1.086 without), and sharing 1.0201 against `ql` alone's 1.0894. Since
+2.17.0 eigh with eigenvectors goes to the two-stage `band` from N = 512, a
+batch of 2-127 handed to the batch backends' two stages, and larger batches
+of 96-1024 to `tridiag_batch`; a `ql` batch is shared with the CPU from 256
+matrices of N = 48 and more (the `ql` kernel in registers alone is faster
+below).
 The M5 Pro row of 2.16.0 (run `9f2589`) scored 1.0231 at 207 points. The M5
 Pro row of 2.9.0 was the first measured against the CPU path that spreads a
 batch over every core. Against it the GPU keeps two regions: large

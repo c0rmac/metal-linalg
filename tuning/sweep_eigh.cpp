@@ -230,7 +230,7 @@ int main(int argc, char** argv) {
                     "\"values_band_width\": %u, \"band_min_n\": %u, \"tridiag_batch_min_n\": %u, "
                     "\"tridiag_batch_max_n\": %u, \"tridiag_batch_min_batch\": %u, "
                     "\"values_tridiag_batch_min_n\": %u, \"values_tridiag_batch_max_n\": %u, "
-                    "\"values_tridiag_batch_min_batch\": %u}\n",
+                    "\"values_tridiag_batch_min_batch\": %u, \"share_min_n\": %u}\n",
                     device_name(), p.gpu_cores, eigh_policy_source(),
                     p.simd_max_n, p.block_min_n, p.block_min_n_batched, p.block_min_batch,
                     p.gpu_max_n, p.gpu_min_batch_times_n, p.gpu_min_batch,
@@ -240,7 +240,8 @@ int main(int argc, char** argv) {
                     p.tridiag_max_batch, p.values_tridiag_max_batch, p.share_min_batch,
                     p.gpu_big_batch_max_n, p.gpu_big_batch_min, p.values_band_min_n, p.values_band_width,
                     p.band_min_n, p.tridiag_batch_min_n, p.tridiag_batch_max_n, p.tridiag_batch_min_batch,
-                    p.values_tridiag_batch_min_n, p.values_tridiag_batch_max_n, p.values_tridiag_batch_min_batch);
+                    p.values_tridiag_batch_min_n, p.values_tridiag_batch_max_n, p.values_tridiag_batch_min_batch,
+                    p.share_min_n);
         return 0;
     }
     if (argc != 4) {
