@@ -407,8 +407,6 @@ struct PanelParams {
     uint sa, sw, sb, sv;   // per-matrix strides, in floats: A, W, B and C, d e tau
 };
 
-constant constexpr uint PANEL_MAX_N = 1024;
-
 // The threadgroup's sum (or max) of x, in every thread; part holds a value a
 // simdgroup and is free again on return.
 static float tg_sum(float x, threadgroup float* part, uint sg, uint lane, uint nsg) {
@@ -686,18 +684,18 @@ kernel void td_make_v(device const float* A [[buffer(0)]], device float* V [[buf
 }
 
 // T (row-major, upper triangular) for blocks of at most 64 reflectors, a
-// threadgroup a matrix and a thread a row, T in threadgroup memory:
-// T(i, j) = -tau_j T(i, 0:j) G(0:j, j), T(i, i) = tau_i, a row a thread, as
-// compact_wy_t's recurrence. (With T in device memory, each column's barrier
-// had to make the last one's writes visible through memory: 6 ms of a
-// 1024 x 128^2 batch's back-transformation, for blocks of 128.)
+// threadgroup a matrix, T in threadgroup memory: T(i, j) = -tau_j T(i, 0:j)
+// G(0:j, j), T(i, i) = tau_i, compact_wy_t's recurrence, in blocks (below).
+// (With T in device memory, each column's barrier had to make the last one's
+// writes visible through memory: 6 ms of a 1024 x 128^2 batch's
+// back-transformation, for blocks of 128.)
 constant constexpr uint WY_MAX = 64;
 
 kernel void td_make_t(device const float* G [[buffer(0)]], device const float* tau [[buffer(1)]],
                       device float* T [[buffer(2)]], constant WyParams& p [[buffer(3)]],
                       uint mat [[threadgroup_position_in_grid]], uint i [[thread_index_in_threadgroup]],
                       uint nt [[threads_per_threadgroup]]) {
-    threadgroup float Ts[64][64], Gs[64][64];   // 32 KB: G staged, T built (bb <= 64)
+    threadgroup float Ts[WY_MAX][WY_MAX], Gs[WY_MAX][WY_MAX];   // 32 KB: G staged, T built (bb <= 64)
     const ulong mt = mat;
     G += mt * p.stb; T += mt * p.stb; tau += mt * p.sv + p.k0;
     const uint bb = p.bb, kb = p.kb;
