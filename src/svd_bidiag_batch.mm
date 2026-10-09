@@ -85,9 +85,10 @@ struct BlParams { uint32_t rows, cols, m, n, lda, sa, c0; };
 struct BsParams { uint32_t rows, cols, c0; };
 struct BcParams { uint32_t per, c0; };
 struct BwParams { uint32_t len, kb, bb, k0, lda, left, sa, sv, svb, stb; };
-struct BqParams { uint32_t p, nb, rs, cs, sa, sv, st, ldv, ldt; };
+struct BqParams { uint32_t p, nb, rs, cs, sa, sv, st, ldv, ldt, dup, s2, ld2; };
 struct MergeParams { uint32_t np, b, sg, stb, sta; };
 struct ChaseParams { uint32_t n, rs, cs, pmax, pass0, pass1; };
+struct SlParams { uint32_t n, lda, sa, lower, c0; };
 
 // Singular values alone from this k: every matrix to an upper band of width
 // kBand by blocks on the GPU (bb_panel and batched products), the bands to
@@ -114,7 +115,7 @@ struct Cache {
     // to 128, 256, 512 and 1024 rows
     id<MTLComputePipelineState> panels[4] = {nil, nil, nil, nil};
     id<MTLComputePipelineState> load = nil, store = nil, copy = nil, make_v = nil, make_t = nil, band_panel = nil;
-    id<MTLComputePipelineState> merge_t = nil, chase_wide = nil, chase_narrow = nil;
+    id<MTLComputePipelineState> merge_t = nil, chase_wide = nil, chase_narrow = nil, sym_load = nil;
 
     void ensure() {
         if (load) return;
@@ -132,6 +133,7 @@ struct Cache {
         merge_t = mk(@"bd_merge_t");
         chase_wide = mk(@"bd_chase_apply_4_4");
         chase_narrow = mk(@"bd_chase_apply_2_8");
+        sym_load = mk(@"sb_load");
     }
 };
 
@@ -377,11 +379,12 @@ uint32_t encode_band(Cache& c, id<MTLCommandBuffer> cb, Work& w, uint32_t cnt, i
     [enc dispatchThreadgroups:MTLSizeMake((m + 31) / 32, (n + 31) / 32, cnt) threadsPerThreadgroup:MTLSizeMake(32, 8, 1)];
     auto panel = [&](size_t off, uint32_t p, uint32_t rs, uint32_t cs, id<MTLBuffer> V, size_t voff, size_t sv,
                      uint32_t ldv, id<MTLBuffer> T, size_t toff, size_t st, uint32_t ldt) {
-        const BqParams q{p, b, rs, cs, w.sa, (uint32_t)sv, (uint32_t)st, ldv, ldt};
+        const BqParams q{p, b, rs, cs, w.sa, (uint32_t)sv, (uint32_t)st, ldv, ldt, 0, 0, 0};
         [enc setComputePipelineState:c.band_panel];
         [enc setBuffer:w.A offset:off * 4 atIndex:0];
         [enc setBuffer:V offset:voff * 4 atIndex:1];
         [enc setBuffer:T offset:toff * 4 atIndex:2];
+        [enc setBuffer:V offset:voff * 4 atIndex:4];   // unused (ld2 0)
         [enc setBytes:&q length:sizeof q atIndex:3];
         [enc dispatchThreadgroups:MTLSizeMake(cnt, 1, 1)
             threadsPerThreadgroup:MTLSizeMake(std::max<uint32_t>(32, (p + 31) / 32 * 32), 1, 1)];
@@ -972,7 +975,403 @@ void qr_first(const Matrices& a, float* u_out, float* s_out, float* vt_out, uint
     if (staged) metal_linalg::detail::copy_out(staged->data(), out, batch, pq);
 }
 
+// --- eigh with vectors for batches in two stages ----------------------------
+//
+// eigh_band_batch, the eigensolver's `tridiag_batch` from kEighBandMinN with
+// eigenvectors: every matrix (loaded from its triangle, mirrored, scaled:
+// sb_load) to a lower band of width kBand by blocks on the GPU, as
+// band_reduce_symmetric reduces one: per block the panel below the diagonal
+// block (bb_panel), then both sides of the trailing matrix as batched
+// products on the whole of it, X = A22 V T, Y = X - V (T^T V^T X) / 2,
+// A22 -= V Y^T + Y V^T, each block's reflectors kept as bidiag_batch's are;
+// on the CPU's cores, a matrix a core, the last columns by LAPACK's
+// ssytrd_sy2sb and Q = Q_tail, then (the GPU forming Q1 Q meanwhile) the band
+// chased to tridiagonal keeping the chase's reflectors and T = Z diag(w) Z^T
+// by the divide and conquer; on the GPU, Q <- Q Q2 (bd_chase_apply, a
+// dispatch a matrix) and V = Q Z. Chunks pipelined over two slots, as
+// direct()'s.
+
+struct EWork {
+    uint32_t n = 0, capacity = 0, lda = 0, ldq = 0, blocks = 0;
+    size_t sa = 0, sqy = 0, stq = 0, sq = 0, sz = 0, slv = 0, sb = 0, sza = 0;
+    id<MTLBuffer> A, QY, QT, VT, VYV, S, M, GA, TA, Q, Z, LV, OV, ZA, ZA2;
+    size_t svyv = 0;
+};
+
+size_t eband_floats(uint32_t n) {
+    const size_t pmax = n >= 2 ? (n - 2) / 16 : 0, nblocks = (pmax + 1) * (pmax + 2) / 2;
+    const size_t lda = (n + 7) / 8 * 8, ldq = (n + 31) / 32 * 32;
+    return lda * n + (size_t)n * n * 3 + ldq * n + (n / kBand + 1) * 1024 + nblocks * metal_linalg::detail::kChaseBlockFloats +
+           4 * (size_t)n * kBand + 2 * (size_t)n * kAgg * kBand + 2 * 128 * 128;
+}
+
+EWork& ework(Cache& c, uint32_t n, uint32_t capacity, int slot) {
+    static EWork ws[2];
+    EWork& w = ws[slot];
+    if (w.A && w.n == n && w.capacity >= capacity) return w;
+    id<MTLDevice> dev = c.rt.device;
+    auto make = [&](size_t floats, MTLResourceOptions opt) {
+        id<MTLBuffer> b = [dev newBufferWithLength:std::max<size_t>(floats, 4) * 4 options:opt];
+        if (!b) throw std::runtime_error("[eigh] tridiag_batch: could not allocate " + std::to_string(floats * 4) + " bytes");
+        return b;
+    };
+    const MTLResourceOptions shared = MTLResourceStorageModeShared, priv = MTLResourceStorageModePrivate;
+    w = EWork{};
+    w.n = n;
+    w.capacity = capacity;
+    w.lda = (n + 7) / 8 * 8;
+    w.ldq = (n + 31) / 32 * 32;
+    w.blocks = n / kBand + 1;
+    const size_t pmax = n >= 2 ? (n - 2) / 16 : 0;
+    w.sa = (size_t)w.lda * n;
+    w.sqy = (size_t)n * n;
+    w.stq = (size_t)w.blocks * 1024;
+    w.sq = (size_t)w.ldq * n;
+    w.sz = (size_t)n * n;
+    w.slv = (pmax + 1) * (pmax + 2) / 2 * metal_linalg::detail::kChaseBlockFloats;
+    w.sb = (size_t)n * kBand;
+    w.sza = (size_t)n * kAgg * kBand;
+    const size_t C = capacity + 1;
+    w.A = make(C * w.sa, shared);
+    w.QT = make(C * w.stq, priv);
+    w.VT = make(C * w.sb, priv);
+    w.svyv = (size_t)n * 3 * kBand;
+    w.VYV = make(C * w.svyv, priv);
+    w.S = make(C * kBand * kBand, priv);
+    w.M = make(C * kBand * kBand, priv);
+    w.QY = make(C * w.sqy, shared);
+    std::memset(w.QY.contents, 0, C * w.sqy * 4);   // the zeros above each panel, never written
+    w.GA = make(C * 128 * 128, priv);
+    w.TA = make(C * 128 * 128, priv);
+    w.Q = make(C * w.sq, shared);
+    w.Z = make(C * w.sz, shared);
+    w.LV = make(C * w.slv, shared);
+    w.OV = make(C * w.sz, priv);
+    w.ZA = make(C * w.sza, priv);
+    w.ZA2 = make(C * w.sza, priv);
+    return w;
+}
+
+// Step 1 for `cnt` matrices from index[c0]: loaded, then reduced by blocks
+// while three blocks' columns remain. Returns the first column left to the
+// CPU.
+uint32_t encode_sym_band(Cache& c, id<MTLCommandBuffer> cb, EWork& w, uint32_t cnt, id<MTLBuffer> src,
+                         id<MTLBuffer> index, id<MTLBuffer> scale, uint32_t c0, bool lower) {
+    id<MTLDevice> dev = c.rt.device;
+    const uint32_t n = w.n, lda = w.lda, b = kBand;
+    id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+    const SlParams lp{n, lda, (uint32_t)w.sa, lower ? 1u : 0u, c0};
+    [enc setComputePipelineState:c.sym_load];
+    [enc setBuffer:src offset:0 atIndex:0];
+    [enc setBuffer:w.A offset:0 atIndex:1];
+    [enc setBuffer:index offset:0 atIndex:2];
+    [enc setBuffer:scale offset:0 atIndex:3];
+    [enc setBytes:&lp length:sizeof lp atIndex:4];
+    [enc dispatchThreads:MTLSizeMake(n, n, cnt) threadsPerThreadgroup:MTLSizeMake(32, 8, 1)];
+    uint32_t k = 0;
+    for (; k + 3 * b <= n; k += b) {
+        const uint32_t n1 = n - k - b, j = k / b;
+        // The panel A(k+b:, k:k+b): R in place (the band), V into [V Y V]
+        // (ld 3b) twice and into QY, T into QT
+        const BqParams q{n1, b, 1, lda, (uint32_t)w.sa, (uint32_t)w.svyv, (uint32_t)w.stq, 3 * b, 32, 2 * b,
+                         (uint32_t)w.sqy, n};
+        [enc setComputePipelineState:c.band_panel];
+        [enc setBuffer:w.A offset:((size_t)k * lda + k + b) * 4 atIndex:0];
+        [enc setBuffer:w.VYV offset:0 atIndex:1];
+        [enc setBuffer:w.QT offset:(size_t)j * 1024 * 4 atIndex:2];
+        [enc setBytes:&q length:sizeof q atIndex:3];
+        [enc setBuffer:w.QY offset:((size_t)(k + b) * n + k) * 4 atIndex:4];
+        [enc dispatchThreadgroups:MTLSizeMake(cnt, 1, 1)
+            threadsPerThreadgroup:MTLSizeMake(std::max<uint32_t>(32, (n1 + 31) / 32 * 32), 1, 1)];
+        [enc endEncoding];
+        // A22 <- H^T A22 H on the whole symmetric A22 (its row-major view is
+        // itself): X = A22 (V T) into Y's place, Y = X - V (T^T (V^T X)) / 2,
+        // A22 -= [V Y] [Y V]^T, one product
+        MPSMatrix* V = mps(w.VYV, 0, n1, b, 3 * b, cnt, w.svyv);
+        MPSMatrix* T = mps(w.QT, (size_t)j * 1024, b, b, 32, cnt, w.stq);
+        MPSMatrix* VT = mps(w.VT, 0, n1, b, b, cnt, w.sb);
+        MPSMatrix* X = mps(w.VYV, b, n1, b, 3 * b, cnt, w.svyv);
+        MPSMatrix* S = mps(w.S, 0, b, b, b, cnt, b * b);
+        MPSMatrix* M = mps(w.M, 0, b, b, b, cnt, b * b);
+        MPSMatrix* A22 = mps(w.A, (size_t)(k + b) * lda + k + b, n1, n1, lda, cnt, w.sa);
+        gemm(dev, cb, V, false, T, false, VT, n1, b, b, 1, 0, cnt);
+        gemm(dev, cb, A22, false, VT, false, X, n1, b, n1, 1, 0, cnt);
+        gemm(dev, cb, V, true, X, false, S, b, b, n1, 1, 0, cnt);
+        gemm(dev, cb, T, true, S, false, M, b, b, b, 0.5, 0, cnt);
+        gemm(dev, cb, V, false, M, false, X, n1, b, b, -1, 1, cnt);
+        gemm(dev, cb, mps(w.VYV, 0, n1, 2 * b, 3 * b, cnt, w.svyv), false, mps(w.VYV, b, n1, 2 * b, 3 * b, cnt, w.svyv),
+             true, A22, n1, n1, 2 * b, -1, 1, cnt);
+        enc = [cb computeCommandEncoder];
+    }
+    [enc endEncoding];
+    return k;
+}
+
+// Step 2's first part for the slot's `cnt` matrices: the trailing block from
+// `tail` on by LAPACK's ssytrd_sy2sb (its band copied into A's lower band),
+// and Q = I with its reflectors applied, last panel first.
+void solve_sym_tail(EWork& w, uint32_t cnt, uint32_t tail, unsigned threads) {
+    const uint32_t n = w.n, b = kBand, nt = n - tail;
+    float* A = static_cast<float*>(w.A.contents);
+    float* Q = static_cast<float*>(w.Q.contents);
+    metal_linalg::detail::lapack_batches(cnt, (size_t)n * n, threads, [&](uint32_t b0, uint32_t b1) {
+        std::vector<float> tau(std::max(nt, 1u)), work((size_t)std::max(nt, 1u) * 64 + 64);
+        const L KD = nt > 1 ? std::min<L>(b, nt - 1) : 0, LDAB = KD + 1;
+        std::vector<float> abt((size_t)LDAB * std::max(nt, 1u));
+        for (uint32_t j = b0; j < b1; ++j) {
+            float* Aj = A + (size_t)j * w.sa;
+            float* Qj = Q + (size_t)j * w.sq;
+            for (uint32_t c = 0; c < n; ++c) {
+                std::fill(Qj + (size_t)c * w.ldq, Qj + (size_t)(c + 1) * w.ldq, 0.0f);
+                Qj[(size_t)c * w.ldq + c] = 1.0f;
+            }
+            if (nt < 2) continue;
+            L N = nt, LDA = w.lda, lw = -1, info = 0;
+            float q = 0.0f;
+            float* At = Aj + (size_t)tail * w.lda + tail;
+            ssytrd_sy2sb_("L", &N, &KD, At, &LDA, abt.data(), &LDAB, tau.data(), &q, &lw, &info);
+            if ((size_t)q > work.size()) work.resize((size_t)q);
+            lw = (L)work.size();
+            ssytrd_sy2sb_("L", &N, &KD, At, &LDA, abt.data(), &LDAB, tau.data(), work.data(), &lw, &info);
+            if (info != 0) throw std::runtime_error("[eigh] tridiag_batch: LAPACK ssytrd_sy2sb failed, info " +
+                                                    std::to_string((long long)info));
+            // Q(tail:, tail:) <- H_tail, ssytrd_sy2sb's panels, last first
+            // (LAPACK's I = 1, 1 + KD, ... while I <= N - KD, 1-based)
+            std::vector<uint32_t> panels;
+            for (uint32_t i = 0; i + (uint32_t)KD < nt; i += (uint32_t)KD) panels.push_back(i);
+            L LDQ = w.ldq;
+            for (auto it = panels.rbegin(); it != panels.rend(); ++it) {
+                const uint32_t i = *it;
+                L Mq = nt - i - KD, Nq = nt, Kq = std::min<L>(Mq, KD);
+                sormqr_("L", "N", &Mq, &Nq, &Kq, At + (size_t)i * w.lda + i + KD, &LDA, tau.data() + i,
+                        Qj + (size_t)tail * w.ldq + tail + i + KD, &LDQ, work.data(), &lw, &info);
+            }
+            // The tail's band into A's lower band
+            for (uint32_t c = 0; c < nt; ++c)
+                for (uint32_t r = c; r < nt && r <= c + (uint32_t)KD; ++r)
+                    At[(size_t)c * w.lda + r] = abt[(size_t)c * LDAB + r - c];
+        }
+    });
+}
+
+// Step 2's second part: the band chased to tridiagonal, keeping the chase's
+// reflectors (bd_chase_apply's blocks), then T = Z diag(w) Z^T into the
+// slot's Z. done(j, d) takes matrix j's eigenvalues; which(j) names it.
+template <class Done, class Which>
+void solve_sym_chase(EWork& w, uint32_t cnt, unsigned threads, const Done& done, const Which& which) {
+    const uint32_t n = w.n, b = kBand;
+    const size_t pmax = n >= 2 ? (n - 2) / 16 : 0, nblocks = (pmax + 1) * (pmax + 2) / 2;
+    const long groups = (long)pmax + 1;
+    const unsigned per = std::max(1u, threads / std::max(1u, std::min(cnt, threads)));
+    const float* A = static_cast<const float*>(w.A.contents);
+    float* Z = static_cast<float*>(w.Z.contents);
+    float* LV = static_cast<float*>(w.LV.contents);
+    metal_linalg::detail::lapack_batches(cnt, (size_t)n * n, threads, [&](uint32_t b0, uint32_t b1) {
+        std::vector<float> dj(n), ej(n), ltau(nblocks * 16);
+        const size_t ld = 2 * (size_t)b + 1;
+        std::vector<float> ab(ld * n);
+        for (uint32_t j = b0; j < b1; ++j) {
+            const float* Aj = A + (size_t)j * w.sa;
+            std::fill(ab.begin(), ab.end(), 0.0f);
+            for (uint32_t c = 0; c < n; ++c)
+                for (uint32_t r = c; r < n && r <= c + b; ++r) ab[(size_t)c * ld + r - c] = Aj[(size_t)c * w.lda + r];
+            metal_linalg::detail::ChaseReflectors rec;
+            rec.L = LV + (size_t)j * w.slv;
+            rec.Ltau = ltau.data();
+            rec.pmax = pmax;
+            metal_linalg::detail::band_to_tridiagonal(n, b, ab.data(), ld, dj.data(), ej.data(), per, &rec);
+            const long chunks = std::min<long>(groups, 4 * (long)per);
+            auto build = [&](size_t t) {
+                metal_linalg::detail::chase_build_blocks(rec.L, rec.Ltau, n, groups * (long)t / chunks,
+                                                         groups * ((long)t + 1) / chunks);
+            };
+            if (per > 1) metal_linalg::detail::parallel_for((size_t)chunks, build);
+            else for (long t = 0; t < chunks; ++t) build((size_t)t);
+            const long info = metal_linalg::detail::tridiagonal_eigensystem(n, dj.data(), ej.data(), Z + (size_t)j * w.sz,
+                                                                            n, per);
+            if (info != 0)
+                throw std::runtime_error("[eigh] tridiag_batch: the divide and conquer failed on matrix " +
+                                         std::to_string(which(j)) + ", info " + std::to_string(info) + ".");
+            done(j, dj.data());
+        }
+    });
+}
+
+// Step 3: Q <- Q1 Q (once solve_sym_tail is done), as encode_q1_p1's left
+// side with the reflectors a block lower; then (once solve_sym_chase is)
+// Q <- Q Q2 and V = Q Z, row-major, copied to matrix index[c0 + j].
+void encode_sym_q1(Cache& c, id<MTLCommandBuffer> cb, EWork& w, uint32_t cnt, uint32_t blocks) {
+    id<MTLDevice> dev = c.rt.device;
+    const uint32_t n = w.n, b = kBand, aggs = (blocks + kAgg - 1) / kAgg;
+    for (int a = (int)aggs - 1; a >= 0; --a) {
+        const uint32_t j0 = (uint32_t)a * kAgg, np = std::min(kAgg, blocks - j0), wa = np * b;
+        const uint32_t r0 = j0 * b + b, len = n - r0;
+        MPSMatrix* Y = mps(w.QY, (size_t)r0 * n + j0 * b, len, wa, n, cnt, w.sqy);
+        gemm(dev, cb, Y, true, Y, false, mps(w.GA, 0, wa, wa, 128, cnt, 128 * 128), wa, wa, len, 1, 0, cnt);
+        const MergeParams mp{np, b, 128 * 128, (uint32_t)w.stq, 128 * 128};
+        id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+        [enc setComputePipelineState:c.merge_t];
+        [enc setBuffer:w.GA offset:0 atIndex:0];
+        [enc setBuffer:w.QT offset:(size_t)j0 * 1024 * 4 atIndex:1];
+        [enc setBuffer:w.TA offset:0 atIndex:2];
+        [enc setBytes:&mp length:sizeof mp atIndex:3];
+        [enc dispatchThreadgroups:MTLSizeMake(1, 1, cnt) threadsPerThreadgroup:MTLSizeMake(1024, 1, 1)];
+        [enc endEncoding];
+        MPSMatrix* Zm = mps(w.Q, (size_t)r0 * w.ldq + r0, len, len, w.ldq, cnt, w.sq);
+        MPSMatrix* Ta = mps(w.TA, 0, wa, wa, 128, cnt, 128 * 128);
+        MPSMatrix* W = mps(w.ZA, 0, len, wa, kAgg * b, cnt, w.sza);
+        MPSMatrix* W2 = mps(w.ZA2, 0, len, wa, kAgg * b, cnt, w.sza);
+        gemm(dev, cb, Zm, false, Y, false, W, len, wa, len, 1, 0, cnt);
+        gemm(dev, cb, W, false, Ta, true, W2, len, wa, wa, 1, 0, cnt);
+        gemm(dev, cb, W2, false, Y, true, Zm, len, len, wa, -1, 1, cnt);
+    }
+}
+
+void encode_sym_back(Cache& c, id<MTLCommandBuffer> cb, EWork& w, uint32_t cnt, id<MTLBuffer> out,
+                     id<MTLBuffer> index, uint32_t c0) {
+    id<MTLDevice> dev = c.rt.device;
+    const uint32_t n = w.n;
+    if (n >= 3) {
+        const uint32_t pmax = (n - 2) / 16, groups = pmax + 1, ld = w.ldq;
+        const bool widek = ld / 32 >= 64;
+        const uint32_t C = widek ? 32 : 16, K = widek ? 4 : 8;
+        const ChaseParams q{n, ld, 1, pmax, 0, (groups + K - 1) / K};
+        id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoderWithDispatchType:MTLDispatchTypeConcurrent];
+        [enc setComputePipelineState:widek ? c.chase_wide : c.chase_narrow];
+        [enc setBytes:&q length:sizeof q atIndex:2];
+        for (uint32_t j = 0; j < cnt; ++j) {
+            [enc setBuffer:w.Q offset:(size_t)j * w.sq * 4 atIndex:0];
+            [enc setBuffer:w.LV offset:(size_t)j * w.slv * 4 atIndex:1];
+            [enc dispatchThreadgroups:MTLSizeMake(ld / C, 1, 1) threadsPerThreadgroup:MTLSizeMake(32 * K, 1, 1)];
+        }
+        [enc endEncoding];
+    }
+    // V = Q Z, row-major: on the row-major views Q^T and Z^T
+    gemm(dev, cb, mps(w.Q, 0, n, n, w.ldq, cnt, w.sq), true, mps(w.Z, 0, n, n, n, cnt, w.sz), true,
+         mps(w.OV, 0, n, n, n, cnt, w.sz), n, n, n, 1, 0, cnt);
+    id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+    const BcParams cp{n * n, c0};
+    [enc setComputePipelineState:c.copy];
+    [enc setBuffer:w.OV offset:0 atIndex:0];
+    [enc setBuffer:out offset:0 atIndex:1];
+    [enc setBuffer:index offset:0 atIndex:2];
+    [enc setBytes:&cp length:sizeof cp atIndex:3];
+    [enc dispatchThreads:MTLSizeMake(cp.per, cnt, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+    [enc endEncoding];
+}
+
 } // namespace
+
+namespace detail {
+
+void eigh_band_batch(const Matrices& a, bool lower, float* w_out, float* v_out, uint32_t* info_out) {
+    const uint32_t n = a.cols, batch = a.batch;
+    if (a.rows != n) throw std::invalid_argument("[eigh] Input matrices must be square.");
+    if (!v_out) throw std::invalid_argument("[eigh] tridiag_batch in two stages: eigenvectors only.");
+    if (n == 0 || batch == 0) {
+        if (info_out) std::fill(info_out, info_out + batch, 0u);
+        return;
+    }
+    if (n > kMaxDim) throw std::invalid_argument("[eigh] tridiag_batch: N above " + std::to_string(kMaxDim));
+    AutoreleasePool pool;
+    Cache& cache = shared_cache();
+    id<MTLDevice> dev = cache.rt.device;
+    const size_t per = (size_t)n * n;
+    std::vector<float> amax(batch);
+    std::vector<char>  finite(batch);
+    scan(a, lower ? Part::lower : Part::upper, amax.data(), finite.data());
+    std::vector<uint32_t> todo;
+    for (uint32_t b = 0; b < batch; ++b) {
+        if (finite[b]) { todo.push_back(b); continue; }
+        std::fill(w_out + (size_t)b * n, w_out + (size_t)(b + 1) * n, NAN);
+        std::fill(v_out + b * per, v_out + (b + 1) * per, NAN);
+        if (info_out) info_out[b] = 1u << 17;
+    }
+    if (todo.empty()) return;
+    const size_t total = todo.size();
+    // Chunks as direct()'s, at most 2^26 floats (256 MB) a slot
+    const size_t min_chunk = std::max<size_t>(16, ((size_t)1 << 21) / per);
+    const size_t chunks = std::clamp<size_t>(std::min<size_t>(4, total / std::max<size_t>(1, min_chunk)), 1, total);
+    size_t chunk = (total + chunks - 1) / chunks;
+    const size_t most = std::max<size_t>(1, ((size_t)1 << 26) / eband_floats(n));
+    if (chunk > most) chunk = (total + (total + most - 1) / most - 1) / ((total + most - 1) / most);   // balanced
+    const size_t count = (total + chunk - 1) / chunk;
+
+    id<MTLBuffer> src = metal_linalg::detail::input_buffer(dev, a);
+    id<MTLBuffer> index = [dev newBufferWithBytes:todo.data() length:total * sizeof(uint32_t)
+                                          options:MTLResourceStorageModeShared];
+    id<MTLBuffer> scale = [dev newBufferWithLength:total * sizeof(float) options:MTLResourceStorageModeShared];
+    float* sc = static_cast<float*>(scale.contents);
+    for (size_t j = 0; j < total; ++j) {
+        int ex = 0;
+        if (amax[todo[j]] > 0.0f) std::frexp(amax[todo[j]], &ex);
+        sc[j] = std::ldexp(1.0f, -ex);
+    }
+    id<MTLBuffer> out = nil;
+    if (reinterpret_cast<uintptr_t>(v_out) % (uintptr_t)getpagesize() == 0) {
+        try { out = metal_linalg::detail::wrap_host(dev, v_out, (size_t)batch * per); } catch (...) { out = nil; }
+    }
+    if (!out) out = [dev newBufferWithLength:(size_t)batch * per * sizeof(float) options:MTLResourceStorageModeShared];
+
+    EWork* ws[2] = {&ework(cache, n, (uint32_t)chunk, 0), count > 1 ? &ework(cache, n, (uint32_t)chunk, 1) : nullptr};
+    auto check = [](id<MTLCommandBuffer> cb) {
+        [cb waitUntilCompleted];
+        if (cb.error)
+            throw std::runtime_error(std::string("[eigh] tridiag_batch: GPU error: ") + cb.error.localizedDescription.UTF8String);
+    };
+    std::vector<id<MTLCommandBuffer>> committed;
+    auto commit = [&](id<MTLCommandBuffer> cb) {
+        [cb commit];
+        committed.push_back(cb);
+        return cb;
+    };
+    auto cnt_of = [&](size_t k) { return (uint32_t)std::min(chunk, total - k * chunk); };
+    uint32_t tail = 0;
+    auto reduce = [&](size_t k) {
+        id<MTLCommandBuffer> cb = [cache.rt.queue commandBufferWithUnretainedReferences];
+        tail = encode_sym_band(cache, cb, *ws[k % 2], cnt_of(k), src, index, scale, (uint32_t)(k * chunk), lower);
+        return commit(cb);
+    };
+    const unsigned solve_threads = metal_linalg::detail::cpu_threads_beside_gpu();
+    std::vector<id<MTLCommandBuffer>> reduced(count, nil), backed;
+    try {
+        reduced[0] = reduce(0);
+        if (count > 1) reduced[1] = reduce(1);
+        for (size_t k = 0; k < count; ++k) {
+            EWork& w = *ws[k % 2];
+            const uint32_t cnt = cnt_of(k), c0 = (uint32_t)(k * chunk);
+            check(reduced[k]);
+            if (k >= 2) check(backed[k - 2]);   // done reading the slot this chunk writes
+            solve_sym_tail(w, cnt, tail, solve_threads);
+            id<MTLCommandBuffer> cq = [cache.rt.queue commandBufferWithUnretainedReferences];
+            encode_sym_q1(cache, cq, w, cnt, tail / kBand);
+            commit(cq);
+            solve_sym_chase(w, cnt, solve_threads, [&](uint32_t j, const float* dj) {
+                const size_t at = k * chunk + j;
+                const float unscale = 1.0f / sc[at];
+                float* wb = w_out + (size_t)todo[at] * n;
+                for (uint32_t i = 0; i < n; ++i) wb[i] = dj[i] * unscale;   // ascending
+                if (info_out) info_out[todo[at]] = 1u | (1u << 16);
+            }, [&](uint32_t j) { return todo[k * chunk + j]; });
+            id<MTLCommandBuffer> cb = [cache.rt.queue commandBufferWithUnretainedReferences];
+            encode_sym_back(cache, cb, w, cnt, out, index, c0);
+            backed.push_back(commit(cb));
+            if (k + 2 < count) reduced[k + 2] = reduce(k + 2);
+        }
+        for (id<MTLCommandBuffer> cb : backed) check(cb);
+    } catch (...) {
+        for (id<MTLCommandBuffer> cb : committed) [cb waitUntilCompleted];
+        throw;
+    }
+    if (out.contents != (void*)v_out) {
+        const float* o = static_cast<const float*>(out.contents);
+        metal_linalg::detail::for_each_matrix((uint32_t)total, per, [&](uint32_t j) {
+            std::memcpy(v_out + (size_t)todo[j] * per, o + (size_t)todo[j] * per, per * sizeof(float));
+        });
+    }
+}
+
+} // namespace detail
 
 namespace core::detail {
 

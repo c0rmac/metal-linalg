@@ -98,6 +98,16 @@ struct WyParams { uint32_t m, kb, bb, k0, lda, sa, sv, svb, stb; };
 // Must match PanelParams in Eigh_Tridiag.metal.
 struct PanelParams { uint32_t nn, lda, ldw, ldb, k, nb, sa, sw, sb, sv; };
 constexpr uint32_t kPanelMaxN = 1024;   // must match PANEL_MAX_N
+// The batched form with eigenvectors from this N in two stages instead
+// (eigh_band_batch, svd_bidiag_batch.mm), for batches of up to half as many
+// matrices as the CPU's solve has threads (a quarter below kBandHalfMinN): its
+// band reduction is matrix products, but each matrix's band chase is the
+// CPU's, which bounds larger batches. On an M5 Pro (16 solve threads)
+// against the one-stage reduction: one 1024 x 1024 2.1x, 4 1.58x, 8 1.19x,
+// 12 0.98x; 8 of 768 1.14x, 12 0.91x; 8 of 640 1.09x; 4 of 512 1.11x, 8
+// 0.96x; 4 of 384 1.06x, 16 0.83x; at 256 0.92-0.99x.
+constexpr uint32_t kBandMinN = 384;
+constexpr uint32_t kBandHalfMinN = 640;
 
 // Buffers for one N, reused across the matrices of a batch and across calls.
 // A and Z come in two pipeline slots (the second allocated for a batch).
@@ -739,6 +749,17 @@ void eigh_tridiag_batch(const Matrices& a, bool lower, float* w_out, float* v_ou
         return;
     }
     if (n > kPanelMaxN) throw std::invalid_argument("[eigh] tridiag (batched): N above " + std::to_string(kPanelMaxN));
+    // With eigenvectors from kBandMinN, in two stages (eigh_band_batch);
+    // EIGH_TRIDIAG_BATCH_BAND=0 keeps the one-stage reduction
+    const unsigned band_max_batch =
+        std::max(1u, metal_linalg::detail::cpu_threads_beside_gpu() / (n >= kBandHalfMinN ? 2u : 4u));
+    if (v_out && n >= kBandMinN && batch <= band_max_batch) {
+        const char* e = std::getenv("EIGH_TRIDIAG_BATCH_BAND");
+        if (!(e && std::string(e) == "0")) {
+            metal_linalg::detail::eigh_band_batch(a, lower, w_out, v_out, info_out);
+            return;
+        }
+    }
     AutoreleasePool pool;
     static Cache cache;
     id<MTLDevice> dev = cache.rt.device;

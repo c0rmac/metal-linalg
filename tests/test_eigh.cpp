@@ -740,6 +740,81 @@ int main() {
             check("tridiag_batch " + std::to_string(b) + " x " + std::to_string(n) + "x" + std::to_string(n), A,
                   tb(A, true, true));
         }
+        // With eigenvectors in two stages from N = 384, for batches up to half
+        // the CPU's solve threads (a quarter below 640): sizes about the blocks
+        // (16) and the CPU's tail, one chunk and two (8 of 1024), against the
+        // one-stage reduction (EIGH_TRIDIAG_BATCH_BAND=0); each triangle;
+        // scaled, constant, a NaN, unaligned outputs
+        if (cpu_threads() >= 10) {   // batches of 8 in two stages: 16 solve threads or so
+            for (auto [b, n] : {std::pair{2, 384}, std::pair{3, 400}, std::pair{4, 433}, std::pair{4, 640},
+                                std::pair{3, 1000}, std::pair{8, 1024}}) {
+                array A = random_symmetric(b, n, 4500 + n);
+                EighResult r = tb(A, true, true);
+                const std::string label = "tridiag_batch two-stage " + std::to_string(b) + " x " + std::to_string(n) +
+                                          "x" + std::to_string(n);
+                check(label, A, r);
+                setenv("EIGH_TRIDIAG_BATCH_BAND", "0", 1);
+                EighResult o = tb(A, true, true);
+                unsetenv("EIGH_TRIDIAG_BATCH_BAND");
+                const float d = max_abs(subtract(r.eigenvalues, o.eigenvalues)) / std::max(frobenius(A), 1.0f);
+                ++g_checks;
+                if (d > 1e-6f) fail(label + " == one-stage", "differ by " + std::to_string(d));
+                else std::printf("  ok    %-44s |dw|=%.1e\n", (label + " == one-stage").c_str(), d);
+            }
+            {
+                const int n = 400;
+                array S = random_symmetric(2, n, 4600);
+                array junk = full({2, n, n}, 1e30f);
+                array lo = add(tril(S), triu(junk, 1)), up = add(triu(S), tril(junk, -1));
+                check("tridiag_batch two-stage lower, junk above 2 x 400", lo, tb(lo, true, true), true);
+                check("tridiag_batch two-stage upper, junk below 2 x 400", up, tb(up, true, false), false);
+            }
+            for (float sc : {1e-30f, 1e30f}) {
+                char label[64];
+                std::snprintf(label, sizeof label, "tridiag_batch two-stage scaled by %.0e 2 x 420", sc);
+                array A = multiply(random_symmetric(2, 420, 4700), array(sc / 5.0f));
+                check(label, A, tb(A, true, true));
+            }
+            {
+                const int n = 512;
+                std::vector<float> w(2 * n, 0.0f);
+                w[n - 1] = w[2 * n - 1] = (float)n;
+                const array we = from_values(w, {2, n});
+                check("tridiag_batch two-stage constant 2 x 512", full({2, n, n}, 1.0f),
+                      tb(full({2, n, n}, 1.0f), true, true), true, true, &we, 5.0f);
+                std::vector<float> spec(600);
+                for (int i = 0; i < 600; ++i) spec[i] = i < 200 ? 1.0f : i < 400 ? -2.0f : 1e-4f * (float)i;
+                std::sort(spec.begin(), spec.end());
+                array R = with_spectrum(spec);
+                check("tridiag_batch two-stage repeated eigenvalues 600", R, tb(R, true, true));
+            }
+            {   // a NaN in one matrix of three
+                const int n = 400, b = 3;
+                array S = random_symmetric(b, n, 4800);
+                eval({S});
+                std::vector<float> data(S.data<float>(), S.data<float>() + (size_t)b * n * n);
+                data[(size_t)n * n + 9 * n + 2] = NAN;   // matrix 1, lower triangle
+                EighResult r = tb(from_values(data, {b, n, n}), true, true);
+                eval({r.eigenvalues, r.info});
+                const float* wp = r.eigenvalues.data<float>();
+                bool ok = detail::eigh_nonfinite(r.info.data<uint32_t>()[1]) && !detail::eigh_nonfinite(r.info.data<uint32_t>()[0]);
+                for (int i = 0; i < b * n; ++i) ok = ok && (std::isnan(wp[i]) == (i >= n && i < 2 * n));
+                ++g_checks;
+                if (!ok) fail("tridiag_batch two-stage NaN in matrix 1 of 3", "not isolated");
+                else std::printf("  ok    %-44s\n", "tridiag_batch two-stage NaN in matrix 1 of 3");
+                // the float API, outputs not page-aligned
+                array B = random_symmetric(2, n, 4900);
+                eval({B});
+                std::vector<float> w(2 * n + 1), v((size_t)2 * n * n + 1);
+                std::vector<uint32_t> inf(2);
+                core::detail::eigh_tridiag_batch(core::Matrices{B.data<float>(), 2u, (uint32_t)n, (uint32_t)n}, true,
+                                                 w.data() + 1, v.data() + 1, inf.data());
+                EighResult ru{from_values(std::vector<float>(w.begin() + 1, w.end()), {2, n}),
+                              from_values(std::vector<float>(v.begin() + 1, v.end()), {2, n, n}),
+                              array(inf.data(), {2}, uint32)};
+                check("tridiag_batch two-stage, unaligned outputs 2 x 400", B, ru);
+            }
+        }
         // Several chunks: 2 of 550 (64^2), 3 of 1000 (48^2)
         for (auto [b, n] : {std::pair{1100, 64}, std::pair{3000, 48}}) {
             array A = random_symmetric(b, n, 4100 + n);

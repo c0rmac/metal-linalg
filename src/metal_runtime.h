@@ -372,6 +372,10 @@ void band_general_tail(float* A, uint32_t m, uint32_t n, uint32_t lda, uint32_t 
 // A, the LQ's are copied out); only those two fields are touched.
 void band_general_tail(float* A, uint32_t m, uint32_t n, uint32_t lda, uint32_t b, uint32_t k, BandKeep* keep);
 
+// eigh with eigenvectors for a batch in two stages (svd_bidiag_batch.mm), the
+// tridiag_batch backend's from kEighBandMinN (eigh_tridiag.mm): n up to 1024.
+void eigh_band_batch(const core::Matrices& a, bool lower, float* w, float* v, uint32_t* info);
+
 bool band_reduce_general(id<MTLBuffer> A, uint32_t m, uint32_t n, uint32_t lda, uint32_t b,
                          BandKeep* keep = nullptr, BandWatch* watch = nullptr);
 // A symmetric A (n x n, both triangles, in shared storage) to a band of width

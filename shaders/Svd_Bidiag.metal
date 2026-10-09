@@ -1820,12 +1820,14 @@ kernel void bd_make_t(device const float* G [[buffer(0)]], device const float* t
 // V (p x nb, row-major, its unit diagonal explicit) to V + j * sv; T (nb x
 // nb, row-major, H(0) ... H(nb-1) = I - V T V^T) to T + j * st; V's rows
 // ldv apart and T's ldt (nb, or wider to write them straight into the
-// layout their products read: bidiag_batch with vectors). A threadgroup
+// layout their products read: bidiag_batch with vectors). With dup, V again
+// at V + dup and, with V2 bound (ld2 nonzero), into V2 + j * s2, rows ld2
+// apart (the eigensolver's [V Y V] beside its kept V). A threadgroup
 // a matrix and a thread a row, its nb entries in registers; per column, the
 // reflector's norm (one sum of squares) and then 32 sums at once, the remaining columns' products with v and the products of
 // the earlier v's with it (for T), across the lanes by five shuffle stages.
 // The strides let a row panel be factored through its transpose.
-struct BqParams { uint p, nb, rs, cs, sa, sv, st, ldv, ldt; };
+struct BqParams { uint p, nb, rs, cs, sa, sv, st, ldv, ldt, dup, s2, ld2; };
 
 #define BQ_U16(...) { { constexpr uint c = 0; __VA_ARGS__ } { constexpr uint c = 1; __VA_ARGS__ } { constexpr uint c = 2; __VA_ARGS__ } { constexpr uint c = 3; __VA_ARGS__ } { constexpr uint c = 4; __VA_ARGS__ } { constexpr uint c = 5; __VA_ARGS__ } { constexpr uint c = 6; __VA_ARGS__ } { constexpr uint c = 7; __VA_ARGS__ } { constexpr uint c = 8; __VA_ARGS__ } { constexpr uint c = 9; __VA_ARGS__ } { constexpr uint c = 10; __VA_ARGS__ } { constexpr uint c = 11; __VA_ARGS__ } { constexpr uint c = 12; __VA_ARGS__ } { constexpr uint c = 13; __VA_ARGS__ } { constexpr uint c = 14; __VA_ARGS__ } { constexpr uint c = 15; __VA_ARGS__ } }
 #define BQ_U32(...) { { constexpr uint c = 0; __VA_ARGS__ } { constexpr uint c = 1; __VA_ARGS__ } { constexpr uint c = 2; __VA_ARGS__ } { constexpr uint c = 3; __VA_ARGS__ } { constexpr uint c = 4; __VA_ARGS__ } { constexpr uint c = 5; __VA_ARGS__ } { constexpr uint c = 6; __VA_ARGS__ } { constexpr uint c = 7; __VA_ARGS__ } { constexpr uint c = 8; __VA_ARGS__ } { constexpr uint c = 9; __VA_ARGS__ } { constexpr uint c = 10; __VA_ARGS__ } { constexpr uint c = 11; __VA_ARGS__ } { constexpr uint c = 12; __VA_ARGS__ } { constexpr uint c = 13; __VA_ARGS__ } { constexpr uint c = 14; __VA_ARGS__ } { constexpr uint c = 15; __VA_ARGS__ } { constexpr uint c = 16; __VA_ARGS__ } { constexpr uint c = 17; __VA_ARGS__ } { constexpr uint c = 18; __VA_ARGS__ } { constexpr uint c = 19; __VA_ARGS__ } { constexpr uint c = 20; __VA_ARGS__ } { constexpr uint c = 21; __VA_ARGS__ } { constexpr uint c = 22; __VA_ARGS__ } { constexpr uint c = 23; __VA_ARGS__ } { constexpr uint c = 24; __VA_ARGS__ } { constexpr uint c = 25; __VA_ARGS__ } { constexpr uint c = 26; __VA_ARGS__ } { constexpr uint c = 27; __VA_ARGS__ } { constexpr uint c = 28; __VA_ARGS__ } { constexpr uint c = 29; __VA_ARGS__ } { constexpr uint c = 30; __VA_ARGS__ } { constexpr uint c = 31; __VA_ARGS__ } }
@@ -1847,7 +1849,8 @@ struct BqParams { uint p, nb, rs, cs, sa, sv, st, ldv, ldt; };
         w[0] = keep + simd_shuffle_xor(send, (ushort)1); }
 
 kernel void bb_panel(device float* A [[buffer(0)]], device float* V [[buffer(1)]], device float* T [[buffer(2)]],
-                     constant BqParams& q [[buffer(3)]], uint mat [[threadgroup_position_in_grid]],
+                     constant BqParams& q [[buffer(3)]], device float* V2 [[buffer(4)]],
+                     uint mat [[threadgroup_position_in_grid]],
                      uint t [[thread_index_in_threadgroup]], uint sg [[simdgroup_index_in_threadgroup]],
                      uint lane [[thread_index_in_simdgroup]], uint nsg [[simdgroups_per_threadgroup]]) {
     threadgroup float part[32 * 32];   // a simdgroup's sums
@@ -1910,9 +1913,30 @@ kernel void bb_panel(device float* A [[buffer(0)]], device float* V [[buffer(1)]
         BQ_U16({ if (c < nb) Am[(ulong)r * q.rs + (ulong)c * q.cs] = x[c]; })
         device float* vm = V + (ulong)mat * q.sv + (ulong)r * q.ldv;
         BQ_U16({ if (c < nb) vm[c] = v[c]; })
+        if (q.dup) BQ_U16({ if (c < nb) vm[q.dup + c] = v[c]; })
+        if (q.ld2) {
+            device float* v2 = V2 + (ulong)mat * q.s2 + (ulong)r * q.ld2;
+            BQ_U16({ if (c < nb) v2[c] = v[c]; })
+        }
     }
     if (t < nb) {
         device float* tm = T + (ulong)mat * q.st + (ulong)t * q.ldt;
         for (uint c = 0; c < nb; ++c) tm[c] = c >= t ? Ts[t][c] : 0.0f;
     }
+}
+
+// The eigensolver's batches in two stages (eigh_band_batch, in
+// svd_bidiag_batch.mm): matrix index[c0 + j] of src (n x n, row-major), its
+// lower or upper triangle mirrored, times scale[c0 + j], into A (column-major,
+// ld lda, matrices sa apart).
+struct SlParams { uint n, lda, sa, lower, c0; };
+kernel void sb_load(device const float* src [[buffer(0)]], device float* A [[buffer(1)]],
+                    device const uint* index [[buffer(2)]], device const float* scale [[buffer(3)]],
+                    constant SlParams& p [[buffer(4)]], uint3 id [[thread_position_in_grid]]) {
+    const uint r = id.x, c = id.y, j = id.z, n = p.n;
+    if (r >= n || c >= n) return;
+    device const float* m = src + (ulong)index[p.c0 + j] * n * n;
+    const bool given = p.lower ? r >= c : r <= c;
+    const float v = given ? m[(ulong)r * n + c] : m[(ulong)c * n + r];
+    A[(ulong)j * p.sa + (ulong)c * p.lda + r] = v * scale[p.c0 + j];
 }
