@@ -11,8 +11,8 @@ shuffles. Doing that uncovered the larger cause: the file is built with
 panel kernels now divide and take square roots with the fast approximations
 and a Newton step. A 4096 x 16 panel: top 91.6 to 42.9 us, leaf 32.6 to 20.8,
 rebuild 15.6 to 12.0. svdvals on `band` 1.30x at 1024, 1.24x at 2048, 1.13x
-at 4096; eigvalsh 1.18x, 1.15x, 1.08x. The dispatch merge (step 3) was not
-tried. See [the study](../studies/proposals-2-15-apple-m5-pro.md), section 2;
+at 4096; eigvalsh 1.18x, 1.15x, 1.08x. The dispatch merge (step 3) was
+measured and not built (2.17.0; [below](#step-3-measured-2026-10-09)). See [the study](../studies/proposals-2-15-apple-m5-pro.md), section 2;
 the same IEEE finding is followed up in [ieee-mode-audit.md](ieee-mode-audit.md).
 
 What follows is the proposal as written on 2026-10-04.
@@ -131,3 +131,22 @@ kernels.
   (`leaves * cols` threads, rounded to 32).
 - [The two-stage study](../studies/two-stage-apple-m5-pro.md), section 4, for
   how the panel kernels got to where they are and what did not work.
+
+## Step 3, measured (2026-10-09)
+
+What the leaf-to-top boundary costs, measured by adding empty dispatches
+after each panel's leaves (min of four interleaved rounds, M5 Pro):
+
+| | as now | an extra boundary a panel |
+|---|---|---|
+| QR 1024^2 | 5.05 ms | +0.08 ms (1.6%) |
+| QR 4 x 2048^2 | 31.2 | +0.36 (1.1%) |
+| QR 4096^2 | 59.7 | +0.15 (0.25%) |
+| svdvals `band` 2048 | 51.7 | +0.19 (0.4%) |
+| svdvals `band` 4096 | 199.8 | +0.48 (0.24%) |
+| eigvalsh `band` 4096 | 130.5 | +0.57 (0.44%) |
+
+Merging the dispatches could save at most that, and less: the last leaf's
+threadgroup (32 threads) would run the top, which takes up to 1024, and the
+"last block" pattern needs a device-scope fence (`atomic_thread_fence`,
+Metal 3.2, macOS 15), where the shaders build for macOS 14. Not built.

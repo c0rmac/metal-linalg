@@ -1620,26 +1620,41 @@ kernel void bd_panel(device float* A [[buffer(0)]], device float* X [[buffer(1)]
     float tp_prev = 0.0f;   // taup of column i - 1
 
     for (uint i = 0; i <= p.nb; ++i) {
-        // X(r, i-1) = taup_{i-1} (qv[r] - Ak(r, 0:i) t3 - X(r, 0:i-1) t4), r >= i
-        if (i > 0 && tp_prev != 0.0f) {
+        // X(r, i-1) = taup_{i-1} (qv[r] - Ak(r, 0:i) t3 - X(r, 0:i-1) t4), r >= i;
+        // then Ak(r, i) -= Ak(r, 0:i) Y(i, 0:i)^T + X(r, 0:i) Ak(0:i, i) into vv
+        // (Ak(j, i), j < i, are the earlier rows' u, their unit 1). Both in one
+        // pass over a row of the panel, its own thread's (two passes, and a
+        // barrier between them, were a fifth of the reduction at 128)
+        if (i == p.nb) {   // the panel's last X column, for the trailing update
             const uint c = i - 1;
             for (uint r = i + t; r < mm; r += nt) {
                 float acc = qv[r];
-                for (uint j = 0; j <= c; ++j) acc = fma(-A[r + j * lda], t3[j], acc);
-                for (uint j = 0; j < c; ++j) acc = fma(-X[r + j * ldx], t4[j], acc);
-                X[r + c * ldx] = tp_prev * acc;
+                if (tp_prev != 0.0f) {
+                    for (uint j = 0; j < c; ++j) acc = fma(-X[r + j * ldx], t4[j], fma(-A[r + j * lda], t3[j], acc));
+                    acc = fma(-A[r + c * lda], t3[c], acc);
+                }
+                X[r + c * ldx] = tp_prev != 0.0f ? tp_prev * acc : 0.0f;
             }
-        } else if (i > 0) {
-            for (uint r = i + t; r < mm; r += nt) X[r + (i - 1) * ldx] = 0.0f;
+            break;
         }
-        if (i == p.nb) break;   // the panel's last X column, for the trailing update
-        threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
-
-        // Ak(r, i) -= Ak(r, 0:i) Y(i, 0:i)^T + X(r, 0:i) Ak(0:i, i), r >= i,
-        // into vv (Ak(j, i), j < i, are the earlier rows' u, their unit 1)
         for (uint r = i + t; r < mm; r += nt) {
             float x = A[r + i * lda];
-            for (uint j = 0; j < i; ++j) x -= A[r + j * lda] * Y[i + j * ldy] + X[r + j * ldx] * A[j + i * lda];
+            if (i > 0) {
+                const uint c = i - 1;
+                float acc = qv[r];
+                if (tp_prev != 0.0f)   // uniform
+                    for (uint j = 0; j < c; ++j) {
+                        const float a = A[r + j * lda], xr = X[r + j * ldx];
+                        acc = fma(-xr, t4[j], fma(-a, t3[j], acc));
+                        x -= a * Y[i + j * ldy] + xr * A[j + i * lda];
+                    }
+                else
+                    for (uint j = 0; j < c; ++j) x -= A[r + j * lda] * Y[i + j * ldy] + X[r + j * ldx] * A[j + i * lda];
+                const float a = A[r + c * lda];
+                const float xc = tp_prev != 0.0f ? tp_prev * fma(-a, t3[c], acc) : 0.0f;
+                X[r + c * ldx] = xc;
+                x -= a * Y[i + c * ldy] + xc * A[c + i * lda];
+            }
             vv[r] = x;
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -1662,15 +1677,29 @@ kernel void bd_panel(device float* A [[buffer(0)]], device float* X [[buffer(1)]
         // t1 = Ak(i:, 0:i)^T v, t2 = X(i:, 0:i)^T v, a simdgroup each (once v
         // is in vv); qv zeroed for the sums below
         threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
-        for (uint q = sg; q < 2 * i; q += nsg) {
-            device const float* col = q < i ? A + (ulong)q * lda : X + (ulong)(q - i) * ldx;
-            float s = 0.0f;
-            for (uint r = i + lane; r < mm; r += 32) s = fma(col[r], vv[r], s);
-            s = simd_sum(s);
-            if (lane == 0) {
-                if (q < i) t1[q] = s;
-                else       t2[q - i] = s;
+        // (up to 128 rows, at most four simdgroups, two columns a pass: their
+        // loads and sums overlap, 1.05x the reduction at 96-128; from 160 the
+        // pairs' uneven share lost 2-3%)
+        constexpr uint PC = Q <= 4 ? 2 : 1;
+        for (uint q0 = sg; q0 < 2 * i; q0 += PC * nsg) {
+            float s[PC];
+            device const float* col[PC];
+            for (uint h = 0; h < PC; ++h) {
+                const uint q = min(q0 + h * nsg, 2 * i - 1);   // (past the end: a repeat, unused)
+                col[h] = q < i ? A + (ulong)q * lda : X + (ulong)(q - i) * ldx;
+                s[h] = 0.0f;
             }
+            for (uint r = i + lane; r < mm; r += 32) {
+                const float v = vv[r];
+                for (uint h = 0; h < PC; ++h) s[h] = fma(col[h][r], v, s[h]);
+            }
+            for (uint h = 0; h < PC; ++h) s[h] = simd_sum(s[h]);
+            if (lane == 0)
+                for (uint h = 0; h < PC; ++h) {
+                    const uint q = q0 + h * nsg;
+                    if (q < i) t1[q] = s[h];
+                    else if (q < 2 * i) t2[q - i] = s[h];
+                }
         }
         for (uint r = i + 1 + t; r < mm; r += nt) qv[r] = 0.0f;
         threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -1745,20 +1774,27 @@ kernel void bd_panel(device float* A [[buffer(0)]], device float* X [[buffer(1)]
         // qv[r] = Ak(r, i+1:) u = Ak(r, i+1) + sc Ak(r, i+2:) uu, r > i;
         // t3 = Y(i+1:, 0:i+1)^T u, t4 = Ak(0:i, i+1:) u, a simdgroup each
         for (uint r = i + 1 + t; r < mm; r += nt) qv[r] = fma(sc2, qv[r], A[r + (ulong)(i + 1) * lda]);
-        for (uint q = sg; q < 2 * i + 1; q += nsg) {
-            float s = 0.0f;
-            if (q <= i) {
-                device const float* col = Y + (ulong)q * ldy;
-                for (uint c = i + 1 + lane; c < nn; c += 32) s = fma(col[c], uu[c], s);
-            } else {
-                device const float* row = A + (q - i - 1);
-                for (uint c = i + 1 + lane; c < nn; c += 32) s = fma(row[(ulong)c * lda], uu[c], s);
+        for (uint q0 = sg; q0 < 2 * i + 1; q0 += PC * nsg) {   // (PC a pass, as above)
+            float s[PC];
+            device const float* b[PC];
+            ulong st[PC];
+            for (uint h = 0; h < PC; ++h) {   // entry c of column q: Y's, then A's rows read as columns
+                const uint q = min(q0 + h * nsg, 2 * i);
+                b[h] = q <= i ? Y + (ulong)q * ldy : A + (q - i - 1);
+                st[h] = q <= i ? 1 : lda;
+                s[h] = 0.0f;
             }
-            s = simd_sum(s);
-            if (lane == 0) {
-                if (q <= i) t3[q] = s;
-                else        t4[q - i - 1] = s;
+            for (uint c = i + 1 + lane; c < nn; c += 32) {
+                const float u = uu[c];
+                for (uint h = 0; h < PC; ++h) s[h] = fma(b[h][c * st[h]], u, s[h]);
             }
+            for (uint h = 0; h < PC; ++h) s[h] = simd_sum(s[h]);
+            if (lane == 0)
+                for (uint h = 0; h < PC; ++h) {
+                    const uint q = q0 + h * nsg;
+                    if (q <= i) t3[q] = s[h];
+                    else if (q < 2 * i + 1) t4[q - i - 1] = s[h];
+                }
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }

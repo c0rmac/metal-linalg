@@ -470,31 +470,25 @@ kernel void td_panel(device float* A [[buffer(0)]], device float* W [[buffer(1)]
                      uint lane [[thread_index_in_simdgroup]], uint nsg [[simdgroups_per_threadgroup]]) {
     threadgroup float* col = shm;
     threadgroup float* wcol = shm + p.nn;
+    threadgroup float* ncol = shm + 2 * p.nn;   // the next column, updated (below)
     threadgroup float rowW[32], rowA[32], tmp[64], part[32];
     const ulong mt = mat;
     A += mt * p.sa; W += mt * p.sw; d += mt * p.sv; e += mt * p.sv; tau += mt * p.sv;
     Bm += mt * p.sb; Cm += mt * p.sb;
     const uint nn = p.nn, lda = p.lda, ldw = p.ldw;
     for (uint i = 0; i < p.nb; ++i) {
-        // Row i of the panel's V and W so far
-        if (t < i) {
-            rowW[t] = W[i + t * ldw];
-            rowA[t] = A[i + t * lda];
+        // Row i + 1 of the panel's V and W so far, for the next column's update
+        if (t < i && i + 1 < nn) {
+            rowW[t] = W[i + 1 + t * ldw];
+            rowA[t] = A[i + 1 + t * lda];
         }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
         // Ak(i:, i) -= Ak(i:, 0:i) W(i, 0:i)^T + W(i:, 0:i) Ak(i, 0:i)^T, into col
         // alone: v overwrites the column below the diagonal (by other threads:
         // two threads' writes to one address would race), and d takes the
-        // diagonal
-        for (uint r = i + t; r < nn; r += nt) {
-            float x = A[r + i * lda];
-            if (i > 0) {
-                float acc = 0.0f;
-                for (uint j = 0; j < i; ++j) acc = fma(A[r + j * lda], rowW[j], fma(W[r + j * ldw], rowA[j], acc));
-                x -= acc;
-            }
-            col[r] = x;
-        }
+        // diagonal. Formed by the previous column's last pass (ncol), whose
+        // rows the same threads own: one pass over the panel's rows a column
+        // where there were two
+        for (uint r = i + t; r < nn; r += nt) col[r] = i > 0 ? ncol[r] : A[r + i * lda];
         threadgroup_barrier(mem_flags::mem_threadgroup);
         // The reflector annihilating Ak(i+2:, i), as slarfg, its norm scaled
         // by the largest magnitude; every thread computes the same. Alpha and
@@ -533,12 +527,32 @@ kernel void td_panel(device float* A [[buffer(0)]], device float* W [[buffer(1)]
         threadgroup_barrier(mem_flags::mem_threadgroup);
         // The corrections' dot products: tmp[j] = W(i+1:, j)^T v and
         // tmp[i + j] = Ak(i+1:, j)^T v, j < i, a simdgroup each
-        for (uint q = sg; q < 2 * i; q += nsg) {
-            device const float* c = q < i ? W + q * ldw : A + (q - i) * lda;
-            float s = 0.0f;
-            for (uint r = i + 1 + lane; r < nn; r += 32) s = fma(c[r], col[r], s);
-            s = simd_sum(s);
-            if (lane == 0) tmp[q] = s;
+        if (nsg <= 4) {   // uniform: up to 128 rows, two columns a pass (their loads and sums overlap)
+            for (uint q = sg; q < 2 * i; q += 2 * nsg) {
+                const uint q2 = min(q + nsg, 2 * i - 1);   // (past the end: a repeat, unused)
+                device const float* c = q < i ? W + q * ldw : A + (q - i) * lda;
+                device const float* c2 = q2 < i ? W + q2 * ldw : A + (q2 - i) * lda;
+                float s = 0.0f, s2 = 0.0f;
+                for (uint r = i + 1 + lane; r < nn; r += 32) {
+                    const float v = col[r];
+                    s = fma(c[r], v, s);
+                    s2 = fma(c2[r], v, s2);
+                }
+                s = simd_sum(s);
+                s2 = simd_sum(s2);
+                if (lane == 0) {
+                    tmp[q] = s;
+                    if (q + nsg < 2 * i) tmp[q + nsg] = s2;
+                }
+            }
+        } else {
+            for (uint q = sg; q < 2 * i; q += nsg) {
+                device const float* c = q < i ? W + q * ldw : A + (q - i) * lda;
+                float s = 0.0f;
+                for (uint r = i + 1 + lane; r < nn; r += 32) s = fma(c[r], col[r], s);
+                s = simd_sum(s);
+                if (lane == 0) tmp[q] = s;
+            }
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
         // Ak(i+1:, i+1:) v from its lower triangle alone, half the reads of the
@@ -578,16 +592,35 @@ kernel void td_panel(device float* A [[buffer(0)]], device float* W [[buffer(1)]
         threadgroup_barrier(mem_flags::mem_threadgroup);
         // W(i+1:, i) = tau (Ak(i+1:, i+1:) v - Ak(i+1:, 0:i) tmp - W(i+1:, 0:i) tmp'),
         // then W += -tau/2 (W . v) v
+        // and with the same reads of the panel's rows, the next column's update
+        // but for its term in W(:, i): ncol = Ak(r, i+1) - Ak(r, 0:i) W(i+1, 0:i)^T
+        // - W(r, 0:i) Ak(i+1, 0:i)^T
+        const bool next = i + 1 < p.nb;   // uniform
         float dot = 0.0f;
         for (uint r = i + 1 + t; r < nn; r += nt) {
-            float acc = wcol[r];
-            for (uint j = 0; j < i; ++j) acc -= A[r + j * lda] * tmp[j] + W[r + j * ldw] * tmp[i + j];
+            float acc = wcol[r], an = 0.0f;
+            if (next)
+                for (uint j = 0; j < i; ++j) {
+                    const float a = A[r + j * lda], w = W[r + j * ldw];
+                    acc -= a * tmp[j] + w * tmp[i + j];
+                    an = fma(a, rowW[j], fma(w, rowA[j], an));
+                }
+            else
+                for (uint j = 0; j < i; ++j) acc -= A[r + j * lda] * tmp[j] + W[r + j * ldw] * tmp[i + j];
             const float w = ta * acc;
             wcol[r] = w;
             dot = fma(w, col[r], dot);
+            if (next) ncol[r] = A[r + (i + 1) * lda] - an;
         }
         const float al = -0.5f * ta * tg_sum(dot, part, sg, lane, nsg);
-        for (uint r = i + 1 + t; r < nn; r += nt) W[r + i * ldw] = fma(al, col[r], wcol[r]);
+        // W(i+1, i), every thread's (wcol's entries written before tg_sum's barriers);
+        // the next column's last term, Ak(r, i) W(i+1, i) + W(r, i) Ak(i+1, i), Ak(i+1, i) = 1
+        const float wn = fma(al, col[i + 1], wcol[i + 1]);
+        for (uint r = i + 1 + t; r < nn; r += nt) {
+            const float wr = fma(al, col[r], wcol[r]);
+            W[r + i * ldw] = wr;
+            if (next) ncol[r] -= fma(col[r], wn, wr);
+        }
         threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
     }
     // B = [V W], C = [W V] below the panel (column-major, ldb), then e back

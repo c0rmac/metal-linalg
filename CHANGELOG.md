@@ -33,7 +33,10 @@
   under the CPU's. The panel kernel is bound by memory and reads only the
   lower triangle for its symmetric products (32 x 32 tiles, a tile's column
   terms summed across a simdgroup by shuffles): 1.5x the whole-matrix read at
-  16 x 1024^2. On an M5 Pro 1.46x the CPU at 1024 x 128^2, 1.36x at
+  16 x 1024^2. Its passes over the panel's own rows are one a column (the
+  next column's update formed with this one's W, by the threads that own
+  the rows) and, up to 128 rows, the dot products two columns a pass:
+  eigenvalues alone 1.07-1.1x at 64-128. On an M5 Pro 1.46x the CPU at 1024 x 128^2, 1.36x at
   1024 x 96^2, 1.28x at 256 x 256^2, 1.55x at 16 x 1024^2 with eigenvectors;
   eigenvalues alone 1.2-1.35x at 1024 x 96-128^2. Routed by a window of N and
   batch per device (`tridiag_batch_min_n`, `_max_n`, `_min_batch`, and
@@ -65,7 +68,10 @@
   problems on the CPU's cores, both back-transformations as batched products,
   pipelined over chunks. Each panel step reads the trailing block once, where
   `slabrd` reads it twice (a column in registers gives both its product with
-  v and its share of A u): 1.3-1.9x from 256 x 256. A matrix at least twice
+  v and its share of A u): 1.3-1.9x from 256 x 256. A step's two passes over
+  the panel's own rows (X's column, then the next column's update) are one,
+  and up to 128 rows its dot products go two columns a pass: singular values
+  alone 1.12-1.15x at 64-128, 1.02-1.04x with vectors to 256. A matrix at least twice
   as tall or as wide as k goes through this library's QR first, as on the
   CPU, and only R is bidiagonalized (2.4-2.5x at 256 x 1024x128 and
   128x1024; `SVD_BIDIAG_BATCH_QR=0` turns it off). Singular values alone

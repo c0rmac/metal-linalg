@@ -584,7 +584,7 @@ void encode_reduce_batch(Cache& cache, id<MTLCommandBuffer> cb, const Reduce& r,
         [enc setBuffer:r.B offset:0 atIndex:5];
         [enc setBuffer:r.C offset:0 atIndex:6];
         [enc setBytes:&pp length:sizeof pp atIndex:7];
-        [enc setThreadgroupMemoryLength:((size_t)2 * nn * sizeof(float) + 15) / 16 * 16 atIndex:0];
+        [enc setThreadgroupMemoryLength:((size_t)3 * nn * sizeof(float) + 15) / 16 * 16 atIndex:0];
         [enc dispatchThreadgroups:MTLSizeMake(B, 1, 1)
             threadsPerThreadgroup:MTLSizeMake(group_size(p.panel, threads), 1, 1)];
         if (last) break;

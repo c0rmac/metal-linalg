@@ -38,7 +38,32 @@ thread holds cost occupancy, fewer simdgroups a core to hide memory latency
 in a kernel bound by memory, and the reads they saved were mostly cache hits
 (the panel's columns are 64 KB a matrix at 256, read again within a step).
 The SVD's panel, which already holds a column in registers for its fused
-pass, was not tried.
+pass, was not tried then.
+
+**Measured, then a cheaper form (2026-10-09).** The SVD's panel with its
+own columns' reads and their arithmetic left out (the wrong answer, the
+right timing), the reduction's GPU time at 1024 x 128^2: 175 to 122 ms;
+1024 x 96^2 94 to 63; 256 x 1024x128 41.5 to 29.1; 256^2 and 512^2 about
+unchanged. Each of its three passes was about a third of that: X's column,
+the next column's update, and the corrections' dot products. Registers were
+not the way (eigh's had lost to occupancy); instead, in both panels:
+
+- **One pass over the panel's rows a step.** The SVD's X column and the
+  next column's update both read row r of [A, X] and run in the thread that
+  owns row r, so they share one read and lose the device barrier between
+  them; eigh's W update and its next column's update likewise, the latter's
+  last term (in the new W column) added once the step's sum is known, the
+  column kept in threadgroup memory until the next step.
+- **Two columns a pass in the dot products up to 128 rows** (at most four
+  simdgroups, each with up to sixteen columns in turn): their loads and
+  sums overlap. From 160 rows the pairs' uneven share lost 2-3%, so only
+  there; four columns a pass gained nothing more.
+
+M5 Pro, min of 5-12 alternating runs: svdvals 1.13x at 1024 x 64^2, 1.15x
+at 96^2, 1.12x at 128^2, level at 160-224 and 512; the SVD with vectors
+1.02-1.04x at 128-256; eigvalsh 1.1x at 1024 x 64^2, 1.09x at 96^2, 1.07x
+at 128^2, 1.02-1.03x at 192-256; eigh with vectors level (its CPU solve the
+longer stage).
 
 ## What
 
