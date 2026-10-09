@@ -436,7 +436,7 @@ in the policy source.
 | `SVD_BIDIAG_BATCH_MIN_K`, `SVD_BIDIAG_BATCH_MAX_K`, `SVD_BIDIAG_BATCH_MIN_BATCH`, `SVD_BIDIAG_BATCH_MAX_L` | SVD: the `bidiag_batch` backend for k in this window, l up to the cap, from this batch (max k 0: never); `SVD_VALUES_BIDIAG_BATCH_*` for singular values alone |
 | `SVD_GK_SIMD=0` | SVD: the golub_kahan backend in threadgroup memory at every size (off: up to 32 x 32 in registers) |
 | `SVD_BIDIAG_BATCH_QR=0` | SVD: the bidiag_batch backend bidiagonalizes a tall or wide matrix as it is, not R of a QR first |
-| `SVD_BIDIAG_BATCH_BAND=0` | SVD: the bidiag_batch backend reduces directly, not to a band first (singular values alone from k = 160, with vectors from 384) |
+| `SVD_BIDIAG_BATCH_BAND=0` | SVD: the bidiag_batch backend reduces directly, not to a band first (singular values alone from k = 160, with vectors from 288, or 160 for small batches) |
 | `SVD_GK_RUN=0` | SVD: the register kernel's QR iterations a simdgroup each, no runner simdgroup |
 | `SVD_CPU_DC=0` | SVD: the CPU path with vectors calls `sgesdd` whole, not its steps with the divide and conquer on idle cores |
 | `SVD_BAND_BATCH=0` | SVD, with vectors: the band backend solves a batch a matrix at a time, not through bidiag_batch's two stages |

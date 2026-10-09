@@ -518,15 +518,26 @@ transpose) are factored by `bb_panel`, a threadgroup a matrix and a thread a
 row, its 16 entries in registers, building $T$ as it goes; the updates are
 batched products, so the reduction's work is matrix products whatever the
 batch, and the GPU's last few columns go to LAPACK with the chase
-(`SVD_BIDIAG_BATCH_BAND=0` reduces directly throughout). On an M5 Pro
-against the direct reduction: 1.05-1.1x at 160-256, 1.5x at 64 × 512² (38.8
-ms against 57.7), 2.0-2.3x at 1024² (16 × 1024² 68 ms against 137); at 128,
-0.88x, where the CPU's chase is the longer stage. Against the CPU path:
-1.22x at 256 × 256², 1.34x at 64 × 512², 3.3x at 16 × 1024².
+(`SVD_BIDIAG_BATCH_BAND=0` reduces directly throughout). A block's two
+updates are merged, as `slabrd` merges a column's: $Z = A^T V_1$ (one read
+of the trailing matrix); the row panel's kernel forms $W = Z T_1$, updates
+its 16 rows from $W$ alone before factoring them, and forms $V_2 T_2$,
+writing $W^T$ into 16 spare rows below the matrix; one product then gives
+both $A_{22} V_2 T_2$ and $W^T V_2 T_2$ (one read), and $A_{22}
+\mathrel{-}= [W\ V_2][V_{1b}\ Q]^T$, $Q = A_{22} V_2 T_2 - V_{1b} W^T V_2 T_2$,
+is one rank-32 product (one read and write): three passes and five
+dispatches a block where applying one panel and then the other took four and
+eight (1.04-1.16x; with the passes merged but the small products as products
+of their own, eight dispatches became ten and it lost, 0.91-0.96x). On an M5
+Pro against the direct reduction: 1.05-1.1x at 160-256, 1.6x at 64 × 512²,
+2.2-2.5x at 1024² (16 × 1024² 61 ms against 137); at 128, 0.88x, where the
+CPU's chase is the longer stage. Against the CPU path: 1.33x at 256 × 256²,
+1.46x at 64 × 512², 3.8x at 16 × 1024².
 
-**With vectors, from $k = 384$, in two stages too** (since 2.17.0), `band`'s
-method with vectors for the batch at once, both stages' reflectors kept and
-applied:
+**With vectors, from $k = 288$ (from 160 for batches of up to as many
+matrices as the CPU's solve has threads), in two stages too** (since
+2.17.0), `band`'s method with vectors for the batch at once, both stages'
+reflectors kept and applied:
 
 1. the band reduction as for the singular values alone, `bb_panel` writing
    each panel's $V$ straight into the layout the back-transformation's
@@ -545,10 +556,12 @@ applied:
    outputs' layout (for a wide matrix's transpose, $U = P V_B$ and
    $V^T = U_B^T Q^T$).
 
-On an M5 Pro against the CPU path: one 1024 × 1024 1.96x (29 ms against 57),
-4 2.1x, 8 1.84x, 16 2.7x; 8 of 768 1.43x, 16 1.23x; 32 of 512 1.15x; 2.7-3.4x
-the direct reduction at 1024, 1.6-2.1x at 768, 1.08-1.27x at 512, 1.07x at
-384 (0.88-0.9x at 256, hence the threshold). Singular values within
+On an M5 Pro against the CPU path: one 1024 × 1024 1.95x (29.6 ms against
+57.7), 4 2.2x, 8 1.86x, 16 2.7x; 8 of 768 1.38x; 32 of 512 1.24x; 2.7-3.4x the
+direct reduction at 1024, 1.6-2.1x at 768, 1.10-1.25x at 288-320. At 256 it
+leads the direct reduction by 1.29-1.46x for 2-16 matrices, but is level at
+32-64 and 0.91x at 256 matrices, where the CPU's chases bound it, hence the
+batch limit below 288. Singular values within
 $7 \times 10^{-8}$ of the direct reduction's relative to $\|A\|_F$,
 reconstruction and orthogonality about $2$-$3 \times 10^{-6}$. With more
 matrices than fit a slot's 256 MB (about 4 of 1024 × 1024) the chunks are
@@ -687,7 +700,8 @@ threadgroup memory at every size (off: up to 32 × 32 in registers),
 `SVD_BIDIAG_BATCH_QR=0` has `bidiag_batch` bidiagonalize a tall or wide
 matrix as it is rather than its R, `SVD_BIDIAG_BATCH_BAND=0` has it
 reduce directly rather than in two stages (singular values alone from
-k = 160, with vectors from 384), and `SVD_BAND_BATCH=0` keeps a batch in
+k = 160, with vectors from 288, or 160 for small batches), and
+`SVD_BAND_BATCH=0` keeps a batch in
 `band` rather than handing it to `bidiag_batch`'s two stages.
 `svd_backend(m, n, batch)` and `svdvals_backend(m, n, batch)` say which of the
 ten backends a problem gets, with vectors and for singular values alone.

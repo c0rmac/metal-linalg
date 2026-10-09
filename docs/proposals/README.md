@@ -7,9 +7,8 @@ Apple M5 Pro's (20 GPU cores, 18 CPU cores).
 
 ## Open
 
-| proposal | affects | time at stake | effort | expected gain |
-|---|---|---|---|---|
-| [The SVD's batched band blocks in three passes](svd-band-three-passes.md) | `bidiag_batch` in two stages (k >= 160 values, 384 vectors) | the reduction, 8 of one 1024^2's 29 ms with vectors | half a day | about 7% for one 1024^2, a few % for batches |
+None (2026-10-09): every proposal written so far is done, tried and
+rejected, or measured and judged not worth building; see Done below.
 
 **Not code, but open:**
 
@@ -34,6 +33,7 @@ In 2.17.0 (2026-10-09), eigh and the SVD:
 | one trailing product a SVD panel; the batch back-transformations | not built: removing a whole product saved 3-6%, the whole back-transformation 6-14% of the wall time (it overlaps the CPU's solve); what a rework would recover is a few % |
 | [the blocked QR's fixed costs](qr-fixed-costs.md#done-2026-10-09-what-was-left) (what was left) | the TSQR is half of one matrix's call (57 us a 16-column panel at 1024): panels of 8 columns for up to 4 matrices of 768-3072 rows, 1.05-1.1x; the three TSQR kernels as one threadgroup tried, 0.74x (its rebuild on one core); the in-aggregate updates and the scan not built (at best 4% and 2%) |
 | a constant matrix's Q (found on the way) | far from orthogonal on the blocked QR and both `band` backends (5e4 at 600 x 64, 3e7 for the SVD's at 1024²): sums of squares that underflowed in part; a rest below 2^-80 is now zero in every kernel |
+| [the SVD's batched band blocks in three passes](svd-band-three-passes.md) | three passes and five dispatches a block instead of four and eight (the row panel's kernel applies the left update): 1.04-1.16x; as planned, with the small products separate, it lost (0.91-0.96x). Two stages with vectors now from k = 288 (160 for small batches) |
 | [batches of a few large matrices with vectors in two stages](batched-two-stage-vectors.md) | `bidiag_batch` with vectors from k = 384 and `tridiag_batch` with eigenvectors (N from 384, small batches) in two stages, both stages' reflectors kept and applied on the GPU: the SVD 1.96x the CPU at 1 x 1024^2, 2.7x at 16 (2.7-3.4x the direct reduction); eigh 1.6x the CPU at 1 x 1024^2, 1.7x at 8. `band` with vectors hands them batches of two or more. Eigenvalues alone: not kept (LAPACK's two-stage driver faster) |
 | [the CPU path's divide and conquer](cpu-path-divide-and-conquer.md) | eigh and the SVD with vectors, a batch of at most a quarter as many matrices as cores, in the drivers' steps with the divide and conquer on the idle cores: eigh 1.17-1.26x `ssyevd` from 256 to 2048, the SVD 1.23-1.4x `sgesdd` (1.16-1.3x tall or wide); with fewer than 4 cores a matrix it lost (6 of 1024: 1.1x slower) |
 | the batch backends at 1024 | the SVD's panel with 1024 threads, 1.1x. With vectors, 8 matrices of 768-1024 still go to the CPU (1.3-1.5x ahead): a threadgroup a matrix leaves 12 of 20 cores idle. Singular values alone are solved by the two stages above (their products use every core); with vectors the same would need the band backend's transformations batched, a project of days |

@@ -1,6 +1,6 @@
 # The SVD's batched band blocks in three passes
 
-Status: proposal, not started (2026-10-09).
+Status: **done** in 2.17.0 (2026-10-09), in a different form from the plan's; see [Outcome](#outcome).
 
 ## What
 
@@ -34,3 +34,38 @@ makes one rank-32 product of its update (1.1x).
 
 Half a day with tests: the small products' order and the row panel's update
 are where it can go wrong.
+
+## Outcome
+
+Built as planned first: three passes, but the small products ($W = Z T_1$,
+the row panel's update, $W^T V_2$, the correction of $P$, $P T_2$) as MPS
+products of their own, ten dispatches a block against the old eight. It lost
+almost everywhere (0.91-0.96x; 1.12x only at 16 x 1024^2 for the singular
+values alone): a dispatch's fixed cost outweighed the pass it saved.
+
+Built again with the small work folded away: the row panel's kernel
+(`bb_panel`, flag `merge`) forms $W = Z T_1$ a row at a time, updates its
+rows before factoring them, and forms $V_2 T_2$ at the end (no reductions:
+$T_1$, $V_{1t}$ and $T_2$ in threadgroup memory); it writes $W^T$ into 16
+spare rows below the matrix, so that one product gives both $A_{22} V_2 T_2$
+and $W^T V_2 T_2$; one small product corrects $Q = A_{22} V_2 T_2 - V_{1b}
+W^T V_2 T_2$; and $A_{22} \mathrel{-}= [W\ V_2][V_{1b}\ Q]^T$. Three passes
+and five dispatches against four and eight. Against the old blocks,
+interleaved, the minimum of four rounds each, M5 Pro:
+
+| | old | merged |
+|---|---|---|
+| singular values alone, 1 x 1024^2 | 26.7 ms | 25.0 |
+| singular values alone, 16 x 1024^2 | 64.6 | 55.9 |
+| singular values alone, 64 x 512^2 | 38.0 | 33.5 |
+| singular values alone, 256 x 256^2 | 30.3 | 27.3 |
+| with vectors, 1 x 1024^2 | 30.7 | 28.5 |
+| with vectors, 32 x 512^2 | 45.1 | 42.0 |
+| with vectors, 16 x 384^2 | 15.4 | 14.2 |
+
+With the reduction faster, two stages with vectors now pay from k = 288 at
+any batch (1.10-1.25x the direct reduction at 288-320) and from 160 for
+batches of up to the CPU's solve threads (1.3-1.8x at 2-16 matrices of
+160-256; level or behind from 32, where the CPU's chases bound it), against
+384 before.
+

@@ -103,14 +103,19 @@
   simdgroup, up to 16 two (`QR_SIMD_PACK=0` turns it off): 2.5x at 4 x 4,
   1.7-2.5x at 8 x 8, 1.3-1.7x at 16 x 16 for large batches.
 - **The SVD with vectors for batches in two stages**: `bidiag_batch` from
-  k = 384 reduces every matrix to a band by blocks of batched products, as
+  k = 288 (from 160 for batches of up to the CPU's solve threads) reduces
+  every matrix to a band by blocks of batched products, as
   for the singular values alone, keeping both stages' reflectors: the CPU's
   cores chase each band to bidiagonal (keeping the chase's) and solve it
   while the GPU forms Q1 and P1; the GPU applies the chase's to them, a
-  dispatch a matrix, and forms U and V^T. On an M5 Pro 1.96x the CPU path for
-  one 1024 x 1024 (29 ms against 57), 2.1x for 4, 2.7x for 16, 1.43x for 8 of
-  768; 2.7-3.4x the direct reduction at 1024. `SVD_BIDIAG_BATCH_BAND=0` turns
-  it off with the values' two stages.
+  dispatch a matrix, and forms U and V^T. On an M5 Pro 1.95x the CPU path for
+  one 1024 x 1024 (29.6 ms against 57.7), 2.2x for 4, 2.7x for 16, 1.38x for
+  8 of 768; 2.7-3.4x the direct reduction at 1024. `SVD_BIDIAG_BATCH_BAND=0`
+  turns it off with the values' two stages. The band blocks' two updates are
+  merged into three passes over the trailing matrix and five dispatches
+  instead of four and eight (the row panel's kernel applies the left update
+  and forms V2 T2): 1.04-1.16x, the singular values alone 3.8x the CPU at
+  16 x 1024^2 (was 3.3x).
 - **eigh with eigenvectors for small batches in two stages**:
   `tridiag_batch` from N = 384, for batches of up to half as many matrices as
   the CPU's solve has threads (a quarter below 640), the same for the

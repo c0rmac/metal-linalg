@@ -99,12 +99,16 @@ struct SlParams { uint32_t n, lda, sa, lower, c0; };
 constexpr uint32_t kBand = 16;
 constexpr uint32_t kBandMinK = 160;
 
-// With vectors from this k: two stages too, both stages' reflectors kept and
-// applied (see direct()), the back-transformation's blocks aggregated kAgg
-// panels at a time. On an M5 Pro against the direct reduction: 1.07x at
-// 16 x 384^2, 1.08-1.27x at 512, 1.6-2.1x at 768, 2.7-3.4x at 1024; 0.88-0.9x
-// at 256.
-constexpr uint32_t kBandVectorsMinK = metal_linalg::detail::kBatchBandVectorsMinK;
+// With vectors from kBandVectorsMinK: two stages too, both stages'
+// reflectors kept and applied (see direct()), the back-transformation's
+// blocks aggregated kAgg panels at a time; from kBandVectorsSmallMinK for
+// batches of up to as many matrices as the CPU's solve has threads, beyond
+// which the CPU's chases bound it. On an M5 Pro against the direct reduction:
+// 1.10-1.25x at 288-320 (16 to 256 matrices), 1.18x at 256 x 384^2, 1.6-2.1x
+// at 768, 2.7-3.4x at 1024; at 256, 1.29-1.46x for 2-16 matrices, 1.03x for
+// 32, 0.91x for 256; at 160, 1.09-1.83x for 1-8, 0.88x for 32.
+constexpr uint32_t kBandVectorsMinK = 288;
+constexpr uint32_t kBandVectorsSmallMinK = 160;
 constexpr uint32_t kAgg = 8;
 
 using L = __LAPACK_int;
@@ -732,6 +736,15 @@ void direct(const Matrices& a, float* u_out, float* s_out, float* vt_out, uint32
     }
     if (todo.empty()) return;
     const size_t total = todo.size();
+    // Singular values alone from kBandMinK, and with vectors from
+    // kBandVectorsMinK (kBandVectorsSmallMinK for small batches): in two
+    // stages, a band first
+    const unsigned solve_threads = metal_linalg::detail::cpu_threads_beside_gpu();
+    const char* band_env = std::getenv("SVD_BIDIAG_BATCH_BAND");
+    const bool band_ok = !(band_env && std::string(band_env) == "0");
+    const bool band = !vectors && n >= kBandMinK && band_ok;
+    const bool bandv = vectors && band_ok &&
+                       (n >= kBandVectorsMinK || (n >= kBandVectorsSmallMinK && total <= solve_threads));
     // A thread a row, up to 1024 (on an M5 Pro 1.1x at 8 x 1024^2 against 512;
     // eigh's panel, with less work a column, gains nothing from it)
     const uint32_t threads = std::clamp((m + 31) / 32 * 32, 64u, 1024u);
@@ -746,7 +759,7 @@ void direct(const Matrices& a, float* u_out, float* s_out, float* vt_out, uint32
     chunk = std::min(chunk, std::max<size_t>(1, ((size_t)1 << 25) / per));
     // With vectors in two stages a matrix takes about 13 of its own in a slot
     // (52 MB at 1024 x 1024): at most 2^26 floats (256 MB) a slot
-    if (vectors && n >= kBandVectorsMinK) {
+    if (bandv) {
         const size_t most = std::max<size_t>(1, ((size_t)1 << 26) / bandv_floats(m, n));
         if (chunk > most) chunk = (total + (total + most - 1) / most - 1) / ((total + most - 1) / most);   // balanced
     }
@@ -772,12 +785,6 @@ void direct(const Matrices& a, float* u_out, float* s_out, float* vt_out, uint32
     id<MTLBuffer> uo = vectors ? output(u_out, (size_t)batch * M * K) : nil;
     id<MTLBuffer> vo = vectors ? output(vt_out, (size_t)batch * K * N) : nil;
 
-    // Singular values alone from kBandMinK, and with vectors from
-    // kBandVectorsMinK: in two stages, a band first
-    const char* band_env = std::getenv("SVD_BIDIAG_BATCH_BAND");
-    const bool band_ok = !(band_env && std::string(band_env) == "0");
-    const bool band = !vectors && n >= kBandMinK && band_ok;
-    const bool bandv = vectors && n >= kBandVectorsMinK && band_ok;
     uint32_t band_tail = 0;   // the first column the CPU reduces (the same for every chunk)
     Work* ws[2] = {&work(cache, m, n, (uint32_t)chunk, vectors && !bandv, 0, band || bandv, bandv),
                    count > 1 ? &work(cache, m, n, (uint32_t)chunk, vectors && !bandv, 1, band || bandv, bandv) : nullptr};
@@ -837,7 +844,6 @@ void direct(const Matrices& a, float* u_out, float* s_out, float* vt_out, uint32
     };
     // Step 2 for chunk k on the CPU's cores but two: the singular values into
     // s_out, the bidiagonal's vectors into U's first n rows and V^T
-    const unsigned solve_threads = metal_linalg::detail::cpu_threads_beside_gpu();
     auto solve = [&](size_t k) {
         Work& w = *ws[k % 2];
         const uint32_t cnt = cnt_of(k);
