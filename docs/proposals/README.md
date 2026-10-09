@@ -7,8 +7,9 @@ Apple M5 Pro's (20 GPU cores, 18 CPU cores).
 
 ## Open
 
-None (2026-10-09): every proposal written so far is done, tried and
-rejected, or measured and judged not worth building; see Done below.
+| proposal | affects | time at stake | effort | expected gain |
+|---|---|---|---|---|
+| [The SVD's batched band blocks in three passes](svd-band-three-passes.md) | `bidiag_batch` in two stages (k >= 160 values, 384 vectors) | the reduction, 8 of one 1024^2's 29 ms with vectors | half a day | about 7% for one 1024^2, a few % for batches |
 
 **Not code, but open:**
 
