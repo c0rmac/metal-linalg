@@ -1822,12 +1822,18 @@ kernel void bd_make_t(device const float* G [[buffer(0)]], device const float* t
 // ldv apart and T's ldt (nb, or wider to write them straight into the
 // layout their products read: bidiag_batch with vectors). With dup, V again
 // at V + dup and, with V2 bound (ld2 nonzero), into V2 + j * s2, rows ld2
-// apart (the eigensolver's [V Y V] beside its kept V). A threadgroup
+// apart (the eigensolver's [V Y V] beside its kept V). With merge (the SVD's
+// row panels, nb = 16), the block's left update first, from Z = A^T V1 (Zp,
+// ld 16, sz apart): row r's w = z T1 (T1p, ld ldt1, st1 apart), x -= w V1t^T
+// (V1t the first 16 rows of V1p, ld ldv, s1 apart), w written to Wp (ld ldv,
+// sw apart) and to the panel's row at column ms (A's spare rows: the block's
+// W^T); and at the end v T (T this panel's), to Yp (ld 16, sy apart).
+// A threadgroup
 // a matrix and a thread a row, its nb entries in registers; per column, the
 // reflector's norm (one sum of squares) and then 32 sums at once, the remaining columns' products with v and the products of
 // the earlier v's with it (for T), across the lanes by five shuffle stages.
 // The strides let a row panel be factored through its transpose.
-struct BqParams { uint p, nb, rs, cs, sa, sv, st, ldv, ldt, dup, s2, ld2; };
+struct BqParams { uint p, nb, rs, cs, sa, sv, st, ldv, ldt, dup, s2, ld2, merge, sz, ldt1, st1, s1, sw, ms, sy; };
 
 #define BQ_U16(...) { { constexpr uint c = 0; __VA_ARGS__ } { constexpr uint c = 1; __VA_ARGS__ } { constexpr uint c = 2; __VA_ARGS__ } { constexpr uint c = 3; __VA_ARGS__ } { constexpr uint c = 4; __VA_ARGS__ } { constexpr uint c = 5; __VA_ARGS__ } { constexpr uint c = 6; __VA_ARGS__ } { constexpr uint c = 7; __VA_ARGS__ } { constexpr uint c = 8; __VA_ARGS__ } { constexpr uint c = 9; __VA_ARGS__ } { constexpr uint c = 10; __VA_ARGS__ } { constexpr uint c = 11; __VA_ARGS__ } { constexpr uint c = 12; __VA_ARGS__ } { constexpr uint c = 13; __VA_ARGS__ } { constexpr uint c = 14; __VA_ARGS__ } { constexpr uint c = 15; __VA_ARGS__ } }
 #define BQ_U32(...) { { constexpr uint c = 0; __VA_ARGS__ } { constexpr uint c = 1; __VA_ARGS__ } { constexpr uint c = 2; __VA_ARGS__ } { constexpr uint c = 3; __VA_ARGS__ } { constexpr uint c = 4; __VA_ARGS__ } { constexpr uint c = 5; __VA_ARGS__ } { constexpr uint c = 6; __VA_ARGS__ } { constexpr uint c = 7; __VA_ARGS__ } { constexpr uint c = 8; __VA_ARGS__ } { constexpr uint c = 9; __VA_ARGS__ } { constexpr uint c = 10; __VA_ARGS__ } { constexpr uint c = 11; __VA_ARGS__ } { constexpr uint c = 12; __VA_ARGS__ } { constexpr uint c = 13; __VA_ARGS__ } { constexpr uint c = 14; __VA_ARGS__ } { constexpr uint c = 15; __VA_ARGS__ } { constexpr uint c = 16; __VA_ARGS__ } { constexpr uint c = 17; __VA_ARGS__ } { constexpr uint c = 18; __VA_ARGS__ } { constexpr uint c = 19; __VA_ARGS__ } { constexpr uint c = 20; __VA_ARGS__ } { constexpr uint c = 21; __VA_ARGS__ } { constexpr uint c = 22; __VA_ARGS__ } { constexpr uint c = 23; __VA_ARGS__ } { constexpr uint c = 24; __VA_ARGS__ } { constexpr uint c = 25; __VA_ARGS__ } { constexpr uint c = 26; __VA_ARGS__ } { constexpr uint c = 27; __VA_ARGS__ } { constexpr uint c = 28; __VA_ARGS__ } { constexpr uint c = 29; __VA_ARGS__ } { constexpr uint c = 30; __VA_ARGS__ } { constexpr uint c = 31; __VA_ARGS__ } }
@@ -1850,7 +1856,9 @@ struct BqParams { uint p, nb, rs, cs, sa, sv, st, ldv, ldt, dup, s2, ld2; };
 
 kernel void bb_panel(device float* A [[buffer(0)]], device float* V [[buffer(1)]], device float* T [[buffer(2)]],
                      constant BqParams& q [[buffer(3)]], device float* V2 [[buffer(4)]],
-                     uint mat [[threadgroup_position_in_grid]],
+                     device const float* Zp [[buffer(5)]], device const float* T1p [[buffer(6)]],
+                     device const float* V1p [[buffer(7)]], device float* Wp [[buffer(8)]],
+                     device float* Yp [[buffer(9)]], uint mat [[threadgroup_position_in_grid]],
                      uint t [[thread_index_in_threadgroup]], uint sg [[simdgroup_index_in_threadgroup]],
                      uint lane [[thread_index_in_simdgroup]], uint nsg [[simdgroups_per_threadgroup]]) {
     threadgroup float part[32 * 32];   // a simdgroup's sums
@@ -1864,6 +1872,32 @@ kernel void bb_panel(device float* A [[buffer(0)]], device float* V [[buffer(1)]
         x[c] = row && c < nb ? Am[(ulong)r * q.rs + (ulong)c * q.cs] : 0.0f;
         v[c] = 0.0f;
     })
+    if (q.merge) {   // the block's left update of this row panel (nb = 16)
+        threadgroup float (*T1)[17] = Ts;   // T1, then this panel's T
+        threadgroup float* V1t = part;      // V1's first 16 rows, ld 17
+        for (uint e = t; e < 256; e += nsg * 32) {
+            T1[e / 16][e % 16] = T1p[(ulong)mat * q.st1 + (e / 16) * q.ldt1 + e % 16];
+            V1t[(e / 16) * 17 + e % 16] = V1p[(ulong)mat * q.s1 + (e / 16) * q.ldv + e % 16];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if (row) {
+            float z[16], w[16];
+            BQ_J16({ z[j] = Zp[(ulong)mat * q.sz + (ulong)r * 16 + j]; })
+            BQ_U16({
+                float s = 0.0f;
+                BQ_J16({ s = fma(z[j], T1[j][c], s); })
+                w[c] = s;
+            })
+            BQ_U16({
+                float s = 0.0f;
+                BQ_J16({ s = fma(w[j], V1t[c * 17 + j], s); })
+                x[c] -= s;
+            })
+            device float* wm = Wp + (ulong)mat * q.sw + (ulong)r * q.ldv;
+            BQ_U16({ wm[c] = w[c]; Am[(ulong)r * q.rs + q.ms + c] = w[c]; })
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);   // T1 and V1t read: Ts and part free
+    }
     for (uint j = 0; j < nb; ++j) {
         float xj = 0.0f;
         BQ_U16({ if (c == j) xj = x[c]; })
@@ -1922,6 +1956,14 @@ kernel void bb_panel(device float* A [[buffer(0)]], device float* V [[buffer(1)]
     if (t < nb) {
         device float* tm = T + (ulong)mat * q.st + (ulong)t * q.ldt;
         for (uint c = 0; c < nb; ++c) tm[c] = c >= t ? Ts[t][c] : 0.0f;
+    }
+    if (q.merge && row) {   // v T, for the block's products
+        device float* ym = Yp + (ulong)mat * q.sy + (ulong)r * 16;
+        BQ_U16({
+            float s = 0.0f;
+            BQ_J16({ if (j <= c) s = fma(v[j], Ts[j][c], s); })
+            ym[c] = s;
+        })
     }
 }
 

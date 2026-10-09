@@ -85,7 +85,7 @@ struct BlParams { uint32_t rows, cols, m, n, lda, sa, c0; };
 struct BsParams { uint32_t rows, cols, c0; };
 struct BcParams { uint32_t per, c0; };
 struct BwParams { uint32_t len, kb, bb, k0, lda, left, sa, sv, svb, stb; };
-struct BqParams { uint32_t p, nb, rs, cs, sa, sv, st, ldv, ldt, dup, s2, ld2; };
+struct BqParams { uint32_t p, nb, rs, cs, sa, sv, st, ldv, ldt, dup, s2, ld2, merge, sz, ldt1, st1, s1, sw, ms, sy; };
 struct MergeParams { uint32_t np, b, sg, stb, sta; };
 struct ChaseParams { uint32_t n, rs, cs, pmax, pass0, pass1; };
 struct SlParams { uint32_t n, lda, sa, lower, c0; };
@@ -186,10 +186,11 @@ struct Work {
     id<MTLBuffer> A, X, Y, d, e, tq, tp;   // the reduction
     id<MTLBuffer> U, VT;                   // m x n and n x n, column-major
     id<MTLBuffer> V, G, T, Z, Z2;          // the back-transformations'
-    // the reduction to bands: the column and row panels' V (m x kBand, n x
-    // kBand) and T, and two m x kBand products
+    // the reduction to bands: [V1 Q] (m + kBand rows, 2 kBand wide) and [W V2]
+    // (n x 2 kBand), row-major, for the block's one rank-2 kBand update; the
+    // panels' T; Z = A^T V1 and V2 T2
     uint32_t sb1 = 0, sb2 = 0, sbz = 0;
-    id<MTLBuffer> BV1, BV2, BT1, BT2, BZ, BZ2;
+    id<MTLBuffer> BR, BL, BT1, BT2, BZ, BZ2;
     // with vectors in two stages: the blocks' reflectors, QY (m x n) and PY
     // (n x n) row-major, a panel's V at its row and column (PY's a block's
     // row panel at row k + kBand), zeros above, and their T's, 32 x 32 slots;
@@ -233,7 +234,9 @@ Work& work(Cache& c, uint32_t m, uint32_t n, uint32_t capacity, bool vectors, in
     w.vectors = vectors;
     w.band = band;
     w.bandv = bandv;
-    w.lda = (m + 7) / 8 * 8;
+    // The band reduction's blocks keep their W^T in 16 spare rows below each
+    // matrix (encode_band)
+    w.lda = (m + 7) / 8 * 8 + (band ? kBand : 0);
     w.sa = w.lda * n;
     w.sx = m * (kPanel + 1);
     w.sy = n * (kPanel + 1);
@@ -247,11 +250,11 @@ Work& work(Cache& c, uint32_t m, uint32_t n, uint32_t capacity, bool vectors, in
     w.tq = make(C * n, shared);
     w.tp = make(C * n, shared);
     if (band) {
-        w.sb1 = m * kBand;
-        w.sb2 = n * kBand;
+        w.sb1 = (m + kBand) * 2 * kBand;
+        w.sb2 = n * 2 * kBand;
         w.sbz = m * kBand;
-        w.BV1 = make(C * w.sb1, priv);
-        w.BV2 = make(C * w.sb2, priv);
+        w.BR = make(C * w.sb1, priv);
+        w.BL = make(C * w.sb2, priv);
         w.BT1 = make(C * kBand * kBand, priv);
         w.BT2 = make(C * kBand * kBand, priv);
         w.BZ = make(C * w.sbz, priv);
@@ -355,15 +358,23 @@ void encode_reduce(Cache& c, id<MTLCommandBuffer> cb, Work& w, uint32_t cnt, id<
     [enc endEncoding];
 }
 
-// Singular values alone, step 1 as two stages' first: `cnt` matrices loaded
-// (as encode_reduce's), then reduced to an upper band of width kBand by blocks
-// while three blocks' columns remain, as band_reduce.mm reduces one matrix:
-// per block the column panel's QR (bb_panel) and Q^T applied to the columns
-// right of it, then the row panel's LQ (bb_panel on its transpose) and its Q
-// applied to the rows below, the products batched (on the row-major views of
-// the column-major matrices). Returns the first column left to the CPU. With
-// `keep` (vectors), each block's reflectors into QY, PY and their T's into QT,
-// PT, where the back-transformation reads them, instead of scratch.
+// Step 1 in two stages' first: `cnt` matrices loaded (as encode_reduce's),
+// then reduced to an upper band of width b = kBand by blocks while three
+// blocks' columns remain, as band_reduce.mm reduces one matrix: per block the
+// column panel's QR (bb_panel), H1 = I - V1 T1 V1^T, applied to the columns
+// right of it, then the row panel's LQ (bb_panel on its transpose), G = I -
+// V2 T2 V2^T, applied to the rows below; the products batched, on the
+// row-major views of the column-major matrices. The two updates are merged,
+// as slabrd merges a column's: Z = A(k:, k+b:)^T V1 (one read); the row
+// panel's kernel forms W = Z T1, updates its b rows from W alone, factors
+// them and forms V2 T2, writing W^T into the 16 spare rows below the matrix;
+// then one product gives both A22 V2 T2 and W^T V2 T2 (one read), and with
+// Q = A22 V2 T2 - V1b (W^T V2 T2), A22 -= [W V2] [V1b Q]^T is one rank-2b
+// product (one read and write): three passes over the trailing matrix and
+// five dispatches a block where applying H1 then G took four and eight. Returns
+// the first column left to the CPU. With `keep` (vectors), each block's
+// reflectors into QY, PY and their T's into QT, PT too, where the
+// back-transformation reads them.
 uint32_t encode_band(Cache& c, id<MTLCommandBuffer> cb, Work& w, uint32_t cnt, id<MTLBuffer> src, id<MTLBuffer> index,
                      id<MTLBuffer> scale, uint32_t c0, uint32_t rows, uint32_t cols, bool keep = false) {
     id<MTLDevice> dev = c.rt.device;
@@ -377,56 +388,62 @@ uint32_t encode_band(Cache& c, id<MTLCommandBuffer> cb, Work& w, uint32_t cnt, i
     [enc setBuffer:scale offset:0 atIndex:3];
     [enc setBytes:&lp length:sizeof lp atIndex:4];
     [enc dispatchThreadgroups:MTLSizeMake((m + 31) / 32, (n + 31) / 32, cnt) threadsPerThreadgroup:MTLSizeMake(32, 8, 1)];
+    // A panel's V into V (ld 2b, sv apart) and, with keep, into V2 too (ld2,
+    // s2); with merge (a row panel), the block's left update first and V2 T2
+    // after (bb_panel)
     auto panel = [&](size_t off, uint32_t p, uint32_t rs, uint32_t cs, id<MTLBuffer> V, size_t voff, size_t sv,
-                     uint32_t ldv, id<MTLBuffer> T, size_t toff, size_t st, uint32_t ldt) {
-        const BqParams q{p, b, rs, cs, w.sa, (uint32_t)sv, (uint32_t)st, ldv, ldt, 0, 0, 0};
+                     id<MTLBuffer> T, size_t toff, size_t st, uint32_t ldt, id<MTLBuffer> V2, size_t v2off,
+                     size_t s2, bool merge, uint32_t ms, id<MTLBuffer> T1) {
+        const BqParams q{p, b, rs, cs, w.sa, (uint32_t)sv, (uint32_t)st, 2 * b, ldt, 0, (uint32_t)s2, V2 ? n : 0u,
+                         merge ? 1u : 0u, w.sbz, ldt, (uint32_t)st, w.sb1, w.sb2, ms, w.sbz};
         [enc setComputePipelineState:c.band_panel];
         [enc setBuffer:w.A offset:off * 4 atIndex:0];
         [enc setBuffer:V offset:voff * 4 atIndex:1];
         [enc setBuffer:T offset:toff * 4 atIndex:2];
-        [enc setBuffer:V offset:voff * 4 atIndex:4];   // unused (ld2 0)
         [enc setBytes:&q length:sizeof q atIndex:3];
+        [enc setBuffer:V2 ? V2 : V offset:(V2 ? v2off : voff) * 4 atIndex:4];   // (unused without keep)
+        [enc setBuffer:w.BZ offset:0 atIndex:5];                                // Z
+        [enc setBuffer:T1 ? T1 : T offset:toff * 4 atIndex:6];                  // T1: the column panel's
+        [enc setBuffer:w.BR offset:0 atIndex:7];                                // V1
+        [enc setBuffer:w.BL offset:0 atIndex:8];                                // [W .]
+        [enc setBuffer:w.BZ2 offset:0 atIndex:9];                               // V2 T2
         [enc dispatchThreadgroups:MTLSizeMake(cnt, 1, 1)
             threadsPerThreadgroup:MTLSizeMake(std::max<uint32_t>(32, (p + 31) / 32 * 32), 1, 1)];
     };
     uint32_t k = 0;
     for (; k + 3 * b <= n; k += b) {
         const uint32_t p = m - k, n2 = n - k - b, m2 = m - k - b, j = k / b;
-        // Where the panels' V and T go: scratch, or (keep) QY/PY and QT/PT
-        id<MTLBuffer> v1b = keep ? w.QY : w.BV1, t1b = keep ? w.QT : w.BT1;
-        id<MTLBuffer> v2b = keep ? w.PY : w.BV2, t2b = keep ? w.PT : w.BT2;
-        const size_t v1o = keep ? (size_t)k * n + k : 0, v2o = keep ? (size_t)(k + b) * n + k : 0;
-        const size_t t1o = keep ? (size_t)j * 1024 : 0, sv1 = keep ? w.sqy : w.sb1, sv2 = keep ? w.spy : w.sb2;
-        const size_t st = keep ? w.stq : (size_t)b * b;
-        const uint32_t ldv = keep ? n : b, ldt = keep ? 32 : b;
-        // The column panel A(k:, k:k+b): R in place, V1, T1
-        panel((size_t)k * lda + k, p, 1, lda, v1b, v1o, sv1, ldv, t1b, t1o, st, ldt);
-        [enc endEncoding];
-        // A(k:, k+b:) <- Q1^T A(k:, k+b:): on its transpose S (n2 x p),
-        // S -= ((S V1) T1) V1^T
-        MPSMatrix* S = mps(w.A, (size_t)(k + b) * lda + k, n2, p, lda, cnt, w.sa);
-        MPSMatrix* V1 = mps(v1b, v1o, p, b, ldv, cnt, sv1);
-        MPSMatrix* T1 = mps(t1b, t1o, b, b, ldt, cnt, st);
+        // T's: scratch, or (keep) QT/PT, 32 x 32 slots
+        id<MTLBuffer> t1b = keep ? w.QT : w.BT1, t2b = keep ? w.PT : w.BT2;
+        const size_t to = keep ? (size_t)j * 1024 : 0, st = keep ? w.stq : (size_t)b * b;
+        const uint32_t ldt = keep ? 32 : b;
+        MPSMatrix* S = mps(w.A, (size_t)(k + b) * lda + k, n2, p, lda, cnt, w.sa);   // A(k:, k+b:)^T
+        MPSMatrix* S2 = mps(w.A, (size_t)(k + b) * lda + k + b, n2, m2, lda, cnt, w.sa);   // A22^T
+        MPSMatrix* V1 = mps(w.BR, 0, p, b, 2 * b, cnt, w.sb1);
         MPSMatrix* Z = mps(w.BZ, 0, n2, b, b, cnt, w.sbz);
-        MPSMatrix* Z2 = mps(w.BZ2, 0, n2, b, b, cnt, w.sbz);
-        gemm(dev, cb, S, false, V1, false, Z, n2, b, p, 1, 0, cnt);
-        gemm(dev, cb, Z, false, T1, false, Z2, n2, b, b, 1, 0, cnt);
-        gemm(dev, cb, Z2, false, V1, true, S, n2, p, b, -1, 1, cnt);
-        // The row panel A(k:k+b, k+b:) through its transpose (n2 x b): L in
-        // place, V2, T2
-        enc = [cb computeCommandEncoder];
-        panel((size_t)(k + b) * lda + k, n2, lda, 1, v2b, v2o, sv2, ldv, t2b, t1o, st, ldt);
+        // The column panel A(k:, k:k+b): R in place, V1 into [V1 .] (rows 0..p)
+        panel((size_t)k * lda + k, p, 1, lda, w.BR, 0, w.sb1, t1b, to, st, ldt, keep ? w.QY : nil, (size_t)k * n + k,
+              w.sqy, false, 0, nil);
         [enc endEncoding];
-        // A(k+b:, k+b:) <- A Q2, Q2 = I - V2 T2 V2^T: on its transpose S2
-        // (n2 x m2), S2 -= V2 (T2^T (V2^T S2))
-        MPSMatrix* S2 = mps(w.A, (size_t)(k + b) * lda + k + b, n2, m2, lda, cnt, w.sa);
-        MPSMatrix* V2 = mps(v2b, v2o, n2, b, ldv, cnt, sv2);
-        MPSMatrix* T2 = mps(t2b, t1o, b, b, ldt, cnt, st);
-        MPSMatrix* Y = mps(w.BZ, 0, b, m2, m, cnt, w.sbz);
-        MPSMatrix* Y2 = mps(w.BZ2, 0, b, m2, m, cnt, w.sbz);
-        gemm(dev, cb, V2, true, S2, false, Y, b, m2, n2, 1, 0, cnt);
-        gemm(dev, cb, T2, true, Y, false, Y2, b, m2, b, 1, 0, cnt);
-        gemm(dev, cb, V2, false, Y2, false, S2, n2, m2, b, -1, 1, cnt);
+        // Z = S V1 (A not yet updated)
+        gemm(dev, cb, S, false, V1, false, Z, n2, b, p, 1, 0, cnt);
+        // The row panel A(k:k+b, k+b:) through its transpose (n2 x b): W = Z
+        // T1 into [W .] and A's spare rows, its rows updated, L in place, V2
+        // into [W V2], V2 T2
+        enc = [cb computeCommandEncoder];
+        panel((size_t)(k + b) * lda + k, n2, lda, 1, w.BL, b, w.sb2, t2b, to, st, ldt, keep ? w.PY : nil,
+              (size_t)(k + b) * n + k, w.spy, true, m - k, t1b);
+        [enc endEncoding];
+        // [A22; W^T] V2 T2 into [. Q] and the 16 rows after it; Q -= V1b (W^T
+        // V2 T2); A22^T -= [W V2] [V1b Q]^T
+        gemm(dev, cb, mps(w.A, (size_t)(k + b) * lda + k + b, n2, m2 + b, lda, cnt, w.sa), true,
+             mps(w.BZ2, 0, n2, b, b, cnt, w.sbz), false, mps(w.BR, (size_t)b * 2 * b + b, m2 + b, b, 2 * b, cnt, w.sb1),
+             m2 + b, b, n2, 1, 0, cnt);
+        gemm(dev, cb, mps(w.BR, (size_t)b * 2 * b, m2, b, 2 * b, cnt, w.sb1), false,
+             mps(w.BR, (size_t)(b + m2) * 2 * b + b, b, b, 2 * b, cnt, w.sb1), false,
+             mps(w.BR, (size_t)b * 2 * b + b, m2, b, 2 * b, cnt, w.sb1), m2, b, b, -1, 1, cnt);
+        gemm(dev, cb, mps(w.BL, 0, n2, 2 * b, 2 * b, cnt, w.sb2), false,
+             mps(w.BR, (size_t)b * 2 * b, m2, 2 * b, 2 * b, cnt, w.sb1), true, S2, n2, m2, 2 * b, -1, 1, cnt);
         enc = [cb computeCommandEncoder];
     }
     [enc endEncoding];
@@ -1081,6 +1098,7 @@ uint32_t encode_sym_band(Cache& c, id<MTLCommandBuffer> cb, EWork& w, uint32_t c
         [enc setBuffer:w.QT offset:(size_t)j * 1024 * 4 atIndex:2];
         [enc setBytes:&q length:sizeof q atIndex:3];
         [enc setBuffer:w.QY offset:((size_t)(k + b) * n + k) * 4 atIndex:4];
+        for (NSUInteger i = 5; i <= 9; ++i) [enc setBuffer:w.VYV offset:0 atIndex:i];   // (merge's, unused)
         [enc dispatchThreadgroups:MTLSizeMake(cnt, 1, 1)
             threadsPerThreadgroup:MTLSizeMake(std::max<uint32_t>(32, (n1 + 31) / 32 * 32), 1, 1)];
         [enc endEncoding];
