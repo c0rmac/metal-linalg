@@ -485,7 +485,7 @@ void encode_back(Cache& c, id<MTLCommandBuffer> cb, Work& w, uint32_t cnt) {
             [enc setBuffer:left ? w.tq : w.tp offset:0 atIndex:1];
             [enc setBuffer:w.T offset:0 atIndex:2];
             [enc setBytes:&bp length:sizeof bp atIndex:3];
-            [enc dispatchThreadgroups:MTLSizeMake(cnt, 1, 1) threadsPerThreadgroup:MTLSizeMake(bb, 1, 1)];
+            [enc dispatchThreadgroups:MTLSizeMake(cnt, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
             [enc endEncoding];
             MPSMatrix* Tm = mps(w.T, 0, bb, bb, bb, cnt, w.stb);   // T, row-major
             if (left) {

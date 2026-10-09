@@ -541,7 +541,7 @@ void encode_back_transform_batch(Cache& cache, id<MTLCommandBuffer> cb, BatchWor
         [enc setBuffer:r.tau offset:0 atIndex:1];
         [enc setBuffer:w.T offset:0 atIndex:2];
         [enc setBytes:&wp length:sizeof wp atIndex:3];
-        [enc dispatchThreadgroups:MTLSizeMake(batch, 1, 1) threadsPerThreadgroup:MTLSizeMake(bb, 1, 1)];
+        [enc dispatchThreadgroups:MTLSizeMake(batch, 1, 1) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
         [enc endEncoding];
         MPSMatrix* Zs = mps_matrix(w.Z, (size_t)k0 + 1, n, m, n, batch, sz);
         MPSMatrix* Tm = mps_matrix(w.T, 0, bb, bb, bb, batch, st);   // T, row-major

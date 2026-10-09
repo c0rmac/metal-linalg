@@ -509,9 +509,11 @@ most of their time (16 of 512×512: 89 ms against the CPU's 16). `tridiag_batch`
    (`sstedc`'s divide and conquer, or `ssterf` for eigenvalues alone).
 3. **The back-transformation as batched products**, blocks of 64 reflectors:
    $V$ copied out by a kernel, $V^T V$ by an MPS product, $T$ from it in
-   threadgroup memory (`td_make_t`, a thread a row; with $T$ in device memory
-   each column's barrier had to go through memory, 6 ms of a 1024 × 128^2
-   batch), then the three products; the eigenvectors transposed out by a
+   threadgroup memory (`td_make_t`: its four 16 × 16 diagonal blocks a thread
+   a row, then merged in pairs, $T_{ab} = -T_{aa} G_{ab} T_{bb}$, five
+   barriers where column by column took 128 and 2-4% of the call; with $T$ in
+   device memory each column's barrier had to go through memory, 6 ms of a
+   1024 × 128^2 batch), then the three products; the eigenvectors transposed out by a
    tiled kernel (`td_store`) straight into the output.
 
 The batch goes through in chunks (four, each at least 8 MB of matrices),

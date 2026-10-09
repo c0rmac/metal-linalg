@@ -149,7 +149,10 @@
   `EIGH_CPU_DC=0` and `SVD_CPU_DC=0` keep the drivers. The CPU path is every
   boundary's baseline, so both are re-measured.
 - **Batch backends' pipelines** in eight chunks for matrices of up to
-  128 x 128 (four above): 1.07-1.15x at 1024 x 96-128^2.
+  128 x 128 (four above): 1.07-1.15x at 1024 x 96-128^2. Their
+  back-transformations' T built in blocks (16 x 16 diagonal blocks a thread a
+  row, then merged in pairs: five barriers where column by column took 128):
+  1.04-1.05x for the SVD, 1.02-1.15x for eigh at 96-384 batches.
 - **The measurement takes half the time** (eigh and SVD about 40 minutes
   instead of 75 on an M5 Pro): the Jacobi kernels are timed only up to
   N = 96 and k = 128, where they can win, with a canary beyond that warns if

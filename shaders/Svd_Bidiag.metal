@@ -1873,30 +1873,58 @@ constant constexpr uint BW_MAX = 64;
 
 kernel void bd_make_t(device const float* G [[buffer(0)]], device const float* tau [[buffer(1)]],
                       device float* T [[buffer(2)]], constant BwParams& p [[buffer(3)]],
-                      uint mat [[threadgroup_position_in_grid]], uint i [[thread_index_in_threadgroup]]) {
-    threadgroup float Ts[BW_MAX][BW_MAX + 1], gj[BW_MAX], tj[1];
+                      uint mat [[threadgroup_position_in_grid]], uint i [[thread_index_in_threadgroup]],
+                      uint nt [[threads_per_threadgroup]]) {
+    threadgroup float Ts[64][64], Gs[64][64];   // 32 KB: G staged, T built (bb <= 64)
     const ulong mt = mat;
     G += mt * p.stb; T += mt * p.stb; tau += mt * p.sv + p.k0;
     const uint bb = p.bb, kb = p.kb;
-    for (uint j = 0; j < bb; ++j) {
-        if (i < bb) gj[i] = i < j ? G[i * bb + j] : 0.0f;
-        if (i == 0) tj[0] = j < kb ? tau[j] : 0.0f;
+    // T in blocks: the four 16 x 16 diagonal blocks a thread a row (row i of a
+    // block needs only its own earlier entries and G), then merged in pairs,
+    // T(a, b) = -T(a, a) G(a, b) T(b, b), at 16 and then 32: five barriers,
+    // where column by column took 128 (2-4% of a batch's call)
+    for (uint e = i; e < 64 * 64; e += nt) Gs[e / 64][e % 64] = e / 64 < bb && e % 64 < bb ? G[(e / 64) * bb + e % 64] : 0.0f;
+    for (uint e = i; e < 64 * 64; e += nt) Ts[e / 64][e % 64] = 0.0f;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (i < 64) {
+        const uint q0 = i / 16 * 16, q1 = q0 + 16;
+        Ts[i][i] = i < kb ? tau[i] : 0.0f;
+        for (uint j = i + 1; j < q1; ++j) {
+            float s = 0.0f;
+            for (uint k = i; k < j; ++k) s = fma(Ts[i][k], Gs[k][j], s);
+            Ts[i][j] = -(j < kb ? tau[j] : 0.0f) * s;
+        }
+        (void)q0;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint w = 16; w < 64; w *= 2) {
+        // pairs of w-blocks (a, b) = ([2 w p, 2 w p + w), [2 w p + w, 2 w p + 2 w)):
+        // X = G(a, b) T(b, b) into Ts(a, b), then T(a, b) = -T(a, a) X
+        threadgroup float (*X)[64] = Gs;   // G(b, b) blocks are done with; X over G(a, b)
+        for (uint e = i; e < (64 / (2 * w)) * w * w; e += nt) {
+            const uint pr = e / (w * w), r = e % (w * w) / w, c = e % w;
+            const uint a0 = 2 * w * pr, b0 = a0 + w;
+            float s = 0.0f;
+            for (uint k = 0; k <= c; ++k) s = fma(Gs[a0 + r][b0 + k], Ts[b0 + k][b0 + c], s);
+            Ts[a0 + r][b0 + c] = s;
+        }
         threadgroup_barrier(mem_flags::mem_threadgroup);
-        if (i < bb) {
-            float v = 0.0f;
-            if (i < j) {
-                float s = 0.0f;
-                for (uint k = i; k < j; ++k) s = fma(Ts[i][k], gj[k], s);
-                v = -tj[0] * s;
-            } else if (i == j) {
-                v = tj[0];
-            }
-            Ts[i][j] = v;
+        for (uint e = i; e < (64 / (2 * w)) * w * w; e += nt) {
+            const uint pr = e / (w * w), r = e % (w * w) / w, c = e % w;
+            const uint a0 = 2 * w * pr, b0 = a0 + w;
+            float s = 0.0f;
+            for (uint k = r; k < w; ++k) s = fma(Ts[a0 + r][a0 + k], Ts[a0 + k][b0 + c], s);
+            X[a0 + r][b0 + c] = -s;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        for (uint e = i; e < (64 / (2 * w)) * w * w; e += nt) {
+            const uint pr = e / (w * w), r = e % (w * w) / w, c = e % w;
+            const uint a0 = 2 * w * pr, b0 = a0 + w;
+            Ts[a0 + r][b0 + c] = X[a0 + r][b0 + c];
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
-    for (uint r = 0; r < bb; ++r)
-        if (i < bb) T[r * bb + i] = Ts[r][i];
+    for (uint e = i; e < bb * bb; e += nt) T[e] = Ts[e / bb][e % bb];
 }
 
 // =============================================================================
