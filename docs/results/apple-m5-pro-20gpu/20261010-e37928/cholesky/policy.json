@@ -1,0 +1,45 @@
+{
+ "policy": {
+  "device": "Apple M5 Pro",
+  "gpu_cores": 20,
+  "source": "default:untuned-device (Apple M5 Pro)",
+  "cpu_threads": 18,
+  "simd_max_n": 32,
+  "blocked_min_n": 256,
+  "blocked_max_batch": 0,
+  "gpu_max_n": 0,
+  "gpu_min_batch_times_n": 0,
+  "gpu_min_batch": 1,
+  "gpu_min_n": 0,
+  "gpu_large_min_n": 2048,
+  "gpu_large_max_batch": 0
+ },
+ "machine": {
+  "start": {
+   "load_1m": 2.26123046875,
+   "cpus": 18,
+   "power": "mains",
+   "low_power_mode": 0,
+   "busy_processes": 0
+  },
+  "end": {
+   "load_1m": 2.8818359375,
+   "cpus": 18,
+   "power": "mains",
+   "low_power_mode": 0,
+   "busy_processes": 0
+  }
+ },
+ "drift": {
+  "before_ms": null,
+  "after_ms": null,
+  "ratio": {
+   "cpu": 1.0071337908,
+   "tg": 1.00762400414,
+   "blocked": 1.00562330031
+  },
+  "worst": 1.00762400414,
+  "ok": true,
+  "note": "rebuilt from submission.json (the sweep's policy.json then held the policy alone)"
+ }
+}

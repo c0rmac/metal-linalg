@@ -59,6 +59,19 @@ final class MetalLinalgMLXTests: XCTestCase {
         }
     }
 
+    func testCholesky() throws {
+        try onCPU {
+            let x = MLXRandom.normal([2, 3, 16, 16])     // two batch dimensions
+            let p = matmul(x, x.transposed(0, 1, 3, 2)) / 16 + MLXArray.identity(16)
+            let l = try choleskyAccelerated(p)
+            XCTAssertEqual(l.shape, [2, 3, 16, 16])
+            XCTAssertLessThan(maxAbs(matmul(l, l.transposed(0, 1, 3, 2)) - p), 1e-4)
+            XCTAssertEqual(maxAbs(triu(l, k: 1)), 0)
+            let u = try choleskyAccelerated(p, upper: true)
+            XCTAssertLessThan(maxAbs(u - l.transposed(0, 1, 3, 2)), 1e-5)
+        }
+    }
+
     func testSVD() throws {
         try onCPU {
             for shape in [[8, 30, 10], [8, 10, 30]] {

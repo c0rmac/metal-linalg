@@ -143,6 +143,20 @@ public func svdvalsAccelerated(_ a: MLXArray) throws -> MLXArray {
     }[0]
 }
 
+/// Cholesky of A [..., N, N] symmetric positive definite, reading the lower
+/// triangle (the upper with `upper`, returning U = L^T): L [..., N, N] with
+/// zeros in the other triangle. A matrix that is not positive definite comes
+/// back all NaN; the [Float] function of the same name also returns where it
+/// failed.
+public func choleskyAccelerated(_ a: MLXArray, upper: Bool = false) throws -> MLXArray {
+    let x = try Matrices(a, "cholesky")
+    try square(x, "cholesky")
+    let n = Int(x.cols)
+    return try x.run([x.batchShape + [n, n]]) { a, o in
+        metal_linalg_cholesky(a, x.batch, x.cols, upper ? 1 : 0, o[0], nil)
+    }[0]
+}
+
 private func square(_ x: Matrices, _ who: String) throws {
     guard x.rows == x.cols else {
         throw MetalLinalgError(kind: .invalidArgument, message: "[\(who)] Input matrices must be square.")

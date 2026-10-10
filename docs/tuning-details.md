@@ -459,8 +459,15 @@ in the policy source.
 | `SVD_DEVICE=band` | SVD: every call on the band backend |
 | `SVD_DEVICE=bidiag_batch` | SVD: every call on the bidiag_batch backend |
 | `SVD_DEVICE=gpu` or `cpu` | SVD: bypass the GPU/CPU boundary |
+| `CHOLESKY_SIMD_MAX_N` | Cholesky: the simd kernel up to this N (at most 32) |
+| `CHOLESKY_BLOCKED_MIN_N`, `CHOLESKY_BLOCKED_MAX_BATCH` | Cholesky: the blocked path from this N in batches up to this (0: any), else the threadgroup kernel |
+| `CHOLESKY_GPU_MAX_N`, `CHOLESKY_GPU_MIN_BATCH_TIMES_N`, `CHOLESKY_GPU_MIN_BATCH`, `CHOLESKY_GPU_MIN_N` | Cholesky: the GPU/CPU boundary |
+| `CHOLESKY_GPU_LARGE_MIN_N`, `CHOLESKY_GPU_LARGE_MAX_BATCH` | Cholesky: the GPU anyway from this N in batches up to this (0: never / any) |
+| `CHOLESKY_DEVICE=simd`, `threadgroup` or `blocked` | Cholesky: every call on that kernel, where it takes the shape |
+| `CHOLESKY_DEVICE=gpu` or `cpu` | Cholesky: bypass the GPU/CPU boundary |
 
-**Programmatic overrides.** `set_qr_policy()`, `set_eigh_policy()` and
-`set_svd_policy()` take precedence over both the environment and the table;
-`qr_policy_source()`, `eigh_policy_source()` and `svd_policy_source()` report
-which is in effect.
+**Programmatic overrides.** `set_qr_policy()`, `set_eigh_policy()`,
+`set_svd_policy()` and `set_cholesky_policy()` take precedence over both the
+environment and the table; `qr_policy_source()`, `eigh_policy_source()`,
+`svd_policy_source()` and `cholesky_policy_source()` report which is in
+effect.

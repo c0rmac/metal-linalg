@@ -40,6 +40,7 @@ last_error = _fn("metal_linalg_last_error", _cstr)
 _qr = _fn("metal_linalg_qr_with_mode", ctypes.c_int, _f32p, _u32, _u32, _u32, ctypes.c_int, _f32p, _f32p)
 _eigh = _fn("metal_linalg_eigh", ctypes.c_int, _f32p, _u32, _u32, ctypes.c_int, _f32p, _f32p, _u32p)
 _svd = _fn("metal_linalg_svd", ctypes.c_int, _f32p, _u32, _u32, _u32, _f32p, _f32p, _f32p, _u32p)
+_cholesky = _fn("metal_linalg_cholesky", ctypes.c_int, _f32p, _u32, _u32, ctypes.c_int, _f32p, _u32p)
 buffer_contents = _fn("metal_linalg_buffer_contents", ctypes.c_void_p,
                       ctypes.c_void_p, ctypes.c_uint64, ctypes.c_uint64)
 know_buffer = _fn("metal_linalg_know_buffer", ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)
@@ -57,10 +58,12 @@ eigh_backend = _fn("metal_linalg_eigh_backend", _cstr, _u32, _u32)
 eigvalsh_backend = _fn("metal_linalg_eigvalsh_backend", _cstr, _u32, _u32)
 svd_backend = _fn("metal_linalg_svd_backend", _cstr, _u32, _u32, _u32)
 svdvals_backend = _fn("metal_linalg_svdvals_backend", _cstr, _u32, _u32, _u32)
+cholesky_backend = _fn("metal_linalg_cholesky_backend", _cstr, _u32, _u32)
 
 qr_policy_source = _fn("metal_linalg_qr_policy_source", _cstr)
 eigh_policy_source = _fn("metal_linalg_eigh_policy_source", _cstr)
 svd_policy_source = _fn("metal_linalg_svd_policy_source", _cstr)
+cholesky_policy_source = _fn("metal_linalg_cholesky_policy_source", _cstr)
 
 
 def _struct(name, fields):
@@ -90,11 +93,14 @@ SVD_FIELDS = ("qr_min_rows", "qr_min_k", "block_min_k", "block_min_k_batched", "
               "bidiag_batch_min_batch", "bidiag_batch_max_l", "values_bidiag_batch_min_k",
               "values_bidiag_batch_max_k", "values_bidiag_batch_min_batch", "values_bidiag_batch_max_l",
               "share_min_k")
+CHOLESKY_FIELDS = ("simd_max_n", "blocked_min_n", "blocked_max_batch", "gpu_max_n", "gpu_min_batch_times_n",
+                   "gpu_min_batch", "gpu_min_n", "gpu_large_min_n", "gpu_large_max_batch", "gpu_cores")
 # Read back but ignored when set.
 INFORMATIONAL = {"gpu_cores", "concurrent_matrices"}
 
 POLICIES = {}
-for _what, _fields in (("qr", QR_FIELDS), ("eigh", EIGH_FIELDS), ("svd", SVD_FIELDS)):
+for _what, _fields in (("qr", QR_FIELDS), ("eigh", EIGH_FIELDS), ("svd", SVD_FIELDS),
+                       ("cholesky", CHOLESKY_FIELDS)):
     _S = _struct(f"{_what}_policy", _fields)
     POLICIES[_what] = (_S, _fields, _fn(f"metal_linalg_{_what}_policy_get", _S),
                        _fn(f"metal_linalg_{_what}_policy_set", None, ctypes.POINTER(_S)))
@@ -148,6 +154,11 @@ def eigh(a, batch, n, lower, w, v):
 def svd(a, batch, rows, cols, u, s, vt):
     with lock:
         check(_svd(a, batch, rows, cols, u, s, vt, None), "svd")
+
+
+def cholesky(a, batch, n, upper, l, info):
+    with lock:
+        check(_cholesky(a, batch, n, 1 if upper else 0, l, info), "cholesky")
 
 
 def text(s):

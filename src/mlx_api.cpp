@@ -1,6 +1,8 @@
-// The MLX API (qr.h, eigh.h, svd.h) over the buffer core (core.h). Each call
-// makes its input an evaluated, contiguous float32 array, allocates its
-// outputs as MLX arrays, and has the core write into their memory.
+// The MLX API (qr.h, eigh.h, svd.h, cholesky.h) over the buffer core
+// (core.h). Each call makes its input an evaluated, contiguous float32 array,
+// allocates its outputs as MLX arrays, and has the core write into their
+// memory.
+#include <metal_linalg/cholesky.h>
 #include <metal_linalg/eigh.h>
 #include <metal_linalg/qr.h>
 #include <metal_linalg/svd.h>
@@ -179,11 +181,52 @@ SvdResult run_svd(const mx::array& a, bool uv, const char* who, Fn fn) {
     return {u, s, vt, info};
 }
 
+// --- Cholesky -----------------------------------------------------------------
+
+using CholeskyFn = void (*)(const core::Matrices&, bool, float*, uint32_t*);
+
+CholeskyResult run_cholesky(const mx::array& a, bool upper, const char* who, CholeskyFn fn) {
+    Input in = prepare(a, who);
+    const uint32_t n = in.matrices.cols;
+    if (in.matrices.rows != n) {
+        throw std::invalid_argument(std::string("[") + who + "] Input matrices must be square.");
+    }
+    mx::array l    = output(shape_of(in.batch_shape, {n, n}));
+    mx::array info = output(in.batch_shape, mx::uint32);
+    Known known(in);
+    known(l)(info);
+    fn(in.matrices, upper, memory<float>(l), memory<uint32_t>(info));
+    return {l, info};
+}
+
 } // namespace
 
 // =============================================================================
 // Public API
 // =============================================================================
+
+mx::array cholesky_accelerated(const mx::array& a, bool upper) {
+    return run_cholesky(a, upper, "cholesky", core::cholesky).l;
+}
+
+CholeskyResult cholesky_ex_accelerated(const mx::array& a, bool upper) {
+    return run_cholesky(a, upper, "cholesky", core::cholesky);
+}
+
+namespace detail {
+CholeskyResult cholesky_simd(const mx::array& a, bool upper) {
+    return run_cholesky(a, upper, "cholesky", core::detail::cholesky_simd);
+}
+CholeskyResult cholesky_threadgroup(const mx::array& a, bool upper) {
+    return run_cholesky(a, upper, "cholesky", core::detail::cholesky_threadgroup);
+}
+CholeskyResult cholesky_blocked(const mx::array& a, bool upper) {
+    return run_cholesky(a, upper, "cholesky", core::detail::cholesky_blocked);
+}
+CholeskyResult cholesky_cpu(const mx::array& a, bool upper) {
+    return run_cholesky(a, upper, "cholesky", core::detail::cholesky_cpu);
+}
+} // namespace detail
 
 std::pair<mx::array, mx::array> qr_accelerated(const mx::array& a, const std::string& mode) {
     return run_qr(a, "qr", core::qr, parse_qr_mode(mode, "qr"));

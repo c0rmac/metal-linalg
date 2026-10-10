@@ -29,7 +29,7 @@ import submissions as sub   # noqa: E402
 import kernels             # noqa: E402
 
 OPS = [("qr", "tune_qr.py", "src/qr.mm"), ("eigh", "tune_eigh.py", "src/eigh.mm"),
-       ("svd", "tune_svd.py", "src/svd.mm")]
+       ("svd", "tune_svd.py", "src/svd.mm"), ("cholesky", "tune_cholesky.py", "src/cholesky.mm")]
 
 
 # The fields of each row after the device name and core count, as in kTuned[].
@@ -48,6 +48,8 @@ FIELDS = {
             "values_gpu_max_k", "values_gpu_min_batch_times_k", "values_gpu_min_batch", "values_gpu_max_l", "bidiag_min_k", "values_bidiag_min_k",
             "bidiag_max_batch", "values_bidiag_max_batch", "gk_min_k", "gk_max_k", "share_min_batch",
             "gpu_big_batch_max_k", "gpu_big_batch_min", "values_band_min_k", "values_band_width", "band_min_k"],
+    "cholesky": ["simd_max_n", "blocked_min_n", "blocked_max_batch", "gpu_max_n", "gpu_min_batch_times_n",
+                 "gpu_min_batch", "gpu_min_n", "gpu_large_min_n", "gpu_large_max_batch"],
 }
 
 

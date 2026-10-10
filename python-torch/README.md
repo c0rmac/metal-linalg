@@ -65,6 +65,8 @@ pip install "git+https://github.com/c0rmac/metal-linalg.git#subdirectory=python-
 | `eigvalsh(A, UPLO="L")` | `torch.linalg.eigvalsh` | eigenvalues, ascending; less work than `eigh` |
 | `svd(A, full_matrices=False)` | `torch.linalg.svd` | `(U, S, Vh)`, thin, `S` descending |
 | `svdvals(A)` | `torch.linalg.svdvals` | singular values, descending; about half the work of `svd` |
+| `cholesky(A, upper=False)` | `torch.linalg.cholesky` | `L` (or `U = L.mT`); raises `torch.linalg.LinAlgError` for a matrix that is not positive definite, as torch does (since 2.18.0) |
+| `cholesky_ex(A, upper=False, check_errors=False)` | `torch.linalg.cholesky_ex` | `(L, info)`, `info` int32; a failed matrix's `L` is all NaN (torch's holds a partial factor) |
 
 `A` is `[..., M, N]` with any number of batch dimensions, on `"cpu"` or
 `"mps"`. What differs from `torch.linalg`:
@@ -79,12 +81,13 @@ pip install "git+https://github.com/c0rmac/metal-linalg.git#subdirectory=python-
   gradient when `A` requires grad), where torch's raises.
 - **No exceptions for bad matrices.** A matrix with a NaN or an infinity
   gives NaN results for that matrix alone, leaving the rest of its batch
-  intact, where torch raises.
+  intact, where torch raises. `cholesky` is the exception: it raises for a
+  matrix that is not positive definite, as torch's does.
 
 ## Autograd and torch.compile
 
 Underneath, the functions are custom operators,
-`torch.ops.metal_linalg.{qr, eigh, eigvalsh, svd, svdvals}`, with fake
+`torch.ops.metal_linalg.{qr, eigh, eigvalsh, svd, svdvals, cholesky}`, with fake
 implementations and the backward formulas `torch.linalg` uses:
 
 ```python

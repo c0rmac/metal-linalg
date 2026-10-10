@@ -48,6 +48,13 @@ def _empty(shape, device="cpu"):
     return torch.empty(shape, dtype=torch.float32, device=device)
 
 
+def _alloc(spec, device="cpu"):
+    """An output: a shape (float32), or (shape, dtype)."""
+    if len(spec) == 2 and isinstance(spec[1], torch.dtype):
+        return torch.empty(spec[0], dtype=spec[1], device=device)
+    return _empty(spec, device)
+
+
 def _back(device, *ts):
     return tuple(t if device.type == "cpu" else t.to(device) for t in ts)
 
@@ -93,13 +100,13 @@ def mps_in_place():
 
 
 def _run(a, shapes, call):
-    """Runs the library on `a` into new float32 outputs of `shapes` on a's
-    device: call(input_address, *output_addresses) on memory the library
-    reads and writes in place."""
+    """Runs the library on `a` into new outputs of `shapes` (float32, or
+    (shape, dtype)) on a's device: call(input_address, *output_addresses) on
+    memory the library reads and writes in place."""
     device = a.device
     if device.type == "mps" and mps_in_place():
         x = a.detach().to(dtype=torch.float32).contiguous()
-        outs = tuple(_empty(s, device) for s in shapes)
+        outs = tuple(_alloc(s, device) for s in shapes)
         # The work MPS has queued may still be writing x (or reading the
         # memory the outputs were given); the library uses its own queue.
         torch.mps.synchronize()
@@ -119,7 +126,7 @@ def _run(a, shapes, call):
                     _lib.forget_buffer(*k)
             return outs
     x = _host(a)
-    outs = tuple(_empty(s) for s in shapes)
+    outs = tuple(_alloc(s) for s in shapes)
     call(x.data_ptr(), *(t.data_ptr() for t in outs))
     return _back(device, *outs)
 
@@ -411,3 +418,54 @@ def _svdvals_backward(ctx, gS):
 
 
 svdvals.register_autograd(_svdvals_backward, setup_context=_svdvals_setup)
+
+
+# ---------------------------------------------------------------------------
+# Cholesky
+# ---------------------------------------------------------------------------
+
+# info is int32, as torch.linalg.cholesky_ex's: the library writes uint32,
+# whose values are below 2**31.
+@torch.library.custom_op("metal_linalg::cholesky", mutates_args=(),
+                         schema="(Tensor a, bool upper=False) -> (Tensor, Tensor)")
+def cholesky(a: Tensor, upper: bool = False) -> tuple[Tensor, Tensor]:
+    _square(a, "cholesky")
+    lead, batch, n, _ = _dims(a, "cholesky")
+    if not (batch and n):
+        return _empty((*lead, n, n), a.device), torch.zeros(lead, dtype=torch.int32, device=a.device)
+    return _run(a, ((*lead, n, n), (tuple(lead), torch.int32)),
+                lambda x, l, i: _lib.cholesky(x, batch, n, upper, l, i))
+
+
+@cholesky.register_fake
+def _(a, upper=False):
+    *lead, n, _ = a.shape
+    return a.new_empty((*lead, n, n)), a.new_empty(lead, dtype=torch.int32)
+
+
+def cholesky_grad(L, gL, upper):
+    """torch.linalg.cholesky's (Murray 2016, arXiv 1602.07527), for real
+    input: with L lower and Phi(X) = tril(X), its diagonal halved,
+    gA = L^-T sym(Phi(L^T gL)) L^-1, sym(X) = (X + X^T) / 2."""
+    if gL is None:
+        return None
+    if upper:
+        L, gL = L.mT, gL.mT
+    gA = (L.mT @ gL).tril()
+    gA = 0.5 * (gA + gA.tril(-1).mT)
+    gA = torch.linalg.solve_triangular(L.mT, gA, upper=True, left=True)
+    return torch.linalg.solve_triangular(L, gA, upper=False, left=False)
+
+
+def _cholesky_setup(ctx, inputs, output):
+    ctx.set_materialize_grads(False)
+    ctx.upper = inputs[1] if len(inputs) > 1 else False
+    ctx.save_for_backward(output[0])
+
+
+def _cholesky_backward(ctx, gL, ginfo):
+    (L,) = ctx.saved_tensors
+    return cholesky_grad(L, gL, ctx.upper), None
+
+
+cholesky.register_autograd(_cholesky_backward, setup_context=_cholesky_setup)

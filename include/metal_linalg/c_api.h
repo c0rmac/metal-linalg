@@ -62,6 +62,14 @@ metal_linalg_status metal_linalg_eigh(const float* a, uint32_t batch, uint32_t n
 metal_linalg_status metal_linalg_svd(const float* a, uint32_t batch, uint32_t rows, uint32_t cols,
                                      float* u, float* s, float* vt, uint32_t* info);
 
+/* A = L L^T for symmetric positive definite n x n matrices (since 2.18.0),
+ * reading the lower triangle, or with `upper` nonzero the upper one and
+ * writing U = L^T: l [batch, n, n], the other triangle zero. info [batch] or
+ * NULL: 0, or k where the leading minor of order k is not positive definite
+ * (as LAPACK's spotrf), and then that matrix's l is all NaN. */
+metal_linalg_status metal_linalg_cholesky(const float* a, uint32_t batch, uint32_t n, int upper,
+                                          float* l, uint32_t* info);
+
 /* An `info` word: bits 0-15 the sweeps taken, bit 16 converged, bit 17 the
  * matrix held a NaN or an infinity, bit 18 (SVD) rank-deficient. The CPU
  * paths report a converged matrix as one sweep. */
@@ -109,7 +117,7 @@ const char* metal_linalg_device_name(void);
 /* Calibration notices on stderr (see set_calibration_notices in device.h):
  * on by default; 0 turns them off. METAL_LINALG_NO_CALIBRATION_NOTICE=1 also does. */
 void metal_linalg_set_calibration_notices(int enabled);
-/* The notice for decomposition "QR", "eigh" or "SVD" on this Mac, or "" if
+/* The notice for decomposition "QR", "eigh", "SVD" or "Cholesky" on this Mac, or "" if
  * its calibration is current: for a binding that reports it its own way
  * (Python warns). Valid until the next call on this thread. */
 const char* metal_linalg_calibration_message(const char* decomposition);
@@ -126,12 +134,14 @@ uint32_t metal_linalg_cpu_threads(void);
  *   eigh  "cpu", "simd", "threadgroup", "block", "tridiag", "ql", "band", "tridiag_batch"
  *   SVD   "cpu", "jacobi", "block_jacobi", "qr_jacobi", "qr_block_jacobi", "bidiag",
  *         "golub_kahan", "qr_golub_kahan", "band", "bidiag_batch"
+ *   Cholesky "cpu", "simd", "threadgroup", "blocked"
  * The strings are static. */
 const char* metal_linalg_qr_backend(uint32_t rows, uint32_t cols, uint32_t batch);
 const char* metal_linalg_eigh_backend(uint32_t n, uint32_t batch);
 const char* metal_linalg_eigvalsh_backend(uint32_t n, uint32_t batch);   /* eigenvalues alone */
 const char* metal_linalg_svd_backend(uint32_t rows, uint32_t cols, uint32_t batch);
 const char* metal_linalg_svdvals_backend(uint32_t rows, uint32_t cols, uint32_t batch);   /* values alone */
+const char* metal_linalg_cholesky_backend(uint32_t n, uint32_t batch);
 
 /* The routing policies, field for field as in core.h, which says what each
  * field does. A policy is resolved on first use from the tuned table, then
@@ -226,13 +236,28 @@ typedef struct metal_linalg_svd_policy {
     uint32_t share_min_k;           /* ... share_min_batch only for k of at least this (0: any k); 2.17.0 */
 } metal_linalg_svd_policy;
 
-metal_linalg_qr_policy   metal_linalg_qr_policy_get(void);
-metal_linalg_eigh_policy metal_linalg_eigh_policy_get(void);
-metal_linalg_svd_policy  metal_linalg_svd_policy_get(void);
+typedef struct metal_linalg_cholesky_policy {   /* since 2.18.0 */
+    uint32_t simd_max_n;             /* the GPU kernels: simd up to this n (at most 32), */
+    uint32_t blocked_min_n;          /* blocked from this n for batches up to */
+    uint32_t blocked_max_batch;      /* this (0: any), else threadgroup */
+    uint32_t gpu_max_n;              /* GPU or CPU: the GPU iff gpu_min_n <= n <= gpu_max_n, */
+    uint32_t gpu_min_batch_times_n;  /* batch * n >= this and */
+    uint32_t gpu_min_batch;          /* batch >= this; */
+    uint32_t gpu_min_n;
+    uint32_t gpu_large_min_n;        /* or n >= this (0: never) in a batch of at most */
+    uint32_t gpu_large_max_batch;    /* this (0: any) */
+    uint32_t gpu_cores;              /* informational */
+} metal_linalg_cholesky_policy;
+
+metal_linalg_qr_policy       metal_linalg_qr_policy_get(void);
+metal_linalg_eigh_policy     metal_linalg_eigh_policy_get(void);
+metal_linalg_svd_policy      metal_linalg_svd_policy_get(void);
+metal_linalg_cholesky_policy metal_linalg_cholesky_policy_get(void);
 
 void metal_linalg_qr_policy_set(const metal_linalg_qr_policy* p);
 void metal_linalg_eigh_policy_set(const metal_linalg_eigh_policy* p);
 void metal_linalg_svd_policy_set(const metal_linalg_svd_policy* p);
+void metal_linalg_cholesky_policy_set(const metal_linalg_cholesky_policy* p);
 
 /* Where the policy in effect came from: "tuned:<device>", "estimated:<device>
  * (from <measured device>, ...)" on a Mac nobody has measured, "env:<variables>",
@@ -241,6 +266,7 @@ void metal_linalg_svd_policy_set(const metal_linalg_svd_policy* p);
 const char* metal_linalg_qr_policy_source(void);
 const char* metal_linalg_eigh_policy_source(void);
 const char* metal_linalg_svd_policy_source(void);
+const char* metal_linalg_cholesky_policy_source(void);
 
 #ifdef __cplusplus
 } /* extern "C" */

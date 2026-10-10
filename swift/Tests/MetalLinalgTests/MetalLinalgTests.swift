@@ -252,6 +252,45 @@ final class MetalLinalgTests: XCTestCase {
         }
     }
 
+    func testCholesky() throws {
+        // A = M M^T / n + I for three matrices of 40 x 40, and its L L^T
+        let (batch, n) = (3, 40)
+        let m = values(batch * n * n, seed: 9)
+        var a = [Float](repeating: 0, count: batch * n * n)
+        for b in 0..<batch {
+            for i in 0..<n { for j in 0..<n {
+                var s = i == j ? 1.0 : 0.0
+                for t in 0..<n { s += Double(m[b * n * n + i * n + t]) * Double(m[b * n * n + j * n + t]) / Double(n) }
+                a[b * n * n + i * n + j] = Float(s)
+            } }
+        }
+        let (l, info) = try choleskyAccelerated(a, batch: batch, n: n)
+        XCTAssertEqual(info, [0, 0, 0])
+        let (u, _) = try choleskyAccelerated(a, batch: batch, n: n, upper: true)
+        for b in 0..<batch {
+            for i in 0..<n { for j in 0..<n {
+                var s = 0.0
+                for t in 0..<n { s += Double(l[b * n * n + i * n + t]) * Double(l[b * n * n + j * n + t]) }
+                XCTAssertEqual(s, Double(a[b * n * n + i * n + j]), accuracy: 1e-5)
+                if j > i { XCTAssertEqual(l[b * n * n + i * n + j], 0) }
+                XCTAssertEqual(u[b * n * n + j * n + i], l[b * n * n + i * n + j], accuracy: 1e-6)
+            } }
+        }
+        // not positive definite at its second pivot: info 2, all NaN
+        let (bad, badInfo) = try choleskyAccelerated([1, 2, 2, 1], n: 2)
+        XCTAssertEqual(badInfo, [2])
+        XCTAssertTrue(bad.allSatisfy { $0.isNaN })
+        XCTAssertTrue(["cpu", "simd", "threadgroup", "blocked"].contains(choleskyBackend(n: 40, batch: 3)))
+        let measured = choleskyPolicy
+        defer { choleskyPolicy = measured }
+        var p = measured
+        p.gpu_max_n = 0
+        p.gpu_large_min_n = 0
+        choleskyPolicy = p
+        XCTAssertEqual(choleskyBackend(n: 4096, batch: 1), "cpu")
+        XCTAssertEqual(choleskyPolicySource, "user")
+    }
+
     func testNaNStaysInItsMatrix() throws {
         var a: [Float] = [2, 1, 1, 2,  .nan, 0, 0, 1,  3, 0, 0, 4]
         let w = try eigvalshAccelerated(a, batch: 3, n: 2)

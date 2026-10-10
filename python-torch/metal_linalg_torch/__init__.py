@@ -1,5 +1,5 @@
-"""QR, symmetric eigendecomposition and SVD for batches of matrices on Apple
-GPUs, for PyTorch.
+"""QR, symmetric eigendecomposition, SVD and Cholesky for batches of matrices
+on Apple GPUs, for PyTorch.
 
     import torch
     import metal_linalg_torch as mlt
@@ -7,6 +7,7 @@ GPUs, for PyTorch.
     Q, R = mlt.qr(a)                 # a: [..., M, N], on "cpu" or "mps"
     L, V = mlt.eigh(s)               # s symmetric [..., N, N]; L ascending
     U, S, Vh = mlt.svd(a)            # thin factors; S descending
+    L = mlt.cholesky(p)              # p symmetric positive definite; p = L @ L.mT
 
 The functions take the arguments of their torch.linalg namesakes and return
 the same result types, on the input's device. Each call is routed to the
@@ -26,12 +27,12 @@ from . import _lib, _ops  # noqa: F401  (_ops registers torch.ops.metal_linalg.*
 from ._build import version as __version__
 
 __all__ = [
-    "qr", "eigh", "eigvalsh", "svd", "svdvals",
+    "qr", "eigh", "eigvalsh", "svd", "svdvals", "cholesky", "cholesky_ex",
     "device_name", "gpu_core_count", "cpu_threads", "set_cpu_threads", "mps_in_place",
-    "qr_backend", "eigh_backend", "eigvalsh_backend", "svd_backend", "svdvals_backend",
-    "qr_policy", "eigh_policy", "svd_policy",
-    "set_qr_policy", "set_eigh_policy", "set_svd_policy",
-    "qr_policy_source", "eigh_policy_source", "svd_policy_source",
+    "qr_backend", "eigh_backend", "eigvalsh_backend", "svd_backend", "svdvals_backend", "cholesky_backend",
+    "qr_policy", "eigh_policy", "svd_policy", "cholesky_policy",
+    "set_qr_policy", "set_eigh_policy", "set_svd_policy", "set_cholesky_policy",
+    "qr_policy_source", "eigh_policy_source", "svd_policy_source", "cholesky_policy_source",
     "calibration_status", "CalibrationWarning",
 ]
 
@@ -69,7 +70,8 @@ def _needs_grad(a):
 # cannot trace the construction of a torch.return_types).
 _TRACED = {"linalg_qr": namedtuple("linalg_qr", ["Q", "R"]),
            "linalg_eigh": namedtuple("linalg_eigh", ["eigenvalues", "eigenvectors"]),
-           "linalg_svd": namedtuple("linalg_svd", ["U", "S", "Vh"])}
+           "linalg_svd": namedtuple("linalg_svd", ["U", "S", "Vh"]),
+           "linalg_cholesky_ex": namedtuple("linalg_cholesky_ex", ["L", "info"])}
 
 
 def _result(kind, values):
@@ -161,6 +163,54 @@ def svdvals(A):
     return torch.ops.metal_linalg.svdvals(a)
 
 
+def _not_positive_definite(info):
+    """torch.linalg.cholesky's error for the first matrix that failed."""
+    bad = torch.nonzero(info.reshape(-1).cpu())
+    if bad.numel() == 0:
+        return None
+    i = int(bad[0, 0])
+    k = int(info.reshape(-1)[i])
+    where = f"(Batch element {i}): " if info.dim() else ""
+    return getattr(torch.linalg, "LinAlgError", RuntimeError)(
+        f"linalg.cholesky: {where}The factorization could not be completed because the input is not "
+        f"positive-definite (the leading minor of order {k} is not positive-definite).")
+
+
+def cholesky(A, upper=False):
+    """Cholesky factorization of a batch of symmetric positive definite
+    matrices, like ``torch.linalg.cholesky``: ``A = L @ L.mT``.
+
+    ``A`` is ``[..., N, N]``; only its lower triangle is read (the upper one
+    with ``upper=True``). Returns ``L`` ``[..., N, N]``, lower triangular
+    with a positive diagonal and zeros above it, or ``U = L.mT`` with
+    ``upper=True``. Raises ``torch.linalg.LinAlgError``, as torch does, if a
+    matrix is not positive definite (or holds a NaN or infinity where it is
+    read); :func:`cholesky_ex` reports it instead.
+    """
+    a = _prepare(A, "cholesky")
+    L, info = torch.ops.metal_linalg.cholesky(a, bool(upper))
+    if not torch.compiler.is_compiling() and a.device.type != "meta":
+        err = _not_positive_definite(info)
+        if err is not None:
+            raise err
+    return L
+
+
+def cholesky_ex(A, upper=False, check_errors=False):
+    """:func:`cholesky` and ``info``, like ``torch.linalg.cholesky_ex``:
+    ``(L, info)``, ``info`` ``[...]`` int32, 0 for a matrix factored, else
+    ``k`` where its leading minor of order ``k`` is not positive definite.
+    That matrix's ``L`` is all NaN (torch's holds a partial factor).
+    ``check_errors=True`` raises as :func:`cholesky` does."""
+    a = _prepare(A, "cholesky_ex")
+    L, info = torch.ops.metal_linalg.cholesky(a, bool(upper))
+    if check_errors and not torch.compiler.is_compiling() and a.device.type != "meta":
+        err = _not_positive_definite(info)
+        if err is not None:
+            raise err
+    return _result("linalg_cholesky_ex", (L, info))
+
+
 # ---------------------------------------------------------------------------
 # The device and its routing
 # ---------------------------------------------------------------------------
@@ -234,6 +284,13 @@ def svdvals_backend(m, n, batch=1):
     return _lib.text(_lib.svdvals_backend(m, n, batch))
 
 
+def cholesky_backend(n, batch=1):
+    """Which backend :func:`cholesky` uses for ``batch`` matrices of
+    ``n x n``: ``"cpu"``, ``"simd"`` (up to 32 x 32), ``"threadgroup"`` or
+    ``"blocked"`` (the large-matrix path)."""
+    return _lib.text(_lib.cholesky_backend(n, batch))
+
+
 def qr_policy():
     """The QR routing policy in effect, as a dict of its fields."""
     return _lib.get_policy("qr")
@@ -247,6 +304,11 @@ def eigh_policy():
 def svd_policy():
     """The SVD routing policy in effect, as a dict of its fields."""
     return _lib.get_policy("svd")
+
+
+def cholesky_policy():
+    """The Cholesky routing policy in effect, as a dict of its fields."""
+    return _lib.get_policy("cholesky")
 
 
 def set_qr_policy(policy=None, **fields):
@@ -263,6 +325,11 @@ def set_eigh_policy(policy=None, **fields):
 def set_svd_policy(policy=None, **fields):
     """Replaces the SVD policy, e.g. ``set_svd_policy(bidiag_min_k=1024)``."""
     _lib.set_policy("svd", {**(policy or {}), **fields})
+
+
+def set_cholesky_policy(policy=None, **fields):
+    """Replaces the Cholesky policy, e.g. ``set_cholesky_policy(gpu_large_min_n=1024)``."""
+    _lib.set_policy("cholesky", {**(policy or {}), **fields})
 
 
 def qr_policy_source():
@@ -282,6 +349,11 @@ def svd_policy_source():
     return _lib.text(_lib.svd_policy_source())
 
 
+def cholesky_policy_source():
+    """Where the Cholesky policy came from; see :func:`qr_policy_source`."""
+    return _lib.text(_lib.cholesky_policy_source())
+
+
 # ---------------------------------------------------------------------------
 # Calibration
 # ---------------------------------------------------------------------------
@@ -297,13 +369,13 @@ class CalibrationWarning(UserWarning):
 
 def calibration_status():
     """How current this Mac's measurements are, per decomposition:
-    ``{"qr": state, "eigh": state, "svd": state}``, each ``"current"``,
+    ``{"qr": state, "eigh": state, "svd": state, "cholesky": state}``, each ``"current"``,
     ``"stale"`` (measured on older kernels, still used), ``"incomplete"``
     (from before a newer backend, which stays off) or ``"uncalibrated"``
     (not measured: settings estimated from a measured Mac). See https://c0rmac.github.io/metal-linalg/docs/measurements."""
     out = {}
     for key, source in (("qr", qr_policy_source), ("eigh", eigh_policy_source),
-                        ("svd", svd_policy_source)):
+                        ("svd", svd_policy_source), ("cholesky", cholesky_policy_source)):
         s = source()
         out[key] = ("uncalibrated" if s.startswith(("default:", "estimated:"))
                     else "stale" if s.startswith("tuned-stale:")
@@ -318,9 +390,9 @@ def _calibration_warnings():
     flag = os.environ.get("METAL_LINALG_NO_CALIBRATION_NOTICE", "")
     if flag and flag != "0":
         return
-    for source in (qr_policy_source, eigh_policy_source, svd_policy_source):
+    for source in (qr_policy_source, eigh_policy_source, svd_policy_source, cholesky_policy_source):
         source()   # resolves the policy, which records its calibration
-    for what in ("QR", "eigh", "SVD"):
+    for what in ("QR", "eigh", "SVD", "Cholesky"):
         msg = _lib.text(_lib.calibration_message(what.encode()))
         if msg:
             warnings.warn(msg, CalibrationWarning, stacklevel=3)

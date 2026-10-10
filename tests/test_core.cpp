@@ -6,12 +6,14 @@
 //          triangle ignored, values-only equal to values-with-vectors
 //   SVD    reconstruction, orthonormal U and Vt, descending non-negative S,
 //          values-only equal to values-with-vectors
+//   Cholesky  reconstruction, the other triangle exactly zero, info, lower
+//          and upper
 //
 // plus a NaN matrix in a batch (NaN there, nothing elsewhere), input that is
 // not page-aligned (the copy path), rank deficiency, and two shapes that pad
 // alike in a row (the streaming QR workspace once overran on that). Sizes are
 // small: the test checks the plumbing around the kernels, which the MLX
-// suites (test_qr, test_eigh, test_svd) test in depth.
+// suites (test_qr, test_eigh, test_svd, test_cholesky) test in depth.
 
 #include <metal_linalg/core.h>
 
@@ -318,6 +320,81 @@ void check_nan_svd(const std::string& name, const SvdFn& fn, uint32_t m, uint32_
 
 } // namespace
 
+// -----------------------------------------------------------------------------
+// Cholesky
+// -----------------------------------------------------------------------------
+
+using CholeskyFn = std::function<void(const Matrices&, bool, float*, uint32_t*)>;
+
+// A batch of symmetric positive definite matrices, (M M^T + n I) / n.
+std::vector<float> spd_matrices(uint32_t batch, uint32_t n, unsigned seed) {
+    const std::vector<float> m = random_matrices(batch, n, n, seed);
+    std::vector<float> a((size_t)batch * n * n);
+    for (uint32_t b = 0; b < batch; ++b) {
+        const float* mb = m.data() + (size_t)b * n * n;
+        float* ab = a.data() + (size_t)b * n * n;
+        for (uint32_t i = 0; i < n; ++i)
+            for (uint32_t j = 0; j < n; ++j) {
+                double s = i == j ? n : 0.0;
+                for (uint32_t t = 0; t < n; ++t) s += (double)mb[(size_t)i * n + t] * mb[(size_t)j * n + t];
+                ab[(size_t)i * n + j] = (float)(s / n);
+            }
+    }
+    return a;
+}
+
+void check_cholesky(const std::string& name, const CholeskyFn& fn, uint32_t batch, uint32_t n, unsigned seed) {
+    for (bool upper : {false, true}) {
+        const std::string label = name + " " + dims(batch, n, n) + (upper ? " upper" : "");
+        std::vector<float> a = spd_matrices(batch, n, seed);
+        std::vector<float> l((size_t)batch * n * n, -1.0f);
+        std::vector<uint32_t> info(batch, 99);
+        try {
+            fn({a.data(), batch, n, n}, upper, l.data(), info.data());
+        } catch (const std::exception& e) {
+            report(label, std::string("threw: ") + e.what(), false);
+            continue;
+        }
+        double recon = 0.0;
+        bool zero = true, ok = true;
+        std::vector<float> t((size_t)n * n);
+        for (uint32_t b = 0; b < batch; ++b) {
+            const float* lb = l.data() + (size_t)b * n * n;
+            for (uint32_t i = 0; i < n; ++i)
+                for (uint32_t j = 0; j < n; ++j) {
+                    t[(size_t)j * n + i] = lb[(size_t)i * n + j];
+                    if (upper ? j < i : j > i) zero = zero && lb[(size_t)i * n + j] == 0.0f;
+                }
+            const float* ab = a.data() + (size_t)b * n * n;
+            const double e = upper ? product_error(ab, t.data(), nullptr, lb, n, n, n)
+                                   : product_error(ab, lb, nullptr, t.data(), n, n, n);
+            recon = std::max(recon, e / frobenius(ab, (size_t)n * n));
+            ok = ok && info[b] == 0;
+        }
+        report_value(label, "recon", recon, kTol);
+        report(label, "the other triangle not zero", zero);
+        report(label, "info not 0", ok);
+    }
+}
+
+// The second of three matrices is not positive definite at its third pivot:
+// info 3 there, NaN for it alone.
+void check_not_pd(const std::string& name, const CholeskyFn& fn, uint32_t n) {
+    const std::string label = name + " not positive definite, " + dims(3, n, n);
+    std::vector<float> a = spd_matrices(3, n, 60 + n);
+    float* bad = a.data() + (size_t)n * n;
+    std::fill(bad, bad + (size_t)n * n, 0.0f);
+    for (uint32_t i = 0; i < n; ++i) bad[(size_t)i * n + i] = i == 2 ? -1.0f : 1.0f;
+    std::vector<float> l((size_t)3 * n * n);
+    std::vector<uint32_t> info(3, 99);
+    fn({a.data(), 3, n, n}, false, l.data(), info.data());
+    report(label, "info " + std::to_string(info[0]) + " " + std::to_string(info[1]) + " " + std::to_string(info[2]),
+           info[0] == 0 && info[1] == 3 && info[2] == 0);
+    report(label, "matrix 1 not NaN", all_nan(l.data() + (size_t)n * n, (size_t)n * n));
+    report(label, "NaN leaked into matrices 0, 2",
+           all_finite(l.data(), (size_t)n * n) && all_finite(l.data() + 2 * (size_t)n * n, (size_t)n * n));
+}
+
 int main() {
     namespace cd = core::detail;
     std::printf("\ncore (buffer API) correctness tests, %s\n", device_name());
@@ -402,6 +479,19 @@ int main() {
     check_nan_svd("svd_block_jacobi", sv(cd::svd_block_jacobi), 40, 34);
     check_nan_svd("svd_cpu (LAPACK)", cd::svd_cpu, 10, 6);
 
+    std::printf("\n[ Cholesky ]\n");
+    check_cholesky("cholesky_simd", cd::cholesky_simd, 64, 12, 44);
+    check_cholesky("cholesky_simd", cd::cholesky_simd, 9, 32, 45);
+    check_cholesky("cholesky_threadgroup", cd::cholesky_threadgroup, 5, 70, 46);
+    check_cholesky("cholesky_blocked", cd::cholesky_blocked, 1, 300, 47);
+    check_cholesky("cholesky_cpu (LAPACK)", cd::cholesky_cpu, 3, 40, 48);
+    check_cholesky("cholesky_cpu (LAPACK)", cd::cholesky_cpu, 2, 1, 49);
+    check_cholesky("core::cholesky", core::cholesky, 4, 20, 50);
+    check_not_pd("cholesky_simd", cd::cholesky_simd, 8);
+    check_not_pd("cholesky_threadgroup", cd::cholesky_threadgroup, 40);
+    check_not_pd("cholesky_blocked", cd::cholesky_blocked, 200);
+    check_not_pd("cholesky_cpu (LAPACK)", cd::cholesky_cpu, 40);
+
     std::printf("\n[ input that is not page-aligned ]\n");
     {
         std::vector<float> storage(1 + 3 * 20 * 12);
@@ -418,7 +508,8 @@ int main() {
     {
         set_calibration_notices(false);
         const struct { const char* what; const char* source; } solvers[] = {
-            {"QR", qr_policy_source()}, {"eigh", eigh_policy_source()}, {"SVD", svd_policy_source()}};
+            {"QR", qr_policy_source()}, {"eigh", eigh_policy_source()}, {"SVD", svd_policy_source()},
+            {"Cholesky", cholesky_policy_source()}};
         for (const auto& s : solvers) {
             const std::string src = s.source, msg = calibration_message(s.what);
             const bool untuned = src.rfind("default:untuned-device", 0) == 0 ||

@@ -36,6 +36,7 @@ let (u, s, vt) = try svdAccelerated(a, batch: 1000, rows: 64, cols: 32)  // thin
 
 let (w, v) = try eighAccelerated(sym, batch: 1000, n: 32)                // w ascending, v's columns the vectors
 let values = try eigvalshAccelerated(sym, batch: 1000, n: 32, uplo: .upper)
+let (l, info) = try choleskyAccelerated(spd, batch: 1000, n: 32)    // l lower, info 0 or the failing minor's order
 ```
 
 `QrMode` (since 2.17.0) is numpy's and torch's: `.reduced` (the default),
@@ -57,6 +58,7 @@ let a = MLXRandom.normal([1000, 64, 32])
 let (q, r) = try qrAccelerated(a)                       // or mode: .r, .complete
 let (u, s, vt) = try svdAccelerated(a)
 let (w, v) = try eighAccelerated(matmul(a.transposed(0, 2, 1), a))
+let l = try choleskyAccelerated(matmul(a.transposed(0, 2, 1), a) + MLXArray.identity(32))   // NaN if not positive definite
 ```
 
 Same names, overloaded on `MLXArray`; batch dimensions are arbitrary and the

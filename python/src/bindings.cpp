@@ -56,6 +56,14 @@ const char* name(ml::SvdBackend b) {
         default:                           return "qr_block_jacobi";
     }
 }
+const char* name(ml::CholeskyBackend b) {
+    switch (b) {
+        case ml::CholeskyBackend::simd:        return "simd";
+        case ml::CholeskyBackend::threadgroup: return "threadgroup";
+        case ml::CholeskyBackend::blocked:     return "blocked";
+        default:                               return "cpu";
+    }
+}
 
 // Policies cross as dicts of their fields. FIELDS lists them once, for both
 // directions; an unknown key on the way in is an error, not silently ignored.
@@ -81,6 +89,9 @@ const char* name(ml::SvdBackend b) {
                       X(band_min_k) X(bidiag_batch_min_k) X(bidiag_batch_max_k) X(bidiag_batch_min_batch) \
                       X(bidiag_batch_max_l) X(values_bidiag_batch_min_k) X(values_bidiag_batch_max_k) \
                       X(values_bidiag_batch_min_batch) X(values_bidiag_batch_max_l) X(share_min_k)
+#define CHOLESKY_FIELDS(X) X(simd_max_n) X(blocked_min_n) X(blocked_max_batch) X(gpu_max_n) \
+                           X(gpu_min_batch_times_n) X(gpu_min_batch) X(gpu_min_n) X(gpu_large_min_n) \
+                           X(gpu_large_max_batch) X(gpu_cores)
 
 #define TO_DICT(f) d[#f] = p.f;
 #define FROM_DICT(f) if (key == #f) { p.f = nb::cast<unsigned>(value); return; }
@@ -106,6 +117,11 @@ NB_MODULE(_core, m) {
     m.def("eigvalsh", &ml::eigvalsh_accelerated, "a"_a, "uplo"_a = "L");
     m.def("svd", &ml::svd_accelerated, "a"_a);
     m.def("svdvals", &ml::svdvals_accelerated, "a"_a);
+    m.def("cholesky", &ml::cholesky_accelerated, "a"_a, "upper"_a = false);
+    m.def("cholesky_ex", [](const mlx::core::array& a, bool upper) {
+        ml::CholeskyResult r = ml::cholesky_ex_accelerated(a, upper);
+        return std::make_pair(r.l, r.info);
+    }, "a"_a, "upper"_a = false);
 
     m.def("device_name", [] { return std::string(ml::device_name()); });
     m.def("gpu_core_count", &ml::gpu_core_count);
@@ -125,14 +141,18 @@ NB_MODULE(_core, m) {
         return name(ml::svd_backend(rows, cols, batch)); }, "m"_a, "n"_a, "batch"_a = 1);
     m.def("svdvals_backend", [](unsigned rows, unsigned cols, unsigned batch) {
         return name(ml::svdvals_backend(rows, cols, batch)); }, "m"_a, "n"_a, "batch"_a = 1);
+    m.def("cholesky_backend", [](unsigned n, unsigned batch) {
+        return name(ml::cholesky_backend(n, batch)); }, "n"_a, "batch"_a = 1);
 
     m.def("qr_policy_source", [] { return std::string(ml::qr_policy_source()); });
     m.def("eigh_policy_source", [] { return std::string(ml::eigh_policy_source()); });
     m.def("svd_policy_source", [] { return std::string(ml::svd_policy_source()); });
+    m.def("cholesky_policy_source", [] { return std::string(ml::cholesky_policy_source()); });
 
     m.def("qr_policy", [] { auto p = ml::qr_policy(); nb::dict d; QR_FIELDS(TO_DICT) return d; });
     m.def("eigh_policy", [] { auto p = ml::eigh_policy(); nb::dict d; EIGH_FIELDS(TO_DICT) return d; });
     m.def("svd_policy", [] { auto p = ml::svd_policy(); nb::dict d; SVD_FIELDS(TO_DICT) return d; });
+    m.def("cholesky_policy", [] { auto p = ml::cholesky_policy(); nb::dict d; CHOLESKY_FIELDS(TO_DICT) return d; });
 
     m.def("set_qr_policy", [](const nb::dict& d) {
         ml::set_qr_policy(from_dict(ml::qr_policy(), d, [](ml::QrPolicy& p, const std::string& key, nb::handle value) {
@@ -150,6 +170,13 @@ NB_MODULE(_core, m) {
         ml::set_svd_policy(from_dict(ml::svd_policy(), d, [](ml::SvdPolicy& p, const std::string& key, nb::handle value) {
             SVD_FIELDS(FROM_DICT)
             throw nb::key_error(("unknown SVD policy field: " + key).c_str());
+        }));
+    }, "policy"_a);
+    m.def("set_cholesky_policy", [](const nb::dict& d) {
+        ml::set_cholesky_policy(from_dict(ml::cholesky_policy(), d,
+                                          [](ml::CholeskyPolicy& p, const std::string& key, nb::handle value) {
+            CHOLESKY_FIELDS(FROM_DICT)
+            throw nb::key_error(("unknown Cholesky policy field: " + key).c_str());
         }));
     }, "policy"_a);
 }

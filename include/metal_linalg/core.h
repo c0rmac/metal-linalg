@@ -573,6 +573,60 @@ namespace metal_linalg {
     // with values_bidiag_min_k for the bidiag backend.
     SvdBackend svdvals_backend(unsigned m, unsigned n, unsigned batch);
 
+    // =========================================================================
+    // Cholesky routing (since 2.18.0)
+    // =========================================================================
+    // A = L L^T of a batch of n x n symmetric positive definite matrices. The
+    // GPU has three kernels: up to 32 x 32 a matrix in a simdgroup's registers
+    // (simd), larger ones a matrix to a threadgroup (threadgroup), and one or
+    // a few large matrices blocked across the whole GPU (blocked); the CPU
+    // runs LAPACK's spotrf, a batch spread over every core. As for the other
+    // decompositions, the boundary between them is measured per device
+    // (tuning/tune_cholesky.py) and lives in this policy.
+    // gpu_max_n value meaning "no upper limit on n".
+    constexpr unsigned kCholeskyNoLimit = 0xFFFFFFFFu;
+
+    struct CholeskyPolicy {   // since 2.18.0
+        // The GPU kernels: simd up to simd_max_n (at most 32), blocked from
+        // blocked_min_n for batches up to blocked_max_batch (0: any), else
+        // threadgroup.
+        unsigned simd_max_n        = 32;
+        unsigned blocked_min_n     = 256;
+        unsigned blocked_max_batch = 0;
+        // GPU or CPU: the GPU iff gpu_min_n <= n <= gpu_max_n, batch * n >=
+        // gpu_min_batch_times_n and batch >= gpu_min_batch; or n >=
+        // gpu_large_min_n (0: never) in a batch of at most gpu_large_max_batch
+        // (0: any). The defaults, for a Mac neither measured nor estimated,
+        // are the M5 Pro's: the CPU path (spotrf, a batch over every core)
+        // won every batch of matrices up to 1024 x 1024 there, and the
+        // blocked kernel from 2048.
+        unsigned gpu_max_n             = 0;
+        unsigned gpu_min_batch_times_n = 0;
+        unsigned gpu_min_batch         = 1;
+        unsigned gpu_min_n             = 0;
+        unsigned gpu_large_min_n       = 2048;
+        unsigned gpu_large_max_batch   = 0;
+        // Informational: the device this was resolved against.
+        unsigned gpu_cores = 0;
+    };
+
+    CholeskyPolicy cholesky_policy();
+    // "tuned:<device>", "estimated:<device> (...)", "env:<variables>", "user"
+    // or "default:untuned-device (<device>)", as the other policies' sources.
+    const char*    cholesky_policy_source();
+    void           set_cholesky_policy(const CholeskyPolicy& p);
+
+    // Added last, so the others keep their numbers.
+    enum class CholeskyBackend { cpu, simd, threadgroup, blocked };
+
+    // What a Cholesky call does with a problem under the policy in effect.
+    // CHOLESKY_DEVICE=gpu or =cpu forces the first part of the decision,
+    // =simd, =threadgroup or =blocked a kernel where it takes the shape.
+    CholeskyBackend cholesky_backend(unsigned n, unsigned batch);
+
+    // The GPU kernel the policy picks, regardless of the CPU routing.
+    CholeskyBackend cholesky_gpu_backend(unsigned n, unsigned batch);
+
     // -------------------------------------------------------------------------
     // Options of the lower-level entry points, for tests and tuning
     // -------------------------------------------------------------------------
@@ -868,7 +922,26 @@ namespace metal_linalg {
             // cpu_threads() threads. `info` reports every finite matrix as
             // converged in one sweep.
             void svd_cpu(const Matrices& a, float* u, float* s, float* vt, uint32_t* info);
+
+            // Cholesky's backends, each as core::cholesky (cholesky_gpu.mm,
+            // cholesky_cpu.mm). simd takes n <= 32 and threadgroup any n
+            // (best to about 512), blocked any n (best for one or a few large
+            // matrices); cpu is LAPACK's spotrf, the batch over every core.
+            void cholesky_simd(const Matrices& a, bool upper, float* l, uint32_t* info);
+            void cholesky_threadgroup(const Matrices& a, bool upper, float* l, uint32_t* info);
+            void cholesky_blocked(const Matrices& a, bool upper, float* l, uint32_t* info);
+            void cholesky_cpu(const Matrices& a, bool upper, float* l, uint32_t* info);
         }
+
+        // A = L L^T of `a.batch` symmetric positive definite matrices of n x
+        // n (rows == cols), reading the lower triangle (the upper with
+        // `upper`, and then writing U = L^T): `l` [batch, n, n], the other
+        // triangle zero. `info` (may be null) [batch]: 0, or k > 0 where the
+        // leading minor of order k is not positive definite, as LAPACK's
+        // spotrf reports it -- a NaN or an infinity that reaches a pivot
+        // included -- and then that matrix's output is all NaN. Not an
+        // exception: one matrix that fails leaves the others' results.
+        void cholesky(const Matrices& a, bool upper, float* l, uint32_t* info);
 
     } // namespace core
 

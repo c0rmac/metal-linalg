@@ -14,7 +14,7 @@ sys.path.insert(0, HERE)
 import chips     # noqa: E402
 import kernels   # noqa: E402
 
-OPS = [("qr", "QR"), ("eigh", "eigh"), ("svd", "SVD")]
+OPS = [("qr", "QR"), ("eigh", "eigh"), ("svd", "SVD"), ("cholesky", "Cholesky")]
 REPO = "https://github.com/c0rmac/metal-linalg"
 
 STATES = {

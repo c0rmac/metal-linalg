@@ -55,10 +55,11 @@ cc -std=c99 main.c -I/opt/homebrew/include -L/opt/homebrew/lib -lmetal_linalg -o
 | `metal_linalg_qr_with_mode(a, batch, rows, cols, mode, q, r)` | the same with a mode (since 2.17.0): `METAL_LINALG_QR_REDUCED` as above; `METAL_LINALG_QR_R`, `r` alone (`q` may be NULL; Q is never formed); `METAL_LINALG_QR_COMPLETE`, `q` [batch, rows, rows] orthogonal and `r` [batch, rows, cols], zero below row K |
 | `metal_linalg_eigh(a, batch, n, lower, w, v, info)` | A = V diag(w) Vᵀ, `w` ascending; one triangle read |
 | `metal_linalg_svd(a, batch, rows, cols, u, s, vt, info)` | thin A = U diag(s) Vt, `s` descending |
+| `metal_linalg_cholesky(a, batch, n, upper, l, info)` | A = L Lᵀ (since 2.18.0), the lower triangle read, or the upper with `upper` nonzero and `l` = U = Lᵀ; the other triangle zero; `info` (may be NULL) 0, or k where the leading minor of order k is not positive definite, that matrix's `l` then all NaN |
 | `metal_linalg_device_name()`, `metal_linalg_gpu_core_count()` | the GPU the routing was resolved for |
 | `metal_linalg_cpu_threads()`, `metal_linalg_set_cpu_threads(n)` | how many cores the CPU paths spread a batch over: every core by default, `0` restores that |
-| `metal_linalg_qr_backend(rows, cols, batch)`, `_eigh_backend(n, batch)`, `_eigvalsh_backend(n, batch)`, `_svd_backend(rows, cols, batch)`, `_svdvals_backend(rows, cols, batch)` | the backend a call of that shape uses, by name |
-| `metal_linalg_{qr,eigh,svd}_policy_get()`, `_set(&p)`, `_source()` | the routing policies; see [tuning](tuning.md) |
+| `metal_linalg_qr_backend(rows, cols, batch)`, `_eigh_backend(n, batch)`, `_eigvalsh_backend(n, batch)`, `_svd_backend(rows, cols, batch)`, `_svdvals_backend(rows, cols, batch)`, `_cholesky_backend(n, batch)` | the backend a call of that shape uses, by name |
+| `metal_linalg_{qr,eigh,svd,cholesky}_policy_get()`, `_set(&p)`, `_source()` | the routing policies; see [tuning](tuning.md) |
 | `metal_linalg_set_calibration_notices(enabled)`, `metal_linalg_calibration_message(what)` | the notice printed when this Mac's measurements are missing or not current: off, or as a string to report another way |
 | `metal_linalg_buffer_contents(buffer, offset, bytes)` | the CPU address of a range of a Metal buffer in shared storage, to pass a GPU framework's tensor memory in place (below) |
 | `metal_linalg_know_buffer(contents, buffer)`, `metal_linalg_forget_buffer(contents, buffer)` | for the calls between them, the GPU backends use `buffer` for memory starting at `contents` rather than wrapping it in a new buffer (below) |

@@ -1,5 +1,5 @@
-"""QR, symmetric eigendecomposition and SVD for batches of matrices on Apple
-GPUs, for MLX.
+"""QR, symmetric eigendecomposition, SVD and Cholesky for batches of matrices
+on Apple GPUs, for MLX.
 
     import mlx.core as mx
     import metal_linalg as ml
@@ -7,6 +7,7 @@ GPUs, for MLX.
     Q, R = ml.qr(a)              # a: [..., M, N]
     w, V = ml.eigh(s)            # s symmetric [..., N, N]; w ascending
     U, S, Vt = ml.svd(a)         # thin factors; S descending
+    L = ml.cholesky(p)           # p symmetric positive definite; p = L L^T
 
 Each call is routed to the fastest Metal kernel for its shape and batch, or to
 MLX's CPU path, by a policy measured on the Mac it runs on. Inputs may be
@@ -43,13 +44,13 @@ class CalibrationWarning(UserWarning):
 
 def calibration_status():
     """How current this Mac's measurements are, per decomposition:
-    ``{"qr": state, "eigh": state, "svd": state}``, each ``"current"``,
+    ``{"qr": state, "eigh": state, "svd": state, "cholesky": state}``, each ``"current"``,
     ``"stale"`` (measured on older kernels, still used), ``"incomplete"``
     (from before a newer backend, which stays off) or ``"uncalibrated"``
     (not measured: settings estimated from a measured Mac). See https://c0rmac.github.io/metal-linalg/docs/measurements."""
     out = {}
     for key, source in (("qr", _core.qr_policy_source), ("eigh", _core.eigh_policy_source),
-                        ("svd", _core.svd_policy_source)):
+                        ("svd", _core.svd_policy_source), ("cholesky", _core.cholesky_policy_source)):
         s = source()
         out[key] = ("uncalibrated" if s.startswith(("default:", "estimated:"))
                     else "stale" if s.startswith("tuned-stale:")
@@ -64,9 +65,10 @@ def _calibration_warnings():
     flag = os.environ.get("METAL_LINALG_NO_CALIBRATION_NOTICE", "")
     if flag and flag != "0":
         return
-    for source in (_core.qr_policy_source, _core.eigh_policy_source, _core.svd_policy_source):
+    for source in (_core.qr_policy_source, _core.eigh_policy_source, _core.svd_policy_source,
+                   _core.cholesky_policy_source):
         source()   # resolves the policy, which records its calibration
-    for what in ("QR", "eigh", "SVD"):
+    for what in ("QR", "eigh", "SVD", "Cholesky"):
         msg = _core.calibration_message(what)
         if msg:
             warnings.warn(msg, CalibrationWarning, stacklevel=3)
@@ -75,12 +77,12 @@ def _calibration_warnings():
 _calibration_warnings()
 
 __all__ = [
-    "qr", "eigh", "eigvalsh", "svd", "svdvals",
+    "qr", "eigh", "eigvalsh", "svd", "svdvals", "cholesky", "cholesky_ex",
     "device_name", "gpu_core_count", "cpu_threads", "set_cpu_threads",
-    "qr_backend", "eigh_backend", "eigvalsh_backend", "svd_backend", "svdvals_backend",
-    "qr_policy", "eigh_policy", "svd_policy",
-    "set_qr_policy", "set_eigh_policy", "set_svd_policy",
-    "qr_policy_source", "eigh_policy_source", "svd_policy_source",
+    "qr_backend", "eigh_backend", "eigvalsh_backend", "svd_backend", "svdvals_backend", "cholesky_backend",
+    "qr_policy", "eigh_policy", "svd_policy", "cholesky_policy",
+    "set_qr_policy", "set_eigh_policy", "set_svd_policy", "set_cholesky_policy",
+    "qr_policy_source", "eigh_policy_source", "svd_policy_source", "cholesky_policy_source",
     "calibration_status", "CalibrationWarning",
 ]
 
@@ -145,6 +147,30 @@ def svd(a):
 def svdvals(a):
     """Singular values only, descending; about half the work of :func:`svd`."""
     return _core.svdvals(_array(a))
+
+
+def cholesky(a, upper=False):
+    """Cholesky factorization of a batch of symmetric positive definite
+    matrices: ``a = L @ L^T``.
+
+    ``a`` is ``[..., N, N]``; only its lower triangle is read (the upper one
+    with ``upper=True``). Returns ``L`` ``[..., N, N]``, lower triangular with
+    a positive diagonal and zeros above it, or with ``upper=True``
+    ``U = L^T`` (``a = U^T @ U``), like ``mx.linalg.cholesky``. A matrix that
+    is not positive definite (or holds a NaN or infinity where it is read)
+    comes back all NaN rather than raising; :func:`cholesky_ex` says which
+    and where. On the GPU for large matrices, else in LAPACK on every CPU
+    core, as this Mac was measured (see :func:`cholesky_backend`).
+    """
+    return _core.cholesky(_array(a), bool(upper))
+
+
+def cholesky_ex(a, upper=False):
+    """:func:`cholesky` and ``info`` ``[...]`` (uint32), as
+    ``torch.linalg.cholesky_ex``: 0 for a matrix factored, else ``k`` where
+    its leading minor of order ``k`` is not positive definite (LAPACK's
+    ``spotrf`` convention); that matrix's ``L`` is all NaN."""
+    return _core.cholesky_ex(_array(a), bool(upper))
 
 
 # ---------------------------------------------------------------------------
@@ -213,6 +239,14 @@ def svdvals_backend(m, n, batch=1):
     return _core.svdvals_backend(m, n, batch)
 
 
+def cholesky_backend(n, batch=1):
+    """Which backend :func:`cholesky` uses for ``batch`` matrices of
+    ``n x n``: ``"cpu"``, ``"simd"`` (up to 32 x 32, a matrix in a
+    simdgroup's registers), ``"threadgroup"`` or ``"blocked"`` (the
+    large-matrix path)."""
+    return _core.cholesky_backend(n, batch)
+
+
 def qr_policy():
     """The QR routing policy in effect, as a dict of its fields."""
     return _core.qr_policy()
@@ -226,6 +260,11 @@ def eigh_policy():
 def svd_policy():
     """The SVD routing policy in effect, as a dict of its fields."""
     return _core.svd_policy()
+
+
+def cholesky_policy():
+    """The Cholesky routing policy in effect, as a dict of its fields."""
+    return _core.cholesky_policy()
 
 
 def set_qr_policy(policy=None, **fields):
@@ -244,6 +283,11 @@ def set_svd_policy(policy=None, **fields):
     _core.set_svd_policy({**(policy or {}), **fields})
 
 
+def set_cholesky_policy(policy=None, **fields):
+    """Replaces the Cholesky policy, e.g. ``set_cholesky_policy(gpu_large_min_n=1024)``."""
+    _core.set_cholesky_policy({**(policy or {}), **fields})
+
+
 def qr_policy_source():
     """Where the QR policy came from: ``"tuned:<device>"``, ``"estimated:<device>
     (from <measured device>, ...)"`` on a Mac nobody has measured,
@@ -259,3 +303,8 @@ def eigh_policy_source():
 def svd_policy_source():
     """Where the SVD policy came from; see :func:`qr_policy_source`."""
     return _core.svd_policy_source()
+
+
+def cholesky_policy_source():
+    """Where the Cholesky policy came from; see :func:`qr_policy_source`."""
+    return _core.cholesky_policy_source()

@@ -1,5 +1,5 @@
-// QR, symmetric eigendecomposition and SVD on Apple GPUs, for batches of
-// matrices held in [Float]: row-major, the matrices one after another. Each
+// QR, symmetric eigendecomposition, SVD and Cholesky on Apple GPUs, for
+// batches of matrices held in [Float]: row-major, the matrices one after another. Each
 // call is routed to the fastest Metal kernel for its shape, or to LAPACK on
 // the CPU, by a policy measured on the Mac it runs on. See docs/swift.md.
 import CMetalLinalg
@@ -173,6 +173,27 @@ public func svdvalsAccelerated(_ a: [Float], batch: Int = 1, rows: Int, cols: In
     }
 }
 
+/// Cholesky A = L L^T of `batch` symmetric positive definite matrices of
+/// n x n, reading the lower triangle (the upper with `upper`, then returning
+/// U = L^T). Returns L [batch, n, n] with zeros in the other triangle and
+/// `info` [batch]: 0, or k where the leading minor of order k is not positive
+/// definite (as LAPACK's spotrf), and then that matrix's L is all NaN.
+public func choleskyAccelerated(_ a: [Float], batch: Int = 1, n: Int, upper: Bool = false) throws
+    -> (l: [Float], info: [UInt32])
+{
+    try checkCount(a.count, batch: batch, rows: n, cols: n, "cholesky")
+    let (b, nn) = (try dimension(batch, "batch", "cholesky"), try dimension(n, "n", "cholesky"))
+    var info = [UInt32](repeating: 0, count: batch)
+    let l = try a.withUnsafeBufferPointer { ap in
+        try info.withUnsafeMutableBufferPointer { ip in
+            try output(batch * n * n) { lp in
+                try check(metal_linalg_cholesky(ap.baseAddress, b, nn, upper ? 1 : 0, lp, ip.baseAddress))
+            }
+        }
+    }
+    return (l, info)
+}
+
 // MARK: - Device and routing
 
 /// The default Metal device, e.g. "Apple M5 Pro"; empty if there is none.
@@ -225,10 +246,17 @@ public func svdvalsBackend(rows: Int, cols: Int, batch: Int = 1) -> String {
     String(cString: metal_linalg_svdvals_backend(UInt32(clamping: rows), UInt32(clamping: cols), UInt32(clamping: batch)))
 }
 
+/// "cpu", "simd" (up to 32 x 32), "threadgroup" or "blocked" (the
+/// large-matrix path).
+public func choleskyBackend(n: Int, batch: Int = 1) -> String {
+    String(cString: metal_linalg_cholesky_backend(UInt32(clamping: n), UInt32(clamping: batch)))
+}
+
 /// The routing policies, field for field as in include/metal_linalg/core.h.
 public typealias QrPolicy = metal_linalg_qr_policy
 public typealias EighPolicy = metal_linalg_eigh_policy
 public typealias SvdPolicy = metal_linalg_svd_policy
+public typealias CholeskyPolicy = metal_linalg_cholesky_policy
 
 /// `gpu_max_n` / `gpu_max_k` value meaning no cap.
 public let policyNoLimit: UInt32 = 0xFFFF_FFFF
@@ -250,8 +278,14 @@ public var svdPolicy: SvdPolicy {
     set { withUnsafePointer(to: newValue) { metal_linalg_svd_policy_set($0) } }
 }
 
+public var choleskyPolicy: CholeskyPolicy {
+    get { metal_linalg_cholesky_policy_get() }
+    set { withUnsafePointer(to: newValue) { metal_linalg_cholesky_policy_set($0) } }
+}
+
 /// Where each policy came from: "tuned:<device>", "env:<variables>", "user"
 /// or "default:untuned-device (<device>)".
 public var qrPolicySource: String { String(cString: metal_linalg_qr_policy_source()) }
 public var eighPolicySource: String { String(cString: metal_linalg_eigh_policy_source()) }
 public var svdPolicySource: String { String(cString: metal_linalg_svd_policy_source()) }
+public var choleskyPolicySource: String { String(cString: metal_linalg_cholesky_policy_source()) }

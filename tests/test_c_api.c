@@ -111,6 +111,24 @@ int main(void) {
         CHECK(METAL_LINALG_INFO_CONVERGED(info), "svd: info %#x", info);
     }
 
+    /* Cholesky of [[4, 2], [2, 3]]: L = [[2, 0], [1, sqrt 2]]; the second
+     * matrix, [[1, 2], [2, 1]], is not positive definite at its second pivot. */
+    {
+        const float a[8] = {4, 2, 2, 3,   1, 2, 2, 1};
+        float l[8], u[8];
+        uint32_t info[2] = {7, 7};
+        CHECK(metal_linalg_cholesky(a, 2, 2, 0, l, info) == METAL_LINALG_OK, "cholesky: %s", metal_linalg_last_error());
+        CHECK(near(l[0], 2.0f) && l[1] == 0.0f && near(l[2], 1.0f) && near(l[3], 1.41421356f),
+              "cholesky: L = %g %g %g %g", l[0], l[1], l[2], l[3]);
+        CHECK(info[0] == 0 && info[1] == 2, "cholesky: info %u %u, want 0 2", info[0], info[1]);
+        CHECK(isnan(l[4]) && isnan(l[7]), "cholesky: the failed matrix not NaN");
+        CHECK(metal_linalg_cholesky(a, 1, 2, 1, u, NULL) == METAL_LINALG_OK, "cholesky upper: %s",
+              metal_linalg_last_error());
+        CHECK(near(u[0], 2.0f) && near(u[1], 1.0f) && u[2] == 0.0f && near(u[3], 1.41421356f),
+              "cholesky upper: U = %g %g %g %g", u[0], u[1], u[2], u[3]);
+        CHECK(metal_linalg_cholesky(NULL, 1, 2, 0, l, NULL) == METAL_LINALG_INVALID_ARGUMENT, "cholesky(NULL) not rejected");
+    }
+
     /* A NaN gives NaN for its matrix and is reported in info. */
     {
         const float a[8] = {2, 1, 1, 2,   NAN, 0, 0, 1};
@@ -308,6 +326,34 @@ int main(void) {
                         err = fmaxf(err, fabsf(r - a[b * 24 + i * 4 + j]));
                     }
             CHECK(err < 1e-4f, "svd (golub_kahan) reconstruction error %g", err);
+        }
+        /* Cholesky: never the GPU, then the kernels by size. */
+        {
+            const metal_linalg_cholesky_policy cm = metal_linalg_cholesky_policy_get();
+            metal_linalg_cholesky_policy cp = cm;
+            cp.gpu_max_n = 0;
+            cp.gpu_large_min_n = 0;
+            metal_linalg_cholesky_policy_set(&cp);
+            CHECK(strcmp(metal_linalg_cholesky_backend(16, 4096), "cpu") == 0, "cholesky gpu_max_n = 0 routes to %s",
+                  metal_linalg_cholesky_backend(16, 4096));
+            CHECK(strcmp(metal_linalg_cholesky_policy_source(), "user") == 0, "cholesky source after set: %s",
+                  metal_linalg_cholesky_policy_source());
+            cp.gpu_max_n = METAL_LINALG_NO_LIMIT;
+            cp.gpu_min_batch_times_n = 0;
+            cp.gpu_min_batch = 1;
+            cp.gpu_min_n = 0;
+            cp.simd_max_n = 32;
+            cp.blocked_min_n = 1024;
+            cp.blocked_max_batch = 2;
+            metal_linalg_cholesky_policy_set(&cp);
+            CHECK(metal_linalg_cholesky_policy_get().blocked_max_batch == 2, "cholesky blocked_max_batch not set");
+            CHECK(strcmp(metal_linalg_cholesky_backend(24, 64), "simd") == 0, "cholesky 64 x 24 routes to %s",
+                  metal_linalg_cholesky_backend(24, 64));
+            CHECK(strcmp(metal_linalg_cholesky_backend(200, 64), "threadgroup") == 0, "cholesky 64 x 200 routes to %s",
+                  metal_linalg_cholesky_backend(200, 64));
+            CHECK(strcmp(metal_linalg_cholesky_backend(2048, 1), "blocked") == 0, "cholesky 1 x 2048 routes to %s",
+                  metal_linalg_cholesky_backend(2048, 1));
+            metal_linalg_cholesky_policy_set(&cm);
         }
         metal_linalg_svd_policy_set(&svd_measured);
         metal_linalg_eigh_policy_set(&measured);
