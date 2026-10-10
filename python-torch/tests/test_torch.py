@@ -133,6 +133,81 @@ class Decompositions(unittest.TestCase):
                     self.assertLess(rel(S, ref), 2e-5)
                     self.assertLess(rel(mlt.svdvals(a), ref), 2e-5)
 
+    def test_cholesky(self):
+        for dev in DEVICES:
+            for n in (1, 2, 7, 32, 100, 300):
+                for lead in ((), (4,)):
+                    s = spd(*lead, n=n).float().to(dev)
+                    L = mlt.cholesky(s)
+                    self.assertEqual(L.shape, (*lead, n, n))
+                    self.assertEqual(L.device, s.device)
+                    self.assertLess(rel(L, torch.linalg.cholesky(s.cpu().double())), 2e-5, (dev, n))
+                    self.assertEqual(torch.triu(L.cpu(), 1).abs().max().item() if n > 1 else 0.0, 0.0)
+                    U = mlt.cholesky(s, upper=True)
+                    self.assertLess(rel(U, L.mT), 1e-6, (dev, n))
+                    L2, info = mlt.cholesky_ex(s)
+                    self.assertEqual(info.dtype, torch.int32)
+                    self.assertEqual(info.shape, tuple(lead))
+                    self.assertEqual(int(info.abs().sum()), 0)
+                    self.assertEqual(info.device, s.device)
+
+    def test_cholesky_not_positive_definite(self):
+        for dev in DEVICES:
+            p = torch.tensor([[[4.0, 2.0], [2.0, 3.0]], [[1.0, 2.0], [2.0, 1.0]]], device=dev)
+            L, info = mlt.cholesky_ex(p)
+            self.assertEqual(info.cpu().tolist(), [0, 2])
+            self.assertTrue(bool(torch.isnan(L[1]).all()))
+            self.assertLess(rel(L[0], torch.tensor([[2.0, 0.0], [1.0, math.sqrt(2.0)]])), 1e-6)
+            with self.assertRaisesRegex(RuntimeError, "leading minor of order 2 is not positive-definite"):
+                mlt.cholesky(p)
+            with self.assertRaises(RuntimeError):
+                mlt.cholesky_ex(p, check_errors=True)
+
+    def test_lu_solve_inv(self):
+        for dev in DEVICES:
+            for n in (1, 5, 40, 300):
+                for lead in ((), (3,)):
+                    a = (well_conditioned(*lead, n, n, seed=n) + 0.0).float().to(dev)
+                    LU, piv = mlt.lu_factor(a)
+                    self.assertEqual((LU.shape, piv.shape, piv.dtype), ((*lead, n, n), (*lead, n), torch.int32))
+                    P, L, U = torch.lu_unpack(LU.cpu(), piv.cpu())
+                    self.assertLess(rel(P @ L @ U, a.cpu()), 2e-5, (dev, n))
+                    b = torch.randn(*lead, n, 3, device=dev)
+                    X = mlt.solve(a, b)
+                    self.assertLess(rel(X, torch.linalg.solve(a.cpu().double(), b.cpu().double())), 1e-4, (dev, n))
+                    x = mlt.solve(a, b[..., 0])
+                    self.assertEqual(x.shape, b[..., 0].shape)
+                    self.assertLess(rel(x, X[..., 0]), 1e-5)
+                    self.assertLess(rel(mlt.inv(a), torch.linalg.inv(a.cpu().double())), 1e-4, (dev, n))
+                    self.assertEqual(X.device, a.device)
+
+    def test_solve_triangular(self):
+        for dev in DEVICES:
+            for n, k in ((1, 1), (7, 3), (200, 20)):
+                for upper in (False, True):
+                    for unit in (False, True):
+                        a = torch.randn(2, n, n, device=dev) / math.sqrt(n) + 2 * torch.eye(n, device=dev)
+                        b = torch.randn(2, n, k, device=dev)
+                        X = mlt.solve_triangular(a, b, upper=upper, unitriangular=unit)
+                        ref = torch.linalg.solve_triangular(a.cpu().double(), b.cpu().double(), upper=upper,
+                                                            unitriangular=unit)
+                        self.assertLess(rel(X, ref), 1e-4, (dev, n, upper, unit))
+                        self.assertEqual(X.device, a.device)
+
+    def test_singular(self):
+        for dev in DEVICES:
+            a = torch.tensor([[[1.0, 2.0], [2.0, 4.0]], [[2.0, 0.0], [0.0, 3.0]]], device=dev)
+            with self.assertRaisesRegex(RuntimeError, "singular"):
+                mlt.solve(a, torch.ones(2, 2, device=dev))
+            with self.assertRaisesRegex(RuntimeError, "singular"):
+                mlt.inv(a)
+            X, info = mlt.inv_ex(a)
+            self.assertEqual(info.cpu().tolist(), [2, 0])
+            self.assertTrue(bool(torch.isnan(X[0]).all()))
+            self.assertLess(rel(X[1], torch.tensor([[0.5, 0.0], [0.0, 1.0 / 3.0]])), 1e-6)
+            _, _, info = mlt.lu_factor_ex(a)
+            self.assertEqual(info.cpu().tolist(), [2, 0])
+
     def test_large_single_matrices(self):
         # The GPU bidiagonalization and tridiagonalization backends, where the
         # Mac routes them (bidiag, tridiag), else the CPU: either way correct.
@@ -373,11 +448,17 @@ class Routing(unittest.TestCase):
                "golub_kahan", "qr_golub_kahan", "band"}
         self.assertIn(mlt.svd_backend(64, 32, 16), svd)
         self.assertIn(mlt.svdvals_backend(64, 32, 16), svd)
+        self.assertIn(mlt.cholesky_backend(64, 16), {"cpu", "simd", "threadgroup", "blocked"})
+        self.assertIn(mlt.lu_backend(64, 16), {"cpu", "blocked"})
+        self.assertIn(mlt.trsm_backend(4096, 4096), {"cpu", "blocked"})
 
     def test_policies(self):
         for get, set_, source, field in ((mlt.qr_policy, mlt.set_qr_policy, mlt.qr_policy_source, "gpu_min_batch"),
                                          (mlt.eigh_policy, mlt.set_eigh_policy, mlt.eigh_policy_source, "gpu_min_batch"),
-                                         (mlt.svd_policy, mlt.set_svd_policy, mlt.svd_policy_source, "bidiag_min_k")):
+                                         (mlt.svd_policy, mlt.set_svd_policy, mlt.svd_policy_source, "bidiag_min_k"),
+                                         (mlt.cholesky_policy, mlt.set_cholesky_policy, mlt.cholesky_policy_source,
+                                          "gpu_large_min_n"),
+                                         (mlt.lu_policy, mlt.set_lu_policy, mlt.lu_policy_source, "gpu_min_n")):
             before = get()
             try:
                 set_(**{field: before[field] + 7})
@@ -427,9 +508,34 @@ class Routing(unittest.TestCase):
         finally:
             mlt.set_svd_policy(before)
 
+    def test_lu_routing(self):
+        before = mlt.lu_policy()
+        try:
+            mlt.set_lu_policy(gpu_min_n=100, gpu_max_batch=0)
+            self.assertEqual(mlt.lu_backend(200, 2), "blocked")
+            a = well_conditioned(2, 200, 200, seed=3).float()
+            for k in (1, 40):   # either side of the GPU path's switch to its own triangular solves
+                b = torch.randn(2, 200, k)
+                self.assertLess(rel(mlt.solve(a, b), torch.linalg.solve(a.double(), b.double())), 1e-4, k)
+            self.assertLess(rel(mlt.inv(a), torch.linalg.inv(a.double())), 1e-4)
+        finally:
+            mlt.set_lu_policy(before)
+
+    def test_cholesky_routing(self):
+        before = mlt.cholesky_policy()
+        try:
+            mlt.set_cholesky_policy(gpu_max_n=2**32 - 1, gpu_min_batch_times_n=0, gpu_min_batch=1, gpu_min_n=0,
+                                    simd_max_n=32, blocked_min_n=200, blocked_max_batch=0)
+            for n, backend in ((20, "simd"), (90, "threadgroup"), (300, "blocked")):
+                self.assertEqual(mlt.cholesky_backend(n, 3), backend)
+                s = spd(3, n=n).float()
+                self.assertLess(rel(mlt.cholesky(s), torch.linalg.cholesky(s.double())), 2e-5, backend)
+        finally:
+            mlt.set_cholesky_policy(before)
+
     def test_calibration_status(self):
         st = mlt.calibration_status()
-        self.assertEqual(set(st), {"qr", "eigh", "svd"})
+        self.assertEqual(set(st), {"qr", "eigh", "svd", "cholesky", "lu", "trsm"})
         for v in st.values():
             self.assertIn(v, {"current", "stale", "incomplete", "uncalibrated"})
         self.assertTrue(issubclass(mlt.CalibrationWarning, UserWarning))
@@ -522,6 +628,49 @@ class Gradients(unittest.TestCase):
                                 lambda x: (torch.linalg.svdvals(x) * c.double()).sum())
             self.assertLess(rel(gm, gr), self.TOL, shape)
 
+    def test_cholesky(self):
+        for lead, n in (((), 6), ((3,), 5)):
+            a = spd(*lead, n=n, seed=8)
+            g = torch.Generator().manual_seed(9)
+            W = torch.randn(*lead, n, n, generator=g)
+            for upper in (False, True):
+                gm, gr = self.grads(a, lambda x: (mlt.cholesky(x, upper=upper) * W).sum(),
+                                    lambda x: (torch.linalg.cholesky(x, upper=upper) * W.double()).sum())
+                self.assertLess(rel(gm, gr), self.TOL, (lead, upper))
+
+    def test_solve_and_inv(self):
+        for lead, n in (((), 6), ((3,), 5)):
+            a = well_conditioned(*lead, n, n, seed=10)
+            g = torch.Generator().manual_seed(11)
+            b, W = torch.randn(*lead, n, 2, generator=g, dtype=torch.float64), torch.randn(*lead, n, n, generator=g)
+            gm, gr = self.grads(a, lambda x: (mlt.inv(x) * W).sum(), lambda x: (torch.linalg.inv(x) * W.double()).sum())
+            self.assertLess(rel(gm, gr), self.TOL, lead)
+            gm, gr = self.grads(a, lambda x: (mlt.solve(x, b.float()) ** 2).sum(),
+                                lambda x: (torch.linalg.solve(x, b) ** 2).sum())
+            self.assertLess(rel(gm, gr), self.TOL, lead)
+            # and in B
+            gm, gr = self.grads(b, lambda y: (mlt.solve(a.float(), y) ** 2).sum(),
+                                lambda y: (torch.linalg.solve(a, y) ** 2).sum())
+            self.assertLess(rel(gm, gr), self.TOL, lead)
+
+    def test_solve_triangular_grad(self):
+        a = well_conditioned(3, 6, 6, seed=12)
+        g = torch.Generator().manual_seed(13)
+        b = torch.randn(3, 6, 2, generator=g, dtype=torch.float64)
+        for upper in (False, True):
+            for unit in (False, True):
+                t = (lambda x: x.triu()) if upper else (lambda x: x.tril())
+                gm, gr = self.grads(a, lambda x: (mlt.solve_triangular(t(x), b.float(), upper=upper,
+                                                                       unitriangular=unit) ** 2).sum(),
+                                    lambda x: (torch.linalg.solve_triangular(t(x), b, upper=upper,
+                                                                             unitriangular=unit) ** 2).sum())
+                self.assertLess(rel(gm, gr), self.TOL, (upper, unit))
+                gm, gr = self.grads(b, lambda y: (mlt.solve_triangular(t(a).float(), y, upper=upper,
+                                                                       unitriangular=unit) ** 2).sum(),
+                                    lambda y: (torch.linalg.solve_triangular(t(a), y, upper=upper,
+                                                                             unitriangular=unit) ** 2).sum())
+                self.assertLess(rel(gm, gr), self.TOL, (upper, unit))
+
     def test_float64_input_gets_float64_grad(self):
         a = torch.randn(5, 3, dtype=torch.float64, requires_grad=True)
         mlt.svdvals(a).sum().backward()
@@ -549,7 +698,12 @@ class Operators(unittest.TestCase):
                  (torch.ops.metal_linalg.eigh.default, (s, True)),
                  (torch.ops.metal_linalg.eigvalsh.default, (s, False)),
                  (torch.ops.metal_linalg.svd.default, (a,)),
-                 (torch.ops.metal_linalg.svdvals.default, (a,))]
+                 (torch.ops.metal_linalg.svdvals.default, (a,)),
+                 (torch.ops.metal_linalg.cholesky.default, (s, False)),
+                 (torch.ops.metal_linalg.cholesky.default, (s, True)),
+                 (torch.ops.metal_linalg.solve.default, (s, a[:2, :5, :3].contiguous())),
+                 (torch.ops.metal_linalg.inv.default, (s,)),
+                 (torch.ops.metal_linalg.solve_triangular.default, (s, a[:2, :5, :3].contiguous(), True, False))]
         for op, args in cases:
             torch.library.opcheck(op, args)
             grad_args = tuple(x.clone().requires_grad_(True) if isinstance(x, torch.Tensor) else x for x in args)
@@ -568,7 +722,11 @@ class Operators(unittest.TestCase):
             R2 = mlt.qr(x, mode="r").R
             return (L.sum() + S.sum() + R.diagonal(dim1=-2, dim2=-1).abs().sum() + mlt.svdvals(x).sum()
                     + R2.abs().sum() + mlt.qr(x, mode="complete").Q.abs().sum()
-                    + mlt.eigh(x @ x.mT).eigenvalues.sum() + mlt.svd(x).S.sum())
+                    + mlt.eigh(x @ x.mT).eigenvalues.sum() + mlt.svd(x).S.sum()
+                    + mlt.cholesky(x @ x.mT + torch.eye(x.shape[-1])).diagonal(dim1=-2, dim2=-1).sum()
+                    + mlt.cholesky_ex(x @ x.mT + torch.eye(x.shape[-1]), upper=True).L.sum()
+                    + mlt.solve(x @ x.mT + torch.eye(x.shape[-1]), x).sum()
+                    + mlt.inv_ex(x @ x.mT + torch.eye(x.shape[-1])).inverse.sum())
         cf = torch.compile(f, backend="aot_eager", fullgraph=True)
         x = torch.randn(4, 6, 6)
         self.assertLess(abs(cf(x).item() - f(x).item()), 1e-3)

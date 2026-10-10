@@ -31,9 +31,9 @@ marked stale, rather than an estimate. The library reports the state at run time
 and docs/measurements.md shows it for every chip.
 """
 
-KERNEL_EPOCHS = {"qr": 8, "eigh": 8, "svd": 10}
+KERNEL_EPOCHS = {"qr": 8, "eigh": 8, "svd": 10, "cholesky": 1, "lu": 1, "trsm": 1}
 # The versions from which the CPU path spreads a batch over every core (2.9.0).
-MIN_EPOCHS = {"qr": 2, "eigh": 2, "svd": 3}
+MIN_EPOCHS = {"qr": 2, "eigh": 2, "svd": 3, "cholesky": 1, "lu": 1, "trsm": 1}
 
 # (decomposition, epoch, library version, date, why)
 HISTORY = [
@@ -145,6 +145,15 @@ HISTORY = [
      "4 x 4, 1.7-2.5x at 8 x 8, 1.3-1.7x at 16 x 16 for large batches); the blocked QR's panels 8 columns "
      "wide for up to 4 matrices of 768-3072 rows (1.05-1.1x), its in-aggregate updates one kernel there "
      "(1.16x at 1024^2), its input scanned on the GPU (1.01-1.03x)"),
+    ("cholesky", 1, "2.18.0", "2026-10-10",
+     "the measurements as Cholesky introduced them: the CPU path (spotrf('L') on a padded copy), the simd "
+     "and threadgroup kernels, and the blocked path (fused sub-panels, MPS products on the lower triangle)"),
+    ("lu", 1, "2.18.0", "2026-10-10",
+     "the measurements as LU introduced them: the CPU path (sgetrf, sgetrs, sgetri on a padded copy) and the "
+     "blocked GPU path (CPU panels with a look-ahead, GPU swaps and products, the GPU's triangular solves)"),
+    ("trsm", 1, "2.18.0", "2026-10-10",
+     "the measurements as the triangular solve introduced them: strsm on every core, and the blocked GPU path "
+     "(diagonal blocks' inverses on the CPU, two MPS products a block)"),
 ]
 
 REQUIRED = {
@@ -155,6 +164,9 @@ REQUIRED = {
     "svd": {"cpu", "jacobi", "block", "qr", "qrblock", "bidiag", "band", "gk", "gk_share", "bidiag_batch",
             "cpu_vals", "bidiag_vals", "gk_vals", "gk_share_vals", "band_vals", "band8_vals", "band32_vals",
             "bidiag_batch_vals"},
+    "cholesky": {"cpu", "simd", "tg", "blocked"},
+    "lu": {"cpu", "blocked", "inv_cpu", "inv_blocked", "solve_cpu", "solve_trsm", "solve_getrs"},
+    "trsm": {"cpu", "blocked"},
 }
 
 # Backends added after a decomposition's first measurements, and when: what
@@ -210,9 +222,14 @@ PATHS = {
     "eigh": ["shaders/Eigh_", "src/eigh", "shaders/Svd_Bidiag"] + _JACOBI + _SHARED + _BAND,
     # The QR-preconditioned SVD backends call QR, routed by its table.
     "svd": ["shaders/Svd_", "src/svd"] + _JACOBI + _QR + ["src/tuned/qr.inc"] + _BAND,
+    "cholesky": ["shaders/Cholesky", "src/cholesky"] + _SHARED,
+    "lu": ["shaders/LU", "src/lu", "src/transpose.h"] + _SHARED,
+    "trsm": ["src/trsm"] + _SHARED,
 }
 # A decomposition's own table is generated from its measurements, not a change to them.
-OWN_TABLE = {"qr": "src/tuned/qr.inc", "eigh": "src/tuned/eigh.inc", "svd": "src/tuned/svd.inc"}
+OWN_TABLE = {"qr": "src/tuned/qr.inc", "eigh": "src/tuned/eigh.inc", "svd": "src/tuned/svd.inc",
+             "cholesky": "src/tuned/cholesky.inc", "lu": "src/tuned/lu.inc",
+             "trsm": "src/tuned/trsm.inc"}
 
 
 def run_epoch(info, op):

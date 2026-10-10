@@ -1,0 +1,21 @@
+  154 points x 2 passes = 308 processes (828 timed backends)
+    20/308  elapsed 0.2m  eta 2.3m
+    40/308  elapsed 0.2m  eta 1.5m
+    60/308  elapsed 0.3m  eta 1.3m
+    80/308  elapsed 0.5m  eta 1.4m
+    100/308  elapsed 0.5m  eta 1.1m
+    120/308  elapsed 0.8m  eta 1.2m
+    140/308  elapsed 1.3m  eta 1.6m
+    160/308  elapsed 1.4m  eta 1.3m
+    180/308  elapsed 1.6m  eta 1.1m
+    200/308  elapsed 1.7m  eta 0.9m
+    220/308  elapsed 1.9m  eta 0.7m
+    240/308  elapsed 2.0m  eta 0.6m
+    260/308  elapsed 2.4m  eta 0.4m
+    280/308  elapsed 2.6m  eta 0.3m
+    300/308  elapsed 2.8m  eta 0.1m
+    308/308  elapsed 2.8m  eta 0.0m
+  kernel: simd <= 32, blocked >= 48 (batch <= any)   (1.0077x of the best GPU kernel)
+  GPU iff 2 <= N <= 2, batch*N >= 32768, batch >= 16, or N >= 1536 in a batch of at most any   (1.0036x vs 1.0569x always CPU, worst 1.52x)
+  kTuned entry: {"Apple M5 Pro", 20,   32, 48, 0,   2, 32768, 16, 2,   1536, 0},
+  -> /Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261010-e37928/cholesky/report.md, /Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261010-e37928/cholesky/results.json

@@ -59,6 +59,34 @@ final class MetalLinalgMLXTests: XCTestCase {
         }
     }
 
+    func testCholesky() throws {
+        try onCPU {
+            let x = MLXRandom.normal([2, 3, 16, 16])     // two batch dimensions
+            let p = matmul(x, x.transposed(0, 1, 3, 2)) / 16 + MLXArray.identity(16)
+            let l = try choleskyAccelerated(p)
+            XCTAssertEqual(l.shape, [2, 3, 16, 16])
+            XCTAssertLessThan(maxAbs(matmul(l, l.transposed(0, 1, 3, 2)) - p), 1e-4)
+            XCTAssertEqual(maxAbs(triu(l, k: 1)), 0)
+            let u = try choleskyAccelerated(p, upper: true)
+            XCTAssertLessThan(maxAbs(u - l.transposed(0, 1, 3, 2)), 1e-5)
+        }
+    }
+
+    func testSolveAndInverse() throws {
+        try onCPU {
+            let a = MLXRandom.normal([3, 20, 20]) + 8 * MLXArray.identity(20)
+            let b = MLXRandom.normal([3, 20, 4])
+            let x = try solveAccelerated(a, b)
+            XCTAssertEqual(x.shape, [3, 20, 4])
+            XCTAssertLessThan(maxAbs(matmul(a, x) - b), 1e-4)
+            let inverse = try invAccelerated(a)
+            XCTAssertLessThan(maxAbs(matmul(a, inverse) - MLXArray.identity(20)), 1e-4)
+            let l = tril(a)
+            let y = try solveTriangularAccelerated(l, b)
+            XCTAssertLessThan(maxAbs(matmul(l, y) - b), 1e-4)
+        }
+    }
+
     func testSVD() throws {
         try onCPU {
             for shape in [[8, 30, 10], [8, 10, 30]] {

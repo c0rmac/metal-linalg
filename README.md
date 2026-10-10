@@ -1,12 +1,17 @@
 # metal-linalg
 
-QR decomposition, symmetric eigendecomposition (`eigh`) and singular value
-decomposition (SVD) for batches of matrices on Apple Silicon GPUs, for
+QR decomposition, symmetric eigendecomposition (`eigh`), singular value
+decomposition (SVD), Cholesky factorization, LU factorization (with linear
+solve and inverse) and triangular solves for batches of matrices on Apple
+Silicon GPUs, for
 [MLX](https://github.com/ml-explore/mlx), [PyTorch](https://pytorch.org) and
 plain float buffers. On an M5 Pro it is **1.6-11x faster than Apple's LAPACK
-on all 18 CPU cores for one large matrix** (1024×1024 to 4096×4096, and
-13.9x at 8192), **1.3-5.7x faster for batches of thousands of small
-matrices**, and **4.9-30x faster than PyTorch's `torch.linalg`**, against
+on all 18 CPU cores for one large matrix** (QR, eigh and the SVD from
+1024×1024 to 4096×4096, and 13.9x at 8192; Cholesky, LU and the inverse
+1.3-3.4x from 2048-3072 to 4096), **1.3-5.7x faster for batches of thousands
+of small matrices**, and **4.9-30x faster than PyTorch's `torch.linalg`** for QR,
+eigh and the SVD (1.8-3.9x for Cholesky, LU, solve, inverse and triangular
+solves, which PyTorch has MPS kernels for), against
 whichever of its CPU and MPS paths is quicker ([where the GPU
 wins](#where-the-gpu-wins)). A C++ library, installed with Homebrew or built from
 source inside your own project, with Python packages for `mlx.core` arrays
@@ -16,8 +21,10 @@ mlx-swift's `MLXArray`).
 Each solver has several Metal kernels, one per regime (small matrices in large
 batches, large matrices spread over the whole GPU, long thin matrices), and
 every call is routed to the fastest of them, or to LAPACK on the CPU (a batch
-spread over every core), by a policy measured on the device it runs on. MLX's own `linalg::eigh` and
-`linalg::svd` (`mx.linalg.eigh` and `mx.linalg.svd` in Python) run only on the CPU.
+spread over every core), by a policy measured on the device it runs on. MLX's own `linalg::eigh`,
+`linalg::svd`, `linalg::cholesky`, `linalg::lu_factor`, `linalg::solve`, `linalg::inv` and
+`linalg::solve_triangular`
+(`mx.linalg.*` in Python) run only on the CPU.
 
 > **Contributions welcome: measure your Mac.** The routing is only as good as
 > the measurements behind it, and every new chip needs its own.
@@ -28,7 +35,7 @@ spread over every core), by a policy measured on the device it runs on. MLX's ow
 > estimated from them and published benchmarks, which lean toward the CPU and
 > miss some of what its GPU can do.
 > If you have an Apple Silicon Mac,
-> one command measures it (`python3 tuning/run.py`, about 40 minutes of the
+> one command measures it (`python3 tuning/run.py`, about 45 minutes of the
 > Mac's time on an M5 Pro, longer on smaller chips) and produces a results folder to send as a pull request. Each
 > run improves the library for everyone with that Mac, and runs from several
 > people with the same Mac are combined. Contributions are what keep the
@@ -46,7 +53,10 @@ spread over every core), by a policy measured on the device it runs on. MLX's ow
 - [Overview](#overview)
   - [What it provides](#what-it-provides)
   - [Platforms](#platforms)
-  - [Where the GPU wins](#where-the-gpu-wins)
+  - [Where the GPU wins](#where-the-gpu-wins):
+    [QR](#qr), [eigh](#symmetric-eigensolver-eigh-eigvalsh), [SVD](#svd-svd-svdvals),
+    [Cholesky](#cholesky), [LU, solve and inverse](#lu-solve-and-inverse),
+    [triangular solve](#triangular-solve)
   - [How calls are routed](#how-calls-are-routed)
 - [C++](#c)
   - [Install with Homebrew](#install-with-homebrew)
@@ -86,6 +96,9 @@ spread over every core), by a policy measured on the device it runs on. MLX's ow
 | QR | `qr_accelerated` | Householder in one simdgroup's registers, or blocked in one threadgroup, per matrix; grid-parallel blocked Householder | LAPACK `sgeqrf`, `sorgqr` | [docs/qr.md](docs/qr.md) |
 | symmetric eigendecomposition | `eigh_accelerated`, `eigvalsh_accelerated` | whole-matrix Jacobi; block Jacobi; tridiagonalization and implicit QL in one simdgroup's registers (N <= 32) or one threadgroup per matrix (N <= 87); a batch of mid-size matrices tridiagonalized together, their tridiagonal problems on every CPU core (N <= 1024); Householder tridiagonalization for large N (with LAPACK's tridiagonal solver, or bisection on the GPU for eigenvalues alone); for large N, a two-stage reduction (to a band on the GPU, then to tridiagonal on every CPU core, the eigenvectors' transformations applied on the GPU) | LAPACK `ssyevd`; `ssyevd_2stage` for eigenvalues alone from N = 128 | [docs/eigh.md](docs/eigh.md) |
 | thin SVD | `svd_accelerated`, `svdvals_accelerated` | whole-matrix one-sided Jacobi; block one-sided Jacobi; either after QR for tall input; bidiagonalization and implicit QR in one simdgroup's registers (up to 32 x 32) or one threadgroup per matrix (k <= 83); a batch of mid-size matrices bidiagonalized together, their bidiagonal problems on every CPU core (up to 1024 x 1024); Householder bidiagonalization for large k (with LAPACK's bidiagonal solver, or bisection on the GPU for singular values alone); for large k, a two-stage reduction (to a band on the GPU, then to bidiagonal on every CPU core, the singular vectors' transformations applied on the GPU) | LAPACK `sgesdd` | [docs/svd.md](docs/svd.md) |
+| Cholesky (since 2.18.0) | `cholesky_accelerated`, `cholesky_ex_accelerated` | in one simdgroup's registers (up to 32 x 32); one threadgroup per matrix; for large N, 32-column sub-panels each brought up to date, factored and solved in one dispatch, the trailing update as MPS products on the lower triangle | LAPACK `spotrf` (lower, padded) | [docs/cholesky.md](docs/cholesky.md) |
+| LU, solve, inverse (since 2.18.0) | `lu_factor_accelerated`, `solve_accelerated`, `inv_accelerated` (and `_ex` forms with `info`) | for large N, the GPU and the CPU on one matrix: pivoted panels on the CPU in shared memory with a look-ahead, row swaps and MPS products on the GPU; blocked triangular solves on the GPU | LAPACK `sgetrf`, `sgetrs`, `sgetri` (padded) | [docs/lu.md](docs/lu.md) |
+| triangular solve (since 2.18.0) | `solve_triangular_accelerated` | blocked: 128 rows at a time, two MPS products a block with the diagonal blocks' inverses | BLAS `strsm` | [docs/trsm.md](docs/trsm.md) |
 
 On the CPU a batch is spread over every core, each solving whole matrices
 (`set_cpu_threads()` or `METAL_LINALG_CPU_THREADS` caps it).
@@ -93,7 +106,9 @@ On the CPU a batch is spread over every core, each solving whole matrices
 Input is any batch shape `[..., M, N]`, any real dtype (computed in float32),
 any magnitude from 1e-30 to 1e+37, rank-deficient or not. The eigensolver and
 the SVD return NaN for a non-finite matrix rather than raising, leaving the
-rest of its batch intact. The SVD's factors are the thin ones,
+rest of its batch intact; so does Cholesky for a matrix that is not positive
+definite, with LAPACK's `info` from `cholesky_ex_accelerated` (the PyTorch
+package raises, as `torch.linalg.cholesky` does). The SVD's factors are the thin ones,
 `K = min(M, N)`; QR's too by default, with numpy's and torch's other modes:
 R alone (Q never formed: up to 1.8x faster on the GPU, 2.8x on the CPU)
 and a square, complete Q.
@@ -113,108 +128,211 @@ The same solvers and routing, from five places, each on an Apple Silicon Mac:
 ### Where the GPU wins
 
 On an Apple M5 Pro (20 GPU cores), against a CPU path that spreads every call
-over all 18 CPU cores, the GPU wins in two places, and the router sends work
-there and nowhere else.
+over all 18 CPU cores, the GPU wins for large matrices and for large batches
+of small ones, and the router sends work there and nowhere else. Lone small
+matrices and small batches stay on the CPU, which is up to 100x faster there:
+since 2.9.0 it spreads a batch over every core ([the performance-headroom
+study](docs/studies/performance-headroom-apple-m5-pro.md) has why). Each table
+below is the GPU backend the router uses against the library's own CPU path,
+in bold where the GPU is the faster; the full tables are in the per-solver docs.
 
-**One large matrix: up to 11x, and 13.9x at 8192.** eigh and the SVD keep
-LAPACK's method and move its memory-bound reduction (to tridiagonal or
-bidiagonal form) and its back-transformation to the GPU; the divide and
-conquer between them runs on every CPU core (since 2.15.0). For the eigenvalues
-or singular values alone, large matrices are reduced in two stages (since
-2.13.0): to a band on the GPU, in blocks whose work is matrix products, then
-to tridiagonal or bidiagonal on every CPU core, and the values come from
-bisection on the GPU. Since 2.15.0 the SVD with vectors can take the two
-stages too, both stages' transformations applied on the GPU while the CPU
-chases the band and solves the bidiagonal problem. QR runs on the same
-panels and matrix products (since 2.15.0, a batch at once). One N×N matrix
-against the CPU:
+#### QR
+
+QR runs on panels and matrix products for large matrices (the blocked QR,
+since 2.15.0, a batch at once), and since 2.16.0 on Householder kernels for
+batches: up to 32 columns in a simdgroup's registers, above that blocked in a
+threadgroup, the updates as 8×8 simdgroup matrix products. One N×N matrix:
 
 | | 1024 | 1536 | 2048 | 3072 | 4096 |
 |---|---|---|---|---|---|
-| svdvals, singular values alone | 1.88x | 2.52x | **3.69x** | **7.22x** | **10.1x** |
-| eigh, with eigenvectors | 1.94x | 2.63x | **3.92x** | **6.07x** | **11.0x** |
-| eigvalsh, eigenvalues alone | 1.58x | 1.98x | 2.25x | **3.06x** | **3.73x** |
-| SVD, with vectors | 2.09x | 2.68x | **3.99x** | **6.48x** | **8.43x** |
 | QR | **3.24x** | **4.07x** | **6.21x** | **7.67x** | **10.4x** |
 
-At 8192, the singular values alone take 1.06 s against the CPU's 12.6 s
-(11.8x), eigh 1.27 s against 17.6 s (13.9x), and the eigenvalues alone 0.71 s
-against 2.64 s (3.7x, against LAPACK's own two-stage driver). The M5 Pro uses
-these backends for one matrix or a few: eigh and the SVD with vectors from
-N = 512 (two stages, since 2.17.0 eigh's too: its eigenvectors' transformations
-applied on the GPU), svdvals from 768, eigvalsh from 1024, QR from 512; a
-few of them in two stages are reduced as one batch. The CPU path, faster
-in 2.17.0 with vectors (its divide and conquer on every core), lowered the
-SVD's ratios against 2.16.0's while the GPU's times held (`bidiag`, the
-one-stage reduction, 3.5x at 4096). QR's GPU path takes batches too: 16 of
-1024×1024 2.1x, 4 of 2048×2048 4.5x, and tall matrices, one 8192×512 5.7x.
-At 4096, 2.14 had svdvals at 8.62x, eigh 5.62x, eigvalsh 2.91x, the SVD with
-vectors 2.32x and QR 2.7x.
-
-**Large batches of small matrices: up to 5.7x.** LAPACK's own methods, a
-matrix to a threadgroup or a simdgroup, carry the GPU's lead: the
-eigensolver's `ql` kernel (tridiagonalization and QL), the SVD's
-`golub_kahan` (bidiagonalization and implicit QR, 1.6-3x faster than the
-Jacobi kernels it replaced), and since 2.16.0 QR's Householder kernels (up to
-32 columns in a simdgroup's registers; above that blocked in a threadgroup,
-the updates as 8×8 simdgroup matrix products), which take QR's batches from
-the CPU from 64×64 at 256 matrices and lead by 5.2-5.7x at 128×128. eigh's
-and the SVD's large batches are shared, the GPU and the CPU solving them at
-once (from 256 matrices, eigh's from N = 48 and the SVD's from k = 32: below
-those, since 2.17.0, the kernels in registers alone are faster), up to 64×64
-for eigh and 80×80 for the SVD. The best GPU route against the CPU alone:
+Batches and tall matrices too: 16 of 1024×1024 2.1x, 4 of 2048×2048 4.5x, one
+8192×512 5.7x. Batches of small matrices:
 
 | | lone matrix | batch 16 | batch 256 | batch 4096 |
 |---|---|---|---|---|
-| eigh 24×24 | 0.22x | 0.40x | 1.31x | **2.44x** |
-| eigh 32×32 | 0.31x | 0.42x | 1.41x | **2.51x** |
-| eigh 64×64 | 0.74x | 0.27x | 0.95x | 1.67x |
-| eigvalsh 32×32 | 0.36x | 0.60x | 1.34x | **3.58x** |
-| SVD 16×16 | 0.15x | 0.66x | 1.35x | **3.92x** |
-| SVD 32×32 | 0.43x | 0.57x | 1.76x | **2.87x** |
-| SVD 48×48 | 0.67x | 0.38x | 1.67x | **2.09x** |
-| SVD 64×64 | 0.76x | 0.35x | 1.18x | 1.68x |
-| QR 16×16 | 0.02x | 0.28x | 0.53x | 1.32x |
-| QR 32×32 | 0.06x | 0.63x | 0.63x | **3.14x** |
-| QR 64×64 | 0.23x | 0.87x | 1.37x | **2.42x** |
-| QR 128×128 | 0.82x | 1.32x | **5.19x** | **5.72x** |
-| QR 256×256 | 1.03x | 1.59x | **2.81x** | **2.90x** |
+| 16×16 | 0.02x | 0.28x | 0.53x | **1.32x** |
+| 32×32 | 0.06x | 0.63x | 0.63x | **3.14x** |
+| 64×64 | 0.23x | 0.87x | **1.37x** | **2.42x** |
+| 128×128 | 0.82x | **1.32x** | **5.19x** | **5.72x** |
+| 256×256 | **1.03x** | **1.59x** | **2.81x** | **2.90x** |
 
-QR 16×16 at 4096 matrices takes 0.27-0.31 ms on the GPU in some runs and
+16×16 at 4096 matrices takes 0.27-0.31 ms on the GPU in some runs and
 0.68-0.80 ms in others, its clocks' state (2.9x the CPU or 1.25x); the table
 has the slower, which all four of its passes measured.
 
-**Batches of mid-size matrices: up to 2.5x** (since 2.17.0). The whole
-batch is reduced together on the GPU, a threadgroup a matrix and panel, and
-the tridiagonal or bidiagonal problems are solved on every CPU core under
-it (`tridiag_batch`, `bidiag_batch`; from 384, two stages); against the CPU
-alone:
+#### Symmetric eigensolver (eigh, eigvalsh)
+
+For large matrices eigh keeps LAPACK's method and moves its memory-bound
+reduction to tridiagonal form and its back-transformation to the GPU, the
+divide and conquer between them on every CPU core (since 2.15.0). One matrix
+or a few go in two stages (eigh from N = 512, eigvalsh from 1024): to a band
+on the GPU in blocks whose work is matrix products, then to tridiagonal on
+every CPU core (since 2.13.0 for the eigenvalues alone, which come from
+bisection on the GPU; since 2.17.0 with eigenvectors, their transformations
+applied on the GPU). One N×N matrix:
+
+| | 1024 | 1536 | 2048 | 3072 | 4096 |
+|---|---|---|---|---|---|
+| eigh, with eigenvectors | **1.94x** | **2.63x** | **3.92x** | **6.07x** | **11.0x** |
+| eigvalsh, eigenvalues alone | **1.58x** | **1.98x** | **2.25x** | **3.06x** | **3.73x** |
+
+At 8192, eigh takes 1.27 s against the CPU's 17.6 s (13.9x) and the
+eigenvalues alone 0.71 s against 2.64 s (3.7x, against LAPACK's own
+two-stage driver). Large batches of small matrices go to the `ql` kernel
+(tridiagonalization and QL, a matrix to a simdgroup or a threadgroup), shared
+with the CPU from 256 matrices and N = 48:
+
+| | lone matrix | batch 16 | batch 256 | batch 4096 |
+|---|---|---|---|---|
+| eigh 24×24 | 0.22x | 0.40x | **1.31x** | **2.44x** |
+| eigh 32×32 | 0.31x | 0.42x | **1.41x** | **2.51x** |
+| eigh 64×64 | 0.74x | 0.27x | 0.95x | **1.67x** |
+| eigvalsh 32×32 | 0.36x | 0.60x | **1.34x** | **3.58x** |
+
+Batches of mid-size matrices (since 2.17.0) are reduced together on the GPU,
+a threadgroup a matrix and panel, their tridiagonal problems solved on every
+CPU core under it (`tridiag_batch`):
 
 | | batch 16 | batch 64 | batch 256 | batch 1024 |
 |---|---|---|---|---|
-| eigh 128×128 | 0.39x | 0.87x | 1.19x | 1.52x |
-| eigh 256×256 | 0.87x | 1.31x | 1.57x | 1.67x |
-| eigh 512×512 | 1.05x | 1.36x | 1.40x | 1.48x |
-| eigvalsh 128×128 | 0.34x | 0.61x | 1.24x | 1.50x |
-| eigvalsh 256×256 | 0.60x | 0.87x | 0.99x | 1.11x |
-| SVD 128×128 | 0.71x | 1.06x | 1.63x | **2.05x** |
-| SVD 256×256 | 0.77x | 1.23x | 1.55x | 1.55x |
-| SVD 512×512 | 1.01x | 1.36x | 1.16x | 1.12x |
-| svdvals 128×128 | 0.64x | 1.64x | **2.38x** | **2.53x** |
-| svdvals 256×256 | 0.76x | 1.23x | 1.39x | 1.56x |
+| eigh 128×128 | 0.39x | 0.87x | **1.19x** | **1.52x** |
+| eigh 256×256 | 0.87x | **1.31x** | **1.57x** | **1.67x** |
+| eigh 512×512 | **1.05x** | **1.36x** | **1.40x** | **1.48x** |
+| eigvalsh 128×128 | 0.34x | 0.61x | **1.24x** | **1.50x** |
+| eigvalsh 256×256 | 0.60x | 0.87x | 0.99x | **1.11x** |
 
-Lone small matrices and small batches stay on the CPU, which is up to 100x faster
-there: since 2.9.0 it spreads a batch over every core ([the
-performance-headroom study](docs/studies/performance-headroom-apple-m5-pro.md)
-has why). The numbers for one large matrix are 2.17.0's, measured side by
-side with the CPU path (`sweep_eigh`, `sweep_svd`, `sweep_qr`, median, MLX's
-buffer cache on as an MLX program has it; at 8192 the CPU's for the values
-alone from 2.15.0, its path unchanged since); the batches' too (each GPU
-backend against the CPU path, the best of four passes for small matrices
-and two for mid-size ones, sharing from batch 64 as the routing sweeps time
-it), and QR's batches of large and tall matrices (the best of two passes). The full tables are in the per-solver docs; how the two-stage reduction
-got there is in [the two-stage study](docs/studies/two-stage-apple-m5-pro.md),
-and 2.15.0's changes in [its study](docs/studies/proposals-2-15-apple-m5-pro.md).
+#### SVD (svd, svdvals)
+
+The SVD takes the same routes as eigh, through bidiagonal form: for large
+matrices the reduction and the back-transformation on the GPU and the divide
+and conquer on every CPU core, one matrix or a few in two stages (the SVD with
+vectors from 512, since 2.15.0; svdvals from 768). One N×N matrix:
+
+| | 1024 | 1536 | 2048 | 3072 | 4096 |
+|---|---|---|---|---|---|
+| SVD, with vectors | **2.09x** | **2.68x** | **3.99x** | **6.48x** | **8.43x** |
+| svdvals, singular values alone | **1.88x** | **2.52x** | **3.69x** | **7.22x** | **10.1x** |
+
+At 8192 the singular values alone take 1.06 s against the CPU's 12.6 s
+(11.8x). Large batches of small matrices go to `golub_kahan`
+(bidiagonalization and implicit QR in a simdgroup's registers or a
+threadgroup, 1.6-3x faster than the Jacobi kernels it replaced), shared with
+the CPU from 256 matrices and k = 32:
+
+| | lone matrix | batch 16 | batch 256 | batch 4096 |
+|---|---|---|---|---|
+| 16×16 | 0.15x | 0.66x | **1.35x** | **3.92x** |
+| 32×32 | 0.43x | 0.57x | **1.76x** | **2.87x** |
+| 48×48 | 0.67x | 0.38x | **1.67x** | **2.09x** |
+| 64×64 | 0.76x | 0.35x | **1.18x** | **1.68x** |
+
+Batches of mid-size matrices, bidiagonalized together (`bidiag_batch`, since
+2.17.0):
+
+| | batch 16 | batch 64 | batch 256 | batch 1024 |
+|---|---|---|---|---|
+| SVD 128×128 | 0.71x | **1.06x** | **1.63x** | **2.05x** |
+| SVD 256×256 | 0.77x | **1.23x** | **1.55x** | **1.55x** |
+| SVD 512×512 | **1.01x** | **1.36x** | **1.16x** | **1.12x** |
+| svdvals 128×128 | 0.64x | **1.64x** | **2.38x** | **2.53x** |
+| svdvals 256×256 | 0.76x | **1.23x** | **1.39x** | **1.56x** |
+
+#### Cholesky
+
+Since 2.18.0 ([docs/cholesky.md](docs/cholesky.md)). Cholesky is $N^3/3$
+work, a third of QR's, and the CPU path (`spotrf` on every core) is quick at
+it; the GPU's path for large matrices factors 32-column sub-panels a dispatch
+each and updates the rest by MPS products. A lone matrix goes to the GPU from
+3072, batches from 1536:
+
+| | lone matrix | batch 2 | batch 4 | batch 16 |
+|---|---|---|---|---|
+| 1024×1024 | 0.38x | 0.55x | 0.64x | 0.84x |
+| 1536×1536 | 0.66x | **1.11x** | **1.71x** | **2.39x** |
+| 2048×2048 | 0.88x | **1.37x** | **1.89x** | **2.39x** |
+| 3072×3072 | **1.33x** | **1.89x** | **2.51x** | |
+| 4096×4096 | **2.25x** | **3.19x** | **3.89x** | |
+
+Below 1536 the CPU path wins every batch on this Mac (the nearest the GPU
+kernels come is 0.93x, 4096 matrices of 8×8). MLX's own
+`mx.linalg.cholesky` runs on the CPU, a matrix at a time:
+
+| | MLX | metal-linalg | |
+|---|---|---|---|
+| 16384 × 32×32 | 21.8 ms | 0.96 ms | 22.7x |
+| 16 × 1024×1024 | 11.2 ms | 3.59 ms | 3.1x |
+| one 4096×4096 | 32.0 ms | 13.4 ms | 2.4x |
+
+#### LU, solve and inverse
+
+Since 2.18.0 ([docs/lu.md](docs/lu.md)). The GPU's path splits each matrix
+between the two: the CPU factors each pivoted panel of 128 columns in memory
+the GPU shares, and brings the next panel up to date itself, while the GPU
+swaps rows and updates the rest by matrix products; `solve` and `inv` finish
+with blocked triangular solves on the GPU. The router takes it from 1536:
+
+| | 1024 | 1536 | 2048 | 3072 | 4096 |
+|---|---|---|---|---|---|
+| lu_factor | 0.74x | **1.03x** | **1.37x** | **2.05x** | **2.98x** |
+| lu_factor, batch 2 | 0.49x | **1.03x** | **1.38x** | **2.34x** | **2.96x** |
+| inv | **1.01x** | **1.44x** | **1.97x** | **2.93x** | **3.44x** |
+| inv, batch 2 | 0.72x | **1.45x** | **2.03x** | **2.98x** | **3.39x** |
+| solve, 1 right-hand side | 0.73x | | 0.97x | | **2.73x** |
+| solve, 256 right-hand sides | 0.68x | | **1.36x** | | **2.67x** |
+
+MLX's own `lu_factor`, `solve` and `inv` run on the CPU:
+
+| | MLX | metal-linalg | |
+|---|---|---|---|
+| lu_factor, one 4096×4096 | 130 ms | 16.5 ms | 7.9x |
+| solve, one 4096×4096, 1 right-hand side | 283 ms | 19.2 ms | 14.7x |
+| inv, one 4096×4096 | 144 ms | 40.0 ms | 3.6x |
+| inv, 4096 × 8×8 | 3.19 ms | 0.24 ms | 13.1x |
+
+#### Triangular solve
+
+Since 2.18.0 ([docs/trsm.md](docs/trsm.md)). The GPU solves 128 rows at a
+time, two MPS products a block with the inverses of the diagonal blocks; its
+work is $N^2 K$ for $K$ right-hand sides, and the router takes it from N = 2048
+with 1024 of them. One N×N lower triangle:
+
+| | 1024 | 2048 | 3072 | 4096 |
+|---|---|---|---|---|
+| 1 right-hand side | 0.29x | 0.52x | **1.04x** | **1.49x** |
+| 256 right-hand sides | 0.28x | 0.57x | 0.75x | 0.98x |
+| 1024 right-hand sides | 0.93x | **1.86x** | **2.27x** | **2.37x** |
+| 4096 right-hand sides | | | | **3.99x** |
+
+(3072 and 4096 with one right-hand side are faster on the GPU, but the rule
+on N and K together keeps them on the CPU.) Against MLX's own
+`solve_triangular` (CPU):
+
+| | MLX | metal-linalg | |
+|---|---|---|---|
+| 4096×4096, 4096 right-hand sides | 108 ms | 13.3 ms | 8.1x |
+| 2048×2048, 1024 right-hand sides | 8.6 ms | 1.73 ms | 5.0x |
+| 4096×4096, 1 right-hand side | 46 ms | 3.8 ms | 12.1x |
+
+#### How these were measured
+
+QR's, eigh's and the SVD's numbers are 2.17.0's, measured side by side with
+the CPU path by the routing sweeps (`sweep_eigh`, `sweep_svd`, `sweep_qr`,
+median, MLX's buffer cache on as an MLX program has it; at 8192 the CPU's for
+the values alone from 2.15.0, its path unchanged since): one large matrix and
+QR's batches of large and tall matrices the best of two passes, small batches
+of four, mid-size of two, sharing from batch 64 as the routing sweeps time it.
+The CPU path, faster in 2.17.0 with vectors (its divide and conquer on every
+core), lowered the SVD's ratios against 2.16.0's while the GPU's times held
+(`bidiag`, the one-stage reduction, 3.5x at 4096). Cholesky's, LU's and the
+triangular solve's are 2.18.0's routing sweeps (runs `20261010-e37928`,
+`-22fef9` and `-b7aec3`: median, the faster of two passes), and the
+comparisons with MLX's own `benchmark_cholesky`, `benchmark_lu` and
+`benchmark_trsm` (median, the router's choice against MLX's). How the
+two-stage reduction got there is in [the two-stage
+study](docs/studies/two-stage-apple-m5-pro.md), and 2.15.0's changes in [its
+study](docs/studies/proposals-2-15-apple-m5-pro.md).
 
 ### How calls are routed
 
@@ -223,11 +341,11 @@ chip, so each solver's thresholds are a table of measured policies keyed on
 the Metal device name and GPU core count:
 
 <!-- generated by tuning/generate_tables.py from docs/results/; do not edit -->
-| device | QR | eigh | SVD |
-|---|---|---|---|
-| Apple M1, 8 GPU cores | estimated (out of date) | estimated (out of date) | estimated |
-| Apple M5 Pro, 20 GPU cores | measured | measured | measured |
-| anything else | estimated | estimated | estimated |
+| device | QR | eigh | SVD | Cholesky | LU | triangular solve |
+|---|---|---|---|---|---|---|
+| Apple M1, 8 GPU cores | estimated (out of date) | estimated (out of date) | estimated | estimated | estimated | estimated |
+| Apple M5 Pro, 20 GPU cores | measured | measured | measured | measured | measured | measured |
+| anything else | estimated | estimated | estimated | estimated | estimated | estimated |
 
 Every chip, and what is current: [the measurements page](https://c0rmac.github.io/metal-linalg/docs/measurements).
 <!-- end of generated table -->
@@ -418,7 +536,10 @@ ml.eigh_backend(512, 1)      # 'cpu': which backend a shape gets on this Mac
 ```
 
 Inputs may be `mx.array`, NumPy arrays or nested lists; outputs are float32
-`mx.array`. `ml.eigvalsh` and `ml.svdvals` return the values alone.
+`mx.array`. `ml.eigvalsh` and `ml.svdvals` return the values alone;
+`ml.cholesky(p)` factors symmetric positive definite matrices, and
+`ml.cholesky_ex(p)` says which were not; `ml.lu_factor`, `ml.solve` and
+`ml.inv` as `mx.linalg`'s, and `ml.solve_triangular`.
 
 ### With PyTorch
 
@@ -439,6 +560,9 @@ a = torch.randn(1000, 64, 32, device="mps")   # or on the CPU
 Q, R = mlt.qr(a)                              # like torch.linalg.qr
 U, S, Vh = mlt.svd(a)                         # thin factors, like torch.linalg.svd(a, full_matrices=False)
 L, V = mlt.eigh(a.mT @ a)                     # like torch.linalg.eigh
+C = mlt.cholesky(a.mT @ a + torch.eye(32, device=a.device))   # like torch.linalg.cholesky
+X = mlt.solve(a.mT @ a + torch.eye(32, device=a.device), a.mT)  # like torch.linalg.solve; inv, lu_factor too
+Y = mlt.solve_triangular(C, a.mT, upper=False)                  # like torch.linalg.solve_triangular
 mlt.svd_backend(4096, 4096)                   # 'bidiag': which backend a shape gets on this Mac
 ```
 
@@ -472,6 +596,26 @@ the CPU at once), 4.9x for eigh of one 2048×2048
 and 10x for the SVD of one 4096×4096 with its vectors, and 10-14x for its
 eigenvalues or singular values alone (the last three by a two-stage
 reduction).
+
+The functions new in 2.18.0, where PyTorch 2.13 has MPS kernels of its own
+(`python benchmarks/benchmark_torch.py --new`, best of ten calls, two runs):
+
+| | torch, CPU | torch, MPS | metal-linalg-torch |
+|---|---|---|---|
+| cholesky, one 4096×4096 | 82 ms | 23 ms | 13 ms |
+| cholesky, 4 × 2048×2048 | 60 ms | 13 ms | 6.7 ms |
+| cholesky, 4096 × 32×32 | 1.3 ms | 1.3 ms | 0.38 ms |
+| lu_factor, one 4096×4096 | 68 ms | 59 ms | 15 ms |
+| lu_factor, 4 × 2048×2048 | 31 ms | 101 ms | 17 ms |
+| solve, one 4096×4096, 1 rhs | 73 ms | 285 ms | 19 ms |
+| solve, one 2048×2048, 512 rhs | 14 ms | 34 ms | 6.9 ms |
+| inv, one 4096×4096 | 154 ms | 135 ms | 40 ms |
+| inv, 1024 × 64×64 | 4.4 ms | 800 ms | 1.7 ms |
+| solve_triangular, 4096×4096, 4096 rhs | 58 ms | 37 ms | 14 ms |
+
+Ahead of torch's faster path on every row, by 1.8-3.9x (the batch of 32×32
+Cholesky factorizations is on this library's CPU path, whose `spotrf` calls
+are faster than torch's; the rest on the GPU).
 
 [python-torch/README.md](python-torch/README.md) has the details: what differs
 from `torch.linalg`, gradients, and MPS tensors.
@@ -641,9 +785,12 @@ lists them.
 | `<metal_linalg/qr.h>` | `qr_accelerated(a, mode)`; `QrPolicy`, `qr_policy()`, `set_qr_policy()`, `qr_policy_source()`; `qr_backend(m, n, batch)` |
 | `<metal_linalg/eigh.h>` | `eigh_accelerated`, `eigvalsh_accelerated`; `EighPolicy`, `eigh_policy()`, `set_eigh_policy()`, `eigh_policy_source()`; `eigh_backend(n, batch)`, `eigvalsh_backend(n, batch)`, `eigh_uses_gpu`, `eigvalsh_uses_gpu` |
 | `<metal_linalg/svd.h>` | `svd_accelerated`, `svdvals_accelerated`; `SvdPolicy`, `svd_policy()`, `set_svd_policy()`, `svd_policy_source()`; `svd_backend(m, n, batch)`, `svdvals_backend(m, n, batch)`, `svd_uses_gpu`, `svdvals_uses_gpu` |
+| `<metal_linalg/triangular.h>` | `solve_triangular_accelerated(a, b, upper, unit_diagonal)`; `TrsmPolicy`, `trsm_policy()`, `set_trsm_policy()`, `trsm_policy_source()`; `trsm_backend(n, k, batch)` |
+| `<metal_linalg/lu.h>` | `lu_factor_accelerated(a)`, `solve_accelerated(a, b)`, `inv_accelerated(a)` and `_ex` forms (with `info`); `LuPolicy`, `lu_policy()`, `set_lu_policy()`, `lu_policy_source()`; `lu_backend(n, batch)` |
+| `<metal_linalg/cholesky.h>` | `cholesky_accelerated(a, upper)`, `cholesky_ex_accelerated` (with `info`); `CholeskyPolicy`, `cholesky_policy()`, `set_cholesky_policy()`, `cholesky_policy_source()`; `cholesky_backend(n, batch)` |
 | `<metal_linalg/device.h>` | `device_name()`, `gpu_core_count()`: the GPU the policies were resolved for; `cpu_threads()`, `set_cpu_threads()`: how many cores the CPU paths spread a batch over |
-| `<metal_linalg/core.h>` | the same on float buffers, without MLX: `core::qr`, `core::eigh`, `core::svd`; the policies, backends and options |
-| `<metal_linalg/c_api.h>` | the C API: `metal_linalg_qr`, `_qr_with_mode`, `_eigh`, `_svd`, the routing queries and policies |
+| `<metal_linalg/core.h>` | the same on float buffers, without MLX: `core::qr`, `core::eigh`, `core::svd`, `core::cholesky`, `core::lu_factor`, `core::solve`, `core::inv`, `core::solve_triangular`; the policies, backends and options |
+| `<metal_linalg/c_api.h>` | the C API: `metal_linalg_qr`, `_qr_with_mode`, `_eigh`, `_svd`, `_cholesky`, `_lu_factor`, `_solve`, `_inv`, `_solve_triangular`, the routing queries and policies |
 
 Each header's `metal_linalg::detail` namespace has the individual backends,
 which always run their kernel, with options (tolerances, sweep bounds, launch
@@ -653,15 +800,19 @@ harnesses use.
 ### Tests and benchmarks
 
 ```sh
-ctest --test-dir build --output-on-failure    # test_qr, test_eigh, test_svd, test_core, test_c_api, the examples
+ctest --test-dir build --output-on-failure    # test_qr, test_eigh, test_svd, test_cholesky, test_lu, test_trsm, test_core, test_c_api, the examples
 ./build/benchmark_qr                          # GPU against the CPU, per solver
 ./build/benchmark_eigh
 ./build/benchmark_svd
+./build/benchmark_cholesky                    # also against MLX's own mx.linalg.cholesky
+./build/benchmark_lu                          # lu_factor, solve, inv, also against MLX's own
+./build/benchmark_trsm                        # the triangular solve, also against MLX's own
 ./build/sweep_svd --policy                    # the device and the policy in effect
 ```
 
-The tests (116 QR, 319 eigh and 384 SVD checks through MLX, 208 on the buffer
-API and 66 on the C API) cover every backend directly and through the router,
+The tests (382 QR, 456 eigh, 611 SVD, 1409 Cholesky, 491 LU and 204
+triangular solve checks through MLX, 271 on the buffer API and 186 on the C
+API) cover every backend directly and through the router,
 shapes around every kernel boundary, batches, transposed views, structured
 and rank-deficient input, magnitudes from 1e-30 to 1e+37, NaN inside a batch
 (eigh, SVD), and the routing policies without assuming any device's values.
@@ -686,7 +837,9 @@ The Python (MLX and PyTorch) and Swift packages have their own tests; see their 
 ### Further documentation
 
 - [QR](docs/qr.md), [symmetric eigensolver](docs/eigh.md),
-  [SVD](docs/svd.md): algorithms, kernels, routing, accuracy, performance
+  [SVD](docs/svd.md), [Cholesky](docs/cholesky.md), [LU, solve and
+  inverse](docs/lu.md), [triangular solve](docs/trsm.md): algorithms, kernels,
+  routing, accuracy, performance
 - Other languages: [C](docs/c-api.md), [Swift](docs/swift.md),
   [Objective-C](docs/objective-c.md), Python with [MLX](python/README.md) or
   [PyTorch](python-torch/README.md)

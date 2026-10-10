@@ -97,6 +97,56 @@ class Decompositions(unittest.TestCase):
         self.assertEqual((u.shape, s.shape, vt.shape), ((8, 20, 20), (8, 20), (8, 20, 50)))
         self.assertLess(max_abs(mm(u * s[..., None, :], vt) - a), 1e-4)
 
+    def test_cholesky(self):
+        a = mx.random.normal((16, 40, 40))
+        p = mm(a, a.swapaxes(-1, -2)) / 40 + eye(40)
+        l = ml.cholesky(p)
+        self.assertEqual(l.shape, (16, 40, 40))
+        self.assertLess(max_abs(mm(l, l.swapaxes(-1, -2)) - p) / max_abs(p), 1e-5)
+        self.assertEqual(max_abs(mx.triu(l, 1)), 0.0)
+        self.assertTrue(mx.all(mx.diagonal(l, axis1=-2, axis2=-1) > 0).item())
+        u = ml.cholesky(p, upper=True)
+        self.assertLess(max_abs(u - l.swapaxes(-1, -2)), 1e-5)
+        # only the triangle named is read
+        junk = mx.tril(p) + mx.triu(mx.full((40, 40), 9.0), 1)
+        self.assertLess(max_abs(ml.cholesky(junk) - l), 1e-5)
+
+    def test_cholesky_ex(self):
+        p = mx.array([[[4.0, 2.0], [2.0, 3.0]], [[1.0, 2.0], [2.0, 1.0]]])
+        l, info = ml.cholesky_ex(p)
+        self.assertEqual(info.tolist(), [0, 2])   # the second's minor of order 2 is not positive
+        self.assertEqual(info.dtype, mx.uint32)
+        self.assertLess(max_abs(l[0] - mx.array([[2.0, 0.0], [1.0, math.sqrt(2.0)]])), 1e-6)
+        self.assertTrue(mx.all(mx.isnan(l[1])).item())
+        self.assertTrue(mx.all(mx.isnan(ml.cholesky(p)[1])).item())
+
+    def test_lu(self):
+        a = mx.random.normal((8, 30, 30)) + 6 * eye(30)
+        lu, piv = ml.lu_factor(a)
+        self.assertEqual((lu.shape, piv.shape, piv.dtype), ((8, 30, 30), (8, 30), mx.uint32))
+        b = mx.random.normal((8, 30, 3))
+        x = ml.solve(a, b)
+        self.assertLess(max_abs(mm(a, x) - b), 1e-4)
+        v = ml.solve(a, mx.ones((8, 30)))
+        self.assertEqual(v.shape, (8, 30))
+        self.assertLess(max_abs(ml.inv(a) - mx.linalg.inv(a, stream=mx.cpu)), 1e-4)
+        singular = mx.array([[1.0, 2.0], [2.0, 4.0]])
+        x, info = ml.inv_ex(singular)
+        self.assertEqual(info.item(), 2)
+        self.assertTrue(mx.all(mx.isnan(x)).item())
+        _, _, info = ml.lu_factor_ex(singular)
+        self.assertEqual(info.item(), 2)
+
+    def test_solve_triangular(self):
+        a = mx.tril(mx.random.normal((4, 30, 30)) * 0.1) + 2 * eye(30)
+        b = mx.random.normal((4, 30, 5))
+        x = ml.solve_triangular(a, b)
+        self.assertLess(max_abs(mm(a, x) - b), 1e-4)
+        u = a.swapaxes(-1, -2)
+        self.assertLess(max_abs(mm(u, ml.solve_triangular(u, b, upper=True)) - b), 1e-4)
+        self.assertEqual(ml.solve_triangular(a, b[..., 0]).shape, (4, 30))
+        self.assertIn(ml.trsm_backend(4096, 4096), {"cpu", "blocked"})
+
     def test_accepts_lists(self):
         q, r = ml.qr([[1.0, 2.0], [3.0, 4.0]])
         self.assertLess(max_abs(mm(q, r) - mx.array([[1.0, 2.0], [3.0, 4.0]])), 1e-5)
@@ -116,7 +166,7 @@ class Decompositions(unittest.TestCase):
         # Complex input would otherwise lose its imaginary part silently:
         # this Hermitian matrix has eigenvalues 1 and 3, its real part 2 and 2.
         hermitian = mx.array([[2 + 0j, 1j], [-1j, 2 + 0j]])
-        for fn in (ml.qr, ml.eigh, ml.eigvalsh, ml.svd, ml.svdvals):
+        for fn in (ml.qr, ml.eigh, ml.eigvalsh, ml.svd, ml.svdvals, ml.cholesky, ml.lu_factor, ml.inv):
             with self.assertRaisesRegex(ValueError, "Complex input"):
                 fn(hermitian)
 
@@ -125,13 +175,14 @@ class Routing(unittest.TestCase):
     def test_device(self):
         self.assertIsInstance(ml.device_name(), str)
         self.assertGreaterEqual(ml.gpu_core_count(), 0)
-        for source in (ml.qr_policy_source(), ml.eigh_policy_source(), ml.svd_policy_source()):
+        for source in (ml.qr_policy_source(), ml.eigh_policy_source(), ml.svd_policy_source(),
+                       ml.cholesky_policy_source(), ml.lu_policy_source(), ml.trsm_policy_source()):
             self.assertTrue(source.split(":")[0] in ("tuned", "tuned-stale", "tuned-incomplete",
                                                      "estimated", "default", "env", "user"), source)
 
     def test_calibration_status(self):
         st = ml.calibration_status()
-        self.assertEqual(set(st), {"qr", "eigh", "svd"})
+        self.assertEqual(set(st), {"qr", "eigh", "svd", "cholesky", "lu", "trsm"})
         for key, state in st.items():
             self.assertIn(state, ("current", "stale", "incomplete", "uncalibrated"))
         self.assertTrue(issubclass(ml.CalibrationWarning, UserWarning))
@@ -142,6 +193,8 @@ class Routing(unittest.TestCase):
         self.assertIn(ml.svd_backend(1024, 64, 64),
                       {"cpu", "jacobi", "block_jacobi", "qr_jacobi", "qr_block_jacobi",
                        "golub_kahan", "qr_golub_kahan"})
+        self.assertIn(ml.cholesky_backend(64, 64), {"cpu", "simd", "threadgroup", "blocked"})
+        self.assertIn(ml.lu_backend(64, 64), {"cpu", "blocked"})
 
     def test_policy_override(self):
         measured = ml.eigh_policy()
@@ -212,6 +265,37 @@ class Routing(unittest.TestCase):
         finally:
             ml.set_eigh_policy(measured)
         self.assertEqual(ml.eigh_policy(), measured)
+
+    def test_cholesky_policy(self):
+        measured = ml.cholesky_policy()
+        try:
+            ml.set_cholesky_policy(gpu_max_n=0, gpu_large_min_n=0)
+            self.assertEqual(ml.cholesky_policy_source(), "user")
+            self.assertEqual(ml.cholesky_backend(4096, 1), "cpu")
+            ml.set_cholesky_policy(gpu_max_n=2**32 - 1, gpu_min_batch_times_n=0, gpu_min_batch=1, gpu_min_n=0,
+                                   simd_max_n=32, blocked_min_n=256, blocked_max_batch=0)
+            self.assertEqual(ml.cholesky_backend(16, 64), "simd")
+            self.assertEqual(ml.cholesky_backend(100, 64), "threadgroup")
+            self.assertEqual(ml.cholesky_backend(300, 2), "blocked")
+            a = mx.random.normal((2, 300, 300))
+            p = mm(a, a.swapaxes(-1, -2)) / 300 + eye(300)
+            l = ml.cholesky(p)
+            self.assertLess(max_abs(mm(l, l.swapaxes(-1, -2)) - p) / max_abs(p), 1e-5)
+        finally:
+            ml.set_cholesky_policy(measured)
+        self.assertEqual(ml.cholesky_policy(), measured)
+
+    def test_lu_policy(self):
+        measured = ml.lu_policy()
+        try:
+            ml.set_lu_policy(gpu_min_n=100, gpu_max_batch=0)
+            self.assertEqual(ml.lu_policy_source(), "user")
+            self.assertEqual(ml.lu_backend(200, 2), "blocked")
+            a = mx.random.normal((2, 200, 200)) + 30 * eye(200)
+            self.assertLess(max_abs(mm(a, ml.inv(a)) - eye(200)), 1e-4)
+        finally:
+            ml.set_lu_policy(measured)
+        self.assertEqual(ml.lu_policy(), measured)
 
     def test_unknown_policy_field(self):
         with self.assertRaises(KeyError):

@@ -252,6 +252,84 @@ final class MetalLinalgTests: XCTestCase {
         }
     }
 
+    func testCholesky() throws {
+        // A = M M^T / n + I for three matrices of 40 x 40, and its L L^T
+        let (batch, n) = (3, 40)
+        let m = values(batch * n * n, seed: 9)
+        var a = [Float](repeating: 0, count: batch * n * n)
+        for b in 0..<batch {
+            for i in 0..<n { for j in 0..<n {
+                var s = i == j ? 1.0 : 0.0
+                for t in 0..<n { s += Double(m[b * n * n + i * n + t]) * Double(m[b * n * n + j * n + t]) / Double(n) }
+                a[b * n * n + i * n + j] = Float(s)
+            } }
+        }
+        let (l, info) = try choleskyAccelerated(a, batch: batch, n: n)
+        XCTAssertEqual(info, [0, 0, 0])
+        let (u, _) = try choleskyAccelerated(a, batch: batch, n: n, upper: true)
+        for b in 0..<batch {
+            for i in 0..<n { for j in 0..<n {
+                var s = 0.0
+                for t in 0..<n { s += Double(l[b * n * n + i * n + t]) * Double(l[b * n * n + j * n + t]) }
+                XCTAssertEqual(s, Double(a[b * n * n + i * n + j]), accuracy: 1e-5)
+                if j > i { XCTAssertEqual(l[b * n * n + i * n + j], 0) }
+                XCTAssertEqual(u[b * n * n + j * n + i], l[b * n * n + i * n + j], accuracy: 1e-6)
+            } }
+        }
+        // not positive definite at its second pivot: info 2, all NaN
+        let (bad, badInfo) = try choleskyAccelerated([1, 2, 2, 1], n: 2)
+        XCTAssertEqual(badInfo, [2])
+        XCTAssertTrue(bad.allSatisfy { $0.isNaN })
+        XCTAssertTrue(["cpu", "simd", "threadgroup", "blocked"].contains(choleskyBackend(n: 40, batch: 3)))
+        let measured = choleskyPolicy
+        defer { choleskyPolicy = measured }
+        var p = measured
+        p.gpu_max_n = 0
+        p.gpu_large_min_n = 0
+        choleskyPolicy = p
+        XCTAssertEqual(choleskyBackend(n: 4096, batch: 1), "cpu")
+        XCTAssertEqual(choleskyPolicySource, "user")
+    }
+
+    func testLU() throws {
+        // [[1, 2], [3, 4]]: the rows swapped, L = [[1, 0], [1/3, 1]], U = [[3, 4], [0, 2/3]]
+        let a: [Float] = [1, 2, 3, 4,   1, 2, 2, 4]
+        let (lu, pivots, info) = try luFactorAccelerated(a, batch: 2, n: 2)
+        XCTAssertEqual(pivots[0], 1)
+        XCTAssertEqual(info, [0, 2])
+        XCTAssertEqual(lu[0], 3, accuracy: 1e-6)
+        XCTAssertEqual(lu[2], 1.0 / 3.0, accuracy: 1e-6)
+        let (x, _) = try solveAccelerated(Array(a[0..<4]), [5, 6], n: 2)
+        XCTAssertEqual(x[0], -4, accuracy: 1e-5)
+        XCTAssertEqual(x[1], 4.5, accuracy: 1e-5)
+        let (inverse, inverseInfo) = try invAccelerated(a, batch: 2, n: 2)
+        XCTAssertEqual(inverse[0], -2, accuracy: 1e-5)
+        XCTAssertEqual(inverse[3], -0.5, accuracy: 1e-5)
+        XCTAssertTrue(inverse[4].isNaN)
+        XCTAssertEqual(inverseInfo, [0, 2])
+        XCTAssertTrue(["cpu", "blocked"].contains(luBackend(n: 4096)))
+        let measured = luPolicy
+        defer { luPolicy = measured }
+        var p = measured
+        p.gpu_min_n = 0
+        luPolicy = p
+        XCTAssertEqual(luBackend(n: 8192), "cpu")
+        XCTAssertEqual(luPolicySource, "user")
+    }
+
+    func testSolveTriangular() throws {
+        // [[2, 0], [1, 4]] x = [2, 9]: x = (1, 2); its transpose, [[2, 1], [0, 4]] x = [4, 8]: (1, 2)
+        let lower: [Float] = [2, 99, 1, 4]   // 99 above the diagonal: never read
+        let x = try solveTriangularAccelerated(lower, [2, 9], n: 2)
+        XCTAssertEqual(x[0], 1, accuracy: 1e-6)
+        XCTAssertEqual(x[1], 2, accuracy: 1e-6)
+        let upper: [Float] = [2, 1, 99, 4]
+        let y = try solveTriangularAccelerated(upper, [4, 8], n: 2, upper: true)
+        XCTAssertEqual(y[0], 1, accuracy: 1e-6)
+        XCTAssertEqual(y[1], 2, accuracy: 1e-6)
+        XCTAssertTrue(["cpu", "blocked"].contains(trsmBackend(n: 4096, nrhs: 4096)))
+    }
+
     func testNaNStaysInItsMatrix() throws {
         var a: [Float] = [2, 1, 1, 2,  .nan, 0, 0, 1,  3, 0, 0, 4]
         let w = try eigvalshAccelerated(a, batch: 3, n: 2)

@@ -1,0 +1,15 @@
+  102 points x 2 passes = 204 processes
+    20/204  elapsed 0.1m  eta 0.6m
+    40/204  elapsed 0.1m  eta 0.5m
+    60/204  elapsed 0.2m  eta 0.5m
+    80/204  elapsed 0.3m  eta 0.4m
+    100/204  elapsed 0.3m  eta 0.3m
+    120/204  elapsed 0.4m  eta 0.3m
+    140/204  elapsed 0.4m  eta 0.2m
+    160/204  elapsed 0.5m  eta 0.1m
+    180/204  elapsed 0.6m  eta 0.1m
+    200/204  elapsed 0.6m  eta 0.0m
+    204/204  elapsed 0.6m  eta 0.0m
+  GPU from N = 2048, K >= 1024 (batch <= 4): 1.0055x vs 1.0521x always CPU, worst 1.49x
+  kTuned entry: {"Apple M5 Pro", 20,   2048, 1024, 4},
+  -> /Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261010-b7aec3/trsm/report.md, /Users/cormac/Documents/Projects/metal-linalg/docs/results/apple-m5-pro-20gpu/20261010-b7aec3/trsm/results.json

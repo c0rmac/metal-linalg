@@ -20,7 +20,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import kernels   # noqa: E402
 
-NAMES = {"qr": "QR", "eigh": "eigh", "svd": "SVD"}
+NAMES = {"qr": "QR", "eigh": "eigh", "svd": "SVD", "cholesky": "Cholesky", "lu": "LU", "trsm": "triangular solve"}
 
 
 def git(*args):
@@ -48,6 +48,9 @@ def main():
     for op, name in NAMES.items():
         hits = [p for p in changed if kernels.touches(op, p)]
         if not hits:
+            continue
+        if op not in before:   # a decomposition the base does not have
+            lines.append(f"- {name}: new, at kernel version {kernels.KERNEL_EPOCHS[op]}")
             continue
         bumped = kernels.KERNEL_EPOCHS[op] != before.get(op, 1)
         if bumped:

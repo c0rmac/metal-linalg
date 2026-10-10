@@ -37,8 +37,13 @@ OPS = {"qr": (["pass", "batch", "M", "N", "backend", "ok", "ms", "p25", "p75", "
        "svd": (["pass", "batch", "M", "N", "backend", "ok", "ms", "p25", "p75", "reps"],
                {"cpu", "jacobi", "block", "qr", "qrblock", "bidiag", "band", "gk", "cpu_vals", "bidiag_vals",
                 "gk_vals", "gk_share", "gk_share_vals", "band_vals", "band8_vals", "band32_vals",
-                "bidiag_batch", "bidiag_batch_vals"})}
-TOP_FILES = {"submission.json", "summary.md", "qr.log", "eigh.log", "svd.log"}
+                "bidiag_batch", "bidiag_batch_vals"}),
+       "cholesky": (["pass", "batch", "N", "backend", "ok", "ms", "p25", "p75", "reps"],
+                    {"cpu", "simd", "tg", "blocked"}),
+       "lu": (["pass", "batch", "N", "K", "backend", "ok", "ms", "p25", "p75", "reps"],
+              {"cpu", "blocked", "inv_cpu", "inv_blocked", "solve_cpu", "solve_trsm", "solve_getrs"}),
+       "trsm": (["pass", "batch", "N", "K", "backend", "ok", "ms", "p25", "p75", "reps"], {"cpu", "blocked"})}
+TOP_FILES = {"submission.json", "summary.md", "qr.log", "eigh.log", "svd.log", "cholesky.log", "lu.log", "trsm.log"}
 OP_FILES = {"raw.csv", "results.json", "report.md", "policy.json"}
 ID = re.compile(r"^\d{8}-[0-9a-f]{6}$")
 MAX_FILE = 5 * 2**20

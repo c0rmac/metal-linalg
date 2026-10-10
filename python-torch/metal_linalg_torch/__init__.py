@@ -1,5 +1,5 @@
-"""QR, symmetric eigendecomposition and SVD for batches of matrices on Apple
-GPUs, for PyTorch.
+"""QR, symmetric eigendecomposition, SVD, Cholesky and LU (with solve and
+inverse) for batches of matrices on Apple GPUs, for PyTorch.
 
     import torch
     import metal_linalg_torch as mlt
@@ -7,6 +7,8 @@ GPUs, for PyTorch.
     Q, R = mlt.qr(a)                 # a: [..., M, N], on "cpu" or "mps"
     L, V = mlt.eigh(s)               # s symmetric [..., N, N]; L ascending
     U, S, Vh = mlt.svd(a)            # thin factors; S descending
+    L = mlt.cholesky(p)              # p symmetric positive definite; p = L @ L.mT
+    X = mlt.solve(A, B)              # A [..., N, N], B [..., N] or [..., N, K]
 
 The functions take the arguments of their torch.linalg namesakes and return
 the same result types, on the input's device. Each call is routed to the
@@ -26,12 +28,13 @@ from . import _lib, _ops  # noqa: F401  (_ops registers torch.ops.metal_linalg.*
 from ._build import version as __version__
 
 __all__ = [
-    "qr", "eigh", "eigvalsh", "svd", "svdvals",
+    "qr", "eigh", "eigvalsh", "svd", "svdvals", "cholesky", "cholesky_ex",
+    "lu_factor", "lu_factor_ex", "solve", "solve_ex", "inv", "inv_ex", "solve_triangular",
     "device_name", "gpu_core_count", "cpu_threads", "set_cpu_threads", "mps_in_place",
-    "qr_backend", "eigh_backend", "eigvalsh_backend", "svd_backend", "svdvals_backend",
-    "qr_policy", "eigh_policy", "svd_policy",
-    "set_qr_policy", "set_eigh_policy", "set_svd_policy",
-    "qr_policy_source", "eigh_policy_source", "svd_policy_source",
+    "qr_backend", "eigh_backend", "eigvalsh_backend", "svd_backend", "svdvals_backend", "cholesky_backend", "lu_backend", "trsm_backend",
+    "qr_policy", "eigh_policy", "svd_policy", "cholesky_policy", "lu_policy", "trsm_policy",
+    "set_qr_policy", "set_eigh_policy", "set_svd_policy", "set_cholesky_policy", "set_lu_policy", "set_trsm_policy",
+    "qr_policy_source", "eigh_policy_source", "svd_policy_source", "cholesky_policy_source", "lu_policy_source", "trsm_policy_source",
     "calibration_status", "CalibrationWarning",
 ]
 
@@ -69,7 +72,12 @@ def _needs_grad(a):
 # cannot trace the construction of a torch.return_types).
 _TRACED = {"linalg_qr": namedtuple("linalg_qr", ["Q", "R"]),
            "linalg_eigh": namedtuple("linalg_eigh", ["eigenvalues", "eigenvectors"]),
-           "linalg_svd": namedtuple("linalg_svd", ["U", "S", "Vh"])}
+           "linalg_svd": namedtuple("linalg_svd", ["U", "S", "Vh"]),
+           "linalg_cholesky_ex": namedtuple("linalg_cholesky_ex", ["L", "info"]),
+           "linalg_lu_factor": namedtuple("linalg_lu_factor", ["LU", "pivots"]),
+           "linalg_lu_factor_ex": namedtuple("linalg_lu_factor_ex", ["LU", "pivots", "info"]),
+           "linalg_solve_ex": namedtuple("linalg_solve_ex", ["result", "info"]),
+           "linalg_inv_ex": namedtuple("linalg_inv_ex", ["inverse", "info"])}
 
 
 def _result(kind, values):
@@ -161,6 +169,170 @@ def svdvals(A):
     return torch.ops.metal_linalg.svdvals(a)
 
 
+def _not_positive_definite(info):
+    """torch.linalg.cholesky's error for the first matrix that failed."""
+    bad = torch.nonzero(info.reshape(-1).cpu())
+    if bad.numel() == 0:
+        return None
+    i = int(bad[0, 0])
+    k = int(info.reshape(-1)[i])
+    where = f"(Batch element {i}): " if info.dim() else ""
+    return getattr(torch.linalg, "LinAlgError", RuntimeError)(
+        f"linalg.cholesky: {where}The factorization could not be completed because the input is not "
+        f"positive-definite (the leading minor of order {k} is not positive-definite).")
+
+
+def cholesky(A, upper=False):
+    """Cholesky factorization of a batch of symmetric positive definite
+    matrices, like ``torch.linalg.cholesky``: ``A = L @ L.mT``.
+
+    ``A`` is ``[..., N, N]``; only its lower triangle is read (the upper one
+    with ``upper=True``). Returns ``L`` ``[..., N, N]``, lower triangular
+    with a positive diagonal and zeros above it, or ``U = L.mT`` with
+    ``upper=True``. Raises ``torch.linalg.LinAlgError``, as torch does, if a
+    matrix is not positive definite (or holds a NaN or infinity where it is
+    read); :func:`cholesky_ex` reports it instead.
+    """
+    a = _prepare(A, "cholesky")
+    L, info = torch.ops.metal_linalg.cholesky(a, bool(upper))
+    if not torch.compiler.is_compiling() and a.device.type != "meta":
+        err = _not_positive_definite(info)
+        if err is not None:
+            raise err
+    return L
+
+
+def cholesky_ex(A, upper=False, check_errors=False):
+    """:func:`cholesky` and ``info``, like ``torch.linalg.cholesky_ex``:
+    ``(L, info)``, ``info`` ``[...]`` int32, 0 for a matrix factored, else
+    ``k`` where its leading minor of order ``k`` is not positive definite.
+    That matrix's ``L`` is all NaN (torch's holds a partial factor).
+    ``check_errors=True`` raises as :func:`cholesky` does."""
+    a = _prepare(A, "cholesky_ex")
+    L, info = torch.ops.metal_linalg.cholesky(a, bool(upper))
+    if check_errors and not torch.compiler.is_compiling() and a.device.type != "meta":
+        err = _not_positive_definite(info)
+        if err is not None:
+            raise err
+    return _result("linalg_cholesky_ex", (L, info))
+
+
+def _singular(info, what):
+    """torch's error for the first singular matrix of a batch, or None."""
+    if torch.compiler.is_compiling() or info.device.type == "meta":
+        return None
+    bad = torch.nonzero(info.reshape(-1).cpu())
+    if bad.numel() == 0:
+        return None
+    i = int(bad[0, 0])
+    where = f"(Batch element {i}): " if info.dim() else ""
+    msg = {"solve": "The solver failed because the input matrix is singular.",
+           "inv": f"The diagonal element {int(info.reshape(-1)[i])} is zero, the inversion could not be completed "
+                  f"because the input matrix is singular."}[what]
+    return getattr(torch.linalg, "LinAlgError", RuntimeError)(f"linalg.{what}: {where}{msg}")
+
+
+def _no_pivot(pivot, name):
+    if not pivot:
+        raise NotImplementedError(f"metal_linalg_torch.{name}: only pivot=True (partial pivoting) is supported")
+
+
+def lu_factor(A, *, pivot=True):
+    """LU factorization with partial pivoting, like ``torch.linalg.lu_factor``:
+    ``(LU, pivots)``, ``LU`` ``[..., N, N]`` (``U`` on and above the diagonal,
+    ``L`` below it with its unit diagonal implied) and ``pivots`` ``[..., N]``
+    int32, 1-based as LAPACK's and torch's. Square matrices only. Not
+    differentiable (torch's is)."""
+    a = _prepare(A, "lu_factor")
+    _no_pivot(pivot, "lu_factor")
+    LU, piv, _ = torch.ops.metal_linalg.lu_factor(a)
+    return _result("linalg_lu_factor", (LU, piv))
+
+
+def lu_factor_ex(A, *, pivot=True, check_errors=False):
+    """:func:`lu_factor` and ``info``, like ``torch.linalg.lu_factor_ex``: 0,
+    or ``k`` where ``U``'s k-th diagonal entry is exactly zero."""
+    a = _prepare(A, "lu_factor_ex")
+    _no_pivot(pivot, "lu_factor_ex")
+    LU, piv, info = torch.ops.metal_linalg.lu_factor(a)
+    if check_errors and bool((info != 0).any()):
+        raise getattr(torch.linalg, "LinAlgError", RuntimeError)(
+            "linalg.lu_factor_ex: U is exactly singular (info " + str(info.reshape(-1).tolist()) + ")")
+    return _result("linalg_lu_factor_ex", (LU, piv, info))
+
+
+def _solve(A, B, left, name):
+    a = _prepare(A, name)
+    b = B if isinstance(B, torch.Tensor) else torch.as_tensor(B)
+    if not left:
+        raise NotImplementedError(f"metal_linalg_torch.{name}: only left=True is supported")
+    vector = b.dim() == a.dim() - 1
+    bm = (b.unsqueeze(-1) if vector else b).to(torch.float32)
+    X, info = torch.ops.metal_linalg.solve(a, bm)
+    return (X.squeeze(-1) if vector else X), info
+
+
+def solve(A, B, *, left=True):
+    """``X`` with ``A @ X = B``, like ``torch.linalg.solve``: ``A``
+    ``[..., N, N]``, ``B`` ``[..., N, K]`` or ``[..., N]`` (when it has one
+    dimension fewer than ``A``), the batch shapes equal (no broadcasting).
+    Raises ``torch.linalg.LinAlgError`` for a singular matrix, as torch does.
+    Differentiable in ``A`` and ``B``."""
+    X, info = _solve(A, B, left, "solve")
+    err = _singular(info, "solve")
+    if err is not None:
+        raise err
+    return X
+
+
+def solve_ex(A, B, *, left=True, check_errors=False):
+    """:func:`solve` and ``info``, like ``torch.linalg.solve_ex``; a singular
+    matrix's result is all NaN."""
+    X, info = _solve(A, B, left, "solve_ex")
+    if check_errors:
+        err = _singular(info, "solve")
+        if err is not None:
+            raise err
+    return _result("linalg_solve_ex", (X, info))
+
+
+def inv(A):
+    """The inverse of a batch of square matrices, like ``torch.linalg.inv``.
+    Raises ``torch.linalg.LinAlgError`` for a singular matrix. Differentiable."""
+    a = _prepare(A, "inv")
+    X, info = torch.ops.metal_linalg.inv(a)
+    err = _singular(info, "inv")
+    if err is not None:
+        raise err
+    return X
+
+
+def solve_triangular(A, B, *, upper, left=True, unitriangular=False):
+    """``X`` with ``A @ X = B`` for triangular ``A``, like
+    ``torch.linalg.solve_triangular``: ``A`` ``[..., N, N]`` (only the
+    triangle ``upper`` names is read; with ``unitriangular`` its diagonal is
+    taken as ones), ``B`` ``[..., N, K]`` with ``A``'s batch shape (no
+    broadcasting). ``left=False`` is not supported. Differentiable in ``A``
+    and ``B``."""
+    a = _prepare(A, "solve_triangular")
+    if not left:
+        raise NotImplementedError("metal_linalg_torch.solve_triangular: only left=True is supported")
+    b = B if isinstance(B, torch.Tensor) else torch.as_tensor(B)
+    return torch.ops.metal_linalg.solve_triangular(a, b.to(torch.float32), bool(upper), bool(unitriangular))
+
+
+def inv_ex(A, *, check_errors=False):
+    """:func:`inv` and ``info``, like ``torch.linalg.inv_ex``; a singular
+    matrix's inverse is all NaN."""
+    a = _prepare(A, "inv_ex")
+    X, info = torch.ops.metal_linalg.inv(a)
+    if check_errors:
+        err = _singular(info, "inv")
+        if err is not None:
+            raise err
+    return _result("linalg_inv_ex", (X, info))
+
+
 # ---------------------------------------------------------------------------
 # The device and its routing
 # ---------------------------------------------------------------------------
@@ -234,6 +406,25 @@ def svdvals_backend(m, n, batch=1):
     return _lib.text(_lib.svdvals_backend(m, n, batch))
 
 
+def cholesky_backend(n, batch=1):
+    """Which backend :func:`cholesky` uses for ``batch`` matrices of
+    ``n x n``: ``"cpu"``, ``"simd"`` (up to 32 x 32), ``"threadgroup"`` or
+    ``"blocked"`` (the large-matrix path)."""
+    return _lib.text(_lib.cholesky_backend(n, batch))
+
+
+def lu_backend(n, batch=1):
+    """Which backend :func:`lu_factor`, :func:`solve` and :func:`inv` use for
+    ``batch`` matrices of ``n x n``: ``"cpu"`` or ``"blocked"`` (the GPU path)."""
+    return _lib.text(_lib.lu_backend(n, batch))
+
+
+def trsm_backend(n, k=1, batch=1):
+    """Which backend :func:`solve_triangular` uses for ``batch`` triangles of
+    ``n x n`` with ``k`` right-hand sides: ``"cpu"`` or ``"blocked"``."""
+    return _lib.text(_lib.trsm_backend(n, k, batch))
+
+
 def qr_policy():
     """The QR routing policy in effect, as a dict of its fields."""
     return _lib.get_policy("qr")
@@ -247,6 +438,21 @@ def eigh_policy():
 def svd_policy():
     """The SVD routing policy in effect, as a dict of its fields."""
     return _lib.get_policy("svd")
+
+
+def cholesky_policy():
+    """The Cholesky routing policy in effect, as a dict of its fields."""
+    return _lib.get_policy("cholesky")
+
+
+def lu_policy():
+    """The LU routing policy in effect, as a dict of its fields."""
+    return _lib.get_policy("lu")
+
+
+def trsm_policy():
+    """The triangular solve's routing policy in effect, as a dict of its fields."""
+    return _lib.get_policy("trsm")
 
 
 def set_qr_policy(policy=None, **fields):
@@ -263,6 +469,21 @@ def set_eigh_policy(policy=None, **fields):
 def set_svd_policy(policy=None, **fields):
     """Replaces the SVD policy, e.g. ``set_svd_policy(bidiag_min_k=1024)``."""
     _lib.set_policy("svd", {**(policy or {}), **fields})
+
+
+def set_cholesky_policy(policy=None, **fields):
+    """Replaces the Cholesky policy, e.g. ``set_cholesky_policy(gpu_large_min_n=1024)``."""
+    _lib.set_policy("cholesky", {**(policy or {}), **fields})
+
+
+def set_lu_policy(policy=None, **fields):
+    """Replaces the LU policy, e.g. ``set_lu_policy(gpu_min_n=1024)``."""
+    _lib.set_policy("lu", {**(policy or {}), **fields})
+
+
+def set_trsm_policy(policy=None, **fields):
+    """Replaces the triangular solve's policy, e.g. ``set_trsm_policy(gpu_min_rhs=64)``."""
+    _lib.set_policy("trsm", {**(policy or {}), **fields})
 
 
 def qr_policy_source():
@@ -282,6 +503,21 @@ def svd_policy_source():
     return _lib.text(_lib.svd_policy_source())
 
 
+def cholesky_policy_source():
+    """Where the Cholesky policy came from; see :func:`qr_policy_source`."""
+    return _lib.text(_lib.cholesky_policy_source())
+
+
+def lu_policy_source():
+    """Where the LU policy came from; see :func:`qr_policy_source`."""
+    return _lib.text(_lib.lu_policy_source())
+
+
+def trsm_policy_source():
+    """Where the triangular solve's policy came from; see :func:`qr_policy_source`."""
+    return _lib.text(_lib.trsm_policy_source())
+
+
 # ---------------------------------------------------------------------------
 # Calibration
 # ---------------------------------------------------------------------------
@@ -297,13 +533,14 @@ class CalibrationWarning(UserWarning):
 
 def calibration_status():
     """How current this Mac's measurements are, per decomposition:
-    ``{"qr": state, "eigh": state, "svd": state}``, each ``"current"``,
+    ``{"qr": state, "eigh": state, "svd": state, "cholesky": state, "lu": state, "trsm": state}``, each ``"current"``,
     ``"stale"`` (measured on older kernels, still used), ``"incomplete"``
     (from before a newer backend, which stays off) or ``"uncalibrated"``
     (not measured: settings estimated from a measured Mac). See https://c0rmac.github.io/metal-linalg/docs/measurements."""
     out = {}
     for key, source in (("qr", qr_policy_source), ("eigh", eigh_policy_source),
-                        ("svd", svd_policy_source)):
+                        ("svd", svd_policy_source), ("cholesky", cholesky_policy_source), ("lu", lu_policy_source),
+                        ("trsm", trsm_policy_source)):
         s = source()
         out[key] = ("uncalibrated" if s.startswith(("default:", "estimated:"))
                     else "stale" if s.startswith("tuned-stale:")
@@ -318,9 +555,10 @@ def _calibration_warnings():
     flag = os.environ.get("METAL_LINALG_NO_CALIBRATION_NOTICE", "")
     if flag and flag != "0":
         return
-    for source in (qr_policy_source, eigh_policy_source, svd_policy_source):
+    for source in (qr_policy_source, eigh_policy_source, svd_policy_source, cholesky_policy_source,
+                   lu_policy_source, trsm_policy_source):
         source()   # resolves the policy, which records its calibration
-    for what in ("QR", "eigh", "SVD"):
+    for what in ("QR", "eigh", "SVD", "Cholesky", "LU", "triangular solve"):
         msg = _lib.text(_lib.calibration_message(what.encode()))
         if msg:
             warnings.warn(msg, CalibrationWarning, stacklevel=3)

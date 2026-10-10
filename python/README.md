@@ -30,7 +30,12 @@ ml.set_eigh_policy(gpu_min_batch=1)   # override the measured policy
 
 Inputs may be `mx.array`, NumPy arrays or nested lists; outputs are float32
 `mx.array`. `ml.eigvalsh` and `ml.svdvals` return the values alone, for less
-work. The kernels and the routing are described in the
+work; `ml.cholesky(p, upper=False)` factors symmetric positive definite
+matrices (since 2.18.0; a matrix that is not comes back all NaN), and
+`ml.cholesky_ex(p)` also returns LAPACK's `info` for each; `ml.lu_factor`,
+`ml.solve` and `ml.inv` work as `mx.linalg`'s, on the GPU for large matrices,
+and their `_ex` forms return `info` too; `ml.solve_triangular(a, b, upper=False)`
+as `mx.linalg.solve_triangular`. The kernels and the routing are described in the
 [main README](https://github.com/c0rmac/metal-linalg).
 
 ## Installing

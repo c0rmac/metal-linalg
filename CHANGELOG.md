@@ -1,5 +1,90 @@
 # Changes
 
+## 2.18.0
+
+- **Cholesky factorization**, `A = L L^T` for batches of symmetric positive
+  definite matrices, in every API, routed like the other decompositions by a
+  policy measured per Mac (`CholeskyPolicy`, `cholesky_backend(n, batch)`).
+  It reads the lower triangle (the upper one with `upper`, returning
+  `U = L^T`), writes zeros in the other, and reports a matrix that is not
+  positive definite as LAPACK's `spotrf` does (`info` = the failing leading
+  minor's order) with its factor all NaN, the rest of its batch unaffected.
+  - C++: `cholesky_accelerated(a, upper)`, `cholesky_ex_accelerated` (with
+    `info`), `core::cholesky`; `<metal_linalg/cholesky.h>`.
+  - C: `metal_linalg_cholesky(a, batch, n, upper, l, info)`, its backend
+    query and policy.
+  - Python with MLX: `ml.cholesky(a, upper=False)`, `ml.cholesky_ex`.
+  - PyTorch: `mlt.cholesky` (raises `torch.linalg.LinAlgError` as torch
+    does) and `mlt.cholesky_ex` (int32 `info`, `check_errors`), the operator
+    `metal_linalg::cholesky` with torch's gradient (Murray 2016),
+    `torch.compile` and MPS tensors in place.
+  - Swift: `choleskyAccelerated` on `[Float]` (with `info`) and on `MLXArray`.
+- **Four backends.** `simd`: up to 32 x 32, a row a lane in registers, several
+  matrices a simdgroup below 16, staged through threadgroup memory both ways
+  (4.6x the unstaged kernel at 16384 of 32 x 32). `threadgroup`: a matrix a
+  threadgroup, 32-column panels, the trailing update by simdgroup matrix
+  products. `blocked`, for large matrices: 128-column panels whose 32-column
+  sub-panels are each one dispatch (every threadgroup brings the diagonal
+  block and its strip of rows up to date from threadgroup memory, factors the
+  block itself and solves its strip; the blocks are put in place at the end),
+  the trailing update as MPS products in 512-wide column blocks that skip
+  most of the upper triangle. One 4096 x 4096 in 13 ms on an M5 Pro, 2.25x
+  the CPU path and 36x `MPSMatrixDecompositionCholesky` (which also factors
+  only a batch's first matrix); 4 of 4096 x 4096 3.9x, 4 of 2048 x 2048
+  1.9x. `cpu`: `spotrf('L')` on a column-major copy in a scratch padded off
+  power-of-two leading dimensions, a batch over every core: on macOS 27
+  `'U'` was 4-5x slower up to N = 64 and 1.3-1.4x to 3072, and a power-of-two
+  leading dimension lost 10-45%; 2-4x the plain copy-and-`spotrf('U')`
+  (2048 x 2048 5.5 ms to 2.8). Large matrices go one at a time: concurrent
+  `spotrf` calls with Accelerate's threading off corrupted each other's
+  factors from N ~ 1536.
+- **Measured on the M5 Pro** (run `20261010-e37928`, `tuning/tune_cholesky.py`,
+  about 3 minutes): the GPU from 1536 in batches (batch x N >= 3072) and for
+  a lone matrix from 3072, the CPU everywhere else, where it won every batch
+  measured; 1.0001x geometric-mean regret against the best backend at 154
+  points, worst 1.02x. Every other Mac is estimated from it, as for the other
+  decompositions. `tuning/run.py` measures Cholesky too (`--only cholesky`),
+  `test_cholesky` (1409 checks) runs before it, and the measurement page and
+  tables have a Cholesky column.
+- **LU factorization, linear solve and inverse** (`lu_factor`, `solve`, `inv`,
+  and `_ex` forms with LAPACK's `info`), in every API with MLX's conventions
+  (0-based uint32 pivots; the PyTorch package torch's: 1-based int32 pivots,
+  `LinAlgError` for a singular matrix in `solve` and `inv`, torch's gradients
+  for both). A singular matrix is factored as by `sgetrf`; its solve and
+  inverse are all NaN, for it alone.
+  - `cpu`: `sgetrf`, `sgetrs`, `sgetri` on a padded column-major copy, a
+    batch over every core (an unpadded leading dimension of 4096 cost
+    `sgetrf` 2.7x).
+  - `blocked`, for large matrices: the GPU and the CPU on one matrix in the
+    memory they share. The CPU factors each pivoted 128-column panel
+    (recursively, its updates on Accelerate's matrix units) and brings the
+    next panel up to date itself while the GPU swaps rows (the panel's swaps
+    composed into one gather) and updates the trailing matrix by MPS
+    products; `solve` and `inv` by blocked triangular solves on the GPU (with
+    a few right-hand sides, `sgetrs` on the shared factorization). On an M5
+    Pro one 4096 x 4096 `lu_factor` in 16 ms against 48 on the CPU path
+    (3.0x), `inv` 40 against 137 (3.4x), one 8192 x 8192 `lu_factor` 96
+    against 427; against MLX's own CPU functions 8.1x, 3.6x and, for `solve`,
+    15x at 4096.
+  - Measured on the M5 Pro (run `20261010-22fef9`, `tuning/tune_lu.py`, about
+    3 minutes): the GPU from 1536 at any batch, 1.0001x geometric-mean regret
+    over 66 points (worst 1.01x); estimated for every other Mac.
+    `test_lu` (491 checks), `benchmark_lu`, `sweep_lu`.
+- **Triangular solve** (`solve_triangular`: lower or upper, `unit_diagonal`,
+  one or many right-hand sides), in every API (PyTorch: torch's arguments and
+  gradient). `cpu`: `strsm` a batch over every core; `blocked`: 128 rows at a
+  time on the GPU, two MPS products a block with the diagonal blocks'
+  inverses (made on the CPU), on the caller's matrices in place. On an M5 Pro
+  4096 x 4096 with 4096 right-hand sides in 12.5 ms against 50 (4.0x) and
+  MLX's 100. Measured (run `20261010-b7aec3`, `tune_trsm.py`): the GPU from
+  N = 2048 with 1024 right-hand sides, batches up to 4; 1.0055x geometric-mean
+  regret over 92 points. `test_trsm` (204 checks), `benchmark_trsm`,
+  `sweep_trsm`.
+- `benchmark_cholesky`: each kernel, the CPU path and MLX's own
+  `mx.linalg.cholesky` (one matrix at a time), which the library beats by
+  1.4-2.3x for one matrix of 128 to 2048, 2.4x at 4096, and 20-24x for
+  16384 matrices of 8 x 8 to 32 x 32.
+
 ## 2.17.0
 
 - **QR modes**, as `numpy.linalg.qr`'s and `torch.linalg.qr`'s, in every

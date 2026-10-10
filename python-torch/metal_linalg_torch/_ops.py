@@ -48,6 +48,13 @@ def _empty(shape, device="cpu"):
     return torch.empty(shape, dtype=torch.float32, device=device)
 
 
+def _alloc(spec, device="cpu"):
+    """An output: a shape (float32), or (shape, dtype)."""
+    if len(spec) == 2 and isinstance(spec[1], torch.dtype):
+        return torch.empty(spec[0], dtype=spec[1], device=device)
+    return _empty(spec, device)
+
+
 def _back(device, *ts):
     return tuple(t if device.type == "cpu" else t.to(device) for t in ts)
 
@@ -93,13 +100,13 @@ def mps_in_place():
 
 
 def _run(a, shapes, call):
-    """Runs the library on `a` into new float32 outputs of `shapes` on a's
-    device: call(input_address, *output_addresses) on memory the library
-    reads and writes in place."""
+    """Runs the library on `a` into new outputs of `shapes` (float32, or
+    (shape, dtype)) on a's device: call(input_address, *output_addresses) on
+    memory the library reads and writes in place."""
     device = a.device
     if device.type == "mps" and mps_in_place():
         x = a.detach().to(dtype=torch.float32).contiguous()
-        outs = tuple(_empty(s, device) for s in shapes)
+        outs = tuple(_alloc(s, device) for s in shapes)
         # The work MPS has queued may still be writing x (or reading the
         # memory the outputs were given); the library uses its own queue.
         torch.mps.synchronize()
@@ -119,7 +126,7 @@ def _run(a, shapes, call):
                     _lib.forget_buffer(*k)
             return outs
     x = _host(a)
-    outs = tuple(_empty(s) for s in shapes)
+    outs = tuple(_alloc(s) for s in shapes)
     call(x.data_ptr(), *(t.data_ptr() for t in outs))
     return _back(device, *outs)
 
@@ -411,3 +418,212 @@ def _svdvals_backward(ctx, gS):
 
 
 svdvals.register_autograd(_svdvals_backward, setup_context=_svdvals_setup)
+
+
+# ---------------------------------------------------------------------------
+# Cholesky
+# ---------------------------------------------------------------------------
+
+# info is int32, as torch.linalg.cholesky_ex's: the library writes uint32,
+# whose values are below 2**31.
+@torch.library.custom_op("metal_linalg::cholesky", mutates_args=(),
+                         schema="(Tensor a, bool upper=False) -> (Tensor, Tensor)")
+def cholesky(a: Tensor, upper: bool = False) -> tuple[Tensor, Tensor]:
+    _square(a, "cholesky")
+    lead, batch, n, _ = _dims(a, "cholesky")
+    if not (batch and n):
+        return _empty((*lead, n, n), a.device), torch.zeros(lead, dtype=torch.int32, device=a.device)
+    return _run(a, ((*lead, n, n), (tuple(lead), torch.int32)),
+                lambda x, l, i: _lib.cholesky(x, batch, n, upper, l, i))
+
+
+@cholesky.register_fake
+def _(a, upper=False):
+    *lead, n, _ = a.shape
+    return a.new_empty((*lead, n, n)), a.new_empty(lead, dtype=torch.int32)
+
+
+def cholesky_grad(L, gL, upper):
+    """torch.linalg.cholesky's (Murray 2016, arXiv 1602.07527), for real
+    input: with L lower and Phi(X) = tril(X), its diagonal halved,
+    gA = L^-T sym(Phi(L^T gL)) L^-1, sym(X) = (X + X^T) / 2."""
+    if gL is None:
+        return None
+    if upper:
+        L, gL = L.mT, gL.mT
+    gA = (L.mT @ gL).tril()
+    gA = 0.5 * (gA + gA.tril(-1).mT)
+    gA = torch.linalg.solve_triangular(L.mT, gA, upper=True, left=True)
+    return torch.linalg.solve_triangular(L, gA, upper=False, left=False)
+
+
+def _cholesky_setup(ctx, inputs, output):
+    ctx.set_materialize_grads(False)
+    ctx.upper = inputs[1] if len(inputs) > 1 else False
+    ctx.save_for_backward(output[0])
+
+
+def _cholesky_backward(ctx, gL, ginfo):
+    (L,) = ctx.saved_tensors
+    return cholesky_grad(L, gL, ctx.upper), None
+
+
+cholesky.register_autograd(_cholesky_backward, setup_context=_cholesky_setup)
+
+
+
+# ---------------------------------------------------------------------------
+# LU, solve, inverse
+# ---------------------------------------------------------------------------
+
+def _run2(a, b, shapes, call):
+    """As _run with a second input: call(a_address, b_address, *outputs)."""
+    bb = b.detach().to(device=a.device, dtype=torch.float32).contiguous()
+    if a.device.type == "mps" and mps_in_place():
+        holder = {}
+        def inner(x, *outs):
+            return call(x, holder["b"], *outs)
+        torch.mps.synchronize()
+        address = _mps_address(bb)
+        if address:
+            holder["b"] = address
+            return _run(a, shapes, inner)
+    bh = _host(bb)
+    return _run(a, shapes, lambda x, *outs: call(x, bh.data_ptr(), *outs))
+
+
+# pivots and info int32, LAPACK's (as torch.linalg.lu_factor_ex's): the
+# library's 0-based uint32 pivots plus one.
+@torch.library.custom_op("metal_linalg::lu_factor", mutates_args=(), schema="(Tensor a) -> (Tensor, Tensor, Tensor)")
+def lu_factor(a: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+    _square(a, "lu_factor")
+    lead, batch, n, _ = _dims(a, "lu_factor")
+    if not (batch and n):
+        return (_empty((*lead, n, n), a.device), torch.zeros((*lead, n), dtype=torch.int32, device=a.device),
+                torch.zeros(lead, dtype=torch.int32, device=a.device))
+    LU, piv, info = _run(a, ((*lead, n, n), ((*lead, n), torch.int32), (tuple(lead), torch.int32)),
+                         lambda x, l, p, i: _lib.lu_factor(x, batch, n, l, p, i))
+    return LU, piv + 1, info
+
+
+@lu_factor.register_fake
+def _(a):
+    *lead, n, _ = a.shape
+    return a.new_empty((*lead, n, n)), a.new_empty((*lead, n), dtype=torch.int32), a.new_empty(lead, dtype=torch.int32)
+
+
+@torch.library.custom_op("metal_linalg::solve", mutates_args=(), schema="(Tensor a, Tensor b) -> (Tensor, Tensor)")
+def solve(a: Tensor, b: Tensor) -> tuple[Tensor, Tensor]:
+    """b [..., N, K] with a's batch shape; the vector case is the caller's."""
+    _square(a, "solve")
+    lead, batch, n, _ = _dims(a, "solve")
+    if tuple(b.shape[:-1]) != (*lead, n):
+        raise ValueError(f"metal_linalg_torch.solve: B must be [..., N, K] with A's batch shape, got A "
+                         f"{tuple(a.shape)} and B {tuple(b.shape)}")
+    k = b.shape[-1]
+    if not (batch and n and k):
+        return _empty((*lead, n, k), a.device), torch.zeros(lead, dtype=torch.int32, device=a.device)
+    return _run2(a, b, ((*lead, n, k), (tuple(lead), torch.int32)),
+                 lambda x, bp, out, i: _lib.solve(x, batch, n, bp, k, out, i))
+
+
+@solve.register_fake
+def _(a, b):
+    *lead, n, _ = a.shape
+    return a.new_empty((*lead, n, b.shape[-1])), a.new_empty(lead, dtype=torch.int32)
+
+
+@torch.library.custom_op("metal_linalg::inv", mutates_args=(), schema="(Tensor a) -> (Tensor, Tensor)")
+def inv(a: Tensor) -> tuple[Tensor, Tensor]:
+    _square(a, "inv")
+    lead, batch, n, _ = _dims(a, "inv")
+    if not (batch and n):
+        return _empty((*lead, n, n), a.device), torch.zeros(lead, dtype=torch.int32, device=a.device)
+    return _run(a, ((*lead, n, n), (tuple(lead), torch.int32)), lambda x, out, i: _lib.inv(x, batch, n, out, i))
+
+
+@inv.register_fake
+def _(a):
+    *lead, n, _ = a.shape
+    return a.new_empty((*lead, n, n)), a.new_empty(lead, dtype=torch.int32)
+
+
+def _solve_setup(ctx, inputs, output):
+    ctx.set_materialize_grads(False)
+    ctx.save_for_backward(inputs[0], output[0])
+
+
+def _solve_backward(ctx, gX, ginfo):
+    """torch.linalg.solve's: gB = A^-T gX, gA = -gB X^T."""
+    if gX is None:
+        return None, None
+    A, X = ctx.saved_tensors
+    gB = torch.ops.metal_linalg.solve(A.mT.contiguous(), gX.contiguous())[0]
+    return -gB @ X.mT, gB
+
+
+solve.register_autograd(_solve_backward, setup_context=_solve_setup)
+
+
+def _inv_setup(ctx, inputs, output):
+    ctx.set_materialize_grads(False)
+    ctx.save_for_backward(output[0])
+
+
+def _inv_backward(ctx, gX, ginfo):
+    """torch.linalg.inv's: gA = -X^T gX X^T."""
+    if gX is None:
+        return None
+    (X,) = ctx.saved_tensors
+    return -X.mT @ gX @ X.mT
+
+
+inv.register_autograd(_inv_backward, setup_context=_inv_setup)
+
+
+
+# ---------------------------------------------------------------------------
+# Triangular solve
+# ---------------------------------------------------------------------------
+
+@torch.library.custom_op("metal_linalg::solve_triangular", mutates_args=(),
+                         schema="(Tensor a, Tensor b, bool upper, bool unitriangular=False) -> Tensor")
+def solve_triangular(a: Tensor, b: Tensor, upper: bool, unitriangular: bool = False) -> Tensor:
+    _square(a, "solve_triangular")
+    lead, batch, n, _ = _dims(a, "solve_triangular")
+    if tuple(b.shape[:-1]) != (*lead, n):
+        raise ValueError(f"metal_linalg_torch.solve_triangular: B must be [..., N, K] with A's batch shape, got A "
+                         f"{tuple(a.shape)} and B {tuple(b.shape)}")
+    k = b.shape[-1]
+    if not (batch and n and k):
+        return _empty((*lead, n, k), a.device)
+    return _run2(a, b, ((*lead, n, k),),
+                 lambda x, bp, out: _lib.solve_triangular(x, batch, n, bp, k, upper, unitriangular, out))[0]
+
+
+@solve_triangular.register_fake
+def _(a, b, upper, unitriangular=False):
+    *lead, n, _ = a.shape
+    return a.new_empty((*lead, n, b.shape[-1]))
+
+
+def _trsm_setup(ctx, inputs, output):
+    ctx.set_materialize_grads(False)
+    ctx.upper = inputs[2]
+    ctx.unit = inputs[3] if len(inputs) > 3 else False
+    ctx.save_for_backward(inputs[0], output)
+
+
+def _trsm_backward(ctx, gX):
+    """torch.linalg.solve_triangular's: gB = A^-T gX, gA = -gB X^T on A's
+    triangle (its diagonal too unless unitriangular)."""
+    if gX is None:
+        return None, None, None, None
+    A, X = ctx.saved_tensors
+    gB = torch.ops.metal_linalg.solve_triangular(A.mT.contiguous(), gX.contiguous(), not ctx.upper, ctx.unit)
+    gA = -gB @ X.mT
+    gA = gA.triu(1 if ctx.unit else 0) if ctx.upper else gA.tril(-1 if ctx.unit else 0)
+    return gA, gB, None, None
+
+
+solve_triangular.register_autograd(_trsm_backward, setup_context=_trsm_setup)

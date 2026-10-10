@@ -6,8 +6,9 @@ library.
     python3 tuning/generate_tables.py --check    # fail if anything is out of date
 
 For each device under docs/results/, combines its runs (tuning/combine.py)
-and writes the rows into src/tuned/qr.inc, eigh.inc and svd.inc, which the
-kTuned[] tables in src/qr.mm, src/eigh.mm and src/svd.mm include. From the
+and writes the rows into src/tuned/qr.inc, eigh.inc, svd.inc, cholesky.inc,
+lu.inc and trsm.inc, which the kTuned[] tables in src/qr.mm, src/eigh.mm,
+src/svd.mm, src/cholesky.mm, src/lu.mm and src/trsm.mm include. From the
 devices measured at the current kernels it refits the estimated rows for the
 Macs nobody has measured (tuning/estimate.py) into src/tuned/*_estimated.inc,
 and writes tuning/chip_specs.py into src/tuned/chips.inc. It also
@@ -111,16 +112,17 @@ def doc_table(doc, per_device):
         return {"current": "measured", "incomplete": "measured (incomplete)",
                 "stale": "measured (stale)"}[e["status"]["state"]]
     if doc == "README.md":
-        L = ["| device | QR | eigh | SVD |", "|---|---|---|---|"]
+        L = ["| device | QR | eigh | SVD | Cholesky | LU | triangular solve |", "|---|---|---|---|---|---|---|"]
         for res in per_device.values():
             dev = res["device"]
             L.append(f"| {dev['name']}, {dev['gpu_cores']} GPU cores | "
                      + " | ".join(measured(res, op, "estimated") for op in ops) + " |")
-        L.append("| anything else | estimated | estimated | estimated |")
+        L.append("| anything else | estimated | estimated | estimated | estimated | estimated | estimated |")
         L.append("")
         L.append("Every chip, and what is current: [the measurements page](https://c0rmac.github.io/metal-linalg/docs/measurements).")
     else:
-        L = ["| Mac | GPU cores | QR | eigh | SVD | runs |", "|---|---|---|---|---|---|"]
+        L = ["| Mac | GPU cores | QR | eigh | SVD | Cholesky | LU | triangular solve | runs |",
+             "|---|---|---|---|---|---|---|---|---|"]
         for res in per_device.values():
             dev = res["device"]
             L.append(f"| {dev['name']} | {dev['gpu_cores']} | "
@@ -139,7 +141,7 @@ def write_doc_table(doc, per_device):
 
 
 def summary(per_device):
-    L = ["| device | runs | QR | eigh | SVD |", "|---|---|---|---|---|"]
+    L = ["| device | runs | QR | eigh | SVD | Cholesky | LU | triangular solve |", "|---|---|---|---|---|---|---|---|"]
     for d, res in per_device.items():
         cells = []
         for op, _, _ in combine.OPS:
