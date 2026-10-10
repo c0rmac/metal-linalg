@@ -144,6 +144,26 @@ reduction). Which
 backend a shape gets on your Mac: `mlt.svd_backend(m, n, batch)` and its
 siblings.
 
+The functions new in 2.18.0, where PyTorch 2.13 has MPS kernels of its own
+(`python benchmarks/benchmark_torch.py --new`, best of ten calls, two runs):
+
+| | torch, CPU | torch, MPS | metal-linalg-torch |
+|---|---|---|---|
+| cholesky, one 4096×4096 | 82 ms | 23 ms | 13 ms |
+| cholesky, 4 × 2048×2048 | 60 ms | 13 ms | 6.7 ms |
+| cholesky, 4096 × 32×32 | 1.3 ms | 1.3 ms | 0.38 ms |
+| lu_factor, one 4096×4096 | 68 ms | 59 ms | 15 ms |
+| lu_factor, 4 × 2048×2048 | 31 ms | 101 ms | 17 ms |
+| solve, one 4096×4096, 1 rhs | 73 ms | 285 ms | 19 ms |
+| solve, one 2048×2048, 512 rhs | 14 ms | 34 ms | 6.9 ms |
+| inv, one 4096×4096 | 154 ms | 135 ms | 40 ms |
+| inv, 1024 × 64×64 | 4.4 ms | 800 ms | 1.7 ms |
+| solve_triangular, 4096×4096, 4096 rhs | 58 ms | 37 ms | 14 ms |
+
+Ahead of torch's faster path on every row, by 1.8-3.9x (the batch of 32×32
+Cholesky factorizations is on this library's CPU path, whose `spotrf` calls
+are faster than torch's; the rest on the GPU).
+
 ## MPS tensors
 
 An MPS tensor is used in place. On Apple Silicon PyTorch keeps MPS tensors in
