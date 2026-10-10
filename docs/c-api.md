@@ -52,6 +52,7 @@ cc -std=c99 main.c -I/opt/homebrew/include -L/opt/homebrew/lib -lmetal_linalg -o
 | function | computes |
 |---|---|
 | `metal_linalg_qr(a, batch, rows, cols, q, r)` | A = QR, `q` [batch, rows, K], `r` [batch, K, cols], K = min(rows, cols) |
+| `metal_linalg_qr_with_mode(a, batch, rows, cols, mode, q, r)` | the same with a mode (since 2.17.0): `METAL_LINALG_QR_REDUCED` as above; `METAL_LINALG_QR_R`, `r` alone (`q` may be NULL; Q is never formed); `METAL_LINALG_QR_COMPLETE`, `q` [batch, rows, rows] orthogonal and `r` [batch, rows, cols], zero below row K |
 | `metal_linalg_eigh(a, batch, n, lower, w, v, info)` | A = V diag(w) Vᵀ, `w` ascending; one triangle read |
 | `metal_linalg_svd(a, batch, rows, cols, u, s, vt, info)` | thin A = U diag(s) Vt, `s` descending |
 | `metal_linalg_device_name()`, `metal_linalg_gpu_core_count()` | the GPU the routing was resolved for |

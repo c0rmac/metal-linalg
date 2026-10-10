@@ -6,6 +6,11 @@
 // a: MLX array of shape [M, N] or [..., M, N] (real: float32, or cast to it; complex input throws)
 // Returns: {Q, R} where Q is [..., M, K] and R is [..., K, N], K = min(M, N)
 auto [Q, R] = metal_linalg::qr_accelerated(a);
+
+// mode, as numpy's and torch's (since 2.17.0): "reduced" (the above), "r"
+// (R alone, Q an empty array and never formed) or "complete" (Q [..., M, M])
+auto [_, R_alone] = metal_linalg::qr_accelerated(a, "r");
+auto [Q_square, R_full] = metal_linalg::qr_accelerated(a, "complete");
 ```
 
 As for the eigensolver and the SVD, each call is routed by a policy measured on
@@ -53,6 +58,18 @@ which can be stated compactly as $Q^T Q = I_K$. The columns of $Q$ form an ortho
 $$R_{ij} = 0 \quad \text{for all } i > j$$
 
 This is the *thin* (or *reduced*) QR decomposition. The full decomposition extends $Q$ to a square $M \times M$ orthogonal matrix, but the thin form is sufficient to reconstruct $A$ and is more compact when $M > N$.
+
+Since 2.17.0 every API takes a `mode`, as `numpy.linalg.qr` and `torch.linalg.qr` do:
+
+| mode | Q | R | |
+|---|---|---|---|
+| `"reduced"` (the default) | $M \times K$ | $K \times N$ | the thin factors, as above |
+| `"r"` | not formed | $K \times N$ | the same R, bit for bit; up to 1.8x faster on the GPU, 2.4-2.8x on the CPU ([below](#modes)) |
+| `"complete"` | $M \times M$, orthogonal | $M \times N$, zero below row $K$ | Q's first $K$ columns are the thin Q |
+
+In C++ and in Python with MLX `"r"` follows numpy: Python returns R alone, C++
+an empty Q with it. The PyTorch package follows torch (an empty Q tensor), the
+C API takes `METAL_LINALG_QR_R` with `q` NULL, and Swift a `QrMode`.
 
 For example, given:
 
@@ -139,7 +156,7 @@ $Y$ and $T$ are loaded into threadgroup memory (L1 cache) once per tile and reus
 
 **Kernel 4 — Haar fix.** Ensures the output $Q$ is a uniform sample from the Haar measure on $O(M)$ and that $R$ has non-negative diagonal. For each column $k$ where $R_{kk} < 0$, the signs of column $k$ in both $Q$ and $R$ are flipped. If the resulting $\det(Q) < 0$, the final column is negated to enforce $\det(Q) = +1$, placing $Q$ in $SO(M)$.
 
-### Algorithm: `qr_blocked` (since 2.15.0, block size $b = 16$, aggregates of 128)
+### Algorithm: `qr_blocked` (since 2.15.0, block size $b = 16$ or 8, aggregates of 128)
 
 The streaming kernels above factor each 32-column panel in one threadgroup
 and stream every panel's trailing update through threadgroups a tile at a
@@ -151,7 +168,23 @@ same Householder QR with the two-stage reduction's machinery
    a panel of up to 128 rows in one simdgroup, rows in registers; a taller
    one by TSQR (leaves of 128 rows a simdgroup each, their stacked
    triangles' QR a tree of pairs, the Householder vectors rebuilt from TSQR's
-   Q), so that every panel gives the compact $H = I - V T V^T$.
+   Q), so that every panel gives the compact $H = I - V T V^T$. For up to 4
+   matrices of 768 to 3072 rows and at least 768 columns, panels of 8
+   (2.17.0): there the TSQR's top, a tree of $b$-step chains whose steps are
+   up to $b$ long, is a third of the call at 1024×1024 with 16 columns, and
+   two panels of 8 take less (1.05x at 1024², 1.1x at 1536² and 2048²,
+   1.06x for 4 of 1024²); elsewhere 16, which kept the lead
+   (`QR_PANEL_WIDTH=8` or `16` forces one). Inside an aggregate, a panel's
+   update of the aggregate's columns right of it, $W = (VT)^T C$ and
+   $C \mathrel{-}= V W$, is one kernel of its own for up to 4 matrices and
+   panels of up to 3072 rows (`qr_agg_apply`: a threadgroup takes 8 columns
+   and every row, $W$ summed across its row groups; one dispatch where MPS
+   took two, 1.16x the call at 1024², 1.06-1.12x at 512-3072); taller panels
+   and larger batches keep MPS's products, which spread them better
+   (`QR_AGG_KERNEL=0` keeps MPS throughout). Where the input is used in
+   place, its scan for the scale and for NaN is the GPU's too (`qr_scan`, an
+   atomic maximum of the magnitudes' bit patterns), so the GPU starts at
+   once: 1.01-1.03x (`QR_GPU_SCAN=0` keeps it on the CPU).
 2. **Aggregates of 128 columns.** Inside one, each panel's $H$ is applied to
    the aggregate's columns right of it, $W = (VT)^T C$ and $C \mathrel{-}= V W$;
    the aggregate's $T_a$ is merged from its panels' $T$'s and the Gram matrix
@@ -252,6 +285,44 @@ Two Metal backends and a CPU path handle different regimes, with a dispatcher th
 **`qr_streaming_amx_reduced`** — The GPU path for large matrices. Since 2.15.0 it hands every call it can to the blocked QR (`qr_blocked`, above; `QR_BLOCKED=0` turns that off), which beat its own kernels at every shape and batch measured (1.8-3.5x on an M5 Pro). Its own kernels, kept for matrices taller than $2^{22}$ rows: multi-pass panel factorisation with grid-parallel trailing matrix updates, column panels of width 32, the T-matrix for each WY representation, then a grid of threadgroups for the trailing update, Q accumulated at its economic width of `K = min(M, N)` columns by a backward pass.
 
 **`qr_streaming_amx_complete`** — The same panel factorisation, but accumulating the full `M x M` orthogonal factor inside the forward loop and slicing Q down to `K` columns at the end. Measured to be within noise of the reduced backend, so it is no longer dispatched to.
+
+### Modes
+
+Every backend takes the mode, routed exactly as `"reduced"` is. For `"r"` none
+of them forms Q: the Householder kernels stop after the factorisation, the
+blocked QR skips the backward accumulation, and the CPU path skips `sorgqr`
+(except for a wide matrix, whose $R_2 = Q^T A_2$ needs Q). For `"complete"`
+with $M > N$, the backward accumulation starts from the $M \times M$ identity
+instead of its first $K$ columns, with the same reflectors: Q's first $K$
+columns are the reduced Q's, and R gains zero rows. The register kernel holds
+at most 32 columns of Q, so `qr_householder` gives a complete Q of a tall
+matrix to its blocked kernel; the grid-parallel kernels kept for more than
+$2^{22}$ rows accumulate $K$ columns alone, and refuse `"complete"` there.
+
+The modes against each other on an M5 Pro (2.17.0, the MLX API, median of
+the routed call, `./build/benchmark_qr --modes`):
+
+| batch × shape | backend | reduced | R alone | complete | R alone, faster by |
+|---|---|---|---|---|---|
+| 4096 × 32×32 | `unblocked` | 0.90 ms | 0.51 ms | 0.86 ms | 1.77x |
+| 4096 × 64×64 | `unblocked` | 3.87 ms | 2.73 ms | 3.88 ms | 1.42x |
+| 1024 × 128×128 | `unblocked` | 4.48 ms | 3.05 ms | 4.44 ms | 1.47x |
+| 256 × 256×256 | `unblocked` | 6.52 ms | 4.18 ms | 6.42 ms | 1.56x |
+| 16 × 1024×1024 | `streaming_reduced` | 20.9 ms | 14.8 ms | 20.8 ms | 1.41x |
+| one 4096×4096 | `streaming_reduced` | 62.5 ms | 46.8 ms | 61.3 ms | 1.33x |
+| one 8192×512 | `streaming_reduced` | 8.78 ms | 7.72 ms | 28.4 ms | 1.14x |
+| one 512×512 | `streaming_reduced` | 2.90 ms | 2.82 ms | 2.91 ms | 1.03x |
+| one 128×128 | `cpu` | 0.21 ms | 0.07 ms | 0.21 ms | 2.76x |
+| one 256×256 | `cpu` | 0.81 ms | 0.34 ms | 0.82 ms | 2.40x |
+| one 64×2048 | `cpu` | 0.09 ms | 0.09 ms | 0.09 ms | none (wide: $R_2$ needs Q) |
+
+One matrix up to about 1024×1024 gains little (0.96-1.05x at 512×512 over
+several runs): its time is the factorisation's chain of panels, and forming
+Q, a few matrix products at the end, is a small part of it. For square and
+wide matrices the complete Q is the reduced one. For tall ones it costs what
+its size does: $M^2$ floats a matrix written, and $M/K$ times the
+accumulation's work (one 8192×512: 3.2x the reduced call, for a Q 16x the
+size).
 
 ### Magnitude and nearly dependent columns
 
@@ -413,7 +484,7 @@ the M5 Pro the second effect won.
 | GPU | cores | `m_crossover` | GPU or CPU | status |
 |---|---|---|---|---|
 | Apple M1 | 8 | — | — | measured before 2.9.0, out of date and no longer used since 2.14.0: estimated like any unmeasured Mac (the old row's study: [`studies/qr-routing-apple-m1.md`](studies/qr-routing-apple-m1.md)) |
-| Apple M5 Pro | 20 | k: 80 below batch 8, 768 from 8 | GPU iff `w <= 448` and `batch * w >= 1448` (w = floor(sqrt(M k))), or `sqrt(M k) >= 512`; no batch shared with the CPU | measured — run [`20261007-9f2589`](results/apple-m5-pro-20gpu/20261007-9f2589/qr/report.md) |
+| Apple M5 Pro | 20 | k: 80 below batch 8, 768 from 8 | GPU iff `w <= 448` and `batch * w >= 1448` (w = floor(sqrt(M k))), or `sqrt(M k) >= 512`; no batch shared with the CPU | measured — run [`20261009-b60ec0`](results/apple-m5-pro-20gpu/20261009-b60ec0/qr/report.md) |
 | anything else | — | estimated | estimated | **estimated** from the M5 Pro's timings ([how](tuning.md#macs-nobody-has-measured)) |
 
 The GPU-or-CPU boundary is measured by every run made since QR had a CPU path;
@@ -485,7 +556,7 @@ cmake --build build --target test_qr
 ./build/test_qr          # or: ctest --test-dir build
 ```
 
-`tests/test_qr.cpp` checks each backend, the CPU path included, directly as well as through the dispatcher and the routing policy, verifying output shapes, reconstruction (`Q*R == A`), orthogonality (`Q^T*Q == I`) and upper-triangularity of `R`, across input magnitudes from 1e-30 to 1e+37 and for nearly dependent columns.
+`tests/test_qr.cpp` checks each backend, the CPU path included, directly as well as through the dispatcher and the routing policy, verifying output shapes, reconstruction (`Q*R == A`), orthogonality (`Q^T*Q == I`) and upper-triangularity of `R`, across input magnitudes from 1e-30 to 1e+37 and for nearly dependent columns. Its modes section runs every backend in `"r"` and `"complete"` over tall, square and wide shapes: R alone equal to the reduced R, the complete Q orthogonal with the reduced Q as its first columns, and R's rows below $K$ zero.
 
 
 ## Benchmark

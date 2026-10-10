@@ -235,8 +235,23 @@ struct SymSweep {
     bool  done;
     float tau = 0.0f;
     std::vector<float> u, w;
+    const ChaseReflectors* rec;
 
-    SymSweep(long kd, const ChaseReflectors*) : u(kd + 1), w(kd + 1) {}
+    SymSweep(long kd, const ChaseReflectors* r) : u(kd + 1), w(kd + 1), rec(r) {}
+
+    // Keeps reflector (s, j), on rows s + 1 + kd j .., in the bidiagonal
+    // chase's left layout (kd = 16): Q2 = the reflectors' product in the
+    // order applied, as for the SVD's left side.
+    void keep(long j, const float* x, long len, float t) const {
+        if (!rec || !rec->L || len < 2) return;
+        const size_t G = (size_t)s / 16, c = (size_t)s % 16, pm = rec->pmax;
+        const size_t b = G * (pm + 1) - G * (G - 1) / 2 + (size_t)j;
+        const size_t ct = c / 8, r0 = 8 * ct;
+        float* blk = rec->L + b * kChaseBlockFloats + ct * 3 * 64 + c % 8;
+        for (size_t r = r0; r < r0 + 24; ++r)
+            blk[(r - r0) / 8 * 64 + (r % 8) * 8] = r >= c && r < c + (size_t)len ? x[r - c] : 0.0f;
+        rec->Ltau[b * 16 + c] = t;
+    }
 
     void start(long sweep, long n, long kd) {
         s = sweep;
@@ -250,6 +265,7 @@ struct SymSweep {
         if (done) return false;
         if (task == 0) {
             tau = reflector(ed - st + 1, A.at(st, s), 1, u.data());
+            keep(0, u.data(), ed - st + 1, tau);
             two_sided(A, st, ed, u.data(), tau, w.data());
         } else if (task % 2 == 1) {
             const long j1 = ed + 1, j2 = std::min(ed + kd, n - 1);
@@ -271,6 +287,7 @@ struct SymSweep {
                 }
             }
             tau = reflector(m, A.at(j1, st), 1, u.data());
+            keep((task + 1) / 2, u.data(), m, tau);
             for (long j = st + 1; j <= ed; ++j) {   // the rest of the block from the left
                 if (tau == 0.0f) break;
                 float* p = A.at(j1, j);
@@ -420,6 +437,47 @@ void band_to_tridiagonal(uint32_t n, uint32_t kd, float* W, size_t ld, float* d,
     for (long i = 0; i < N; ++i) {
         d[i] = *A.at(i, i);
         if (i + 1 < N) e[i] = *A.at(i + 1, i);
+    }
+}
+
+void chase_build_blocks(float* Bp, float* taus, long n, long G0, long G1) {
+    constexpr size_t kb = kChaseBlockFloats;
+    const long pmax = (n - 2) / 16;
+    // V's tile (row, column) as a slot of the block; -1 for a zero tile.
+    auto vslot = [](long rt, long ct) -> long { return ct == 0 ? (rt <= 2 ? rt : -1) : (rt >= 1 ? rt + 2 : -1); };
+    for (long G = G0; G < G1; ++G) {
+        for (long p = G; p <= pmax; ++p) {
+            const long j = p - G, blk = G * (pmax + 1) - G * (G - 1) / 2 + j;
+            float* B = Bp + blk * (long)kb;
+            float* tau = taus + blk * 16;
+            for (long c = 0; c < 16; ++c) {
+                const long s = 16 * G + c, a = s + 1 + 16 * j, e = std::min(s + 16 * (j + 1), n - 1);
+                if (s <= n - 2 && e - a + 1 >= 2) continue;
+                for (long r = 8 * (c / 8); r < 8 * (c / 8) + 24; ++r) B[vslot(r / 8, c / 8) * 64 + (r % 8) * 8 + c % 8] = 0.0f;
+                tau[c] = 0.0f;
+            }
+            // Y = -T^T V^T, with T slarft's forward T, row by row: Y_i =
+            // -tau_i (V_i + sum_{m < i} (V_m . V_i) Y_m). Reflector c spans
+            // rows c .. c + 15 of the block (Y_i rows up to i + 15).
+            float Vt[16][32] = {}, Y[16][32] = {};   // a reflector a row
+            for (long c = 0; c < 16; ++c)
+                for (long r = c; r < c + 16; ++r) Vt[c][r] = B[vslot(r / 8, c / 8) * 64 + (r % 8) * 8 + c % 8];
+            for (long i = 0; i < 16; ++i) {
+                if (tau[i] == 0.0f) continue;
+                float* y = Y[i];
+                for (long r = i; r < i + 16; ++r) y[r] = Vt[i][r];
+                for (long m = std::max(0L, i - 15); m < i; ++m) {
+                    float z = 0.0f;
+                    for (long r = i; r <= m + 15; ++r) z += Vt[m][r] * Vt[i][r];
+                    for (long r = 0; r <= m + 15; ++r) y[r] += z * Y[m][r];
+                }
+                for (long r = 0; r < i + 16; ++r) y[r] *= -tau[i];
+            }
+            static constexpr long yt[7][2] = {{0, 0}, {0, 1}, {0, 2}, {1, 0}, {1, 1}, {1, 2}, {1, 3}};
+            for (long t = 0; t < 7; ++t)
+                for (long ii = 0; ii < 8; ++ii)
+                    for (long rr = 0; rr < 8; ++rr) B[(6 + t) * 64 + ii * 8 + rr] = Y[8 * yt[t][0] + ii][8 * yt[t][1] + rr];
+        }
     }
 }
 

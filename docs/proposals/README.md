@@ -7,15 +7,8 @@ Apple M5 Pro's (20 GPU cores, 18 CPU cores).
 
 ## Open
 
-| proposal | affects | time at stake | effort | expected gain |
-|---|---|---|---|---|
-| [The blocked QR's fixed costs and panels](qr-fixed-costs.md#done-2026-10-07) (what is left) | QR, one matrix of 512-4096 | the TSQR's leaves, top and rebuild about 3.8 of 6.6 ms at 1024; updates inside aggregates 12% | 1-2 days | a few % each: the leaves and top as one dispatch, the in-aggregate updates as kernels of their own |
-| [The CPU path's divide and conquer](cpu-path-divide-and-conquer.md) | eigh and SVD with vectors on the CPU, one matrix | `sstedc` 43 of 239 ms, `sbdsdc` 133 of 439 at 2048 | about 2 days | eigh 1.15-1.25x, SVD ~1.34x at 1024-2048 (estimate) |
-| [eigh and the SVD for batches of mid-size matrices](eigh-svd-mid-size.md) (analysed, not built) | eigh and the SVD, batches of 88-128 with vectors | the CPU 2-10x ahead of every GPU backend at 96-512 (1024 of 96 x 96 eigh: 22.5 ms against 75) | 3-5 days | at best 1.2-1.5x the CPU at 88-128, with the vectors in registers |
-
-The CPU path's divide and conquer matters less on the M5 Pro since 2.15.0,
-where the GPU takes single matrices from about 512, but more on Macs whose
-GPU is weaker against their CPU.
+None (2026-10-09): every proposal written so far is done, tried and
+rejected, or measured and judged not worth building; see Done below.
 
 **Not code, but open:**
 
@@ -24,6 +17,32 @@ GPU is weaker against their CPU.
   Mac to run `python3 tuning/run.py` on an idle machine.
 
 ## Done
+
+In 2.17.0 (2026-10-09), eigh and the SVD:
+
+| work | outcome |
+|---|---|
+| [eigh for batches of mid-size matrices](eigh-svd-mid-size.md) | `tridiag_batch`: a batch reduced together (a threadgroup a matrix and panel), the tridiagonal problems on the CPU's cores under the GPU's stages: 1.3-1.5x the CPU at 256-1024 matrices of 96-256; its symmetric products from the lower triangle alone, 1.5x at 1024 |
+| [the SVD for batches of mid-size matrices](eigh-svd-mid-size.md) | `bidiag_batch`, the same for the SVD, each panel step reading the trailing block once (`slabrd` reads it twice): 1.4-1.65x the CPU at 256-1024 matrices of 128-256 |
+| eigh with eigenvectors in two stages | `band` with eigenvectors, as the SVD's: 1.36x `tridiag` at 4096, 1.59x at 8192 |
+| ql in registers | up to N = 32 a simdgroup a matrix: 1.1-1.5x; eigenvalues alone by bisection, 2-3x |
+| golub_kahan in registers | up to 32 x 32 in a simdgroup's registers, four or two matrices a simdgroup up to 8 or 16 rows: 1.6-2.1x with vectors to 16 x 16; singular values alone by bisection on the Golub-Kahan tridiagonal, 1.6-2.7x; `ql`'s registers packed the same way, 2x up to N = 8 |
+| `bidiag_batch` for tall and wide matrices | R of this library's QR first, as on the CPU: 256 x 1024x128 2.5x (1.77x the CPU, from 0.71x), 256 x 128x1024 2.4x (1.96x) |
+| singular values alone of batches in two stages | from k = 160: a band on the GPU (batched panels and products), bidiagonal on the CPU's cores: 1.5x at 512, 2-2.3x at 1024 (3.3x the CPU at 16 x 1024^2). The eigensolver's counterpart not built: its CPU path is LAPACK's own two-stage driver, whose band chase alone is two-thirds of its time (64 x 512^2: 15.8 of 23.2 ms), so a GPU first stage could reach about 1.3x |
+| a runner simdgroup for the register kernels' QR iterations (17-32 rows) | the SVD's: 1.1-1.35x; eigh's `ql`: 0.8-1.1x, not kept (its sweeps are cheap against a threadgroup barrier a sweep) |
+| one trailing product a SVD panel; the batch back-transformations | not built: removing a whole product saved 3-6%, the whole back-transformation 6-14% of the wall time (it overlaps the CPU's solve); what a rework would recover is a few %. The SVD panel's two trailing products as one of rank 2nb (2026-10-09; its operands [Y; U] and [V; X] gathered by the panel kernel, as eigh's): 0.98-1.04x from 64 to 1024, the gather costing what the second product had; reverted |
+| [the blocked QR's fixed costs](qr-fixed-costs.md#done-2026-10-09-what-was-left) (what was left) | the TSQR is half of one matrix's call (57 us a 16-column panel at 1024): panels of 8 columns for up to 4 matrices of 768-3072 rows, 1.05-1.1x; the three TSQR kernels as one threadgroup tried, 0.74x (its rebuild on one core); the in-aggregate updates as one kernel (up to 4 matrices, 3072 rows), 1.16x at 1024^2; the input's scan on the GPU, 1.01-1.03x |
+| a constant matrix's Q (found on the way) | far from orthogonal on the blocked QR and both `band` backends (5e4 at 600 x 64, 3e7 for the SVD's at 1024²): sums of squares that underflowed in part; a rest below 2^-80 is now zero in every kernel |
+| the eigensolver's batched band blocks in four dispatches (found on the way) | the panel kernel forms V T, one kernel (`sb_small`) does V^T X, M and Y: four dispatches a block instead of seven, 1.09-1.31x; two stages then pay from N = 64 for small batches and up to 32 matrices from 896 |
+| the batch back-transformations (left from the mid-size work) | measured: 3-15% of a batch call, mostly batched products near their flop rate; their T, built column by column with 128 barriers, 1-4%. T now built in blocks (diagonal 16 x 16 blocks a thread a row, merged in pairs, five barriers): its cost gone, 1.04-1.05x the SVD and 1.02-1.15x eigh at 96-384. A row a thread without blocks (no barriers, the same dependent chain) gained nothing. The input's scan in these backends (0.3 ms of 27-117, every core already) not moved to the GPU |
+| the batch pipelines' smallest chunk (found on the way) | tried and rejected: below 16 matrices a chunk the one-stage reductions' threadgroup-a-matrix kernels leave the GPU idle (24 x 1024^2 in chunks of 2-8: 0.97-1.04x; 16 x 1024^2 0.63-0.93x) |
+| [the SVD's batched band blocks in three passes](svd-band-three-passes.md) | three passes and five dispatches a block instead of four and eight (the row panel's kernel applies the left update): 1.04-1.16x; as planned, with the small products separate, it lost (0.91-0.96x). Two stages with vectors now from k = 288 (160 for small batches) |
+| [batches of a few large matrices with vectors in two stages](batched-two-stage-vectors.md) | `bidiag_batch` with vectors from k = 384 and `tridiag_batch` with eigenvectors (N from 384, small batches) in two stages, both stages' reflectors kept and applied on the GPU: the SVD 1.96x the CPU at 1 x 1024^2, 2.7x at 16 (2.7-3.4x the direct reduction); eigh 1.6x the CPU at 1 x 1024^2, 1.7x at 8. `band` with vectors hands them batches of two or more. Eigenvalues alone: not kept (LAPACK's two-stage driver faster) |
+| [the CPU path's divide and conquer](cpu-path-divide-and-conquer.md) | eigh and the SVD with vectors, a batch of at most a quarter as many matrices as cores, in the drivers' steps with the divide and conquer on the idle cores: eigh 1.17-1.26x `ssyevd` from 256 to 2048, the SVD 1.23-1.4x `sgesdd` (1.16-1.3x tall or wide); with fewer than 4 cores a matrix it lost (6 of 1024: 1.1x slower) |
+| the batch backends at 1024 | the SVD's panel with 1024 threads, 1.1x. With vectors, 8 matrices of 768-1024 still go to the CPU (1.3-1.5x ahead): a threadgroup a matrix leaves 12 of 20 cores idle. Singular values alone are solved by the two stages above (their products use every core); with vectors the same would need the band backend's transformations batched, a project of days |
+| a GPU solve for the batch backends; two matrices a threadgroup | not built: timed stage by stage, the batch backends were bound by the GPU's reduction (its memory traffic), not the CPU's solve, from 256; at 128 the two balance. Two matrices a threadgroup helps a latency-bound kernel, which these are not |
+| [the batch panels' own columns in registers](eigh-svd-mid-size.md#tried-the-panels-own-columns-in-registers) | tried on eigh's panel, three ways, and reverted: 10-17% slower at 128-512. The 64 registers a thread costs fewer simdgroups a core in a kernel bound by memory, and the reads it saved were mostly cache hits. Measured on the SVD's panel (2026-10-09): those reads were a third of its reduction at 96-128, so each step now makes one pass over the panel's rows instead of two, and up to 128 rows the dot products go two columns a pass, in both panels: svdvals 1.12-1.15x and eigvalsh 1.07-1.1x at 64-128 |
+| [the bulge chase on the GPU](gpu-band-chase.md) (new on the way) | tried and rejected: a threadgroup a matrix, the sweeps in lockstep, gives the CPU's tridiagonal in 11 ms at 1024 whatever the batch (16 x 512^2 4.2 ms), bound by one core's issue rate; the CPU's cores do a batch's chases about as fast, and skipping the chase entirely gains 1.13-1.8x, so the GPU's would net 1.0-1.1x. Two sweeps a simdgroup: slower (16.4 ms); the band in threadgroup memory, at best 1.24-1.37x where 3x was needed |
 
 In 2.16.0 (2026-10-08):
 

@@ -37,7 +37,7 @@ def _fn(name, restype, *argtypes):
 
 
 last_error = _fn("metal_linalg_last_error", _cstr)
-_qr = _fn("metal_linalg_qr", ctypes.c_int, _f32p, _u32, _u32, _u32, _f32p, _f32p)
+_qr = _fn("metal_linalg_qr_with_mode", ctypes.c_int, _f32p, _u32, _u32, _u32, ctypes.c_int, _f32p, _f32p)
 _eigh = _fn("metal_linalg_eigh", ctypes.c_int, _f32p, _u32, _u32, ctypes.c_int, _f32p, _f32p, _u32p)
 _svd = _fn("metal_linalg_svd", ctypes.c_int, _f32p, _u32, _u32, _u32, _f32p, _f32p, _f32p, _u32p)
 buffer_contents = _fn("metal_linalg_buffer_contents", ctypes.c_void_p,
@@ -76,14 +76,20 @@ EIGH_FIELDS = ("simd_max_n", "block_min_n", "block_min_n_batched", "block_min_ba
                "values_gpu_max_n", "values_gpu_min_batch_times_n", "values_gpu_min_batch",
                "tridiag_min_n", "values_tridiag_min_n", "ql_min_n", "ql_max_n",
                "tridiag_max_batch", "values_tridiag_max_batch", "share_min_batch",
-               "gpu_big_batch_max_n", "gpu_big_batch_min", "values_band_min_n", "values_band_width")
+               "gpu_big_batch_max_n", "gpu_big_batch_min", "values_band_min_n", "values_band_width",
+               "band_min_n", "tridiag_batch_min_n", "tridiag_batch_max_n", "tridiag_batch_min_batch",
+               "values_tridiag_batch_min_n", "values_tridiag_batch_max_n", "values_tridiag_batch_min_batch",
+               "share_min_n")
 SVD_FIELDS = ("qr_min_rows", "qr_min_k", "block_min_k", "block_min_k_batched", "block_min_batch",
               "gpu_max_k", "gpu_min_batch_times_k", "gpu_min_batch", "gpu_cores",
               "bidiag_min_k", "values_bidiag_min_k", "bidiag_max_batch", "values_bidiag_max_batch",
               "gk_min_k", "gk_max_k", "gpu_max_l",
               "values_gpu_max_k", "values_gpu_min_batch_times_k", "values_gpu_min_batch", "values_gpu_max_l",
               "share_min_batch", "gpu_big_batch_max_k", "gpu_big_batch_min", "values_band_min_k",
-              "values_band_width", "band_min_k")
+              "values_band_width", "band_min_k", "bidiag_batch_min_k", "bidiag_batch_max_k",
+              "bidiag_batch_min_batch", "bidiag_batch_max_l", "values_bidiag_batch_min_k",
+              "values_bidiag_batch_max_k", "values_bidiag_batch_min_batch", "values_bidiag_batch_max_l",
+              "share_min_k")
 # Read back but ignored when set.
 INFORMATIONAL = {"gpu_cores", "concurrent_matrices"}
 
@@ -126,9 +132,12 @@ def check(status, what):
     raise RuntimeError(f"metal_linalg_torch.{what}: {msg}")
 
 
-def qr(a, batch, rows, cols, q, r):
+QR_MODES = {"reduced": 0, "r": 1, "complete": 2}   # metal_linalg_qr_with_mode's
+
+
+def qr(a, batch, rows, cols, q, r, mode="reduced"):
     with lock:
-        check(_qr(a, batch, rows, cols, q, r), "qr")
+        check(_qr(a, batch, rows, cols, QR_MODES[mode], q, r), "qr")
 
 
 def eigh(a, batch, n, lower, w, v):

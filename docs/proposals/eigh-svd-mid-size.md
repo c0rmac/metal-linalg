@@ -1,8 +1,69 @@
 # eigh and the SVD for batches of mid-size matrices
 
-Status: **analysed, not built** (2026-10-08). The CPU path is 2-10x ahead
-of every GPU backend here, and what a GPU kernel could reach is about level
-with it, not ahead; see [Why not now](#why-not-now).
+Status: **analysed, not built** (2026-10-08) as a kernel a matrix; **done
+another way for eigh** (2.17.0): the `tridiag_batch` backend reduces a whole
+batch together on the GPU, a threadgroup a matrix and panel, and leaves the
+tridiagonal problems (the part this page found the GPU cannot do well, the
+QL rotations on the vectors) to the CPU's cores, pipelined under the GPU's
+stages: 1.3-1.5x the CPU at 256-1024 matrices of 96-256 on an M5 Pro
+([eigh.md, backend 6](../eigh.md#backend-6-a-batch-reduced-together-tridiag_batch)).
+The SVD's counterpart is built too (2.17.0, `bidiag_batch`, [svd.md](../svd.md#an-eighth-backend-for-batches-of-mid-size-matrices-bidiag_batch)):
+1.4-1.65x the CPU at 256-1024 matrices of 128-256. The analysis of a kernel a
+matrix below stands: the CPU path is 2-10x ahead of every one-matrix GPU
+backend here, and what such a kernel could reach is about level with it; see
+[Why not now](#why-not-now).
+
+## Where the time goes
+
+Timed stage by stage (the GPU's reduction, the CPU's solve, the GPU's
+back-transformation, under the pipeline), both batch backends are bound by
+the reduction from 256, and the reduction by memory: about 170-190 GB/s.
+Reading the lower triangle alone (eigh) and the trailing block once a step
+(the SVD) took 1.2-1.9x off it. At 128 the CPU's solve is as long as the
+GPU's work.
+
+## Tried: the panel's own columns in registers
+
+Each panel step also reads the panel's own columns, $V$ and $W$ (the SVD: $V$
+and $X$), three times: for the column's update, for the corrections' dot
+products and in the corrections themselves; by estimate as much as the
+trailing product at $N = 256$. On eigh's panel (2026-10-08), a thread a row,
+its row of $V$ and $W$ kept in registers as the steps formed them, so that
+no step read them: the update and the corrections register-local, the dot
+products summed across the lanes (five shuffle stages) and then the
+simdgroups (a partial-sums array; then compare-and-swap into the result);
+and, third, the dot products left in memory. Every variant was 10-17% slower
+at 128-512 (256 × 256²: 37.5-38.9 ms against 32.3-33.2). The 64 floats a
+thread holds cost occupancy, fewer simdgroups a core to hide memory latency
+in a kernel bound by memory, and the reads they saved were mostly cache hits
+(the panel's columns are 64 KB a matrix at 256, read again within a step).
+The SVD's panel, which already holds a column in registers for its fused
+pass, was not tried then.
+
+**Measured, then a cheaper form (2026-10-09).** The SVD's panel with its
+own columns' reads and their arithmetic left out (the wrong answer, the
+right timing), the reduction's GPU time at 1024 x 128^2: 175 to 122 ms;
+1024 x 96^2 94 to 63; 256 x 1024x128 41.5 to 29.1; 256^2 and 512^2 about
+unchanged. Each of its three passes was about a third of that: X's column,
+the next column's update, and the corrections' dot products. Registers were
+not the way (eigh's had lost to occupancy); instead, in both panels:
+
+- **One pass over the panel's rows a step.** The SVD's X column and the
+  next column's update both read row r of [A, X] and run in the thread that
+  owns row r, so they share one read and lose the device barrier between
+  them; eigh's W update and its next column's update likewise, the latter's
+  last term (in the new W column) added once the step's sum is known, the
+  column kept in threadgroup memory until the next step.
+- **Two columns a pass in the dot products up to 128 rows** (at most four
+  simdgroups, each with up to sixteen columns in turn): their loads and
+  sums overlap. From 160 rows the pairs' uneven share lost 2-3%, so only
+  there; four columns a pass gained nothing more.
+
+M5 Pro, min of 5-12 alternating runs: svdvals 1.13x at 1024 x 64^2, 1.15x
+at 96^2, 1.12x at 128^2, level at 160-224 and 512; the SVD with vectors
+1.02-1.04x at 128-256; eigvalsh 1.1x at 1024 x 64^2, 1.09x at 96^2, 1.07x
+at 128^2, 1.02-1.03x at 192-256; eigh with vectors level (its CPU solve the
+longer stage).
 
 ## What
 

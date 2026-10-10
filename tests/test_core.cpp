@@ -128,6 +128,8 @@ std::string dims(uint32_t batch, uint32_t m, uint32_t n) {
 // -----------------------------------------------------------------------------
 
 using QrFn = std::function<void(const Matrices&, float*, float*)>;
+// The three-argument (reduced) overloads, by name
+using QrPtr = void (*)(const Matrices&, float*, float*);
 
 void check_qr(const std::string& name, const QrFn& fn, uint32_t batch, uint32_t m, uint32_t n,
               unsigned seed, float scale = 1.0f) {
@@ -321,25 +323,25 @@ int main() {
     std::printf("\ncore (buffer API) correctness tests, %s\n", device_name());
 
     std::printf("\n[ QR ]\n");
-    check_qr("qr_unblocked", cd::qr_unblocked, 3, 20, 12, 1);
-    check_qr("qr_unblocked", cd::qr_unblocked, 2, 12, 20, 2);
-    check_qr("qr_unblocked", cd::qr_unblocked, 1, 1, 1, 3);
-    check_qr("qr_unblocked", cd::qr_unblocked, 2, 16, 16, 4, 1e-6f);
-    check_qr("qr_unblocked", cd::qr_unblocked, 2, 16, 16, 5, 1e20f);
-    check_qr("qr_streaming_amx_reduced", cd::qr_streaming_amx_reduced, 2, 100, 40, 6);
-    check_qr("qr_streaming_amx_reduced", cd::qr_streaming_amx_reduced, 1, 40, 100, 7);
+    check_qr("qr_unblocked", QrPtr(cd::qr_unblocked), 3, 20, 12, 1);
+    check_qr("qr_unblocked", QrPtr(cd::qr_unblocked), 2, 12, 20, 2);
+    check_qr("qr_unblocked", QrPtr(cd::qr_unblocked), 1, 1, 1, 3);
+    check_qr("qr_unblocked", QrPtr(cd::qr_unblocked), 2, 16, 16, 4, 1e-6f);
+    check_qr("qr_unblocked", QrPtr(cd::qr_unblocked), 2, 16, 16, 5, 1e20f);
+    check_qr("qr_streaming_amx_reduced", QrPtr(cd::qr_streaming_amx_reduced), 2, 100, 40, 6);
+    check_qr("qr_streaming_amx_reduced", QrPtr(cd::qr_streaming_amx_reduced), 1, 40, 100, 7);
     // These two pad to the same 64 x 64: the second must not reuse the first's buffers.
-    check_qr("qr_streaming_amx_reduced", cd::qr_streaming_amx_reduced, 1, 60, 60, 8);
-    check_qr("qr_streaming_amx_reduced", cd::qr_streaming_amx_reduced, 1, 64, 64, 9);
+    check_qr("qr_streaming_amx_reduced", QrPtr(cd::qr_streaming_amx_reduced), 1, 60, 60, 8);
+    check_qr("qr_streaming_amx_reduced", QrPtr(cd::qr_streaming_amx_reduced), 1, 64, 64, 9);
     check_qr("qr_streaming_amx_complete", cd::qr_streaming_amx_complete, 2, 70, 40, 10);
     check_qr("qr_streaming_amx_complete", cd::qr_streaming_amx_complete, 1, 60, 60, 11);
     check_qr("qr_streaming_amx_complete", cd::qr_streaming_amx_complete, 1, 64, 64, 12);
-    check_qr("qr_cpu (LAPACK)", cd::qr_cpu, 3, 20, 12, 14);
-    check_qr("qr_cpu (LAPACK)", cd::qr_cpu, 2, 12, 20, 15);
-    check_qr("qr_cpu (LAPACK)", cd::qr_cpu, 1, 1, 1, 16);
-    check_qr("qr_cpu (LAPACK)", cd::qr_cpu, 2, 16, 16, 17, 1e-6f);
-    check_qr("qr_cpu (LAPACK)", cd::qr_cpu, 1, 300, 40, 18);
-    check_qr("core::qr", core::qr, 4, 30, 30, 13);
+    check_qr("qr_cpu (LAPACK)", QrPtr(cd::qr_cpu), 3, 20, 12, 14);
+    check_qr("qr_cpu (LAPACK)", QrPtr(cd::qr_cpu), 2, 12, 20, 15);
+    check_qr("qr_cpu (LAPACK)", QrPtr(cd::qr_cpu), 1, 1, 1, 16);
+    check_qr("qr_cpu (LAPACK)", QrPtr(cd::qr_cpu), 2, 16, 16, 17, 1e-6f);
+    check_qr("qr_cpu (LAPACK)", QrPtr(cd::qr_cpu), 1, 300, 40, 18);
+    check_qr("core::qr", QrPtr(core::qr), 4, 30, 30, 13);
     {   // A NaN gives NaN for its matrix alone.
         const std::string label = "qr_cpu (LAPACK) NaN in 1 of 3, 10x6";
         std::vector<float> a = random_matrices(3, 10, 6, 79);

@@ -42,6 +42,44 @@ int main(void) {
         }
     }
 
+    /* The modes: R alone is the reduced R, without q; the complete Q is
+     * square and orthogonal, its first K columns the reduced Q's, and R has
+     * zero rows below K. */
+    {
+        const float a[12] = {1, 2, 3, 4, 5, 6,   2, 0, 0, 3, 1, 1};
+        float q[12], r[8], r_alone[8], qc[18], rc[12];
+        CHECK(metal_linalg_qr(a, 2, 3, 2, q, r) == METAL_LINALG_OK, "qr: %s", metal_linalg_last_error());
+        CHECK(metal_linalg_qr_with_mode(a, 2, 3, 2, METAL_LINALG_QR_R, NULL, r_alone) == METAL_LINALG_OK, "qr R alone: %s",
+              metal_linalg_last_error());
+        for (int i = 0; i < 8; ++i) CHECK(near(r_alone[i], r[i]), "qr R alone: r[%d] = %g, want %g", i, r_alone[i], r[i]);
+        CHECK(metal_linalg_qr_with_mode(a, 2, 3, 2, METAL_LINALG_QR_COMPLETE, qc, rc) == METAL_LINALG_OK, "qr complete: %s",
+              metal_linalg_last_error());
+        for (int b = 0; b < 2; ++b) {
+            CHECK(rc[b * 6 + 4] == 0.0f && rc[b * 6 + 5] == 0.0f, "qr complete: R[%d] row 2 not zero", b);
+            for (int i = 0; i < 3; ++i)
+                for (int j = 0; j < 3; ++j) {
+                    float s = 0.0f, x = 0.0f;
+                    for (int t = 0; t < 3; ++t) s += qc[b * 9 + t * 3 + i] * qc[b * 9 + t * 3 + j];
+                    CHECK(fabsf(s - (i == j)) < 1e-5f, "qr complete: (Q^T Q)[%d][%d][%d] = %g", b, i, j, s);
+                    if (j < 2) {
+                        for (int t = 0; t < 3; ++t) x += qc[b * 9 + i * 3 + t] * rc[b * 6 + t * 2 + j];
+                        CHECK(near(x, a[b * 6 + i * 2 + j]), "qr complete: (QR)[%d][%d][%d] = %g", b, i, j, x);
+                        CHECK(near(qc[b * 9 + i * 3 + j], q[b * 6 + i * 2 + j]), "qr complete: Q[%d][%d][%d] = %g, want %g",
+                              b, i, j, qc[b * 9 + i * 3 + j], q[b * 6 + i * 2 + j]);
+                    }
+                }
+        }
+        CHECK(metal_linalg_qr_with_mode(a, 2, 3, 2, METAL_LINALG_QR_COMPLETE, NULL, rc) == METAL_LINALG_INVALID_ARGUMENT,
+              "qr complete without q not rejected");
+        CHECK(metal_linalg_qr_with_mode(a, 2, 3, 2, (metal_linalg_qr_mode)7, q, r) == METAL_LINALG_INVALID_ARGUMENT,
+              "qr mode 7 not rejected");
+        /* Nothing to factor (no columns): the complete Q is the identity. */
+        CHECK(metal_linalg_qr_with_mode(a, 2, 3, 0, METAL_LINALG_QR_COMPLETE, qc, NULL) == METAL_LINALG_OK,
+              "qr complete of 3 x 0: %s", metal_linalg_last_error());
+        for (int i = 0; i < 18; ++i)
+            CHECK(qc[i] == (float)(i % 9 % 4 == 0), "qr complete of 3 x 0: Q[%d] = %g", i, qc[i]);
+    }
+
     /* eigh of [[2, 1], [1, 2]]: eigenvalues 1 and 3, eigenvectors (1, -1) and (1, 1) / sqrt 2. */
     {
         const float a[4] = {2, 1, 1, 2};
@@ -137,6 +175,29 @@ int main(void) {
         CHECK(metal_linalg_eigh_policy_get().values_band_width == 32, "eigh values_band_width not set");
         p.values_band_width = 0;
         metal_linalg_eigh_policy_set(&p);
+        /* With eigenvectors, the band backend from band_min_n (within tridiag_max_batch), and
+           tridiag_batch inside its window. */
+        {
+            metal_linalg_eigh_policy q = measured;
+            q.gpu_max_n = 0;
+            q.tridiag_min_n = 1024;
+            q.tridiag_max_batch = 4;
+            q.band_min_n = 3072;
+            q.tridiag_batch_min_n = 96;
+            q.tridiag_batch_max_n = 512;
+            q.tridiag_batch_min_batch = 64;
+            metal_linalg_eigh_policy_set(&q);
+            CHECK(metal_linalg_eigh_policy_get().band_min_n == 3072, "band_min_n not set");
+            CHECK(strcmp(metal_linalg_eigh_backend(4096, 1), "band") == 0, "band_min_n = 3072: N=4096 routes to %s",
+                  metal_linalg_eigh_backend(4096, 1));
+            CHECK(strcmp(metal_linalg_eigh_backend(2048, 1), "tridiag") == 0, "below band_min_n: N=2048 routes to %s",
+                  metal_linalg_eigh_backend(2048, 1));
+            CHECK(strcmp(metal_linalg_eigh_backend(256, 64), "tridiag_batch") == 0,
+                  "tridiag_batch window: 64 x 256 routes to %s", metal_linalg_eigh_backend(256, 64));
+            CHECK(strcmp(metal_linalg_eigvalsh_backend(256, 64), "tridiag_batch") != 0,
+                  "the values window unset still routes eigvalsh to tridiag_batch");
+            metal_linalg_eigh_policy_set(&p);
+        }
         /* Eigenvalues alone: values_gpu_min_batch = 0 follows eigh; set, it decides apart. */
         p.values_gpu_min_batch = 0;
         metal_linalg_eigh_policy_set(&p);
@@ -152,6 +213,7 @@ int main(void) {
         p = measured;
         p.gpu_max_n = 0;
         p.tridiag_min_n = 256;
+        p.band_min_n = 0;   /* (a device's band threshold may be below 512) */
         metal_linalg_eigh_policy_set(&p);
         CHECK(strcmp(metal_linalg_eigh_backend(512, 1), "tridiag") == 0, "tridiag_min_n = 256: N=512 routes to %s",
               metal_linalg_eigh_backend(512, 1));
@@ -162,6 +224,7 @@ int main(void) {
         metal_linalg_svd_policy sp = svd_measured;
         sp.gpu_max_k = 0;
         sp.bidiag_min_k = 256;
+        sp.band_min_k = 0;   /* (as the eigensolver's band threshold above) */
         sp.values_bidiag_min_k = 0;
         metal_linalg_svd_policy_set(&sp);
         CHECK(strcmp(metal_linalg_svd_backend(512, 512, 1), "bidiag") == 0, "bidiag_min_k = 256: 512x512 routes to %s",
@@ -201,6 +264,25 @@ int main(void) {
               metal_linalg_svd_backend(1200, 1200, 1));
         sp.band_min_k = 0;
         metal_linalg_svd_policy_set(&sp);
+        /* bidiag_batch inside its window, k in [64, 256] and l up to 512, from batch 32. */
+        {
+            metal_linalg_svd_policy q = sp;
+            q.gpu_max_k = 0;
+            q.gpu_big_batch_max_k = 0;
+            q.bidiag_batch_min_k = 64;
+            q.bidiag_batch_max_k = 256;
+            q.bidiag_batch_min_batch = 32;
+            q.bidiag_batch_max_l = 512;
+            metal_linalg_svd_policy_set(&q);
+            CHECK(metal_linalg_svd_policy_get().bidiag_batch_max_l == 512, "bidiag_batch_max_l not set");
+            CHECK(strcmp(metal_linalg_svd_backend(256, 128, 32), "bidiag_batch") == 0,
+                  "bidiag_batch window: 32 x 256x128 routes to %s", metal_linalg_svd_backend(256, 128, 32));
+            CHECK(strcmp(metal_linalg_svd_backend(600, 128, 32), "bidiag_batch") != 0,
+                  "above bidiag_batch_max_l still routes 600x128 to bidiag_batch");
+            CHECK(strcmp(metal_linalg_svdvals_backend(256, 128, 32), "bidiag_batch") != 0,
+                  "the values window unset still routes svdvals to bidiag_batch");
+            metal_linalg_svd_policy_set(&sp);
+        }
         CHECK(strcmp(metal_linalg_svd_backend(40, 24, 16), "golub_kahan") == 0, "gk window: 40x24 routes to %s",
               metal_linalg_svd_backend(40, 24, 16));
         CHECK(strcmp(metal_linalg_svd_backend(4000, 16, 16), "qr_golub_kahan") == 0, "gk window: 4000x16 routes to %s",

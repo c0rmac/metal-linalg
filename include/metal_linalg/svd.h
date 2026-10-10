@@ -58,6 +58,8 @@ namespace metal_linalg {
         SvdResult svd_band(const mlx::core::array& a, uint32_t width = 0);
         // With U and Vt, by the two-stage reduction (width 16).
         SvdResult svd_band_vectors(const mlx::core::array& a);
+        // bidiag's method for a whole batch at once (rows and columns up to 1024).
+        SvdResult svd_bidiag_batch(const mlx::core::array& a, bool compute_uv);
         // Shapes that metal_linalg::detail::svd_gk_fits(); `info` counts QR
         // steps. With the QR first: svd_qr_jacobi with Kernel::golub_kahan.
         SvdResult svd_golub_kahan(const mlx::core::array& a, bool compute_uv);

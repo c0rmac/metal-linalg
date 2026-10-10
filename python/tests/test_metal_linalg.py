@@ -50,6 +50,21 @@ class Decompositions(unittest.TestCase):
         self.assertLess(max_abs(mm(q.swapaxes(-1, -2), q) - eye(16)), 1e-5)
         self.assertEqual(max_abs(mx.tril(r, -1)), 0.0)
 
+    def test_qr_modes(self):
+        a = mx.random.normal((8, 48, 20))
+        q, r = ml.qr(a)
+        r_alone = ml.qr(a, mode="r")
+        self.assertEqual(r_alone.shape, (8, 20, 20))
+        self.assertLess(max_abs(r_alone - r), 1e-5)
+        qc, rc = ml.qr(a, mode="complete")
+        self.assertEqual(qc.shape, (8, 48, 48))
+        self.assertEqual(rc.shape, (8, 48, 20))
+        self.assertLess(max_abs(mm(qc, rc) - a), 1e-4)
+        self.assertLess(max_abs(mm(qc.swapaxes(-1, -2), qc) - eye(48)), 1e-5)
+        self.assertEqual(max_abs(rc[:, 20:, :]), 0.0)
+        with self.assertRaises(ValueError):
+            ml.qr(a, mode="full")
+
     def test_eigh(self):
         a = mx.random.normal((32, 24, 24))
         s = a + a.swapaxes(-1, -2)
@@ -141,7 +156,7 @@ class Routing(unittest.TestCase):
             ml.set_eigh_policy(values_gpu_min_batch=0)
             self.assertEqual(ml.eigvalsh_backend(8, 4096), "cpu")
             # the tridiag backend replaces the CPU from its threshold
-            ml.set_eigh_policy(tridiag_min_n=256, values_tridiag_min_n=0)
+            ml.set_eigh_policy(tridiag_min_n=256, values_tridiag_min_n=0, band_min_n=0)   # (a device's band threshold may be below 512)
             self.assertEqual(ml.eigh_backend(512, 1), "tridiag")
             self.assertEqual(ml.eigh_backend(128, 1), "cpu")
             a = mx.random.normal((300, 300)); s = (a + a.T) / 2
@@ -160,7 +175,7 @@ class Routing(unittest.TestCase):
             # the bidiag SVD backend, with svdvals' own threshold
             svd_measured = ml.svd_policy()
             try:
-                ml.set_svd_policy(gpu_max_k=0, bidiag_min_k=256, values_bidiag_min_k=0, values_band_min_k=0)
+                ml.set_svd_policy(gpu_max_k=0, bidiag_min_k=256, values_bidiag_min_k=0, values_band_min_k=0, band_min_k=0)
                 self.assertEqual(ml.svd_backend(400, 300), "bidiag")
                 self.assertEqual(ml.svdvals_backend(400, 300), "cpu")
                 # singular values alone by the two-stage reduction

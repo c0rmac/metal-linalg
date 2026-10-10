@@ -6,10 +6,12 @@
 // is only reachable for a narrow shape range still gets covered.
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <random>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include <mlx/mlx.h>
@@ -122,6 +124,71 @@ array from_values(std::vector<float> v, Shape shape) {
 
 } // namespace
 
+
+// The modes (core::QrMode) of a raw backend: R alone matches the reduced R,
+// and a square Q is orthogonal, its first K columns the reduced Q, R's rows
+// below K zero. `fn` takes (a, q, r, mode).
+using ModeFn = void (*)(const core::Matrices&, float*, float*, core::QrMode);
+void check_modes(const std::string& label, ModeFn fn, uint32_t batch, uint32_t M, uint32_t N, uint32_t seed) {
+    ++g_checks;
+    const uint32_t K = std::min(M, N);
+    std::mt19937 gen(seed);
+    std::normal_distribution<float> dist;
+    std::vector<float> a((size_t)batch * M * N);
+    for (float& x : a) x = dist(gen);
+    const core::Matrices A{a.data(), batch, M, N};
+    std::vector<float> q((size_t)batch * M * K), r((size_t)batch * K * N);
+    std::vector<float> rr((size_t)batch * K * N, -7.0f);
+    std::vector<float> qc((size_t)batch * M * M, -7.0f), rc((size_t)batch * M * N, -7.0f);
+    std::string what;
+    try {
+        fn(A, q.data(), r.data(), core::QrMode::reduced);
+        fn(A, nullptr, rr.data(), core::QrMode::r);
+        fn(A, qc.data(), rc.data(), core::QrMode::complete);
+    } catch (const std::exception& e) {
+        what = e.what();
+    }
+    double r_diff = 0, q_diff = 0, orth = 0, rec = 0, below = 0;
+    if (what.empty()) {
+        for (uint32_t b = 0; b < batch; ++b) {
+            const float* Ab = a.data() + (size_t)b * M * N;
+            const float* Rr = r.data() + (size_t)b * K * N;
+            const float* Ro = rr.data() + (size_t)b * K * N;
+            const float* Qc = qc.data() + (size_t)b * M * M;
+            const float* Rc = rc.data() + (size_t)b * M * N;
+            const float* Qr = q.data() + (size_t)b * M * K;
+            for (size_t i = 0; i < (size_t)K * N; ++i) r_diff = std::max(r_diff, (double)std::fabs(Ro[i] - Rr[i]));
+            for (uint32_t i = 0; i < M; ++i)
+                for (uint32_t j = 0; j < K; ++j)
+                    q_diff = std::max(q_diff, (double)std::fabs(Qc[(size_t)i * M + j] - Qr[(size_t)i * K + j]));
+            for (uint32_t i = K; i < M; ++i)
+                for (uint32_t j = 0; j < N; ++j) below = std::max(below, (double)std::fabs(Rc[(size_t)i * N + j]));
+            for (uint32_t i = 0; i < M; ++i)       // Q^T Q - I over all M columns
+                for (uint32_t j = 0; j < M; ++j) {
+                    double d = 0;
+                    for (uint32_t l = 0; l < M; ++l) d += (double)Qc[(size_t)l * M + i] * Qc[(size_t)l * M + j];
+                    orth = std::max(orth, std::fabs(d - (i == j ? 1.0 : 0.0)));
+                }
+            double num = 0, den = 0;              // A - Q R with the square factors
+            for (uint32_t i = 0; i < M; ++i)
+                for (uint32_t j = 0; j < N; ++j) {
+                    double d = 0;
+                    for (uint32_t l = 0; l < M; ++l) d += (double)Qc[(size_t)i * M + l] * Rc[(size_t)l * N + j];
+                    num += (d - Ab[(size_t)i * N + j]) * (d - Ab[(size_t)i * N + j]);
+                    den += (double)Ab[(size_t)i * N + j] * Ab[(size_t)i * N + j];
+                }
+            rec = std::max(rec, std::sqrt(num / std::max(den, 1e-30)));
+        }
+    }
+    char buf[200];
+    std::snprintf(buf, sizeof buf, "R alone %.1e  Q's first K %.1e  orth %.1e  recon %.1e  below K %.1e", r_diff, q_diff,
+                  orth, rec, below);
+    const std::string name = label + " " + std::to_string(batch) + " x " + std::to_string(M) + "x" + std::to_string(N);
+    if (!what.empty()) fail(name, what);
+    else if (r_diff > 1e-5 || q_diff > 1e-5 || orth > 1e-4 || rec > 1e-4 || below != 0.0) fail(name, buf);
+    else std::printf("  ok    %-46s %s\n", name.c_str(), buf);
+}
+
 int main() {
     set_default_device(Device::gpu);
 
@@ -190,6 +257,8 @@ int main() {
             run("zeros 100x60",     detail::qr_householder, from_values(std::vector<float>(100 * 60, 0.0f), {100, 60}));
             run("constant 50x10",   detail::qr_householder, from_values(std::vector<float>(50 * 10, 0.5f), {50, 10}));
             run("constant 90x70",   detail::qr_householder, from_values(std::vector<float>(90 * 70, 0.5f), {90, 70}));
+            run("constant 600x64",  detail::qr_householder, from_values(std::vector<float>(600 * 64, 1.0f), {600, 64}));
+            run("constant 2048x96", detail::qr_householder, from_values(std::vector<float>(2048 * 96, 1.0f), {2048, 96}));
         }
         for (bool simd : {true, false}) {   // NaN in one matrix of a batch: that matrix NaN, the others not
             if (!simd) setenv("QR_HOUSEHOLDER_SIMD", "0", 1);   // the blocked kernel
@@ -209,6 +278,42 @@ int main() {
             if (!ok) fail(label, "not isolated");
             else std::printf("  ok    %-46s\n", label.c_str());
             unsetenv("QR_HOUSEHOLDER_SIMD");
+        }
+        // Up to 16 rows the register kernel packs four or two matrices into a
+        // simdgroup: the same factors as one a simdgroup (QR_SIMD_PACK=0), to
+        // rounding (a group's sums add in another order than simd_sum), and a
+        // non-finite matrix leaves its neighbours alone
+        for (auto [B, M, N] : std::vector<std::tuple<int, int, int>>{{37, 5, 5}, {23, 12, 9}, {19, 6, 10}, {9, 16, 16},
+                                                                     {11, 3, 30}}) {
+            array A = random_matrix(B, M, N, 670 + M * 3 + N);
+            auto [Qp, Rp] = detail::qr_householder(A);
+            setenv("QR_SIMD_PACK", "0", 1);
+            auto [Qu, Ru] = detail::qr_householder(A);
+            unsetenv("QR_SIMD_PACK");
+            eval({Qp, Rp, Qu, Ru});
+            ++g_checks;
+            const float d = std::max(max_abs(subtract(Qp, Qu)), max_abs(subtract(Rp, Ru)));
+            const std::string label = "packed == one a simdgroup, batch " + std::to_string(B) + " x " + std::to_string(M) + "x" +
+                                      std::to_string(N);
+            if (!(d < 1e-5f)) fail(label, "differ by " + std::to_string(d));
+            else std::printf("  ok    %-46s\n", label.c_str());
+        }
+        for (auto [M, N] : std::vector<std::pair<int, int>>{{6, 5}, {13, 9}}) {
+            ++g_checks;
+            const int B = 9, K = std::min(M, N);
+            array A = random_matrix(B, M, N, 680 + M);
+            eval({A});
+            std::vector<float> v(A.data<float>(), A.data<float>() + B * M * N);
+            v[(size_t)5 * M * N + 2] = NAN;
+            auto [Q, R] = detail::qr_householder(from_values(v, {B, M, N}));
+            eval({Q, R});
+            const float* q = Q.data<float>();
+            bool ok = true;
+            for (int b = 0; b < B; ++b)
+                for (int i = 0; i < M * K; ++i) ok &= (b == 5) == std::isnan(q[b * M * K + i]);
+            const std::string label = "non-finite in one of 9 packed " + std::to_string(M) + "x" + std::to_string(N);
+            if (!ok) fail(label, "not isolated");
+            else std::printf("  ok    %-46s\n", label.c_str());
         }
         ++g_checks;
         if (!core::detail::qr_householder_preferred(64, 64) || !core::detail::qr_householder_preferred(128, 32) ||
@@ -270,7 +375,20 @@ int main() {
         run("identity 256x256",     detail::qr_blocked, from_values(eye, {256, 256}));
         run("zeros 256x256",        detail::qr_blocked, from_values(std::vector<float>(256 * 256, 0.0f), {256, 256}));
         run("constant 300x200",     detail::qr_blocked, from_values(std::vector<float>(300 * 200, 0.5f), {300, 200}));
+        // A constant matrix's trailing columns are rounding noise, then noise
+        // of that, down to entries whose squares underflow some and not
+        // others: before 2.17.0 the panels' reflectors there were not
+        // orthogonal (Q off by 5e4 at 600x64).
+        for (auto [M, N] : std::vector<std::pair<int, int>>{{600, 64}, {200, 100}, {1024, 1024}, {2048, 256}})
+            run("constant " + std::to_string(M) + "x" + std::to_string(N), detail::qr_blocked,
+                from_values(std::vector<float>((size_t)M * N, 1.0f), {M, N}));
+        run("constant batch 4 x 600x64", detail::qr_blocked, full({4, 600, 64}, 1.0f));
     }
+    // Panels of 8 columns for up to 4 matrices of 768-3072 rows, 16 for more:
+    // one shape's workspace, kept between calls, must follow the width.
+    run("batch 2 x 1024x800 (8-wide panels)", detail::qr_blocked, random_matrix(2, 1024, 800, 56));
+    run("batch 6 x 1024x800 (16-wide panels)", detail::qr_blocked, random_matrix(6, 1024, 800, 57));
+    run("batch 2 x 1024x800 again (8-wide)", detail::qr_blocked, random_matrix(2, 1024, 800, 58));
     ++g_checks;
     {
         std::vector<float> v(300 * 300, 1.0f);
@@ -338,6 +456,51 @@ int main() {
     // -------------------------------------------------------------------------
     // Edge cases.
     // -------------------------------------------------------------------------
+
+    // -------------------------------------------------------------------------
+    // Modes: R alone and Q square, every backend
+    // -------------------------------------------------------------------------
+    std::printf("\n[ modes: R alone and Q square ]\n");
+    {
+        const std::vector<std::array<uint32_t, 3>> shapes = {
+            {3, 20, 12}, {2, 12, 20}, {2, 16, 16}, {1, 1, 1}, {2, 5, 3}, {2, 3, 5}, {4, 64, 32}, {3, 100, 40},
+            {2, 130, 70}, {1, 300, 200}, {2, 40, 100}, {1, 257, 33}};
+        const std::vector<std::pair<const char*, ModeFn>> backends = {
+            {"core::qr", core::qr},
+            {"qr_cpu", core::detail::qr_cpu},
+            {"qr_householder", core::detail::qr_householder},
+            {"qr_blocked", core::detail::qr_blocked},
+            {"qr_unblocked", core::detail::qr_unblocked},
+            {"qr_shared", core::detail::qr_shared},
+            {"qr_streaming_amx_reduced", core::detail::qr_streaming_amx_reduced},
+        };
+        uint32_t seed = 900;
+        for (auto [label, fn] : backends)
+            for (auto [b, m, n] : shapes) {
+                if (std::string(label) == "qr_householder" && !core::detail::qr_householder_fits(m, n)) continue;
+                check_modes(label, fn, b, m, n, seed++);
+            }
+        setenv("QR_HOUSEHOLDER_SIMD", "0", 1);   // the blocked kernel where the register one would take it
+        for (auto [b, m, n] : shapes) check_modes("qr_householder (blocked kernel)", core::detail::qr_householder, b, m, n, seed++);
+        unsetenv("QR_HOUSEHOLDER_SIMD");
+        // The MLX API's mode: shapes, and a bad mode refused
+        ++g_checks;
+        {
+            array A = random_matrix(3, 50, 20, 950);
+            auto [Q0, R0] = qr_accelerated(A, "r");
+            auto [Q1, R1] = qr_accelerated(A, "complete");
+            auto [Q2, R2] = qr_accelerated(A);
+            eval({Q0, R0, Q1, R1, Q2, R2});
+            const bool shapes_ok = Q0.size() == 0 && R0.shape() == Shape{3, 20, 20} && Q1.shape() == Shape{3, 50, 50} &&
+                                   R1.shape() == Shape{3, 50, 20} && Q2.shape() == Shape{3, 50, 20};
+            const bool same_r = max_abs(subtract(R0, R2)) < 1e-5f;
+            bool refused = false;
+            try { qr_accelerated(A, "full"); } catch (const std::invalid_argument&) { refused = true; }
+            if (!shapes_ok || !same_r || !refused) fail("qr_accelerated(a, mode)", "wrong shapes, R, or a bad mode taken");
+            else std::printf("  ok    %-46s\n", "qr_accelerated(a, \"r\" | \"complete\"), a bad mode refused");
+        }
+    }
+
     std::printf("\n[ edge cases ]\n");
 
     // Identity: the shader must not trip over the exact zeros below the diagonal.

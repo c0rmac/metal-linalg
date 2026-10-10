@@ -57,6 +57,7 @@ const char* name(EighBackend b) {
         case EighBackend::tridiag:     return "tridiag";
         case EighBackend::ql:          return "ql";
         case EighBackend::band:        return "band";
+        case EighBackend::tridiag_batch: return "tridiag_batch";
         default:                       return "cpu";
     }
 }
@@ -71,6 +72,7 @@ const char* name(SvdBackend b) {
         case SvdBackend::band:            return "band";
         case SvdBackend::golub_kahan:     return "golub_kahan";
         case SvdBackend::qr_golub_kahan:  return "qr_golub_kahan";
+        case SvdBackend::bidiag_batch:    return "bidiag_batch";
         default:                          return "cpu";
     }
 }
@@ -89,6 +91,22 @@ metal_linalg_status metal_linalg_qr(const float* a, uint32_t batch, uint32_t row
         require(present(q, (uint64_t)batch * rows * k), "[qr] q is NULL");
         require(present(r, (uint64_t)batch * k * cols), "[qr] r is NULL");
         core::qr({a, batch, rows, cols}, q, r);
+    });
+}
+
+metal_linalg_status metal_linalg_qr_with_mode(const float* a, uint32_t batch, uint32_t rows, uint32_t cols,
+                                              metal_linalg_qr_mode mode, float* q, float* r) {
+    return guarded([&] {
+        require(mode == METAL_LINALG_QR_REDUCED || mode == METAL_LINALG_QR_R || mode == METAL_LINALG_QR_COMPLETE,
+                "[qr] mode must be METAL_LINALG_QR_REDUCED, _R or _COMPLETE");
+        const core::QrMode m = mode == METAL_LINALG_QR_R          ? core::QrMode::r
+                               : mode == METAL_LINALG_QR_COMPLETE ? core::QrMode::complete
+                                                                  : core::QrMode::reduced;
+        const uint64_t qc = core::qr_q_cols(m, rows, cols), rr = core::qr_r_rows(m, rows, cols);
+        require(present(a, (uint64_t)batch * rows * cols), "[qr] a is NULL");
+        if (qc) require(present(q, (uint64_t)batch * rows * qc), "[qr] q is NULL");
+        require(present(r, (uint64_t)batch * rr * cols), "[qr] r is NULL");
+        core::qr({a, batch, rows, cols}, qc ? q : nullptr, r, m);
     });
 }
 
@@ -153,7 +171,10 @@ metal_linalg_eigh_policy metal_linalg_eigh_policy_get(void) {
             p.values_gpu_max_n, p.values_gpu_min_batch_times_n, p.values_gpu_min_batch,
             p.tridiag_min_n, p.values_tridiag_min_n, p.ql_min_n, p.ql_max_n,
             p.tridiag_max_batch, p.values_tridiag_max_batch, p.share_min_batch,
-            p.gpu_big_batch_max_n, p.gpu_big_batch_min, p.values_band_min_n, p.values_band_width};
+            p.gpu_big_batch_max_n, p.gpu_big_batch_min, p.values_band_min_n, p.values_band_width,
+            p.band_min_n, p.tridiag_batch_min_n, p.tridiag_batch_max_n, p.tridiag_batch_min_batch,
+            p.values_tridiag_batch_min_n, p.values_tridiag_batch_max_n, p.values_tridiag_batch_min_batch,
+            p.share_min_n};
 }
 
 metal_linalg_svd_policy metal_linalg_svd_policy_get(void) {
@@ -164,7 +185,9 @@ metal_linalg_svd_policy metal_linalg_svd_policy_get(void) {
             p.gk_min_k, p.gk_max_k, p.gpu_max_l,
             p.values_gpu_max_k, p.values_gpu_min_batch_times_k, p.values_gpu_min_batch, p.values_gpu_max_l,
             p.share_min_batch, p.gpu_big_batch_max_k, p.gpu_big_batch_min, p.values_band_min_k, p.values_band_width,
-            p.band_min_k};
+            p.band_min_k, p.bidiag_batch_min_k, p.bidiag_batch_max_k, p.bidiag_batch_min_batch, p.bidiag_batch_max_l,
+            p.values_bidiag_batch_min_k, p.values_bidiag_batch_max_k, p.values_bidiag_batch_min_batch,
+            p.values_bidiag_batch_max_l, p.share_min_k};
 }
 
 // The informational fields keep the detected values.
@@ -208,6 +231,14 @@ void metal_linalg_eigh_policy_set(const metal_linalg_eigh_policy* c) {
     p.gpu_big_batch_min            = c->gpu_big_batch_min;
     p.values_band_min_n            = c->values_band_min_n;
     p.values_band_width            = c->values_band_width;
+    p.band_min_n                     = c->band_min_n;
+    p.tridiag_batch_min_n            = c->tridiag_batch_min_n;
+    p.tridiag_batch_max_n            = c->tridiag_batch_max_n;
+    p.tridiag_batch_min_batch        = c->tridiag_batch_min_batch;
+    p.values_tridiag_batch_min_n     = c->values_tridiag_batch_min_n;
+    p.values_tridiag_batch_max_n     = c->values_tridiag_batch_max_n;
+    p.values_tridiag_batch_min_batch = c->values_tridiag_batch_min_batch;
+    p.share_min_n                    = c->share_min_n;
     set_eigh_policy(p);
 }
 
@@ -239,6 +270,15 @@ void metal_linalg_svd_policy_set(const metal_linalg_svd_policy* c) {
     p.values_band_min_k            = c->values_band_min_k;
     p.values_band_width            = c->values_band_width;
     p.band_min_k                   = c->band_min_k;
+    p.bidiag_batch_min_k            = c->bidiag_batch_min_k;
+    p.bidiag_batch_max_k            = c->bidiag_batch_max_k;
+    p.bidiag_batch_min_batch        = c->bidiag_batch_min_batch;
+    p.bidiag_batch_max_l            = c->bidiag_batch_max_l;
+    p.values_bidiag_batch_min_k     = c->values_bidiag_batch_min_k;
+    p.values_bidiag_batch_max_k     = c->values_bidiag_batch_max_k;
+    p.values_bidiag_batch_min_batch = c->values_bidiag_batch_min_batch;
+    p.values_bidiag_batch_max_l     = c->values_bidiag_batch_max_l;
+    p.share_min_k                   = c->share_min_k;
     set_svd_policy(p);
 }
 

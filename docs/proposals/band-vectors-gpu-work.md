@@ -3,7 +3,8 @@
 Status: **done** in 2.15.0 (2026-10-07), the kernel's part: its blocks
 carry Y = -T^T V^T instead of T, and Q2 and P2 took 98 ms instead of 135
 at 4096; with the CPU then the bottleneck, P1 on the CPU would not pay.
-See [Done](#done-2026-10-07).
+See [Done](#done-2026-10-07). The kernel's step latency, measured again in
+2.17.0: not what bounds it ([below](#the-step-latency-measured-2026-10-09)).
 
 ## What
 
@@ -89,7 +90,10 @@ divide and conquer (CPU), the products (GPU). Two consequences:
    53 ms, longer than the CPU takes for it.
 2. P1 on the CPU (step 1 of the plan) would take GPU work out from under
    the chase, where the GPU is not the bottleneck (Q1 and P1's 32 ms under
-   the chase's 43): not built.
+   the chase's 43): not built. Measured in 2.17.0 by leaving P1's GPU work
+   out (the wrong answer, the right timing): 1536 47.9 to 47.3 ms, 2048
+   76.9 to 77.2, 3072 x 2048 89.1 to 87.1, 4096 347.7 to 345.0, at most
+   1.02x before the CPU's own cost of P1, on the CPU that is the bottleneck.
 
 Found on the way: `MpsGemm` wrapped every one of a solve's page-aligned
 temporaries as a Metal buffer when it was allocated, tens of microseconds
@@ -105,3 +109,33 @@ about 440 MB a side at 8192.
 conquer (about 120 ms, its top products now on the GPU). The step latency
 of `bd_chase_apply` (two blocks a step, register handoffs by simdgroup
 shuffles) no longer shortens the call while the CPU is the bottleneck.
+
+## The step latency, measured (2026-10-09)
+
+2.17.0 runs `bd_chase_apply` in more places (eigh's `band` with vectors, the
+batch backends' two stages), so the step-latency idea was measured rather
+than left on the judgement above. M5 Pro, min of three interleaved runs:
+
+| call | as now | without `bd_chase_apply` | twice the simdgroups a threadgroup |
+|---|---|---|---|
+| SVD 2048 | 79.8 ms | 78.8 (1.01x) | 1.007x |
+| SVD 4096 | 352.2 | 313.5 (1.12x) | 1.003x |
+| eigh 2048 | 50.8 | 49.4 (1.03x) | 0.989x |
+| eigh 4096 | 206.6 | 191.6 (1.08x) | 1.007x |
+| SVD 8 x 1024^2 | 64.5 | 58.6 (1.10x) | 0.996x |
+| SVD 16 x 1024^2 | 114.2 | 108.3 (1.05x) | 0.977x |
+| eigh 8 x 1024^2 | 45.4 | 38.8 (1.17x) | 0.982x |
+| eigh 16 x 1024^2 | 68.1 | 62.4 (1.09x) | 0.961x |
+| eigh 16 x 512^2 | 15.5 | 14.2 (1.09x) | 0.973x |
+
+The kernel without its work is the gains' upper bound. Twice the
+simdgroups (8 a threadgroup wide, 16 narrow) covers twice the groups a pass
+and so halves the steps, as two blocks a step a simdgroup would: the calls
+did not move, and the kernel's own GPU time at 4096 went from 98 to 102 ms
+for the SVD's two sides (eigh's 48 to 49); only the narrow variant at 2048
+was faster (14.0 to 11.7 ms), off the call's critical path. At 4096 the
+kernel is bound by its products, not its steps: 13 tile products a block
+for each of 32 columns, about 400 GFLOP a side, with some 25 simdgroups a
+core resident to hide the steps' latency. Neither untried variant (two
+blocks a step, the handoffs by shuffles) changes the products, so neither
+was built.

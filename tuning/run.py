@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Measure this Mac for metal-linalg: all three decompositions, one command.
 
-    python3 tuning/run.py              # about 90 minutes; leave the Mac alone
+    python3 tuning/run.py              # about 40 minutes on an M5 Pro; leave the Mac alone
     python3 tuning/run.py --quick      # a 15-minute smoke test, not a submission
-    python3 tuning/run.py --only qr    # one decomposition (qr ~4 min, eigh ~25, svd ~50)
+    python3 tuning/run.py --only qr    # one decomposition (qr ~5 min, eigh ~12, svd ~22)
 
 Checks that the Mac is fit to measure, builds the tools, runs the correctness
 tests, then the QR, eigensolver and SVD sweeps one after another, and writes
@@ -260,6 +260,11 @@ def main():
                          "settings fitted from earlier runs")
     ap.add_argument("--anyway", action="store_true",
                     help="measure even if the Mac is busy or on battery (results marked untrustworthy)")
+    ap.add_argument("--full-grid", action="store_true",
+                    help="eigh and SVD: time the Jacobi backends at every size, not only where they can win (a "
+                         "report says when that is worth doing)")
+    ap.add_argument("--full-passes", action="store_true",
+                    help="eigh and SVD: repeat every point in every pass, not only those without a clear winner")
     args = ap.parse_args()
     known = [op for op, *_ in SWEEPS]
     only = known if not args.only else [op.strip() for op in args.only.split(",") if op.strip()]
@@ -291,7 +296,7 @@ def main():
     info.update({"status": "running", "conditions": {"start": conditions()}, "results": {}, "minutes": {}})
     json.dump(info, open(os.path.join(out, "submission.json"), "w"), indent=1)
 
-    minutes = {"qr": (2, 4), "eigh": (8, 25), "svd": (8, 50)}
+    minutes = {"qr": (2, 5), "eigh": (8, 12), "svd": (8, 22)}   # an M5 Pro's, 2.17.0
     total = str(sum(minutes[op][0 if args.quick else 1] for op in only))
     info["memory_budget_gb"] = round(sub.memory_budget_bytes() / 2 ** 30, 1)
     say(f"\nMemory: shapes are capped to {info['memory_budget_gb']} GB at peak "
@@ -301,8 +306,10 @@ def main():
     for op, harness, binary, options, quick_options in sweeps:
         say(f"--- {op} ---")
         t0 = time.time()
+        extra = ([] if op == "qr" else
+                 (["--full-grid"] if args.full_grid else []) + (["--full-passes"] if args.full_passes else []))
         rc = run_sweep(op, harness, os.path.join(build_dir, binary),
-                       quick_options if args.quick else options,
+                       (quick_options if args.quick else options) + extra,
                        os.path.join(out, op), os.path.join(out, f"{op}.log"))
         info["minutes"][op] = round((time.time() - t0) / 60, 1)
         info["results"][op] = result_of(op, os.path.join(out, op))

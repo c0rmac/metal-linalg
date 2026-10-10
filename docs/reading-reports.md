@@ -213,7 +213,8 @@ they did before these backends existed.
 
 **Stage 1c** fits `share_min_batch`: from which batch a batch that goes to
 `ql` (eigh) or `gk` (SVD) is shared with the CPU path, the two solving it at
-once. It is scored against the best GPU backend, the shared one (`ql_share`,
+once; and with it (since 2.17.0) `share_min_n` or `share_min_k`, the smallest
+matrices shared, since the kernels in registers alone win the smallest. It is scored against the best GPU backend, the shared one (`ql_share`,
 `gk_share`) included, on the points where that was timed (batches from 64)
 and the backend is the GPU's choice. Sharing only pays from a batch large
 enough to keep both busy; below it the threads cost more than they save.
@@ -237,7 +238,11 @@ alone: where the rules choose the CPU or `bidiag`, `band` from this k on,
 scored against the CPU, `bidiag` and `band` on the points where `band_vals`
 was timed (k >= 512). The report lists `band` over `bidiag` and over the CPU
 at each of them. **Stage 3c** (SVD, since 2.15.0) is the same with singular
-vectors: `band_min_k`, on the points where `band` was timed. **Stage 4b** (eigensolver) does the same for eigenvalues
+vectors: `band_min_k`, on the points where `band` was timed; since 2.17.0
+with the batch cap (`bidiag_max_batch`) fitted alongside, over `band`'s points
+and `bidiag`'s, its `chosen` and `cap` both reported, as `band` now takes
+batches through `bidiag_batch`'s two stages (stage 4c likewise for the
+eigensolver's `band_min_n` and `tridiag_max_batch`). **Stage 4b** (eigensolver) does the same for eigenvalues
 alone: `band` from this N where the rules choose the CPU or `tridiag`, scored
 against both on the points where `band_vals` was timed (N >= 512).
 
@@ -397,9 +402,10 @@ heuristic the crossover replaced, overall and per kind of shape.
 
 ## Noise floor
 
-Every point is measured in two or more passes, in a different random order
-each time so that thermal drift during the run is not mistaken for an effect
-of size. For each backend at each point the **pass-to-pass ratio** is its
+Every point is measured in a first pass, and the points without a clear
+winner (no backend 1.3x ahead of the next) in a second and any later ones
+(every point with `--full-passes`), in a different random order each time so
+that thermal drift during the run is not mistaken for an effect of size. For each backend at each point the **pass-to-pass ratio** is its
 slowest pass divided by its fastest. The report gives the median, 90th
 percentile and maximum of that ratio overall and by how long the call takes.
 

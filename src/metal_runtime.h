@@ -154,6 +154,18 @@ void for_each_rows(uint32_t batch, uint32_t rows, uint32_t cols, const F& f) {
 // An exception from f is rethrown on the calling thread once every chunk has
 // stopped; chunks not yet started are skipped.
 void lapack_batches(uint32_t batch, size_t per, const std::function<void(uint32_t, uint32_t)>& f);
+// The same on at most `threads` threads (beside the GPU's host work, say).
+void lapack_batches(uint32_t batch, size_t per, unsigned threads, const std::function<void(uint32_t, uint32_t)>& f);
+// The threads one matrix of lapack_batches(batch, per, f) can spread its own
+// work over (the CPU paths' divide and conquer): the cores its threads leave
+// idle, shared out. 1 on share_batch's workers and from a batch of
+// cpu_threads() up.
+unsigned lapack_threads_per_matrix(uint32_t batch, size_t per);
+// The fewest of those threads with which the CPU paths run that divide and
+// conquer themselves rather than call LAPACK's drivers. On an M5 Pro (6 + 12
+// cores), eigh of 1024 x 1024: 4 matrices with 4 threads each 1.2x faster
+// than ssyevd, 6 with 3 1.1x slower, 8 with 2 1.25x slower.
+constexpr unsigned kCpuDcMinThreads = 4;
 
 // A batch on the GPU and the CPU at once. gpu(b0, count) solves matrices
 // [b0, b0 + count) with a GPU backend, cpu(b0, count) with the CPU path. The
@@ -338,17 +350,42 @@ struct BandKeep : BandWatch {
         std::vector<float> tq, tp, lq;
     };
     std::vector<Step> steps;
+    // The symmetric reduction's (since 2.17.0): Q1 = H_0 H_1 ... H_tail, GPU
+    // block k's H_k = I - V T V^T, V on rows (k + 1) b .. n - 1, written as
+    // qv, qoff, qld and qt say (pv, pt unused); the trailing block from
+    // `tail` on is LAPACK's ssytrd_sy2sb's, its reflectors below the band in
+    // A (kd wide panels, sy2sb_tau their taus, its order n - tail).
+    uint32_t sy2sb_kd = 0;
+    std::vector<float> sy2sb_tau;
 };
 
 // A (m x n column-major, m >= n, in shared storage) to an upper band of width
 // b, A = Q B P^T: the band in A's upper band, the rest of A scratch (with
 // `keep`, Q's and P's reflectors as above; `watch`, if not keep itself, its
 // progress). False if m is too tall for the panel kernels (m b > 128 * 1024).
+// The general reduction's last columns from column k on, with LAPACK on the
+// CPU (A column-major m x n, ld lda): the same block steps, so that A ends an
+// upper band of width b; the batch backend's tail (svd_bidiag_batch.mm).
+void band_general_tail(float* A, uint32_t m, uint32_t n, uint32_t lda, uint32_t b, uint32_t k);
+// The same keeping its reflectors as band_reduce_general's tail keeps them:
+// keep->tail = k and keep->steps (the QR's reflectors stay below the band in
+// A, the LQ's are copied out); only those two fields are touched.
+void band_general_tail(float* A, uint32_t m, uint32_t n, uint32_t lda, uint32_t b, uint32_t k, BandKeep* keep);
+
+// eigh with eigenvectors for a batch in two stages (svd_bidiag_batch.mm), the
+// tridiag_batch backend's from kEighBandMinN (eigh_tridiag.mm): n up to 1024.
+void eigh_band_batch(const core::Matrices& a, bool lower, float* w, float* v, uint32_t* info);
+// The smallest k (or N) from which bidiag_batch and tridiag_batch reduce in
+// two stages with vectors; the band backends with vectors hand them a batch
+// of two or more from there (svd_bidiag.mm).
+constexpr uint32_t kBatchBandVectorsMinK = 384;
+
 bool band_reduce_general(id<MTLBuffer> A, uint32_t m, uint32_t n, uint32_t lda, uint32_t b,
                          BandKeep* keep = nullptr, BandWatch* watch = nullptr);
 // A symmetric A (n x n, both triangles, in shared storage) to a band of width
 // b, Q^T A Q: the band in A's lower band. Likewise false if n is too large.
-bool band_reduce_symmetric(id<MTLBuffer> A, uint32_t n, uint32_t lda, uint32_t b, BandWatch* watch = nullptr);
+bool band_reduce_symmetric(id<MTLBuffer> A, uint32_t n, uint32_t lda, uint32_t b, BandWatch* watch = nullptr,
+                           BandKeep* keep = nullptr);
 // The GPU's blocks in the symmetric reduction of order n.
 uint32_t band_blocks_symmetric(uint32_t n, uint32_t b);
 
@@ -385,14 +422,20 @@ uint32_t qr_blocks(id<MTLCommandBuffer> __strong& cb, id<MTLBuffer> A, uint32_t 
 // past Q's (a factored matrix padded with zero rows): they are left out.
 void qr_blocks_apply(id<MTLCommandBuffer> cb, id<MTLBuffer> Q, uint32_t m, uint32_t K, uint32_t ldq, uint32_t b,
                      uint32_t blocks, const QrStore& st);
-// Each R (k x n row-major, k n apart) = up[i] times A's upper triangle (ld
-// lda, sa apart), zeros below.
+// Each R (k x n row-major, sr apart, k n if 0) = up[i] times A's upper
+// triangle (ld lda, sa apart), zeros below.
 void qr_r_out(id<MTLCommandBuffer> cb, id<MTLBuffer> A, id<MTLBuffer> R, uint32_t k, uint32_t n, uint32_t lda,
-              size_t sa, uint32_t batch, id<MTLBuffer> up);
+              size_t sa, uint32_t batch, id<MTLBuffer> up, size_t sr = 0);
 // Each dst (mp x np, row-major, sd apart) = scale[i] src (m x n, m n
 // apart), zeros around it.
 void qr_scale_copy(id<MTLCommandBuffer> cb, id<MTLBuffer> src, id<MTLBuffer> dst, uint32_t m, uint32_t n,
                    uint32_t mp, uint32_t np, size_t sd, uint32_t batch, id<MTLBuffer> scale);
+// Each src matrix's (per floats, per apart) largest |x| as an IEEE bit
+// pattern into bits (zeroed by the caller; at least 0x7f800000 for a NaN or
+// infinity), then its scales into down and up (as qr_blocked.mm's host scan
+// would set them; 1 for a zero or non-finite matrix).
+void qr_scan_scales(id<MTLCommandBuffer> cb, id<MTLBuffer> src, id<MTLBuffer> bits, id<MTLBuffer> down,
+                    id<MTLBuffer> up, size_t per, uint32_t batch);
 id<MTLCommandQueue> qr_queue();
 id<MTLDevice> qr_device();
 

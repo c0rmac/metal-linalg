@@ -2,7 +2,9 @@
 
 Status: **done** in 2.15.0 (2026-10-07) as far as it went: the CPU's round
 trip removed; wider panels, taller leaves and a look-ahead tried and
-rejected; what is left below.
+rejected. The rest **done in 2.17.0** (2026-10-09): narrower panels where
+the TSQR's top dominates; a fused TSQR kernel tried and rejected; see
+[what was left](#done-2026-10-09-what-was-left).
 
 ## What
 
@@ -59,7 +61,45 @@ lost its orthogonality (1.4e-2) in the 256-row single-simdgroup panel. The
 panels on a second queue beside the trailing update: no gain
 ([qr-look-ahead.md](qr-look-ahead.md)).
 
-**Left**, each a few percent: the leaves and the top as one dispatch (the
+## Done (2026-10-09): what was left
+
+Timed by removing each piece (results wrong, times indicative), one matrix
+on an M5 Pro, the TSQR was half the call: 3.2 of 6.5 ms at 1024 x 1024 (the
+leaves 1.3, the top 1.7, the rebuild 0.9, with the dispatches between), 9.0
+of 17.7 at 2048, 2.9 of 5.3 at 4096 x 512; about 57 us a panel. The top
+alone, 26 us a panel at 1024 rows: the tree's way up 10, down 6, Q1 and its
+LU and inverses 11.
+
+- **The leaves, the top and the rebuild as one threadgroup**
+  (`bd_tsqr_fused`, a simdgroup a leaf, up to 8 leaves of 128 rows at width
+  16 in 30 KB of threadgroup memory, each leaf's V in registers): tried and
+  rejected, 8.6 ms against 6.3 at 1024. Its tree was no faster in threadgroup
+  memory (1.66 ms against 1.7: the top is bound by its dependent shuffle
+  chains, not by memory), and its rebuild, on one core, took 42 us a panel
+  against 15 on eight.
+- **Panels of 8 columns** where the top dominates: built, for up to 4
+  matrices of 768 to 3072 rows (`shape()` in `qr_blocked.mm`): the top's
+  chains are a quarter as long for twice the panels. 1.05x at 1024², 1.1x at
+  1536² and 2048², 1.06x for 4 of 1024²; 16 kept elsewhere (8 lost at 512²,
+  very tall matrices and large batches).
+- **The updates inside aggregates as a kernel of their own**: built
+  (`qr_agg_apply`). With 8-wide panels they had become 25% of a 1024 x 1024
+  call (1.5 of 6.0 ms, 256 MPS products) and 18% at 2048. A first kernel, a
+  simdgroup a column walking its rows alone, won at 512-1024 (1.03-1.07x) but
+  lost on tall panels (0.73x at 8192 x 512); the kept one, a threadgroup of 8
+  columns and up to 128 row groups, W summed across them in threadgroup
+  memory, wins at 512-3072 rows for up to 4 matrices (1.16x at 1024^2,
+  1.06-1.12x elsewhere) and is used there; taller panels and larger batches
+  keep MPS (the kernel 0.93-0.97x there).
+- **The input's scan on the GPU**: built (`qr_scan`, `qr_scales`), where the
+  input is used in place: measured warm the host's scan was 0.1 of 6.3 ms at
+  1024 (1.7%) and 0.54 of 20 at 16 x 1024² (2.7%); on the GPU the call is
+  1.01-1.03x faster.
+- Found on the way: a constant matrix's Q far from orthogonal (5e4 at
+  600 x 64), from sums of squares that underflowed in part; fixed in 2.17.0
+  (CHANGELOG).
+
+**Left (as of 2026-10-07)**, each a few percent: the leaves and the top as one dispatch (the
 last leaf's threadgroup to finish does the top: a dispatch's gap a panel,
 some 3-5 us of about 75); the updates inside aggregates as kernels of their
 own (about 6% of the call, if they halve); the input's scan on the GPU

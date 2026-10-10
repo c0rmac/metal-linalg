@@ -11,7 +11,9 @@
 // rotation. Threadgroup memory bounds the size (83 x 83 at 32 KB, longer for
 // tall matrices; V lives in a device-memory workspace); svd.mm sends a tall
 // matrix that does not fit through the library's QR first, so the kernel sees
-// the k x k factor.
+// the k x k factor. Up to 32 rows and columns (since 2.17.0) a second kernel
+// keeps the matrix, U and V in a simdgroup's registers, a simdgroup a matrix
+// (svd_gk_simd; SVD_GK_SIMD=0 turns it off).
 
 #include <metal_linalg/core.h>
 #include <metal_linalg/device.h>
@@ -48,6 +50,22 @@ struct GkParams {
     uint32_t transpose;
     uint32_t max_rots;
 };
+
+// Must match `GksParams` in Svd_GolubKahan.metal (svd_gk_simd, in registers).
+struct GksParams {
+    uint32_t m;
+    uint32_t n;
+    uint32_t transpose;
+    uint32_t max_rots;
+    uint32_t batch;
+};
+constexpr uint32_t kSimdMaxDim = 32;     // rows and columns: a row a lane
+constexpr uint32_t kSimdFloats = 336;    // its threadgroup memory a matrix (kGksFloats)
+constexpr uint32_t kSimdFloatsRun = 488; // the same with a runner (kGksFloatsRun)
+constexpr uint32_t kSimdPerGroup = 4;    // simdgroups a threadgroup
+
+// The register kernel's instance for n columns: 8, 16 or 32.
+uint32_t simd_instance(uint32_t n) { return n <= 8 ? 8 : n <= 16 ? 16 : 32; }
 
 constexpr uint32_t kChaserThreads = 32;   // simdgroup 0 in overlap mode; kChaser in the shader
 
@@ -94,7 +112,21 @@ struct Workspace {
 struct Cache {
     MetalRuntime& rt = MetalRuntime::shared(METAL_LINALG_SHADER(Svd_GolubKahan), "svd_golub_kahan");
     std::map<std::tuple<bool, bool, uint32_t>, id<MTLComputePipelineState>> pipelines;   // (vectors, overlap, part)
+    std::map<std::tuple<bool, uint32_t, uint32_t, bool>, id<MTLComputePipelineState>> simd;   // (vectors, columns, lanes, run)
     std::map<std::pair<uint32_t, uint32_t>, Workspace>               workspaces;   // (M, N)
+
+    id<MTLComputePipelineState> simd_pipeline(bool vectors, uint32_t instance, uint32_t lanes, bool run = false) {
+        const auto key = std::make_tuple(vectors, instance, lanes, run);
+        if (auto it = simd.find(key); it != simd.end()) return it->second;
+        MTLFunctionConstantValues* cv = [[MTLFunctionConstantValues alloc] init];
+        const bool overlap = false;
+        const uint32_t part = 0;
+        [cv setConstantValue:&vectors type:MTLDataTypeBool atIndex:0];
+        [cv setConstantValue:&overlap type:MTLDataTypeBool atIndex:1];
+        [cv setConstantValue:&part type:MTLDataTypeUInt atIndex:2];
+        NSString* name = [NSString stringWithFormat:@"svd_gk_simd_%u_%u%s", instance, lanes, run ? "_run" : ""];
+        return simd[key] = make_pipeline(rt.device, rt.library, name, cv);
+    }
 
     id<MTLComputePipelineState> pipeline(bool vectors, bool overlap, uint32_t part = 0) {
         const auto key = std::make_tuple(vectors, overlap, part);
@@ -213,6 +245,13 @@ void svd_golub_kahan(const Matrices& a, float* u_out, float* s_out, float* vt_ou
     Cache& cache = Cache::shared();
     const bool vectors = u_out || vt_out;
     const uint32_t m = std::max(M, N), n = K;
+    // In registers, up to 32 rows and columns, four matrices a simdgroup up
+    // to 8 rows and two up to 16 (SVD_GK_SIMD=0: the threadgroup-memory
+    // kernel throughout); singular values alone by bisection there, a lane a
+    // value. On an M5 Pro, with vectors 1.6-2.1x the threadgroup kernel up to
+    // 16 x 16 and 1.0-1.35x at 32 x 32; values alone 1.6-2.7x.
+    const char* simd_env = std::getenv("SVD_GK_SIMD");
+    const bool in_registers = m <= kSimdMaxDim && !(simd_env && std::string(simd_env) == "0");
     const bool overlap = vectors && n >= kOverlapMinK;
     id<MTLComputePipelineState> pso = cache.pipeline(vectors, overlap);
     const uint32_t threads = threads_for(m, n, vectors, overlap);
@@ -221,7 +260,7 @@ void svd_golub_kahan(const Matrices& a, float* u_out, float* s_out, float* vt_ou
     // then the QR iteration in threadgroups with almost no threadgroup memory.
     // A pipeline that allows fewer threads than either needs keeps the fused
     // kernel.
-    bool split = n >= (vectors ? kSplitMinKVectors : kSplitMinKValues);
+    bool split = !in_registers && n >= (vectors ? kSplitMinKVectors : kSplitMinKValues);
     id<MTLComputePipelineState> pso1 = nil, pso2 = nil;
     const uint32_t threads1 = threads_for(m, n, vectors, false);
     const uint32_t threads2 = vectors ? threads : kChaserThreads;
@@ -260,7 +299,30 @@ void svd_golub_kahan(const Matrices& a, float* u_out, float* s_out, float* vt_ou
         [enc setBuffer:ws.v    offset:(size_t)b0 * K * K * f atIndex:6];
         [enc setBuffer:ws.uw   offset:(size_t)b0 * K * m * f atIndex:7];
         [enc setBuffer:ws.hw   offset:(size_t)b0 * (2 * K + 2) * f atIndex:8];
-        if (!split) {
+        if (in_registers) {
+            // 32 / lanes matrices a simdgroup (lanes: at least the rows, 8, 16
+            // or 32); as many simdgroups a threadgroup as the pipeline allows,
+            // up to kSimdPerGroup
+            const uint32_t lanes = simd_instance(m);
+            // From 17 rows with vectors, a runner simdgroup runs the QR
+            // iterations of a threadgroup's matrices, a simdgroup each (on an
+            // M5 Pro 1.1-1.35x; SVD_GK_RUN=0 turns it off): 8 matrices a
+            // runner from 17 columns, 4 below (more leave too few threadgroups
+            // for a batch of 1024, fewer too much runner)
+            const char* run_env = std::getenv("SVD_GK_RUN");
+            const bool run = lanes == 32 && vectors && !(run_env && std::string(run_env) == "0");
+            id<MTLComputePipelineState> ps = cache.simd_pipeline(vectors, simd_instance(n), lanes, run);
+            const uint32_t cap = (uint32_t)ps.maxTotalThreadsPerThreadgroup / 32;
+            const uint32_t per = run ? std::clamp<uint32_t>((n > 16 ? 8u : 4u) + 1, 2, cap)
+                                     : std::clamp<uint32_t>(cap, 1, kSimdPerGroup);
+            const uint32_t mats = run ? per - 1 : per * (32 / lanes);   // matrices a threadgroup
+            const GksParams q{m, n, prm.transpose, prm.max_rots, bc};
+            [enc setComputePipelineState:ps];
+            [enc setBytes:&q length:sizeof q atIndex:5];
+            [enc setThreadgroupMemoryLength:(size_t)mats * (run ? kSimdFloatsRun : kSimdFloats) * sizeof(float) atIndex:0];
+            [enc dispatchThreadgroups:MTLSizeMake((bc + mats - 1) / mats, 1, 1)
+                threadsPerThreadgroup:MTLSizeMake(32 * per, 1, 1)];
+        } else if (!split) {
             [enc setComputePipelineState:pso];
             [enc setThreadgroupMemoryLength:tgm atIndex:0];
             [enc dispatchThreadgroups:MTLSizeMake(bc, 1, 1) threadsPerThreadgroup:MTLSizeMake(threads, 1, 1)];

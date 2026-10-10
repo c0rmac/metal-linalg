@@ -389,11 +389,22 @@ thread_local bool tls_share_worker = false;
 } // namespace
 
 void lapack_batches(uint32_t batch, size_t per, const std::function<void(uint32_t, uint32_t)>& f) {
+    lapack_batches(batch, per, cpu_threads(), f);
+}
+
+unsigned lapack_threads_per_matrix(uint32_t batch, size_t per) {
+    if (tls_share_worker || batch == 0) return 1;
+    const uint32_t cores = std::max(1u, cpu_threads()), threads = std::min<uint32_t>(cores, batch);
+    if (threads <= 1 || (!can_single_thread_blas() && per > kUnthreadedMaxFloats)) return cores;   // one at a time
+    return cores / threads;
+}
+
+void lapack_batches(uint32_t batch, size_t per, unsigned max_threads, const std::function<void(uint32_t, uint32_t)>& f) {
     if (tls_share_worker) {
         f(0, batch);   // single-threaded already (share_batch)
         return;
     }
-    const uint32_t threads = std::min<uint32_t>(cpu_threads(), batch);
+    const uint32_t threads = std::min<uint32_t>(std::min(cpu_threads(), std::max(1u, max_threads)), batch);
     if (threads <= 1 || (!can_single_thread_blas() && per > kUnthreadedMaxFloats)) {
         f(0, batch);
         return;

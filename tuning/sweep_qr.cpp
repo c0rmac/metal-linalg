@@ -81,9 +81,13 @@ double quantile(const std::vector<double>& sorted, double q) {
 // Adaptive timing: keep sampling until we have spent `budget_ms` or hit
 // `max_reps`. Slow points settle for the minimum five reps.
 Timing time_ms(QrFn qr, const array& A, double budget_ms = 150.0, int max_reps = 25) {
-    for (int i = 0; i < 2; ++i) {  // warmup: pipeline compile + workspace alloc
+    // Warm-up after the correctness run (which compiled the pipelines and made
+    // the workspaces): two calls, or one where a call takes 20 ms or more
+    for (int i = 0; i < 2; ++i) {
+        const auto w0 = std::chrono::high_resolution_clock::now();
         auto [Q, R] = qr(A);
         eval({Q, R});
+        if (std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - w0).count() >= 20.0) break;
     }
 
     std::vector<double> samples;

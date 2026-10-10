@@ -77,7 +77,7 @@ struct State {
     Panels panels[3];
     Small  small;
     bool   have = false;
-    id<MTLComputePipelineState> scale_copy, merge_t, r_out;
+    id<MTLComputePipelineState> scale_copy, merge_t, r_out, agg_apply[2], scan, scales;
     Buffers buf;
 
     const Panels& kernels(uint32_t b) {
@@ -298,6 +298,14 @@ void general_tail(float* A, uint32_t m, uint32_t n, uint32_t lda, uint32_t b, ui
 
 } // namespace
 
+void band_general_tail(float* A, uint32_t m, uint32_t n, uint32_t lda, uint32_t b, uint32_t k) {
+    general_tail(A, m, n, lda, b, k, nullptr);
+}
+
+void band_general_tail(float* A, uint32_t m, uint32_t n, uint32_t lda, uint32_t b, uint32_t k, BandKeep* keep) {
+    general_tail(A, m, n, lda, b, k, keep);
+}
+
 // 16: 32 took 1.4-1.5x its time at 512-2048 (its panels), the same at 4096.
 // The TSQR's top is a tree of up to 2^15 leaves of kLeafRows rows.
 uint32_t qr_block_width(uint32_t m) {
@@ -370,11 +378,39 @@ uint32_t qr_blocks(id<MTLCommandBuffer> __strong& cb, id<MTLBuffer> A, uint32_t 
             pp.ss = (uint32_t)st.ssc;
             panel(pk, w, cb, A, akk, pp, st.v, (size_t)k * st.ldv + k, st.t, (size_t)j * 1024, nil, 0, 0, st.vt, 0,
                   B, st.sc);
-            if (nr > 0) {
+            // C <- H^T C inside the aggregate: for up to 4 matrices and panels
+            // of up to 3072 rows, qr_agg_apply, one dispatch (on an M5 Pro
+            // 1.16x the call at 1024 x 1024, 1.06-1.12x at 512-3072, 1.09x
+            // for 4 of 1024^2); else two MPS products, which spread taller
+            // panels and larger batches better (the kernel 0.93-0.97x at
+            // 4096-8192 rows, level at 8 matrices). QR_AGG_KERNEL=0: always MPS.
+            static const bool no_kernel = [] {
+                const char* e = std::getenv("QR_AGG_KERNEL");
+                return e && std::string(e) == "0";
+            }();
+            const bool own = (b == 8 || b == 16) && B <= 4 && m1 <= 3072 && !no_kernel;
+            if (nr > 0 && !own) {
                 gemm(dev, cb, mps(st.vt, 0, m1, b, 32, B, st.svt), true, Av(akk + b, m1, nr), false,
                      Zv(st.z, b, nr), b, nr, m1, 1, 0, B);
                 gemm(dev, cb, Vv((size_t)k * st.ldv + k, m1, b), false, Zv(st.z, b, nr), false, Av(akk + b, m1, nr),
                      m1, nr, b, -1, 1, B);
+            } else if (nr > 0) {
+                const int ai = b == 8 ? 0 : 1;
+                if (!s.agg_apply[ai])
+                    s.agg_apply[ai] = make_pipeline(s.rt.device, s.rt.library, b == 8 ? @"qr_agg_apply_8" : @"qr_agg_apply_16", nil);
+                id<MTLComputePipelineState> ps = s.agg_apply[ai];
+                const uint32_t ap[7] = {m1, nr, lda, st.ldv, (uint32_t)st.sa, (uint32_t)st.sv, (uint32_t)st.svt};
+                id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+                [enc setComputePipelineState:ps];
+                [enc setBuffer:A offset:(akk + b) * 4 atIndex:0];
+                [enc setBuffer:st.v offset:((size_t)k * st.ldv + k) * 4 atIndex:1];
+                [enc setBuffer:st.vt offset:0 atIndex:2];
+                [enc setBytes:ap length:sizeof ap atIndex:3];
+                // threads: 8 a row group, up to 128 row groups (fewer for short panels)
+                const uint32_t groups = std::clamp<uint32_t>((m1 + 7) / 8, 4u, 128u);
+                [enc dispatchThreadgroups:MTLSizeMake((nr + 7) / 8, 1, B)
+                    threadsPerThreadgroup:MTLSizeMake((groups * 8 + 31) / 32 * 32, 1, 1)];
+                [enc endEncoding];
             }
         }
         // The aggregate's T, from G = Y^T Y
@@ -429,11 +465,34 @@ void qr_scale_copy(id<MTLCommandBuffer> cb, id<MTLBuffer> src, id<MTLBuffer> dst
     [enc endEncoding];
 }
 
+void qr_scan_scales(id<MTLCommandBuffer> cb, id<MTLBuffer> src, id<MTLBuffer> bits, id<MTLBuffer> down,
+                    id<MTLBuffer> up, size_t per, uint32_t batch) {
+    State& s = State::shared();
+    if (!s.scan) {
+        s.scan = make_pipeline(s.rt.device, s.rt.library, @"qr_scan", nil);
+        s.scales = make_pipeline(s.rt.device, s.rt.library, @"qr_scales", nil);
+    }
+    const uint32_t p = (uint32_t)per;
+    id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+    [enc setComputePipelineState:s.scan];
+    [enc setBuffer:src offset:0 atIndex:0];
+    [enc setBuffer:bits offset:0 atIndex:1];
+    [enc setBytes:&p length:sizeof p atIndex:2];
+    [enc dispatchThreadgroups:MTLSizeMake((per + 4095) / 4096, 1, batch) threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
+    [enc setComputePipelineState:s.scales];
+    [enc setBuffer:bits offset:0 atIndex:0];
+    [enc setBuffer:down offset:0 atIndex:1];
+    [enc setBuffer:up offset:0 atIndex:2];
+    [enc setBytes:&batch length:sizeof batch atIndex:3];
+    [enc dispatchThreads:MTLSizeMake(batch, 1, 1) threadsPerThreadgroup:MTLSizeMake(std::min<uint32_t>(batch, 64), 1, 1)];
+    [enc endEncoding];
+}
+
 void qr_r_out(id<MTLCommandBuffer> cb, id<MTLBuffer> A, id<MTLBuffer> R, uint32_t k, uint32_t n, uint32_t lda,
-              size_t sa, uint32_t batch, id<MTLBuffer> up) {
+              size_t sa, uint32_t batch, id<MTLBuffer> up, size_t sr) {
     State& s = State::shared();
     if (!s.r_out) s.r_out = make_pipeline(s.rt.device, s.rt.library, @"bd_qr_r", nil);
-    const uint32_t p[5] = {k, n, lda, (uint32_t)sa, k * n};
+    const uint32_t p[5] = {k, n, lda, (uint32_t)sa, sr ? (uint32_t)sr : k * n};
     id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
     [enc setComputePipelineState:s.r_out];
     [enc setBuffer:A offset:0 atIndex:0];
@@ -548,8 +607,13 @@ bool band_reduce_general(id<MTLBuffer> Abuf, uint32_t m, uint32_t n, uint32_t ld
 
 uint32_t band_blocks_symmetric(uint32_t n, uint32_t b) { return n >= 3 * b ? (n - 3 * b) / b + 1 : 0; }
 
-bool band_reduce_symmetric(id<MTLBuffer> Abuf, uint32_t n, uint32_t lda, uint32_t b, BandWatch* watch) {
+bool band_reduce_symmetric(id<MTLBuffer> Abuf, uint32_t n, uint32_t lda, uint32_t b, BandWatch* watch,
+                           BandKeep* keep) {
     if ((size_t)n * b > (size_t)kLeafRows * 1024) return false;
+    if (keep) {
+        if (keep->qoff.size() < band_blocks_symmetric(n, b)) throw std::logic_error("[band] BandKeep's layout");
+        if (!watch) watch = keep;
+    }
     if (watch) watch->done.assign(band_blocks_symmetric(n, b), nil);
     State& st = State::shared();
     const Panels& pk = st.kernels(b);
@@ -568,8 +632,16 @@ bool band_reduce_symmetric(id<MTLBuffer> Abuf, uint32_t n, uint32_t lda, uint32_
         const uint32_t n1 = n - k - b, nb = (n1 + 63) / 64;
         const size_t akp = (size_t)k * lda + k + b, a22 = (size_t)(k + b) * lda + k + b;
         id<MTLCommandBuffer> cb = [st.rt.queue commandBufferWithUnretainedReferences];
-        // The panel: R in place; V into [V Y V] twice (flag 8), V T.
-        panel(pk, w, cb, Abuf, akp, PanelParams{n1, b, 1, lda, kLw, 1u | 8u, 0, 0, 0, 0, 2 * b}, w.bl, 0, w.bt);
+        // The panel: R in place; V into [V Y V] twice (flag 8), V T; with
+        // keep, V and T kept there too.
+        const uint32_t bi = k / b;
+        id<MTLBuffer> tbuf = keep ? keep->qt : w.bt;
+        const size_t toff = keep ? (size_t)bi * 1024 : 0;
+        if (keep)
+            panel(pk, w, cb, Abuf, akp, PanelParams{n1, b, 1, lda, kLw, 1u | 8u, 0, 0, 0, 0, 2 * b}, w.bl, 0, tbuf,
+                  toff, keep->qv, keep->qoff[bi], keep->qld[bi]);
+        else
+            panel(pk, w, cb, Abuf, akp, PanelParams{n1, b, 1, lda, kLw, 1u | 8u, 0, 0, 0, 0, 2 * b}, w.bl, 0, w.bt);
         // X = A22 (V T), into Y's place
         gemm(dev, cb, mps(Abuf, a22, n1, n1, lda), false, mps(w.bvt, 0, n1, b, kBandMax), false,
              mps(w.bl, b, n1, b, kLw), n1, b, n1, 1, 0);
@@ -580,7 +652,7 @@ bool band_reduce_symmetric(id<MTLBuffer> Abuf, uint32_t n, uint32_t lda, uint32_
         [enc setComputePipelineState:st.small.sy];
         [enc setBuffer:w.bl offset:0 atIndex:0];
         [enc setBuffer:w.bpart offset:0 atIndex:1];
-        [enc setBuffer:w.bt offset:0 atIndex:2];
+        [enc setBuffer:tbuf offset:toff * 4 atIndex:2];
         [enc setBytes:&q length:sizeof q atIndex:3];
         [enc dispatchThreadgroups:MTLSizeMake((n1 + kApplyPer - 1) / kApplyPer, 1, 1)
             threadsPerThreadgroup:MTLSizeMake(256, 1, 1)];
@@ -609,6 +681,11 @@ bool band_reduce_symmetric(id<MTLBuffer> Abuf, uint32_t n, uint32_t lda, uint32_
     // The trailing block A(k:, k:), fewer than 3b columns: LAPACK's
     // ssytrd_sy2sb, its band copied back into A's lower band.
     const uint32_t nt = n - k;
+    if (keep) {
+        keep->tail = k;
+        keep->sy2sb_kd = 0;
+        keep->sy2sb_tau.clear();
+    }
     if (nt > 1) {
         float* A = static_cast<float*>(Abuf.contents);
         L N = nt, KD = std::min(b, nt - 1), LDA = lda, LDAB = KD + 1, lw = -1, info = 0;
@@ -620,6 +697,10 @@ bool band_reduce_symmetric(id<MTLBuffer> Abuf, uint32_t n, uint32_t lda, uint32_
         ssytrd_sy2sb_("L", &N, &KD, A + (size_t)k * lda + k, &LDA, ab.data(), &LDAB, tau.data(), work.data(), &lw,
                       &info);
         if (info != 0) throw std::runtime_error("[band] LAPACK ssytrd_sy2sb failed, info " + std::to_string((long long)info));
+        if (keep) {
+            keep->sy2sb_kd = (uint32_t)KD;
+            keep->sy2sb_tau = tau;
+        }
         for (uint32_t c = 0; c < nt; ++c)
             for (uint32_t r = c; r < nt && r <= c + (uint32_t)KD; ++r)
                 A[(size_t)(k + c) * lda + k + r] = ab[(size_t)c * LDAB + r - c];

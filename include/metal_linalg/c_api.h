@@ -36,6 +36,19 @@ const char* metal_linalg_last_error(void);
 metal_linalg_status metal_linalg_qr(const float* a, uint32_t batch, uint32_t rows, uint32_t cols,
                                     float* q, float* r);
 
+/* The same with a mode, as numpy.linalg.qr's and torch.linalg.qr's:
+ * METAL_LINALG_QR_REDUCED as above; METAL_LINALG_QR_R, R alone, r
+ * [batch, K, cols], q unused (NULL is fine) and Q never formed;
+ * METAL_LINALG_QR_COMPLETE, q [batch, rows, rows] square, r
+ * [batch, rows, cols] with zero rows below K. */
+typedef enum metal_linalg_qr_mode {
+    METAL_LINALG_QR_REDUCED  = 0,
+    METAL_LINALG_QR_R        = 1,
+    METAL_LINALG_QR_COMPLETE = 2,
+} metal_linalg_qr_mode;
+metal_linalg_status metal_linalg_qr_with_mode(const float* a, uint32_t batch, uint32_t rows, uint32_t cols,
+                                              metal_linalg_qr_mode mode, float* q, float* r);
+
 /* A = V diag(w) V^T for symmetric n x n matrices, reading only the lower
  * triangle if `lower` is nonzero, else the upper. w [batch, n] ascending;
  * v [batch, n, n] with the eigenvectors as columns, or NULL for the
@@ -110,9 +123,9 @@ uint32_t metal_linalg_cpu_threads(void);
 
 /* The backend a call of that shape uses under the policy in effect, by name:
  *   QR    "cpu", "unblocked", "streaming_reduced"
- *   eigh  "cpu", "simd", "threadgroup", "block", "tridiag", "ql", and for eigenvalues alone "band"
+ *   eigh  "cpu", "simd", "threadgroup", "block", "tridiag", "ql", "band", "tridiag_batch"
  *   SVD   "cpu", "jacobi", "block_jacobi", "qr_jacobi", "qr_block_jacobi", "bidiag",
- *         "golub_kahan", "qr_golub_kahan", and for singular values alone "band"
+ *         "golub_kahan", "qr_golub_kahan", "band", "bidiag_batch"
  * The strings are static. */
 const char* metal_linalg_qr_backend(uint32_t rows, uint32_t cols, uint32_t batch);
 const char* metal_linalg_eigh_backend(uint32_t n, uint32_t batch);
@@ -165,6 +178,14 @@ typedef struct metal_linalg_eigh_policy {
     uint32_t gpu_big_batch_min;      /* gpu_big_batch_min (0: never) */
     uint32_t values_band_min_n;      /* eigenvalues alone: the band backend from this N (0: never) */
     uint32_t values_band_width;      /* ... its band's width, 8, 16 or 32 (0: 16) */
+    uint32_t band_min_n;             /* with eigenvectors: the band backend from this N (0: never) */
+    uint32_t tridiag_batch_min_n;    /* the tridiag_batch backend instead of the CPU for N in */
+    uint32_t tridiag_batch_max_n;    /* [min_n, max_n] (max_n 0: never) in a batch of at least */
+    uint32_t tridiag_batch_min_batch;            /* min_batch; since 2.17.0 */
+    uint32_t values_tridiag_batch_min_n;         /* the same for eigenvalues alone */
+    uint32_t values_tridiag_batch_max_n;
+    uint32_t values_tridiag_batch_min_batch;
+    uint32_t share_min_n;            /* ... share_min_batch only for N of at least this (0: any N); 2.17.0 */
 } metal_linalg_eigh_policy;
 
 typedef struct metal_linalg_svd_policy {
@@ -194,6 +215,15 @@ typedef struct metal_linalg_svd_policy {
     uint32_t values_band_min_k;     /* singular values alone: the band backend from this k (0: never) */
     uint32_t values_band_width;     /* ... its band's width, 8, 16 or 32 (0: 16) */
     uint32_t band_min_k;            /* with vectors: the band backend from this k (0: never) */
+    uint32_t bidiag_batch_min_k;    /* the bidiag_batch backend instead of the CPU for k in */
+    uint32_t bidiag_batch_max_k;    /* [min_k, max_k] (max_k 0: never) and max(M, N) up to */
+    uint32_t bidiag_batch_min_batch;        /* max_l in a batch of at least min_batch; */
+    uint32_t bidiag_batch_max_l;            /* since 2.17.0 */
+    uint32_t values_bidiag_batch_min_k;     /* the same for singular values alone */
+    uint32_t values_bidiag_batch_max_k;
+    uint32_t values_bidiag_batch_min_batch;
+    uint32_t values_bidiag_batch_max_l;
+    uint32_t share_min_k;           /* ... share_min_batch only for k of at least this (0: any k); 2.17.0 */
 } metal_linalg_svd_policy;
 
 metal_linalg_qr_policy   metal_linalg_qr_policy_get(void);

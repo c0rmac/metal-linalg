@@ -30,11 +30,17 @@ import MetalLinalg
 // 1000 matrices of 64 x 32, row-major, one after another.
 let a: [Float] = ...
 let (q, r) = try qrAccelerated(a, batch: 1000, rows: 64, cols: 32)       // q: 1000*64*32, r: 1000*32*32
+let (_, rAlone) = try qrAccelerated(a, batch: 1000, rows: 64, cols: 32, mode: .r)   // Q never formed
+let (qSquare, rFull) = try qrAccelerated(a, batch: 1000, rows: 64, cols: 32, mode: .complete)  // 1000*64*64, 1000*64*32
 let (u, s, vt) = try svdAccelerated(a, batch: 1000, rows: 64, cols: 32)  // thin; s descending
 
 let (w, v) = try eighAccelerated(sym, batch: 1000, n: 32)                // w ascending, v's columns the vectors
 let values = try eigvalshAccelerated(sym, batch: 1000, n: 32, uplo: .upper)
 ```
+
+`QrMode` (since 2.17.0) is numpy's and torch's: `.reduced` (the default),
+`.r` (R alone, an empty Q: up to 1.8x faster on the GPU, 2.8x on the CPU) or `.complete` (a square Q, and
+R with zero rows below K).
 
 Every function throws `MetalLinalgError` (`.invalidArgument` for a count that
 does not match the shape, `.runtime` for a GPU failure). A matrix holding a
@@ -48,7 +54,7 @@ import MLX
 import MetalLinalgMLX        // re-exports MetalLinalg
 
 let a = MLXRandom.normal([1000, 64, 32])
-let (q, r) = try qrAccelerated(a)
+let (q, r) = try qrAccelerated(a)                       // or mode: .r, .complete
 let (u, s, vt) = try svdAccelerated(a)
 let (w, v) = try eighAccelerated(matmul(a.transposed(0, 2, 1), a))
 ```

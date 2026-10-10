@@ -78,7 +78,7 @@ inline bool non_finite(float v) {
 }
 
 // =============================================================================
-// In registers: a simdgroup a matrix (qr_householder_simd)
+// In registers: a simdgroup a matrix, or several (qr_householder_simd)
 // =============================================================================
 //
 // For n <= 32 and m <= 128, a matrix fits in one simdgroup's registers -- R rows a lane (row s * 32 + lane in x[s]), B
@@ -114,10 +114,19 @@ inline bool non_finite(float v) {
 
 // Must match `QsParams` in qr_householder.mm.
 struct QsParams {
-    uint m;       // rows, at most 32 R
-    uint n;       // columns, at most B
-    uint batch;   // matrices in this dispatch
+    uint m;        // rows, at most 32 R
+    uint n;        // columns, at most B
+    uint batch;    // matrices in this dispatch
+    uint q_cols;   // Q's columns: K, or 0 for R alone (Q not formed)
 };
+
+// A reflector's rest whose plain sum of squares is below this is taken as
+// zero (tau = 0, H = I): the matrix is scaled into [0.5, 1), so that is a
+// norm below 2^-40 of its largest entry, far under float's rounding. Below
+// it the squares begin to underflow, some and not others, and a reflector
+// whose norm misses some of its vector's entries is not orthogonal: a
+// constant 600 x 64 matrix's Q was off by 5e4 before 2.17.0.
+constant constexpr float kTinySumsq = 8.271806e-25f;   // 2^-80
 
 // slarfg's reflector from alpha and the tail's sum of squares: beta, tau and
 // the scale of the tail, to about half an ulp (div_nr, sqrt_nr).
@@ -125,7 +134,7 @@ inline void reflector(float alpha, float sumsq, thread float& beta, thread float
     beta = alpha;
     tau = 0.0f;
     scale = 1.0f;
-    if (sumsq > 0.0f) {
+    if (sumsq >= kTinySumsq) {
         beta = -copysign(sqrt_nr(alpha * alpha + sumsq), alpha);
         tau = div_nr(beta - alpha, beta);
         scale = div_nr(1.0f, alpha - beta);
@@ -134,6 +143,19 @@ inline void reflector(float alpha, float sumsq, thread float& beta, thread float
 
 #define QH_ROTATE_LEFT  QH_UNROLL(R, s, { const float x0 = x[s][0]; QH_UNROLL(B, c, { if (c + 1 < B) x[s][c] = x[s][c + 1]; }); x[s][B - 1] = x0; })
 #define QH_ROTATE_RIGHT QH_UNROLL(R, s, { const float xl = x[s][B - 1]; QH_UNROLL(B, c, { if (c + 1 < B) x[s][B - 1 - c] = x[s][B - 2 - c]; }); x[s][0] = xl; })
+
+// Sums and maxima over a group of G lanes (8, 16 or 32, aligned), on every
+// lane of it.
+template <uint G, typename T> inline T qh_sum(T x) {
+    if (G == 32) return simd_sum(x);
+    for (ushort off = G / 2; off > 0; off >>= 1) x += simd_shuffle_xor(x, off);
+    return x;
+}
+template <uint G> inline float qh_max(float x) {
+    if (G == 32) return simd_max(x);
+    for (ushort off = G / 2; off > 0; off >>= 1) x = fmax(x, simd_shuffle_xor(x, off));
+    return x;
+}
 
 // x[s][k] -= coef(k) v[s] for k = 1 .. B-1 with j + k < lim, coef(k) = t times
 // the column's dot product with v (plus x(j, k) itself if `head`): the dot
@@ -147,12 +169,12 @@ inline void reflector(float alpha, float sumsq, thread float& beta, thread float
                     QH_UNROLL(R, s, { loc[e] = fma(v[s], x[s][4 * q + e], loc[e]); });                      \
                 }                                                                                           \
             });                                                                                             \
-            const float4 dd = t * simd_sum(loc);                                                            \
+            const float4 dd = t * qh_sum<G>(loc);                                                           \
             QH_UNROLL(4, e, {                                                                               \
                 if (4 * q + e > 0 && 4 * q + e < B && j + 4 * q + e < lim) {                                \
                     QH_UNROLL(R, s, {                                                                       \
                         if (head) {                                                                         \
-                            const uint row = s * 32 + lane;                                                 \
+                            const uint row = s * 32 + i;                                                    \
                             if (row == j) x[s][4 * q + e] = -dd[e];                                         \
                             else if (row > j) x[s][4 * q + e] = fma(-dd[e], v[s], x[s][4 * q + e]);         \
                         } else {                                                                            \
@@ -164,10 +186,10 @@ inline void reflector(float alpha, float sumsq, thread float& beta, thread float
         }                                                                                                   \
     })
 
-template <uint B, uint R>
+template <uint B, uint R, uint G>
 kernel void qr_householder_simd(
     device const float* A_in [[buffer(0)]],   // [batch, m, n] input, row-major
-    device float*       Q    [[buffer(1)]],   // [batch, m, K]
+    device float*       Q    [[buffer(1)]],   // [batch, m, K], unless R alone
     device float*       Rout [[buffer(2)]],   // [batch, K, n]
     constant QsParams&  prm  [[buffer(3)]],
     uint tgi  [[threadgroup_position_in_grid]],
@@ -175,18 +197,22 @@ kernel void qr_householder_simd(
     uint nsg  [[simdgroups_per_threadgroup]],
     uint lane [[thread_index_in_simdgroup]])
 {
-    const uint mat = tgi * nsg + sg;
-    if (mat >= prm.batch) return;   // a whole simdgroup: nothing below waits on the others
-    const uint m = prm.m, n = prm.n, K = min(m, n);
+    // G < 32 (R = 1, rows at most G): 32 / G matrices a simdgroup, a group of
+    // G lanes each, every cross-lane step inside the group; a group returns
+    // alone, since nothing waits on another
+    const uint i = lane % G, gb = lane - i;
+    const uint mat = (tgi * nsg + sg) * (32 / G) + lane / G;
+    if (mat >= prm.batch) return;
+    const uint m = prm.m, n = prm.n, K = min(m, n), QC = prm.q_cols;
     device const float* src = A_in + (ulong)mat * m * n;
-    device float* out_q = Q + (ulong)mat * m * K;
+    device float* out_q = Q + (ulong)mat * m * QC;
     device float* out_r = Rout + (ulong)mat * K * n;
 
     // 1. Load, scan, scale
     float x[R][B];
     float amax = 0.0f, bad = 0.0f;
     QH_UNROLL(R, s, {
-        const uint row = s * 32 + lane;
+        const uint row = s * 32 + i;
         QH_UNROLL(B, c, {
             float v = 0.0f;
             if (row < m && c < n) {
@@ -197,11 +223,11 @@ kernel void qr_householder_simd(
             x[s][c] = v;
         });
     });
-    amax = simd_max(amax);
-    if (simd_max(bad) > 0.0f) {
+    amax = qh_max<G>(amax);
+    if (qh_max<G>(bad) > 0.0f) {
         const float qnan = as_type<float>(0x7FC00000u);
-        for (uint idx = lane; idx < m * K; idx += 32) out_q[idx] = qnan;
-        for (uint idx = lane; idx < K * n; idx += 32) out_r[idx] = qnan;
+        for (uint idx = i; idx < m * QC; idx += G) out_q[idx] = qnan;
+        for (uint idx = i; idx < K * n; idx += G) out_r[idx] = qnan;
         return;
     }
     int expo = 0;
@@ -213,21 +239,21 @@ kernel void qr_householder_simd(
     for (uint j = 0; j < K; ++j) {
         float ss = 0.0f, alpha = 0.0f;
         QH_UNROLL(R, s, {
-            const uint row = s * 32 + lane;
+            const uint row = s * 32 + i;
             const float y = row > j && row < m ? x[s][0] : 0.0f;
             ss = fma(y, y, ss);
-            if (s == j / 32) alpha = simd_shuffle(x[s][0], (ushort)(j % 32));
+            if (s == j / 32) alpha = simd_shuffle(x[s][0], (ushort)(gb + j % 32));
         });
         float beta, t, scale;
-        reflector(alpha, simd_sum(ss), beta, t, scale);
+        reflector(alpha, qh_sum<G>(ss), beta, t, scale);
         float v[R];
         QH_UNROLL(R, s, {
-            const uint row = s * 32 + lane;
+            const uint row = s * 32 + i;
             v[s] = 0.0f;
             if (row == j) { x[s][0] = beta; v[s] = 1.0f; }
             else if (row > j && row < m) { x[s][0] *= scale; v[s] = x[s][0]; }
         });
-        if (lane == j % 32) { if (j < 32) tau_lo = t; else tau_hi = t; }
+        if (i == j % 32) { if (j < 32) tau_lo = t; else tau_hi = t; }
         const uint lim = n;
         if (t != 0.0f) { QH_APPLY(false) }   // uniform
         QH_ROTATE_LEFT
@@ -236,27 +262,29 @@ kernel void qr_householder_simd(
 
     // 3. R
     QH_UNROLL(R, s, {
-        const uint row = s * 32 + lane;
+        const uint row = s * 32 + i;
         if (row < K) {
             QH_UNROLL(B, c, { if (c < n) out_r[row * n + c] = c >= row ? ldexp(x[s][c], expo) : 0.0f; });
         }
     });
+
+    if (QC == 0) return;   // R alone
 
     // 4. Q in place, backward (sorg2r): before step j, columns j+1 .. K-1
     // hold H(j+1) ... H(K-1) and are zero in rows up to j
     for (uint u = 0; u + K <= B; ++u) { QH_ROTATE_RIGHT }
     for (int jj = (int)K - 1; jj >= 0; --jj) {
         const uint j = (uint)jj;
-        const float t = simd_shuffle(j < 32 ? tau_lo : tau_hi, (ushort)(j % 32));
+        const float t = simd_shuffle(j < 32 ? tau_lo : tau_hi, (ushort)(gb + j % 32));
         float v[R];
         QH_UNROLL(R, s, {
-            const uint row = s * 32 + lane;
+            const uint row = s * 32 + i;
             v[s] = row > j && row < m ? x[s][0] : 0.0f;
         });
         const uint lim = K;
         if (t != 0.0f) { QH_APPLY(true) }   // uniform
         QH_UNROLL(R, s, {
-            const uint row = s * 32 + lane;
+            const uint row = s * 32 + i;
             x[s][0] = row < j ? 0.0f : (row == j ? 1.0f - t : -t * v[s]);
         });
         if (j > 0) { QH_ROTATE_RIGHT }
@@ -264,25 +292,32 @@ kernel void qr_householder_simd(
 
     // 5. Q
     QH_UNROLL(R, s, {
-        const uint row = s * 32 + lane;
+        const uint row = s * 32 + i;
         if (row < m) {
             QH_UNROLL(B, c, { if (c < K) out_q[row * K + c] = x[s][c]; });
         }
     });
 }
 
-#define QH_SIMD(B, R)                                                                                    \
-    template [[host_name("qr_householder_simd_" #B "_" #R)]] kernel void qr_householder_simd<B, R>(     \
+#define QH_SIMD(B, R, G, NAME)                                                                           \
+    template [[host_name(NAME)]] kernel void qr_householder_simd<B, R, G>(                               \
         device const float*, device float*, device float*, constant QsParams&, uint, uint, uint, uint);
-QH_SIMD(8, 1)
-QH_SIMD(8, 2)
-QH_SIMD(8, 4)
-QH_SIMD(16, 1)
-QH_SIMD(16, 2)
-QH_SIMD(16, 4)
-QH_SIMD(32, 1)
-QH_SIMD(32, 2)
-QH_SIMD(32, 4)
+QH_SIMD(8, 1, 32, "qr_householder_simd_8_1")
+QH_SIMD(8, 2, 32, "qr_householder_simd_8_2")
+QH_SIMD(8, 4, 32, "qr_householder_simd_8_4")
+QH_SIMD(16, 1, 32, "qr_householder_simd_16_1")
+QH_SIMD(16, 2, 32, "qr_householder_simd_16_2")
+QH_SIMD(16, 4, 32, "qr_householder_simd_16_4")
+QH_SIMD(32, 1, 32, "qr_householder_simd_32_1")
+QH_SIMD(32, 2, 32, "qr_householder_simd_32_2")
+QH_SIMD(32, 4, 32, "qr_householder_simd_32_4")
+// packed, up to 8 or 16 rows
+QH_SIMD(8, 1, 8, "qr_householder_simd_8_1_g8")
+QH_SIMD(16, 1, 8, "qr_householder_simd_16_1_g8")
+QH_SIMD(32, 1, 8, "qr_householder_simd_32_1_g8")
+QH_SIMD(8, 1, 16, "qr_householder_simd_8_1_g16")
+QH_SIMD(16, 1, 16, "qr_householder_simd_16_1_g16")
+QH_SIMD(32, 1, 16, "qr_householder_simd_32_1_g16")
 
 // =============================================================================
 // Blocked, for larger matrices: panels in registers, updates by 8x8 products
@@ -338,8 +373,11 @@ struct QwParams {
     uint mp, np;   // padded: multiples of 8, at least Kp
     uint Kp;       // min(m, n) rounded up to QW_B
     uint batch;    // matrices in this dispatch
-    uint q_direct; // 1: Q formed in place in the output (mp == m, Kp == K)
+    uint q_direct; // 1: Q formed in place in the output (mp == m, qn == qc)
     uint sc;       // the scratch's floats in threadgroup memory
+    uint qn;       // Q's columns in the workspace: Kp, mp (Q square) or 0 (R alone)
+    uint qc;       // ... in the output: K, m or 0
+    uint rr;       // R's rows in the output: K, or m (Q square: zeros below K)
 };
 
 // -a, in place.
@@ -551,25 +589,50 @@ inline void wy_merge(device float* tp, device const float* V, uint ldv, uint k0,
 
 // The panel's step J, rows t + T s (x[s]), the panel at column k: the
 // reflector of column J, applied to the columns right of it; T's column J on
-// lane i < J of every simdgroup (trow). red holds a slot a simdgroup and
-// alpha's at 32; red2 16 floats a simdgroup. Two barriers.
+// lane i < J of every simdgroup (trow). One barrier: the column's sum of
+// squares below the diagonal and its dot products there with every other
+// column of the panel in one reduction (the sum of squares is column J's
+// own), the diagonal row's entries published beside them; then, v being
+// [1; scale x's tail], v^T c = c(col) + scale D[c]. Two barriers a column,
+// the sum of squares first, were the panels' chain. A step's buffers
+// alternate with J's parity (red2's two halves of 16 S floats, the diagonal
+// row at red + 32 or + 48), so that the next step's writes cannot overtake
+// this one's reads.
 template <uint R, uint J>
 inline void wy_step(thread float (&x)[R][QW_B], thread float (&trow)[QW_B], uint k, uint mp, uint t, uint T,
                     uint sg, uint lane, uint S, threadgroup float* red, threadgroup float4* red2) {
     const uint col = k + J;
-    float ss = 0.0f;
-    QH_UNROLL(R, s, {
-        const uint row = t + T * s;
-        if (row > col && row < mp) ss = fma(x[s][J], x[s][J], ss);
-        if (row == col) red[32] = x[s][J];
+    threadgroup float* piv = red + 32 + 16 * (J & 1);
+    threadgroup float4* part = red2 + 4 * S * (J & 1);
+    float4 loc[4];
+    QH_UNROLL(4, f, {
+        loc[f] = 0.0f;
+        QH_UNROLL(4, e, {
+            QH_UNROLL(R, s, {
+                const uint row = t + T * s;
+                if (row > col && row < mp) loc[f][e] = fma(x[s][J], x[s][4 * f + e], loc[f][e]);
+            });
+        });
+        loc[f] = simd_sum(loc[f]);
     });
-    ss = simd_sum(ss);
-    if (lane == 0) red[sg] = ss;
+    QH_UNROLL(R, s, {
+        if (t + T * s == col) { QH_UNROLL(QW_B, c, { piv[c] = x[s][c]; }); }
+    });
+    if (lane < 4) {
+        float4 mine = loc[0];
+        QH_UNROLL(4, f, { if (f == lane) mine = loc[f]; });
+        part[sg * 4 + lane] = mine;
+    }
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    const float sumsq = simd_sum(lane < S ? red[lane] : 0.0f);
-    const float alpha = red[32];
+    float4 acc = 0.0f;
+    for (uint g = lane / 4; g < S; g += 8) acc += part[g * 4 + lane % 4];
+    acc += simd_shuffle_xor(acc, (ushort)4);
+    acc += simd_shuffle_xor(acc, (ushort)8);
+    acc += simd_shuffle_xor(acc, (ushort)16);
+    float4 D[4];
+    QH_UNROLL(4, f, { D[f] = simd_shuffle(acc, (ushort)f); });
     float beta, tau, scale;
-    reflector(alpha, sumsq, beta, tau, scale);
+    reflector(piv[J], D[J / 4][J % 4], beta, tau, scale);
     float v[R];
     QH_UNROLL(R, s, {
         const uint row = t + T * s;
@@ -577,45 +640,24 @@ inline void wy_step(thread float (&x)[R][QW_B], thread float (&trow)[QW_B], uint
         if (row == col) { x[s][J] = beta; v[s] = 1.0f; }
         else if (row > col && row < mp) { x[s][J] *= scale; v[s] = x[s][J]; }
     });
-    // v's dot products with every other column of the panel: right of J the
-    // update's, left of it V^T v for T
-    float4 loc[4];
-    QH_UNROLL(4, f, {
-        loc[f] = 0.0f;
-        QH_UNROLL(4, e, {
-            if (4 * f + e != J) { QH_UNROLL(R, s, { loc[f][e] = fma(v[s], x[s][4 * f + e], loc[f][e]); }); }
-        });
-        loc[f] = simd_sum(loc[f]);
-    });
-    if (lane < 4) {
-        float4 mine = loc[0];
-        QH_UNROLL(4, f, { if (f == lane) mine = loc[f]; });
-        red2[sg * 4 + lane] = mine;
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    float4 acc = 0.0f;
-    for (uint g = lane / 4; g < S; g += 8) acc += red2[g * 4 + lane % 4];
-    acc += simd_shuffle_xor(acc, (ushort)4);
-    acc += simd_shuffle_xor(acc, (ushort)8);
-    acc += simd_shuffle_xor(acc, (ushort)16);
-    float4 D[4];
-    QH_UNROLL(4, f, { D[f] = simd_shuffle(acc, (ushort)f); });
+    // v's dot products with every other column: right of J the update's, left
+    // of it V^T v for T
     if (tau != 0.0f) {   // uniform
         QH_UNROLL(4, f, {
             QH_UNROLL(4, e, {
                 if (4 * f + e > J) {
-                    const float d = tau * D[f][e];
+                    const float d = tau * fma(scale, D[f][e], piv[4 * f + e]);
                     QH_UNROLL(R, s, { x[s][4 * f + e] = fma(-d, v[s], x[s][4 * f + e]); });
                 }
             });
         });
     }
     float tij = 0.0f;
-    QH_UNROLL(4, f, { QH_UNROLL(4, e, { if (4 * f + e < J) tij = fma(trow[4 * f + e], D[f][e], tij); }); });
+    QH_UNROLL(4, f, { QH_UNROLL(4, e, { if (4 * f + e < J) tij = fma(trow[4 * f + e], fma(scale, D[f][e], piv[4 * f + e]), tij); }); });
     trow[J] = lane == J ? tau : (lane < J ? -tau * tij : 0.0f);
 }
 
-// Threadgroup memory, in floats: red 64, red2 16 S, vd 8 QW_NB (a block's
+// Threadgroup memory, in floats: red 64, red2 32 S, vd 8 QW_NB (a block's
 // diagonal tiles of V), eye 64 (the 8 x 8 identity), sc prm.sc (the merge's
 // scratch, the updates' partial sums). qr_householder.mm computes the same
 // size.
@@ -640,15 +682,16 @@ kernel void qr_householder_wy(
     const uint m = prm.m, n = prm.n, K = min(m, n), mp = prm.mp, np = prm.np, Kp = prm.Kp;
     threadgroup float*  red  = tg;
     threadgroup float4* red2 = (threadgroup float4*)(tg + 64);
-    threadgroup float*  vd   = tg + 64 + 16 * S;
+    threadgroup float*  vd   = tg + 64 + 32 * S;
     threadgroup float*  eye  = vd + 8 * QW_NB;
     threadgroup float*  sc   = eye + 64;
 
     device const float* src = A_in + (ulong)mat * m * n;
-    device float* out_q = Q + (ulong)mat * m * K;
-    device float* out_r = Rout + (ulong)mat * K * n;
+    device float* out_q = Q + (ulong)mat * m * prm.qc;
+    device float* out_r = Rout + (ulong)mat * prm.rr * n;
     device float* A = W + (ulong)mat * mp * np;
-    device float* Qw = prm.q_direct ? out_q : QW + (ulong)mat * mp * Kp;
+    const uint qn = prm.qn;
+    device float* Qw = prm.q_direct ? out_q : QW + (ulong)mat * mp * qn;
     device float* Tw = TW + (ulong)mat * ((Kp + 63) / 64) * 64 * 64;   // a block's T at Tw + k0 64, ld 64
 
     // 1. Scan. A matrix that needs neither padding nor scaling (its largest
@@ -677,8 +720,8 @@ kernel void qr_householder_wy(
     const bool nonfinite = group_sum(bad, red + 32, sg, lane, S) > 0.0f;
     if (nonfinite) {
         const float qnan = as_type<float>(0x7FC00000u);
-        for (uint idx = t; idx < m * K; idx += T) out_q[idx] = qnan;
-        for (uint idx = t; idx < K * n; idx += T) out_r[idx] = qnan;
+        for (uint idx = t; idx < m * prm.qc; idx += T) out_q[idx] = qnan;
+        for (uint idx = t; idx < prm.rr * n; idx += T) out_r[idx] = qnan;
         return;   // uniform
     }
     int expo = 0;
@@ -768,8 +811,20 @@ kernel void qr_householder_wy(
         }
     }
 
+    // R's rows below K, where Q is square
+    for (uint idx = t + K * n; idx < prm.rr * n; idx += T) out_r[idx] = 0.0f;
+    if (qn == 0) return;   // R alone
+
     // 3. Q from [I; 0] by the blocks backward, the identity and the zeros
-    // made where Q is not yet written (wy_c)
+    // made where Q is not yet written (wy_c). A square Q's columns beyond Kp
+    // start as the identity, below row Kp (above it the blocks make zeros).
+    if (qn > Kp) {
+        for (uint idx = t; idx < (mp - Kp) * (qn - Kp); idx += T) {
+            const uint r = Kp + idx / (qn - Kp), c = Kp + idx % (qn - Kp);
+            Qw[(ulong)r * qn + c] = r == c ? 1.0f : 0.0f;
+        }
+        threadgroup_barrier(mem_flags::mem_device);
+    }
     for (uint kb = (Kp + QW_NB - 1) / QW_NB; kb > 0; --kb) {
         const uint k0 = (kb - 1) * QW_NB, nb = min((uint)QW_NB, Kp - k0);
         for (uint idx = t; idx < nb * 8; idx += T) {
@@ -777,15 +832,16 @@ kernel void qr_householder_wy(
             vd[idx] = c < r ? A[(ulong)(k0 + 8 * i + r) * np + k0 + 8 * i + c] : (c == r ? 1.0f : 0.0f);
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
-        wy_apply_n<false>(nb / 8, Qw, Qw, Kp, A, np, k0, mp, k0, Kp, vd, Tw + k0 * 64, sc, prm.sc, eye, sg, S);
+        wy_apply_n<false>(nb / 8, Qw, Qw, qn, A, np, k0, mp, k0, qn, vd, Tw + k0 * 64, sc, prm.sc, eye, sg, S);
         threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
     }
 
     // 4. Q, from the workspace
     if (!prm.q_direct) {
-        for (uint idx = t; idx < m * K; idx += T) {
-            const uint r = idx / K, c = idx - r * K;
-            out_q[idx] = Qw[(ulong)r * Kp + c];
+        const uint qc = prm.qc;
+        for (uint idx = t; idx < m * qc; idx += T) {
+            const uint r = idx / qc, c = idx - r * qc;
+            out_q[idx] = Qw[(ulong)r * qn + c];
         }
     }
 }

@@ -23,6 +23,8 @@ const char* name(ml::EighBackend b) {
         case ml::EighBackend::threadgroup: return "GPU, whole-matrix Jacobi, one threadgroup";
         case ml::EighBackend::block:       return "GPU, block Jacobi";
         case ml::EighBackend::ql:          return "GPU, tridiagonalization and QL, one threadgroup";
+        case ml::EighBackend::band:        return "GPU two-stage reduction, LAPACK's tridiagonal solver";
+        case ml::EighBackend::tridiag_batch: return "GPU tridiagonalization of a whole batch, LAPACK's tridiagonal solver";
         default:                           return "GPU tridiagonalization, LAPACK's tridiagonal solver";
     }
 }
@@ -35,6 +37,8 @@ const char* name(ml::SvdBackend b) {
         case ml::SvdBackend::qr_block_jacobi: return "GPU, QR then block kernel";
         case ml::SvdBackend::golub_kahan:     return "GPU, bidiagonalization and QR, one threadgroup";
         case ml::SvdBackend::qr_golub_kahan:  return "GPU, QR then bidiagonalization and QR, one threadgroup";
+        case ml::SvdBackend::band:            return "GPU two-stage reduction, LAPACK's bidiagonal solver";
+        case ml::SvdBackend::bidiag_batch:    return "GPU bidiagonalization of a whole batch, LAPACK's bidiagonal solver";
         default:                              return "GPU bidiagonalization, LAPACK's bidiagonal solver";
     }
 }

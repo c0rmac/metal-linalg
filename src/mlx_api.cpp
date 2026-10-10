@@ -117,15 +117,30 @@ bool parse_uplo(const std::string& uplo, const char* who) {
 
 // --- QR -----------------------------------------------------------------------
 
-template <class Fn>
-std::pair<mx::array, mx::array> run_qr(const mx::array& a, const char* who, Fn fn) {
+core::QrMode parse_qr_mode(const std::string& mode, const char* who) {
+    if (mode == "reduced") return core::QrMode::reduced;
+    if (mode == "r") return core::QrMode::r;
+    if (mode == "complete") return core::QrMode::complete;
+    throw std::invalid_argument(std::string("[") + who + "] mode must be \"reduced\", \"r\" or \"complete\".");
+}
+
+// Q [..., M, K] (M x M complete, an empty array for R alone) and R [..., K, N]
+// (M x N complete).
+using QrFn = void (*)(const core::Matrices&, float*, float*, core::QrMode);
+
+std::pair<mx::array, mx::array> run_qr(const mx::array& a, const char* who, QrFn fn,
+                                       core::QrMode mode = core::QrMode::reduced) {
     Input in = prepare(a, who);
-    const uint32_t M = in.matrices.rows, N = in.matrices.cols, K = std::min(M, N);
-    mx::array q = output(shape_of(in.batch_shape, {M, K}));
-    mx::array r = output(shape_of(in.batch_shape, {K, N}));
+    const uint32_t M = in.matrices.rows, N = in.matrices.cols;
+    const uint32_t QC = core::qr_q_cols(mode, M, N), RR = core::qr_r_rows(mode, M, N);
+    // R alone: Q an empty array, materialized (a lazy one would make the
+    // caller's eval schedule a fill of nothing: some 30 us a call)
+    mx::array q = mode == core::QrMode::r ? mx::array(std::initializer_list<float>{}, mx::Shape{0})
+                                          : output(shape_of(in.batch_shape, {M, QC}));
+    mx::array r = output(shape_of(in.batch_shape, {RR, N}));
     Known known(in);
     known(q)(r);
-    fn(in.matrices, memory<float>(q), memory<float>(r));
+    fn(in.matrices, memory<float>(q), memory<float>(r), mode);
     return {q, r};
 }
 
@@ -170,6 +185,10 @@ SvdResult run_svd(const mx::array& a, bool uv, const char* who, Fn fn) {
 // Public API
 // =============================================================================
 
+std::pair<mx::array, mx::array> qr_accelerated(const mx::array& a, const std::string& mode) {
+    return run_qr(a, "qr", core::qr, parse_qr_mode(mode, "qr"));
+}
+
 std::pair<mx::array, mx::array> qr_accelerated(const mx::array& a) {
     return run_qr(a, "qr", core::qr);
 }
@@ -213,7 +232,10 @@ std::pair<mx::array, mx::array> qr_streaming_amx_reduced(const mx::array& a) {
 }
 
 std::pair<mx::array, mx::array> qr_streaming_amx_complete(const mx::array& a) {
-    return run_qr(a, "qr_streaming_amx_complete", core::detail::qr_streaming_amx_complete);
+    return run_qr(a, "qr_streaming_amx_complete",
+                  [](const core::Matrices& m, float* q, float* r, core::QrMode) {
+                      core::detail::qr_streaming_amx_complete(m, q, r);
+                  });
 }
 
 std::pair<mx::array, mx::array> qr_householder(const mx::array& a) {
@@ -247,6 +269,18 @@ EighResult eigh_block_jacobi(const mx::array& a, bool compute_vectors, bool lowe
 EighResult eigh_tridiag(const mx::array& a, bool compute_vectors, bool lower) {
     return run_eigh(a, compute_vectors, "eigh", [&](const core::Matrices& m, float* w, float* v, uint32_t* info) {
         core::detail::eigh_tridiag(m, lower, w, v, info);
+    });
+}
+
+EighResult eigh_tridiag_batch(const mx::array& a, bool compute_vectors, bool lower) {
+    return run_eigh(a, compute_vectors, "eigh", [&](const core::Matrices& m, float* w, float* v, uint32_t* info) {
+        core::detail::eigh_tridiag_batch(m, lower, w, v, info);
+    });
+}
+
+EighResult eigh_band_vectors(const mx::array& a, bool lower) {
+    return run_eigh(a, true, "eigh", [&](const core::Matrices& m, float* w, float* v, uint32_t* info) {
+        core::detail::eigh_band_vectors(m, lower, w, v, info);
     });
 }
 
@@ -304,6 +338,10 @@ SvdResult svd_band(const mx::array& a, uint32_t width) {
 
 SvdResult svd_band_vectors(const mx::array& a) {
     return run_svd(a, true, "svd", core::detail::svd_band_vectors);
+}
+
+SvdResult svd_bidiag_batch(const mx::array& a, bool compute_uv) {
+    return run_svd(a, compute_uv, "svd", core::detail::svd_bidiag_batch);
 }
 
 SvdResult svd_golub_kahan(const mx::array& a, bool compute_uv) {

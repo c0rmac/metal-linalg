@@ -1,0 +1,110 @@
+{
+ "policy": {
+  "device": "Apple M5 Pro",
+  "gpu_cores": 20,
+  "source": "tuned-stale:Apple M5 Pro",
+  "qr_min_rows": 256,
+  "qr_min_k": 16,
+  "block_min_k": 192,
+  "block_min_k_batched": 64,
+  "block_min_batch": 64,
+  "gpu_max_k": 8,
+  "gpu_min_batch_times_k": 4096,
+  "gpu_min_batch": 1,
+  "gpu_max_l": 2048,
+  "bidiag_min_k": 1024,
+  "values_bidiag_min_k": 1024,
+  "bidiag_max_batch": 4,
+  "values_bidiag_max_batch": 2,
+  "gk_min_k": 8,
+  "gk_max_k": 80,
+  "gk_limit": 83,
+  "values_gpu_max_k": 80,
+  "values_gpu_min_batch_times_k": 16384,
+  "values_gpu_min_batch": 1,
+  "values_gpu_max_l": 2048,
+  "share_min_batch": 256,
+  "gpu_big_batch_max_k": 80,
+  "gpu_big_batch_min": 256,
+  "values_band_min_k": 768,
+  "values_band_width": 16,
+  "band_min_k": 1024,
+  "bidiag_batch_min_k": 0,
+  "bidiag_batch_max_k": 0,
+  "bidiag_batch_min_batch": 0,
+  "bidiag_batch_max_l": 4294967295,
+  "values_bidiag_batch_min_k": 0,
+  "values_bidiag_batch_max_k": 0,
+  "values_bidiag_batch_min_batch": 0,
+  "values_bidiag_batch_max_l": 4294967295
+ },
+ "calibration": {
+  "probe": {
+   "batch": 64,
+   "M": 128,
+   "N": 32,
+   "ms": {
+    "jacobi": 0.913125,
+    "block": 2.084,
+    "qr": 1.199166,
+    "qrblock": 2.322333,
+    "cpu": 0.4825,
+    "gk": 0.916042
+   }
+  },
+  "scale": {
+   "jacobi": 0.08808566148620241,
+   "block": 0.22865157888084486,
+   "qr": 0.16228089833630838,
+   "qrblock": 0.2203051006314128,
+   "cpu": 0.06525292982273923,
+   "bidiag": 1.0,
+   "gk": 0.3821376366621725,
+   "bidiag_batch": 1.0
+  }
+ },
+ "machine": {
+  "start": {
+   "load_1m": 6.76953125,
+   "cpus": 18,
+   "power": "mains",
+   "low_power_mode": 0,
+   "busy_processes": 0
+  },
+  "end": {
+   "load_1m": 6.49755859375,
+   "cpus": 18,
+   "power": "mains",
+   "low_power_mode": 0,
+   "busy_processes": 0
+  }
+ },
+ "drift": {
+  "before_ms": {
+   "jacobi": 0.913125,
+   "block": 2.084,
+   "qr": 1.199166,
+   "qrblock": 2.322333,
+   "cpu": 0.4825,
+   "gk": 0.916042
+  },
+  "after_ms": {
+   "jacobi": 0.859875,
+   "block": 2.096833,
+   "qr": 1.169958,
+   "qrblock": 2.348542,
+   "cpu": 0.487833,
+   "gk": 0.864792
+  },
+  "ratio": {
+   "jacobi": 0.9416837782340862,
+   "block": 1.0061578694817659,
+   "qr": 0.9756430719349949,
+   "qrblock": 1.0112856338862688,
+   "cpu": 1.0110528497409328,
+   "gk": 0.9440527836059919
+  },
+  "worst": 1.0619276057566507,
+  "ok": true
+ }
+}

@@ -31,7 +31,7 @@ marked stale, rather than an estimate. The library reports the state at run time
 and docs/measurements.md shows it for every chip.
 """
 
-KERNEL_EPOCHS = {"qr": 7, "eigh": 7, "svd": 9}
+KERNEL_EPOCHS = {"qr": 8, "eigh": 8, "svd": 10}
 # The versions from which the CPU path spreads a batch over every core (2.9.0).
 MIN_EPOCHS = {"qr": 2, "eigh": 2, "svd": 3}
 
@@ -111,19 +111,50 @@ HISTORY = [
     ("eigh", 7, "2.16.0", "2026-10-08",
      "the sweeps keep MLX's buffer cache on, as an MLX program has it, and MLX's own buffers are no "
      "longer wrapped again: the GPU backends' calls on large batches 10-40% cheaper"),
+    ("eigh", 8, "2.17.0", "2026-10-09",
+     "the ql backend keeps a matrix of up to 32 in a simdgroup's registers, four or two a simdgroup up to "
+     "8 or 16 (1.1-2x with eigenvectors; eigenvalues alone by bisection, a lane an eigenvalue, 1.4-3x), "
+     "and two new backends: "
+     "tridiag_batch (a batch of mid-size matrices reduced together, its symmetric products from the lower "
+     "triangle alone: 1.3-1.5x the CPU at 256-1024 matrices of 96-256, 1.55x at 16 of 1024) and band with "
+     "eigenvectors (the two-stage reduction, 1.36x tridiag at 4096); the CPU path with eigenvectors, for a "
+     "batch of at most a quarter as many matrices as cores, runs ssyevd's steps with the divide and conquer "
+     "on the idle cores from N = 192 (1.17-1.26x); tridiag_batch with eigenvectors in two stages for small "
+     "batches from N = 64 (2.6x the one-stage reduction at 1 x 1024^2; four dispatches a band block), band "
+     "with eigenvectors hands it batches of two or more (4 x 1024^2 2x), and the batch back-transformations' "
+     "T is built in blocks (1.02-1.15x)"),
     ("svd", 9, "2.16.0", "2026-10-08",
      "the sweeps keep MLX's buffer cache on, as an MLX program has it, and MLX's own buffers are no "
      "longer wrapped again: the GPU backends' calls on large batches 10-40% cheaper; the QR-"
      "preconditioned backends run on 2.16.0's QR"),
+    ("svd", 10, "2.17.0", "2026-10-09",
+     "a new backend, bidiag_batch: a batch of mid-size matrices bidiagonalized together, each panel step "
+     "reading the trailing block once, the bidiagonal problems on the CPU's cores, the back-transformations "
+     "as batched products, a tall or wide matrix's R after this library's QR (1.4-2x the CPU at "
+     "256-1024 matrices of 128-256), singular values alone from k = 160 in two stages (3.3x the CPU at "
+     "16 x 1024^2); and golub_kahan in registers up to 32 x 32, four or two matrices a simdgroup up to "
+     "8 or 16 rows, from 17 rows a runner simdgroup for the QR iterations (1.3-2.1x with vectors, "
+     "singular values alone by bisection 1.6-2.7x); the CPU path with vectors, for a batch of at most a "
+     "quarter as many matrices as cores, runs sgesdd's steps with the divide and conquer on the idle cores "
+     "from k = 192 (1.2-1.4x); bidiag_batch with vectors in two stages from k = 288 (128 for small batches; "
+     "2.7-3.4x the direct reduction at 1024), its band blocks in three passes (1.04-1.16x), band with vectors "
+     "hands it batches of two or more (4 x 1024^2 2.4x), and the back-transformations' T in blocks "
+     "(1.04-1.05x)"),
+    ("qr", 8, "2.17.0", "2026-10-09",
+     "the register kernel packs small matrices, four a simdgroup up to 8 rows and two up to 16 (2.5x at "
+     "4 x 4, 1.7-2.5x at 8 x 8, 1.3-1.7x at 16 x 16 for large batches); the blocked QR's panels 8 columns "
+     "wide for up to 4 matrices of 768-3072 rows (1.05-1.1x), its in-aggregate updates one kernel there "
+     "(1.16x at 1024^2), its input scanned on the GPU (1.01-1.03x)"),
 ]
 
 REQUIRED = {
     "qr": {"unblocked", "reduced", "cpu", "share"},
-    "eigh": {"cpu", "simd", "tg", "block", "tridiag", "ql", "ql_share",
+    "eigh": {"cpu", "simd", "tg", "block", "tridiag", "ql", "ql_share", "tridiag_batch", "band",
              "cpu_vals", "simd_vals", "tg_vals", "block_vals", "tridiag_vals", "ql_vals", "ql_share_vals",
-             "band_vals", "band8_vals", "band32_vals"},
-    "svd": {"cpu", "jacobi", "block", "qr", "qrblock", "bidiag", "band", "gk", "gk_share", "cpu_vals",
-            "bidiag_vals", "gk_vals", "gk_share_vals", "band_vals", "band8_vals", "band32_vals"},
+             "tridiag_batch_vals", "band_vals", "band8_vals", "band32_vals"},
+    "svd": {"cpu", "jacobi", "block", "qr", "qrblock", "bidiag", "band", "gk", "gk_share", "bidiag_batch",
+            "cpu_vals", "bidiag_vals", "gk_vals", "gk_share_vals", "band_vals", "band8_vals", "band32_vals",
+            "bidiag_batch_vals"},
 }
 
 # Backends added after a decomposition's first measurements, and when: what
@@ -150,11 +181,16 @@ ADDED = {
     "band_vals": "the band backend, the two-stage reduction for eigenvalues or singular values alone (2.13.0)",
     "band8_vals": "the band backend's width as part of the policy (2.15.0)",
     "band32_vals": "the band backend's width as part of the policy (2.15.0)",
+    "tridiag_batch": "the tridiag_batch backend (2.17.0)",
+    "tridiag_batch_vals": "the tridiag_batch backend (2.17.0)",
+    "bidiag_batch": "the bidiag_batch backend (2.17.0)",
+    "bidiag_batch_vals": "the bidiag_batch backend (2.17.0)",
 }
 # Where a backend name means something else for one decomposition.
 ADDED_FOR = {
     "svd": {"cpu_vals": "the singular-value-only paths (2.7.0)",
             "band": "the band backend with singular vectors (2.15.0)"},
+    "eigh": {"band": "the band backend with eigenvectors (2.17.0)"},
 }
 
 

@@ -225,6 +225,33 @@ namespace metal_linalg {
         // the GPU and the CPU together (on an M5 Pro 16: at 4096 x 4096, 262,
         // 165 and 166 ms for 8, 16 and 32).
         unsigned values_band_width = 0;
+        // With eigenvectors, from N >= band_min_n (within tridiag_max_batch),
+        // the band backend before tridiag (since 2.17.0): the same two-stage
+        // reduction, its reflectors and the chase's kept and applied to the
+        // eigenvectors on the GPU while the CPU chases and solves (as the
+        // SVD's band backend with vectors). On an M5 Pro 1.36x tridiag at
+        // N = 4096, 1.6x at 8192. 0 means never.
+        unsigned band_min_n = 0;
+
+        // --- batches of mid-size matrices: tridiag_batch instead of the CPU ---
+        // Where the rules above choose the CPU (the ql backend's window and
+        // the GPU rule having passed), N in [tridiag_batch_min_n,
+        // tridiag_batch_max_n] in a batch of at least tridiag_batch_min_batch
+        // uses the tridiag_batch backend (since 2.17.0): the tridiag
+        // backend's method for a whole batch at once, the reduction of every
+        // matrix by the same dispatches (a threadgroup a matrix and panel),
+        // the tridiagonal problems on the CPU's cores, the
+        // back-transformation as batched products, pipelined over chunks of
+        // the batch. On an M5 Pro 1.3-1.5x the CPU for batches of 256-1024
+        // matrices of 96-256. tridiag_batch_max_n = 0 means never, which is
+        // what a device without measurements has. The values_ fields are the
+        // same for eigenvalues alone.
+        unsigned tridiag_batch_min_n            = 0;
+        unsigned tridiag_batch_max_n            = 0;
+        unsigned tridiag_batch_min_batch        = 0;
+        unsigned values_tridiag_batch_min_n     = 0;
+        unsigned values_tridiag_batch_max_n     = 0;
+        unsigned values_tridiag_batch_min_batch = 0;
 
         // Large batches: the GPU also for N above gpu_max_n, up to
         // gpu_big_batch_max_n, in a batch of at least gpu_big_batch_min (with
@@ -254,6 +281,11 @@ namespace metal_linalg {
         // faster than either alone where they are close). 0 means never,
         // which is what a device without measurements has.
         unsigned share_min_batch = 0;
+
+        // ... and only for N of at least this (0: any N, as before 2.17.0).
+        // The ql kernel in registers alone is the faster up to N = 32 or so,
+        // where the CPU's share costs more than it saves (since 2.17.0).
+        unsigned share_min_n = 0;
     };
 
     // The policy in effect. Resolved once, on first use.
@@ -272,7 +304,7 @@ namespace metal_linalg {
     // back-transformation on the GPU, the tridiagonal eigenproblem on the
     // CPU). ql: the batched one (tridiagonalization and implicit QL, one
     // threadgroup per matrix). Each added last, so the others keep their numbers.
-    enum class EighBackend { cpu, simd, threadgroup, block, tridiag, ql, band };
+    enum class EighBackend { cpu, simd, threadgroup, block, tridiag, ql, band, tridiag_batch };
 
     // What an eigh call does with a problem under the policy in effect.
     // EIGH_DEVICE=gpu or EIGH_DEVICE=cpu forces the first part of the decision.
@@ -455,6 +487,28 @@ namespace metal_linalg {
         // what a device without measurements of it has.
         unsigned band_min_k = 0;
 
+        // --- batches of mid-size matrices: bidiag_batch instead of the CPU ---
+        // Where the rules above choose the CPU, k in [bidiag_batch_min_k,
+        // bidiag_batch_max_k] (and l = max(M, N) up to bidiag_batch_max_l, and
+        // up to 1024 unless the matrix is at least twice as long as k) in a
+        // batch of at least bidiag_batch_min_batch uses the bidiag_batch
+        // backend (since 2.17.0): the bidiag backend's method for a whole
+        // batch at once, the bidiagonalization of every matrix by the same
+        // dispatches (a threadgroup a matrix and panel; a tall or wide
+        // matrix's R, after this library's QR), the bidiagonal problems on the CPU's
+        // cores, the back-transformations as batched products, pipelined over
+        // chunks of the batch. bidiag_batch_max_k = 0
+        // means never, which is what a device without measurements has. The
+        // values_ fields are the same for singular values alone.
+        unsigned bidiag_batch_min_k            = 0;
+        unsigned bidiag_batch_max_k            = 0;
+        unsigned bidiag_batch_min_batch        = 0;
+        unsigned bidiag_batch_max_l            = 0xFFFFFFFFu;
+        unsigned values_bidiag_batch_min_k     = 0;
+        unsigned values_bidiag_batch_max_k     = 0;
+        unsigned values_bidiag_batch_min_batch = 0;
+        unsigned values_bidiag_batch_max_l     = 0xFFFFFFFFu;
+
         // --- the golub_kahan backend, for k in [gk_min_k, gk_max_k] ---
         // On the GPU, inside this window, LAPACK's method in one threadgroup
         // per matrix (Householder bidiagonalization and implicit bidiagonal
@@ -472,6 +526,10 @@ namespace metal_linalg {
         // with the CPU path, as EighPolicy::share_min_batch describes. 0 means
         // never, which is what a device without measurements has.
         unsigned share_min_batch = 0;
+
+        // ... and only for k of at least this (0: any k, as before 2.17.0),
+        // as EighPolicy::share_min_n.
+        unsigned share_min_k = 0;
     };
 
     constexpr unsigned kSvdNoLimit = 0xFFFFFFFFu;
@@ -490,7 +548,7 @@ namespace metal_linalg {
     // threadgroup per matrix); qr_golub_kahan: the same on the k x k factor of
     // this library's QR. Each added last, so the others keep their numbers.
     enum class SvdBackend { cpu, jacobi, block_jacobi, qr_jacobi, qr_block_jacobi, bidiag,
-                            golub_kahan, qr_golub_kahan, band };
+                            golub_kahan, qr_golub_kahan, band, bidiag_batch };
 
     // What an SVD call does with a problem under the policy in effect.
     // SVD_DEVICE=gpu or SVD_DEVICE=cpu forces the first part of the decision.
@@ -604,9 +662,26 @@ namespace metal_linalg {
             uint32_t     cols;
         };
 
+        // What a QR returns, as numpy.linalg.qr's and torch.linalg.qr's
+        // `mode`: the thin factors, R alone, or Q square.
+        enum class QrMode {
+            reduced,    // q [batch, M, K], r [batch, K, N]
+            r,          // r [batch, K, N] alone; q unused (may be null), Q never formed
+            complete,   // q [batch, M, M], r [batch, M, N] (zero rows below K)
+        };
+        // Q's columns and R's rows for a mode: K or 0 or M, and K or M.
+        inline uint32_t qr_q_cols(QrMode mode, uint32_t m, uint32_t n) {
+            return mode == QrMode::r ? 0 : mode == QrMode::complete ? m : (m < n ? m : n);
+        }
+        inline uint32_t qr_r_rows(QrMode mode, uint32_t m, uint32_t n) {
+            return mode == QrMode::complete ? m : (m < n ? m : n);
+        }
+
         // A = Q R with K = min(M, N): q [batch, M, K] with orthonormal
-        // columns, r [batch, K, N] upper triangular.
-        void qr(const Matrices& a, float* q, float* r);
+        // columns, r [batch, K, N] upper triangular; or R alone, or Q
+        // square, as `mode` says. The routing is the same for every mode.
+        void qr(const Matrices& a, float* q, float* r, QrMode mode);
+        void qr(const Matrices& a, float* q, float* r);   // QrMode::reduced
 
         // A = V diag(w) V^T for symmetric A (N x N), reading only the lower
         // triangle if `lower`, else the upper. w [batch, N] ascending; v
@@ -625,7 +700,8 @@ namespace metal_linalg {
             // The backend for small and mid-size matrices, a matrix to a
             // simdgroup or a threadgroup: qr_householder wherever it takes
             // the matrix (up to 4096 rows), qr_blocked beyond.
-            void qr_unblocked(const Matrices& a, float* q, float* r);
+            void qr_unblocked(const Matrices& a, float* q, float* r, QrMode mode);
+            void qr_unblocked(const Matrices& a, float* q, float* r);   // QrMode::reduced
 
             // LAPACK's methods, a matrix to a simdgroup or a threadgroup:
             // up to 32 columns and 128 rows in one simdgroup's registers
@@ -633,7 +709,8 @@ namespace metal_linalg {
             // threadgroup (sgeqrf, sorgqr: panels of 16 columns in
             // registers, the updates as 8 x 8 simdgroup matrix products).
             // qr_householder_fits says which it takes; throws otherwise.
-            void qr_householder(const Matrices& a, float* q, float* r);
+            void qr_householder(const Matrices& a, float* q, float* r, QrMode mode);
+            void qr_householder(const Matrices& a, float* q, float* r);   // QrMode::reduced
             bool qr_householder_fits(uint32_t m, uint32_t n);
             // Where qr_unblocked hands a call to it: wherever it fits.
             bool qr_householder_preferred(uint32_t m, uint32_t n);
@@ -643,13 +720,15 @@ namespace metal_linalg {
             // grid-parallel path for large matrices. Everything qr_blocked
             // takes goes there instead (qr_blocked_preferred; QR_BLOCKED=0
             // keeps it here).
-            void qr_streaming_amx_reduced(const Matrices& a, float* q, float* r);
+            void qr_streaming_amx_reduced(const Matrices& a, float* q, float* r, QrMode mode);
+            void qr_streaming_amx_reduced(const Matrices& a, float* q, float* r);   // QrMode::reduced
 
             // By blocks of columns, a batch at once: the panels by the band
             // reduction's kernels, the updates and Q's formation as MPS
             // products. For up to 16384 rows (qr_blocked_fits; throws
             // otherwise).
-            void qr_blocked(const Matrices& a, float* q, float* r);
+            void qr_blocked(const Matrices& a, float* q, float* r, QrMode mode);
+            void qr_blocked(const Matrices& a, float* q, float* r);   // QrMode::reduced
             bool qr_blocked_fits(uint32_t m, uint32_t n);
             // Whether qr_streaming_amx_reduced hands the call to qr_blocked:
             // wherever it fits, unless QR_BLOCKED=0.
@@ -661,19 +740,21 @@ namespace metal_linalg {
             // Not reachable from the routing: benchmarking put it within noise
             // of qr_streaming_amx_reduced everywhere it was measured, while
             // allocating the full M x M Q. Kept and tested rather than
-            // deleted, since it is the only backend that forms the complete
-            // orthogonal factor.
+            // deleted; QrMode::complete is how the complete factor is asked
+            // for now.
             void qr_streaming_amx_complete(const Matrices& a, float* q, float* r);
 
             // LAPACK on the CPU (sgeqrf, sorgqr), the matrices of a batch
             // spread over cpu_threads() threads. A matrix holding a NaN or an
             // infinity gives NaN for its Q and R.
-            void qr_cpu(const Matrices& a, float* q, float* r);
+            void qr_cpu(const Matrices& a, float* q, float* r, QrMode mode);
+            void qr_cpu(const Matrices& a, float* q, float* r);   // QrMode::reduced
 
             // The GPU kernel qr_gpu_backend() picks and qr_cpu on one batch at
             // once, sharing it as QrPolicy::share_min_batch describes,
             // whatever the policy.
-            void qr_shared(const Matrices& a, float* q, float* r);
+            void qr_shared(const Matrices& a, float* q, float* r, QrMode mode);
+            void qr_shared(const Matrices& a, float* q, float* r);   // QrMode::reduced
 
             // One team (threadgroup or simdgroup) per matrix. Honours opt.mode
             // only between simd and threadgroup; `block` falls back to
@@ -689,6 +770,20 @@ namespace metal_linalg {
             // back-transformation on the GPU, one matrix at a time; any N.
             // See eigh_tridiag.mm.
             void eigh_tridiag(const Matrices& a, bool lower, float* w, float* v, uint32_t* info);
+
+            // The same for a batch of mid-size matrices: the reduction of every
+            // matrix by one set of dispatches, the tridiagonal problems on the
+            // CPU's cores, the back-transformation as batched products. See
+            // eigh_tridiag.mm.
+            void eigh_tridiag_batch(const Matrices& a, bool lower, float* w, float* v, uint32_t* info);
+
+            // Eigenvalues and eigenvectors by the two-stage reduction, as the
+            // SVD's band backend with vectors: A to a band of 16 on the GPU, its
+            // reflectors kept; the band to tridiagonal on the CPU's cores, its
+            // reflectors kept; the eigenvectors V = Q1 Q2 Z with Q1 and Q2
+            // applied on the GPU while the CPU chases and solves. See
+            // svd_bidiag.mm.
+            void eigh_band_vectors(const Matrices& a, bool lower, float* w, float* v, uint32_t* info);
 
             // Eigenvalues alone by the two-stage reduction: A to a band on the
             // GPU, the band to tridiagonal on the CPU's cores, then LAPACK
@@ -734,6 +829,13 @@ namespace metal_linalg {
             // (a wide matrix as its transpose, a much taller one after a QR).
             // See svd_bidiag.mm.
             void svd_bidiag(const Matrices& a, float* u, float* s, float* vt, uint32_t* info);
+
+            // The same for a batch of mid-size matrices (rows and columns up
+            // to 1024): every matrix bidiagonalized by the same dispatches,
+            // the bidiagonal problems on the CPU's cores, the
+            // back-transformations as batched products. U and V^T, or
+            // neither. See svd_bidiag_batch.mm.
+            void svd_bidiag_batch(const Matrices& a, float* u, float* s, float* vt, uint32_t* info);
 
             // Singular values alone by the two-stage reduction: A to a band
             // on the GPU (blocked panels, the work as matrix products), the

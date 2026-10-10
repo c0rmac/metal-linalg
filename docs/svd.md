@@ -247,6 +247,39 @@ matrix itself where it fits (`golub_kahan`) and otherwise after this
 library's QR, on the $k \times k$ factor (`qr_golub_kahan`), as the Jacobi
 kernels are preconditioned.
 
+**In registers, up to 32 rows and columns** (since 2.17.0). Up to 32 × 32 the
+matrix, $U$ and $V$ fit in a simdgroup's registers, a row a lane, as the
+eigensolver's `ql` keeps its matrix (`svd_gk_simd`, instances for 8, 16 and 32
+columns and 8, 16 or 32 lanes a matrix; `SVD_GK_SIMD=0` turns it off). A
+matrix then needs 1.3 KB of threadgroup memory ($d$, $e$, the reflectors'
+scalars and a step's rotations) and nothing waits on a threadgroup barrier.
+The left reflector's column sums are lane reductions, the right one is formed
+on every lane alike from its row, gathered by shuffles, $V$ and then $U$ are
+formed a row a lane, and the matrix's first lane runs the QR iteration while
+every lane applies its rotations to its rows of $U$ and $V$, every index a
+constant so that the rows stay in registers. A matrix of at most 8 rows takes
+8 lanes and at most 16 takes 16, so a simdgroup holds four or two of them:
+every lane has a row, and the matrices' QR iterations, one lane's chain each,
+run side by side; every cross-lane step stays inside a matrix's lanes, and
+the iteration's loop ends once every matrix's has. On an M5 Pro, with vectors
+1.6-2.1x the threadgroup kernel up to 16 × 16 (16384 matrices: 0.95 ms
+against 1.87 at 8×8, 3.85 against 6.52 at 16×16) and 1.0-1.35x at 32×32,
+where the QR iteration is most of the time either way. From 17 rows a
+matrix fills a simdgroup, and its QR iteration, one lane's chain, leaves 31
+lanes waiting; with vectors the threadgroup's last simdgroup is then a runner:
+lane $j$ runs matrix $j$'s iteration, 8 matrices side by side (4 below 17
+columns), computing step $t+1$ into a second buffer while the matrices'
+simdgroups apply step $t$, one threadgroup barrier a step (1.1-1.35x: 16384
+matrices of 32×32 20.0 ms against 26.3; `SVD_GK_RUN=0` turns it off; the
+eigensolver's `ql`, whose sweeps are cheaper, gained nothing from the same
+and keeps a matrix to a simdgroup). **Singular values alone** skip the
+iteration: bisection on the Golub-Kahan tridiagonal (zero
+diagonal, off-diagonal $d_0, e_0, d_1, \ldots, d_{k-1}$, whose eigenvalues
+are $\pm\sigma_i$), lane $i$ finding the $i$-th largest by Sturm counts, every
+lane at once: 1.6-2.7x (16384 matrices: 0.51 ms against 1.38 at 8×8, 1.67
+against 2.76 at 16×16; 4096: 2.0 against 4.1 at 32×32). Results match the
+threadgroup kernel's to rounding.
+
 On an M5 Pro, $k \times k$ matrices in batches, from the routing sweep in
 [`results/apple-m5-pro-20gpu/20261004-06bc11/svd/`](results/apple-m5-pro-20gpu/20261004-06bc11/svd/)
 (2.13.0; min of two randomised passes; the CPU path spreads the batch over 18 cores; "shared" is the
@@ -440,6 +473,132 @@ LAPACK's relative to $\|A\|_F$. Memory: at 8192 the call keeps about 1.2 GB
 more than `bidiag` (the chase's blocks, $V$ and $Y$, 440 MB a side, and the
 explicit $Q$ and $P$).
 
+## An eighth backend for batches of mid-size matrices: `bidiag_batch`
+
+For batches of mid-size matrices, about 96 to 512, every GPU backend above
+loses to the CPU path, which spreads a batch over every core: the Jacobi
+kernels do several times LAPACK's flops, `golub_kahan`'s matrix no longer fits
+in threadgroup memory from 84, and `bidiag` solves a batch one matrix at a
+time, each reduction thousands of dispatches whose fixed cost is most of their
+time. `bidiag_batch` (since 2.17.0, `src/svd_bidiag_batch.mm`) runs `bidiag`'s
+method on a whole batch at once, as the eigensolver's `tridiag_batch` does
+`tridiag`'s:
+
+1. **The bidiagonalization of every matrix by the same dispatches**, $A = Q B
+   P^T$: per panel of 32 columns, `bd_panel`, a threadgroup a matrix, runs
+   `slabrd`'s steps for the panel's columns with barriers between them; the
+   trailing update is two batched MPS products; the last columns are one
+   final panel. The matrices are loaded and scaled on the GPU (`bd_load`), a
+   wide one as its transpose.
+2. **The bidiagonal problems on the CPU's cores**, a matrix a core (divide and
+   conquer, `sbdsdc`'s method; `sbdsqr`'s dqds for the singular values alone).
+3. **The back-transformations as batched products**: $U = Q U_B$ and $V^T =
+   V_B^T P^T$ in blocks of 64 reflectors, their $V$ and $T$ built on the GPU
+   as `tridiag_batch` builds them; the factors written out by a tiled
+   transpose (`bd_store`), or for a wide matrix, whose column-major factors
+   are already the outputs' layout, by a copy (`bd_copy`).
+
+A matrix at least twice as tall as wide is reduced as the CPU path reduces
+it: R of this library's QR (R alone for the singular values alone), the
+batch's $k \times k$ R decomposed as above, and $U = Q U_R$, one batched
+product; one at least twice as wide likewise through its transpose ($A^T = Q
+R$, so $U = V_R$ and $V^T = U_R^T Q^T$; `SVD_BIDIAG_BATCH_QR=0` turns both
+off). Bidiagonalized as it is, such a matrix's trailing block is read once a
+column: 256 × 1024×128 took 88 ms, behind the CPU's 62; through the QR first,
+35 ms (1.77x the CPU; values alone 17.4 against 29.1), and 256 × 128×1024
+39 ms against the CPU's 76. Rows and columns are then not limited to 1024:
+only R is bidiagonalized.
+
+**Singular values alone, from $k = 160$, in two stages**, as the `band`
+backend reduces one large matrix: every matrix to an upper band of width 16
+by blocks on the GPU, then the bands to bidiagonal on the CPU's cores
+(`band_to_bidiagonal`, a matrix a core) and `sbdsqr`, pipelined over chunks
+of the batch. A block's two panels (16 columns, then 16 rows through their
+transpose) are factored by `bb_panel`, a threadgroup a matrix and a thread a
+row, its 16 entries in registers, building $T$ as it goes; the updates are
+batched products, so the reduction's work is matrix products whatever the
+batch, and the GPU's last few columns go to LAPACK with the chase
+(`SVD_BIDIAG_BATCH_BAND=0` reduces directly throughout). A block's two
+updates are merged, as `slabrd` merges a column's: $Z = A^T V_1$ (one read
+of the trailing matrix); the row panel's kernel forms $W = Z T_1$, updates
+its 16 rows from $W$ alone before factoring them, and forms $V_2 T_2$,
+writing $W^T$ into 16 spare rows below the matrix; one product then gives
+both $A_{22} V_2 T_2$ and $W^T V_2 T_2$ (one read), and $A_{22}
+\mathrel{-}= [W\ V_2][V_{1b}\ Q]^T$, $Q = A_{22} V_2 T_2 - V_{1b} W^T V_2 T_2$,
+is one rank-32 product (one read and write): three passes and five
+dispatches a block where applying one panel and then the other took four and
+eight (1.04-1.16x; with the passes merged but the small products as products
+of their own, eight dispatches became ten and it lost, 0.91-0.96x). On an M5
+Pro against the direct reduction: 1.05-1.1x at 160-256, 1.6x at 64 × 512²,
+2.2-2.5x at 1024² (16 × 1024² 61 ms against 137); at 128, 0.88x, where the
+CPU's chase is the longer stage. Against the CPU path: 1.33x at 256 × 256²,
+1.46x at 64 × 512², 3.8x at 16 × 1024².
+
+**With vectors, from $k = 288$ (from 128 for batches of up to as many
+matrices as the CPU's solve has threads), in two stages too** (since
+2.17.0), `band`'s method with vectors for the batch at once, both stages'
+reflectors kept and applied:
+
+1. the band reduction as for the singular values alone, `bb_panel` writing
+   each panel's $V$ straight into the layout the back-transformation's
+   products read ($V$ row-major beside its neighbours, zeros above, the
+   $T$'s in 32 × 32 slots);
+2. on the CPU's cores, a matrix a core: the LAPACK tail, keeping its
+   reflectors, and $Q = Q_{\text{tail}}[I; 0]$, $P = P_{\text{tail}}$; then,
+   while the GPU forms $Q \leftarrow Q_1 Q$ and $P \leftarrow P_1 P$
+   (aggregates of eight blocks, their $T$ merged by `bd_merge_t` from the
+   Gram matrices), the band chased to bidiagonal keeping the chase's
+   reflectors (into `bd_chase_apply`'s blocks, built on the matrix's
+   threads) and $B = U_B S V_B^T$ by the divide and conquer;
+3. on the GPU: $Q \leftarrow Q Q_2$ and $P \leftarrow P P_2$
+   (`bd_chase_apply`, a dispatch a matrix, the matrices at once), then
+   $U = Q U_B$ and $V^T = V_B^T P^T$ as batched products straight into the
+   outputs' layout (for a wide matrix's transpose, $U = P V_B$ and
+   $V^T = U_B^T Q^T$).
+
+On an M5 Pro against the CPU path: one 1024 × 1024 1.95x (29.6 ms against
+57.7), 4 2.2x, 8 1.86x, 16 2.7x; 8 of 768 1.38x; 32 of 512 1.24x; 2.7-3.4x the
+direct reduction at 1024, 1.6-2.1x at 768, 1.10-1.25x at 288-320. At 256 it
+leads the direct reduction by 1.29-1.46x for 2-16 matrices, but is level at
+32-64 and 0.91x at 256 matrices, where the CPU's chases bound it, hence the
+batch limit below 288. Singular values within
+$7 \times 10^{-8}$ of the direct reduction's relative to $\|A\|_F$,
+reconstruction and orthogonality about $2$-$3 \times 10^{-6}$. With more
+matrices than fit a slot's 256 MB (about 4 of 1024 × 1024) the chunks are
+balanced. `SVD_BIDIAG_BATCH_BAND=0` reduces directly here too.
+
+The `band` backend with vectors hands a batch of two or more (k from 384,
+up to 1024 rows after any QR first) to this path: 2 of 1024 × 1024 in 36 ms
+against 55 a matrix at a time, 4 in 46 against 111; one matrix stays in
+`band` (28 ms against 31: its chase starts under its reduction).
+`SVD_BAND_BATCH=0` keeps a batch in `band`. Stage 3c of
+`tuning/tune_svd.py` therefore fits `band_min_k` and the batch cap
+(`bidiag_max_batch`, which `band` shares with `bidiag`) together, over
+`band`'s points and `bidiag`'s.
+
+The batch is pipelined in chunks over two workspace slots, as `tridiag_batch`'s
+is. The panel kernel is bound by memory, so each step reads the trailing block
+once where `slabrd` reads it twice ($A^T v$, then $A u$): a simdgroup takes a
+column into registers, forms its product with $v$, from that its entry of the
+row reflector's unscaled vector (an affine function of the product), and at
+once its share of $A$ times that vector, summed over the columns in
+threadgroup memory by compare-and-swap; the reflector's scale applies after
+(1.3-1.9x from 256×256: 8 × 1024² 169 ms against 313). From 512 rows the
+panel takes 1024 threads (1.1x at 8 × 1024²).
+
+On an M5 Pro, against the CPU path: with vectors 1.65x at 1024 × 128² (49 ms
+against 81), 1.42x at 256 × 256² (55 against 78), 1.12x at 64 × 512², 1.44x
+for 256 wide 128×512, 1.68-1.77x for 256 tall 512-1024×128; behind it from
+1024² (8 matrices of 1024², a threadgroup each, leave most of the GPU's 20
+cores idle: 0.87x). Singular values alone 2.3x at 1024 × 128², 1.22x at
+256 × 256², 1.34x at 64 × 512², 1.5x at 8 × 1024² and 3.3x at 16 × 1024², 1.7-2.1x
+tall or wide. Up to 1024 rows and columns (the panel kernel's threadgroup
+memory), any number when at least twice as long as $k$. Accuracy is
+`bidiag`'s: reconstruction and orthogonality about $1.4 \times 10^{-6}$ at
+256, singular values within $2 \times 10^{-7}$ of LAPACK's relative to
+$\|A\|_F$. The routing sweep fits its windows (stage 4 of
+`tuning/tune_svd.py`).
+
 ## Routing
 
 With $k = \min(M, N)$ and $l = \max(M, N)$:
@@ -456,9 +615,12 @@ on the GPU:
   otherwise the Jacobi kernels:
     precondition with QR iff  l >= qr_min_rows,  k >= qr_min_k  and  l >= 2k
     block kernel iff  k >= block_min_k,  or  k >= block_min_k_batched and batch >= block_min_batch
-where that says CPU (up to bidiag_max_batch matrices; svdvals: values_bidiag_max_batch):
-  band iff  k >= band_min_k  (svdvals: k >= values_band_min_k; 0 = never)
-  bidiag instead iff  k >= bidiag_min_k  (svdvals: k >= values_bidiag_min_k; 0 = never)
+where that says CPU:
+  bidiag_batch iff  bidiag_batch_min_k <= k <= bidiag_batch_max_k,  l <= bidiag_batch_max_l (and 1024)
+                    and batch >= bidiag_batch_min_batch  (svdvals: the values_ fields; max_k 0 = never)
+  otherwise, up to bidiag_max_batch matrices (svdvals: values_bidiag_max_batch):
+    band iff  k >= band_min_k  (svdvals: k >= values_band_min_k; 0 = never)
+    bidiag instead iff  k >= bidiag_min_k  (svdvals: k >= values_bidiag_min_k; 0 = never)
 ```
 
 The CPU path is a fair one: LAPACK (Accelerate) called directly, `sgesdd`,
@@ -468,17 +630,34 @@ batch is spread over every CPU core, each core solving whole matrices with
 Accelerate's own threading off: on an M5 Pro 11-15x faster than one matrix at
 a time for batches of 8×8 to 128×128, 3-10x for larger ones. A lone matrix
 keeps Accelerate's threading; `set_cpu_threads()` or `METAL_LINALG_CPU_THREADS`
-caps the cores used. The tables below were measured against this CPU path.
+caps the cores used. With vectors, from k = 192, a batch of at most a quarter
+as many matrices as cores, which leaves cores idle, goes through `sgesdd`'s
+steps one by one instead (2.17.0): `sgebrd`, the divide and conquer of the
+`bidiag` backend on the idle cores (`sbdsdc` runs on one), `sormbr` on each
+side, the QR first where one side is at least twice the other. On an M5 Pro
+1.23x faster than `sgesdd` at 256, 1.28x at 512, 1.32x at 1024, 1.4x at 2048
+and 1.38x for four of 1024; 1.16-1.3x tall or wide. `SVD_CPU_DC=0` keeps
+`sgesdd`. The tables below were measured against this CPU path (before
+2.17.0, against `sgesdd` whole).
 
 As for QR and the eigensolver, the policy is a per-device table, keyed on the
 Metal device name and GPU core count:
 
 | GPU | cores | GPU iff | golub_kahan | QR from | block from | else bidiag | status |
 |---|---|---|---|---|---|---|---|
-| Apple M5 Pro | 20 | k <= 8, l <= 2048 and batch * k >= 4096, or k <= 80 in batches of 256+ (svdvals: k <= 80, l <= 2048 and batch * k >= 16384) | k = 8 .. 80, shared with the CPU from batch 256 | 256 rows, k >= 16 | k = 192; k = 64 in batches of 64+ | from k = 1024 (svdvals too), batches up to 4 (svdvals 2); `band` from k = 1024 with vectors, from 768 for svdvals | measured — run [`20261007-9f2589`](results/apple-m5-pro-20gpu/20261007-9f2589/svd/report.md) (1.0170 geometric-mean regret against the best backend at each of 295 points, worst 1.75x) |
+| Apple M5 Pro | 20 | k <= 8, l <= 2048 and batch * k >= 4096, or k <= 80 in batches of 256+ (svdvals: k <= 80, l <= 2048 and batch * k >= 8192) | k = 4 .. 80, shared with the CPU from batch 256 for k >= 32 | 256 rows, k >= 16 | k = 256; k = 64 in batches of 64+ | `band` from k = 512 with vectors (batches up to 16), from 768 for svdvals; `bidiag_batch` for k = 96-1024 in batches of 64+ (svdvals likewise); `bidiag` from 1024 for svdvals' batches of 2 | measured — run [`20261009-b60ec0`](results/apple-m5-pro-20gpu/20261009-b60ec0/svd/report.md) |
 | anything else | — | estimated | estimated | estimated | estimated | estimated | **estimated** from the M5 Pro's timings ([how](tuning.md#macs-nobody-has-measured)) |
 
-On the M5 Pro large batches of small matrices, up to 56×56 and a long side
+The 2.17.0 row (run `b60ec0`) scores 1.0215 geometric-mean regret, worst
+1.61x, on the 253 points where the one-stage backends are timed; its windows,
+fitted on the larger points, score 1.0121 for `band` with vectors (1.115
+without), 1.0709 for svdvals' `band` (1.359 without), 1.0139 for
+`bidiag_batch` (1.244 without) and 1.0289 for its singular values alone
+(1.323 without), and sharing 1.047 against `golub_kahan` alone's 1.115.
+Batches of 64 and more from k = 96 go to `bidiag_batch`, one or a few
+matrices from k = 512 to the two-stage `band`, and `golub_kahan` batches
+are shared with the CPU from 256 matrices of k = 32 and more. Before 2.17.0: on the
+M5 Pro large batches of small matrices, up to 56×56 and a long side
 of 256, go to `golub_kahan` on the GPU, shared with the CPU from 1024
 matrices, and so do batches of 1024 and more up to 80×80 (the large-batch
 clause, since 2.12.0); everything else in a batch goes to the CPU, and one
@@ -515,14 +694,26 @@ entry, remain only for a Mac with nothing to estimate from
 `SVD_VALUES_GPU_MIN_BATCH_TIMES_K`, `SVD_VALUES_GPU_MIN_BATCH`,
 `SVD_VALUES_GPU_MAX_L`, `SVD_BIDIAG_MIN_K`, `SVD_VALUES_BIDIAG_MIN_K`,
 `SVD_BIDIAG_MAX_BATCH`, `SVD_VALUES_BIDIAG_MAX_BATCH`, `SVD_GK_MIN_K`,
-`SVD_GK_MAX_K`, `SVD_SHARE_MIN_BATCH`, `SVD_GPU_BIG_BATCH_MAX_K`,
-`SVD_GPU_BIG_BATCH_MIN`, `SVD_VALUES_BAND_MIN_K`, `SVD_BAND_MIN_K` and
-`SVD_DEVICE=gpu|cpu|bidiag|band` override it (`band` with vectors too since
-2.15.0; before, it meant `bidiag` there). `SVD_VALUES_BAND_WIDTH` sets the
-`band` backend's band width as a policy field (`values_band_width`, 8, 16 or
-32; 0 is 16), and `SVD_BAND_WIDTH=8|16|32` where the policy leaves it 0.
+`SVD_GK_MAX_K`, `SVD_SHARE_MIN_BATCH`, `SVD_SHARE_MIN_K`, `SVD_GPU_BIG_BATCH_MAX_K`,
+`SVD_GPU_BIG_BATCH_MIN`, `SVD_VALUES_BAND_MIN_K`, `SVD_BAND_MIN_K`,
+`SVD_BIDIAG_BATCH_MIN_K`, `SVD_BIDIAG_BATCH_MAX_K`, `SVD_BIDIAG_BATCH_MIN_BATCH`,
+`SVD_BIDIAG_BATCH_MAX_L` (and the same with `SVD_VALUES_` for singular values
+alone) and `SVD_DEVICE=gpu|cpu|bidiag|band|bidiag_batch` override it (`band`
+with vectors too since 2.15.0; before, it meant `bidiag` there).
+`SVD_VALUES_BAND_WIDTH` sets the `band` backend's band width as a policy field
+(`values_band_width`, 8, 16 or 32; 0 is 16), and `SVD_BAND_WIDTH=8|16|32`
+where the policy leaves it 0. `SVD_GK_SIMD=0` keeps `golub_kahan` in
+threadgroup memory at every size (off: up to 32 × 32 in registers),
+`SVD_GK_RUN=0` keeps the register kernel's QR iterations a simdgroup each,
+`SVD_CPU_DC=0` has the CPU path call `sgesdd` whole,
+`SVD_BIDIAG_BATCH_QR=0` has `bidiag_batch` bidiagonalize a tall or wide
+matrix as it is rather than its R, `SVD_BIDIAG_BATCH_BAND=0` has it
+reduce directly rather than in two stages (singular values alone from
+k = 160, with vectors from 288, or 128 for small batches), and
+`SVD_BAND_BATCH=0` keeps a batch in
+`band` rather than handing it to `bidiag_batch`'s two stages.
 `svd_backend(m, n, batch)` and `svdvals_backend(m, n, batch)` say which of the
-nine backends a problem gets, with vectors and for singular values alone.
+ten backends a problem gets, with vectors and for singular values alone.
 
 The whole-matrix Jacobi kernel gives a matrix one threadgroup for its whole
 solve: 263 ms at 512×512 on an M5 Pro, 2.7 s at 1024×1024. With the display
@@ -551,8 +742,11 @@ a few matrices at a time from the back, and they meet wherever their speeds
 put them. On an M5 Pro, against the faster of the two alone: 1.41x for 4096
 matrices of 16×16, 1.45x for 4096 of 40×40, 1.43x for 1024 of 48×48, 1.71x for
 1024 of 56×56 and 1.62x for 1024 of 64×64 (with vectors), 1.45x for 1024 of
-48×48 (singular values alone). `svd_shares_batch()` and
-`svdvals_shares_batch()` report it.
+48×48 (singular values alone). Since 2.17.0 sharing also needs k of at
+least `share_min_k` (0: any k), as the eigensolver's `share_min_n`: on an M5
+Pro from 256 matrices of k = 32 and more (256 of 128×64 1.5x, 1024 of 64×64
+1.8x), `golub_kahan` in registers alone being faster below. `svd_shares_batch()`
+and `svdvals_shares_batch()` report it.
 
 ## Accuracy
 

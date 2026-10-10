@@ -113,8 +113,10 @@ array symmetrised(const array& A, bool lower) {
 
 // The full battery on one result. `lower` says which triangle the solver was
 // asked to read, so the reference is built the same way.
+// w_exact: the eigenvalues known exactly (then not LAPACK's); slack scales
+// the tolerances, for pathological matrices whose rounding exceeds them.
 void check(const std::string& label, const array& A_in, const EighResult& r_in,
-           bool lower = true, bool vectors = true) {
+           bool lower = true, bool vectors = true, const array* w_exact = nullptr, float slack = 1.0f) {
     ++g_checks;
     array A = symmetrised(A_in, lower);
     const auto& shape = A.shape();
@@ -179,12 +181,13 @@ void check(const std::string& label, const array& A_in, const EighResult& r_in,
     // Independent reference: LAPACK through MLX's CPU eigh.
     float eig_err = 0.0f;
     {
-        array w_ref = linalg::eigvalsh(A, lower ? "L" : "U", Device::cpu);
+        array w_ref = w_exact ? *w_exact : linalg::eigvalsh(A, lower ? "L" : "U", Device::cpu);
         eval({w_ref});
         eig_err = max_abs(subtract(r.eigenvalues, w_ref)) / scale;
     }
 
-    const bool ok = order <= 0.0f && resid <= kResidTol && ortho <= kOrthoTol && eig_err <= kEigTol;
+    const bool ok = order <= 0.0f && resid <= slack * kResidTol && ortho <= slack * kOrthoTol &&
+                    eig_err <= slack * kEigTol;
     std::printf("  %s  %-44s resid=%.1e ortho=%.1e |w-lapack|=%.1e sweeps=%u\n",
                 ok ? "ok  " : "FAIL", label.c_str(), resid, ortho, eig_err, max_sweeps);
     if (order > 0.0f) std::printf("        eigenvalues not ascending (max drop %.3e)\n", order);
@@ -717,6 +720,264 @@ int main() {
     }
 
     // -------------------------------------------------------------------------
+    // tridiag_batch: a batch reduced together (td_panel, a threadgroup a
+    // matrix and panel; its last panel the last columns), the tridiagonal
+    // problems on the CPU's cores, the back-transformation in blocks of 64 as
+    // batched products, pipelined over chunks of the batch in two slots. The
+    // sizes straddle the panels (32) and blocks (64); the batches make one,
+    // two and more chunks (the slots reused).
+    // -------------------------------------------------------------------------
+    std::printf("\n[ tridiag_batch backend ]\n");
+    {
+        auto tb = [](const array& A, bool vectors, bool lower) {
+            EighResult r = detail::eigh_tridiag_batch(A, vectors, lower);
+            eval({r.eigenvalues, r.eigenvectors, r.info});
+            return r;
+        };
+        for (int n : {1, 2, 3, 31, 33, 34, 35, 64, 65, 97, 129, 200, 257, 300, 513}) {
+            const int b = n <= 64 ? 40 : n <= 300 ? 9 : 3;
+            array A = random_symmetric(b, n, 4000 + n);
+            check("tridiag_batch " + std::to_string(b) + " x " + std::to_string(n) + "x" + std::to_string(n), A,
+                  tb(A, true, true));
+        }
+        // With eigenvectors in two stages from N = 64, for batches up to half
+        // the CPU's solve threads (all from 640, twice from 896): sizes about the blocks
+        // (16) and the CPU's tail, one chunk and two (8 of 1024), against the
+        // one-stage reduction (EIGH_TRIDIAG_BATCH_BAND=0); each triangle;
+        // scaled, constant, a NaN, unaligned outputs
+        if (cpu_threads() >= 10) {   // batches of 8 in two stages: 16 solve threads or so
+            for (auto [b, n] : {std::pair{4, 64}, std::pair{6, 100}, std::pair{2, 130}, std::pair{2, 384},
+                                std::pair{3, 400}, std::pair{4, 433}, std::pair{4, 640}, std::pair{3, 1000},
+                                std::pair{8, 1024}}) {
+                array A = random_symmetric(b, n, 4500 + n);
+                EighResult r = tb(A, true, true);
+                const std::string label = "tridiag_batch two-stage " + std::to_string(b) + " x " + std::to_string(n) +
+                                          "x" + std::to_string(n);
+                check(label, A, r);
+                setenv("EIGH_TRIDIAG_BATCH_BAND", "0", 1);
+                EighResult o = tb(A, true, true);
+                unsetenv("EIGH_TRIDIAG_BATCH_BAND");
+                const float d = max_abs(subtract(r.eigenvalues, o.eigenvalues)) / std::max(frobenius(A), 1.0f);
+                ++g_checks;
+                if (d > 1e-6f) fail(label + " == one-stage", "differ by " + std::to_string(d));
+                else std::printf("  ok    %-44s |dw|=%.1e\n", (label + " == one-stage").c_str(), d);
+            }
+            {
+                const int n = 400;
+                array S = random_symmetric(2, n, 4600);
+                array junk = full({2, n, n}, 1e30f);
+                array lo = add(tril(S), triu(junk, 1)), up = add(triu(S), tril(junk, -1));
+                check("tridiag_batch two-stage lower, junk above 2 x 400", lo, tb(lo, true, true), true);
+                check("tridiag_batch two-stage upper, junk below 2 x 400", up, tb(up, true, false), false);
+            }
+            for (float sc : {1e-30f, 1e30f}) {
+                char label[64];
+                std::snprintf(label, sizeof label, "tridiag_batch two-stage scaled by %.0e 2 x 420", sc);
+                array A = multiply(random_symmetric(2, 420, 4700), array(sc / 5.0f));
+                check(label, A, tb(A, true, true));
+            }
+            {
+                const int n = 512;
+                std::vector<float> w(2 * n, 0.0f);
+                w[n - 1] = w[2 * n - 1] = (float)n;
+                const array we = from_values(w, {2, n});
+                check("tridiag_batch two-stage constant 2 x 512", full({2, n, n}, 1.0f),
+                      tb(full({2, n, n}, 1.0f), true, true), true, true, &we, 5.0f);
+                std::vector<float> spec(600);
+                for (int i = 0; i < 600; ++i) spec[i] = i < 200 ? 1.0f : i < 400 ? -2.0f : 1e-4f * (float)i;
+                std::sort(spec.begin(), spec.end());
+                array R = with_spectrum(spec);
+                check("tridiag_batch two-stage repeated eigenvalues 600", R, tb(R, true, true));
+            }
+            {   // a NaN in one matrix of three
+                const int n = 400, b = 3;
+                array S = random_symmetric(b, n, 4800);
+                eval({S});
+                std::vector<float> data(S.data<float>(), S.data<float>() + (size_t)b * n * n);
+                data[(size_t)n * n + 9 * n + 2] = NAN;   // matrix 1, lower triangle
+                EighResult r = tb(from_values(data, {b, n, n}), true, true);
+                eval({r.eigenvalues, r.info});
+                const float* wp = r.eigenvalues.data<float>();
+                bool ok = detail::eigh_nonfinite(r.info.data<uint32_t>()[1]) && !detail::eigh_nonfinite(r.info.data<uint32_t>()[0]);
+                for (int i = 0; i < b * n; ++i) ok = ok && (std::isnan(wp[i]) == (i >= n && i < 2 * n));
+                ++g_checks;
+                if (!ok) fail("tridiag_batch two-stage NaN in matrix 1 of 3", "not isolated");
+                else std::printf("  ok    %-44s\n", "tridiag_batch two-stage NaN in matrix 1 of 3");
+                // the float API, outputs not page-aligned
+                array B = random_symmetric(2, n, 4900);
+                eval({B});
+                std::vector<float> w(2 * n + 1), v((size_t)2 * n * n + 1);
+                std::vector<uint32_t> inf(2);
+                core::detail::eigh_tridiag_batch(core::Matrices{B.data<float>(), 2u, (uint32_t)n, (uint32_t)n}, true,
+                                                 w.data() + 1, v.data() + 1, inf.data());
+                EighResult ru{from_values(std::vector<float>(w.begin() + 1, w.end()), {2, n}),
+                              from_values(std::vector<float>(v.begin() + 1, v.end()), {2, n, n}),
+                              array(inf.data(), {2}, uint32)};
+                check("tridiag_batch two-stage, unaligned outputs 2 x 400", B, ru);
+            }
+        }
+        // Several chunks: 2 of 550 (64^2), 3 of 1000 (48^2)
+        for (auto [b, n] : {std::pair{1100, 64}, std::pair{3000, 48}}) {
+            array A = random_symmetric(b, n, 4100 + n);
+            check("tridiag_batch " + std::to_string(b) + " x " + std::to_string(n) + "x" + std::to_string(n) +
+                  " (chunks)", A, tb(A, true, true));
+        }
+        // Eigenvalues alone, against the same matrices with eigenvectors.
+        for (int n : {2, 65, 200}) {
+            array A = random_symmetric(12, n, 4200 + n);
+            EighResult rv = tb(A, false, true), rw = tb(A, true, true);
+            check("tridiag_batch values only 12 x " + std::to_string(n) + "x" + std::to_string(n), A, rv, true, false);
+            const float d = max_abs(subtract(rv.eigenvalues, rw.eigenvalues)) / std::max(frobenius(A), 1.0f);
+            ++g_checks;
+            if (d > 1e-6f) fail("tridiag_batch values-only == with vectors", "differ by " + std::to_string(d));
+        }
+        {   // one triangle read: junk in the other, both ways
+            const int n = 150;
+            array S = random_symmetric(4, n, 4300);
+            array junk = full({4, n, n}, 1e30f);
+            array lo = add(tril(S), triu(junk, 1)), up = add(triu(S), tril(junk, -1));
+            check("tridiag_batch lower, junk above 4 x 150x150", lo, tb(lo, true, true), true);
+            check("tridiag_batch upper, junk below 4 x 150x150", up, tb(up, true, false), false);
+        }
+        for (float sc : {1e-30f, 1e30f}) {
+            array A = multiply(random_symmetric(6, 120, 4400), array(sc / 5.0f));
+            char label[64];
+            std::snprintf(label, sizeof label, "tridiag_batch scaled by %.0e 6 x 120x120", sc);
+            check(label, A, tb(A, true, true));
+        }
+        check("tridiag_batch zero 3 x 100x100", zeros({3, 100, 100}), tb(zeros({3, 100, 100}), true, true));
+        {
+            array I = broadcast_to(eye(100), {3, 100, 100});
+            check("tridiag_batch identity 3 x 100x100", I, tb(I, true, true));
+            std::vector<float> spec(140);
+            for (int i = 0; i < 140; ++i) spec[i] = i < 90 ? 1.0f : 2.0f + (float)(i % 5);
+            array R = with_spectrum(spec);
+            check("tridiag_batch repeated eigenvalues 140x140", R, tb(R, true, true));
+        }
+        {   // a NaN in one matrix of a batch: that matrix NaN and flagged, the rest intact
+            const int n = 90;
+            array S = random_symmetric(5, n, 4500);
+            eval({S});
+            std::vector<float> data(S.data<float>(), S.data<float>() + 5 * n * n);
+            data[(size_t)2 * n * n + 7 * n + 2] = NAN;   // matrix 2, lower triangle
+            EighResult r = tb(from_values(data, {5, n, n}), true, true);
+            array info = reshape(r.info, {-1});
+            array w2 = slice(r.eigenvalues, {2, 0}, {3, n});
+            array rest = concatenate({slice(r.eigenvalues, {0, 0}, {2, n}), slice(r.eigenvalues, {3, 0}, {5, n})});
+            array v2 = slice(r.eigenvectors, {2, 0, 0}, {3, n, n});
+            eval({info, w2, rest, v2});
+            ++g_checks;
+            const uint32_t* iw = info.data<uint32_t>();
+            const bool ok = all(isnan(w2)).item<bool>() && all(isnan(v2)).item<bool>() && !has_non_finite(rest) &&
+                            detail::eigh_nonfinite(iw[2]) && detail::eigh_converged(iw[0]) &&
+                            detail::eigh_converged(iw[4]);
+            if (!ok) fail("tridiag_batch NaN in one matrix of a batch", "not isolated");
+            else std::printf("  ok    %-44s\n", "tridiag_batch NaN in one matrix of a batch");
+        }
+        {   // through the float API with outputs that are not page-aligned (staged)
+            const int b = 7, n = 70;
+            array A = random_symmetric(b, n, 4600);
+            eval({A});
+            std::vector<float> w(b * n + 1), v((size_t)b * n * n + 1);
+            std::vector<uint32_t> info(b);
+            core::detail::eigh_tridiag_batch(core::Matrices{A.data<float>(), (uint32_t)b, (uint32_t)n, (uint32_t)n}, true,
+                                             w.data() + 1, v.data() + 1, info.data());
+            EighResult r{from_values(std::vector<float>(w.begin() + 1, w.end()), {b, n}),
+                         from_values(std::vector<float>(v.begin() + 1, v.end()), {b, n, n}),
+                         array(info.data(), {b}, uint32)};
+            check("tridiag_batch, unaligned outputs 7 x 70x70", A, r);
+        }
+        ++g_checks;
+        try {
+            detail::eigh_tridiag_batch(random_symmetric(1, 1025, 4700), true, true);
+            fail("tridiag_batch N beyond 1024", "did not throw");
+        } catch (const std::invalid_argument&) {
+            std::printf("  ok    %-44s\n", "tridiag_batch N=1025 throws invalid_argument");
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // band with eigenvectors: the band reduction's reflectors (Q1, its GPU
+    // blocks aggregated 8 at a time, the LAPACK tail's) and the chase's (Q2,
+    // applied in chunks as it goes) on the GPU, then V = Q Z. Below 48 (three
+    // blocks of 16) the tridiag backend. The sizes straddle the blocks, the
+    // aggregates (128) and the chase's groups (16 sweeps).
+    // -------------------------------------------------------------------------
+    std::printf("\n[ band backend with eigenvectors ]\n");
+    {
+        auto bv = [](const array& A, bool lower) {
+            EighResult r = detail::eigh_band_vectors(A, lower);
+            eval({r.eigenvalues, r.eigenvectors, r.info});
+            return r;
+        };
+        for (int n : {20, 48, 49, 64, 100, 129, 300, 513, 1100, 2048}) {
+            array A = random_symmetric(1, n, 5000 + n);
+            check("band vectors " + std::to_string(n) + "x" + std::to_string(n), A, bv(A, true));
+        }
+        {
+            array S = random_symmetric(1, 300, 5100);
+            array junk = full({300, 300}, 1e30f);
+            array lo = add(tril(S), triu(junk, 1)), up = add(triu(S), tril(junk, -1));
+            check("band vectors lower, junk above 300x300", lo, bv(lo, true), true);
+            check("band vectors upper, junk below 300x300", up, bv(up, false), false);
+        }
+        check("band vectors batch 3 x 200x200", random_symmetric(3, 200, 5200), bv(random_symmetric(3, 200, 5200), true));
+        // a batch of two or more from N = 384: tridiag_batch's two stages
+        check("band vectors batch 3 x 400x400 (batched)", random_symmetric(3, 400, 5210),
+              bv(random_symmetric(3, 400, 5210), true));
+        {
+            array S = random_symmetric(2, 450, 5220);
+            array junk = full({2, 450, 450}, 1e30f);
+            array up = add(triu(S), tril(junk, -1));
+            check("band vectors batched upper, junk below 2 x 450", up, bv(up, false), false);
+        }
+        check("band vectors zero 200x200", zeros({200, 200}), bv(zeros({200, 200}), true));
+        // Constant: the panels' columns fall to entries whose squares
+        // underflow (orthogonality 0.16 at 300 before 2.17.0). Against the
+        // exact eigenvalues (0, ..., 0, n), with slack: a rank-one matrix's
+        // rounding is above random ones'.
+        for (int n : {300, 1024}) {
+            std::vector<float> w(n, 0.0f);
+            w[n - 1] = (float)n;
+            const array we = from_values(w, {n});
+            check("band vectors constant " + std::to_string(n) + "x" + std::to_string(n), full({n, n}, 1.0f),
+                  bv(full({n, n}, 1.0f), true), true, true, &we, 5.0f);
+        }
+        check("band vectors identity 600x600", eye(600), bv(eye(600), true));
+        {
+            std::vector<float> spec(600), close(500);
+            for (int i = 0; i < 600; ++i) spec[i] = i < 200 ? 1.0f : i < 400 ? -2.0f : 1e-4f * (float)i;
+            for (int i = 0; i < 500; ++i) close[i] = 1.0f + 1e-6f * (float)i;
+            array R = with_spectrum(spec), C = with_spectrum(close);
+            check("band vectors repeated eigenvalues 600x600", R, bv(R, true));
+            check("band vectors clustered eigenvalues 500x500", C, bv(C, true));
+        }
+        for (float sc : {1e-30f, 1e30f}) {
+            array A = multiply(random_symmetric(1, 260, 5300), array(sc / 5.0f));
+            char label[64];
+            std::snprintf(label, sizeof label, "band vectors scaled by %.0e 260x260", sc);
+            check(label, A, bv(A, true));
+        }
+        {   // a NaN in one matrix of a batch
+            const int n = 120;
+            array S = random_symmetric(2, n, 5400);
+            eval({S});
+            std::vector<float> data(S.data<float>(), S.data<float>() + 2 * n * n);
+            data[(size_t)n * n + 6 * n + 1] = NAN;
+            EighResult r = bv(from_values(data, {2, n, n}), true);
+            array info = reshape(r.info, {-1});
+            array w1 = slice(r.eigenvalues, {1, 0}, {2, n}), w0 = slice(r.eigenvalues, {0, 0}, {1, n});
+            eval({info, w0, w1});
+            ++g_checks;
+            const bool ok = all(isnan(w1)).item<bool>() && !has_non_finite(w0) &&
+                            detail::eigh_nonfinite(info.data<uint32_t>()[1]) &&
+                            detail::eigh_converged(info.data<uint32_t>()[0]);
+            if (!ok) fail("band vectors NaN in one matrix of a batch", "not isolated");
+            else std::printf("  ok    %-44s\n", "band vectors NaN in one matrix of a batch");
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // ql: one threadgroup per matrix, the matrix in threadgroup memory. The
     // sizes straddle the simdgroup boundaries (32, 64) and the switch to a
     // chaser simdgroup of its own (N = 33), up to the largest N the device's
@@ -833,6 +1094,63 @@ int main() {
             if (!(nan1 && fin && flags)) fail("ql NaN in one matrix of a batch", "not isolated");
             else std::printf("  ok    %-44s\n", "ql NaN in one matrix of a batch");
         }
+        // Up to N = 32 in registers (eigh_ql_simd), eigenvalues alone there
+        // by bisection from N = 9: the same results as the threadgroup kernel's
+        // (EIGH_QL_SIMD=0), to rounding.
+        for (int n : {5, 12, 17, 24, 32}) {
+            if (n > max_n) continue;
+            array A = random_symmetric(50, n, 2700 + n);
+            EighResult reg = ql(A, true, true), regv = ql(A, false, true);
+            setenv("EIGH_QL_SIMD", "0", 1);
+            EighResult tgm = ql(A, true, true), tgv = ql(A, false, true);
+            unsetenv("EIGH_QL_SIMD");
+            const float nA = std::max(frobenius(A), 1.0f);
+            const float dw = max_abs(subtract(reg.eigenvalues, tgm.eigenvalues)) / nA;
+            const float dv = max_abs(subtract(regv.eigenvalues, tgv.eigenvalues)) / nA;
+            ++g_checks;
+            const std::string label = "ql in registers == in threadgroup memory 50 x " + std::to_string(n);
+            if (!(dw < 1e-6f && dv < 1e-6f)) fail(label, "differ by " + std::to_string(std::max(dw, dv)));
+            else std::printf("  ok    %-44s |dw|=%.1e |dw vals|=%.1e\n", label.c_str(), dw, dv);
+        }
+        // Up to 16, several matrices share a simdgroup: a non-finite one writes
+        // NaN and leaves its neighbours alone, with eigenvectors and without
+        for (int n : {6, 13}) {
+            for (bool vectors : {true, false}) {
+                const int b = 9;
+                array A = random_symmetric(b, n, 2750 + n);
+                eval({A});
+                std::vector<float> data(A.data<float>(), A.data<float>() + (size_t)b * n * n);
+                data[(size_t)2 * n * n + n] = NAN;   // (1, 0): in the lower triangle, the one read
+                EighResult r = ql(from_values(data, {b, n, n}), vectors, true);
+                array info = reshape(r.info, {-1});
+                array w2 = slice(r.eigenvalues, {2, 0}, {3, n});
+                array rest = concatenate({slice(r.eigenvalues, {0, 0}, {2, n}), slice(r.eigenvalues, {3, 0}, {b, n})});
+                eval({info, w2, rest});
+                const uint32_t* iw = info.data<uint32_t>();
+                bool ok = all(isnan(w2)).item<bool>() && !has_non_finite(rest) && detail::eigh_nonfinite(iw[2]);
+                for (int k = 0; k < b; ++k) if (k != 2) ok = ok && detail::eigh_converged(iw[k]);
+                ++g_checks;
+                const std::string label = "ql in registers, NaN among " + std::to_string(b) + " x " + std::to_string(n) +
+                                          (vectors ? "" : ", values");
+                if (!ok) fail(label, "not isolated");
+                else std::printf("  ok    %-44s\n", label.c_str());
+            }
+        }
+        {
+            std::vector<float> rep(30), cluster(28), graded(24);
+            for (int i = 0; i < 30; ++i) rep[i] = i < 20 ? 1.0f : 3.0f;
+            for (int i = 0; i < 28; ++i) cluster[i] = 1.0f + 1e-6f * (float)i;
+            for (int i = 0; i < 24; ++i) graded[i] = std::pow(10.0f, -4.0f + 8.0f * (float)i / 23.0f);
+            for (auto [name, spec] : {std::pair{"repeated", rep}, std::pair{"clustered", cluster},
+                                      std::pair{"graded", graded}}) {
+                array M = with_spectrum(spec);
+                const int n = (int)spec.size();
+                check(std::string("ql values only, ") + name + " " + std::to_string(n) + "x" + std::to_string(n), M,
+                      ql(M, false, true), true, false);
+            }
+            check("ql values only, zero 20x20", zeros({20, 20}), ql(zeros({20, 20}), false, true), true, false);
+            check("ql values only, identity 20x20", eye(20), ql(eye(20), false, true), true, false);
+        }
         // Beyond the threadgroup memory: an error, not a wrong answer.
         ++g_checks;
         try {
@@ -886,6 +1204,61 @@ int main() {
             ++g_checks;
             if (!ok || !detail::eigh_nonfinite(r.info.data<uint32_t>()[37])) fail("CPU NaN in matrix 37 of 64", "not isolated");
             else std::printf("  ok    %-44s\n", "CPU NaN in matrix 37 of 64 stays there");
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // CPU path with vectors in ssyevd's steps (the divide and conquer on the
+    // idle cores) where a batch leaves cores idle: each triangle, scaled far
+    // up and down, a NaN, and the same eigenvalues as ssyevd (EIGH_CPU_DC=0).
+    // -------------------------------------------------------------------------
+    std::printf("\n[ CPU path with vectors: ssyevd's steps on idle cores ]\n");
+    if (cpu_threads() < 4) {
+        std::printf("  skip  fewer than 4 CPU threads\n");
+    } else {
+        for (int n : {192, 300}) {
+            for (int batch : {1, 2}) {
+                array S = random_symmetric(batch, n, 3100 + n + batch);
+                array junk = full({batch, n, n}, 7.0f);
+                for (bool lower : {true, false}) {
+                    array A = lower ? add(tril(S), triu(junk, 1)) : add(triu(S), tril(junk, -1));
+                    EighResult r = detail::eigh_cpu(A, true, lower);
+                    setenv("EIGH_CPU_DC", "0", 1);
+                    EighResult ref = detail::eigh_cpu(A, true, lower);
+                    unsetenv("EIGH_CPU_DC");
+                    eval({r.eigenvalues, r.eigenvectors, ref.eigenvalues});
+                    const std::string label = "steps " + std::to_string(batch) + " x " + std::to_string(n) +
+                                              (lower ? " L" : " U");
+                    check(label, A, r, lower);
+                    const float d = max_abs(subtract(r.eigenvalues, ref.eigenvalues)) / frobenius(S);
+                    ++g_checks;
+                    if (d > 2e-6f) fail(label + " == ssyevd", "differ by " + std::to_string(d));
+                    else std::printf("  ok    %-44s |dw|=%.1e\n", (label + " == ssyevd").c_str(), d);
+                }
+            }
+        }
+        for (float scale : {1e30f, 1e-30f}) {
+            array A = multiply(random_symmetric(1, 256, 3300), array(scale));
+            EighResult r = detail::eigh_cpu(A, true, true);
+            eval({r.eigenvalues, r.eigenvectors});
+            char label[64];
+            std::snprintf(label, sizeof label, "steps 256 scaled by %.0e", scale);
+            check(label, A, r);
+        }
+        {
+            const int n = 200, batch = 2;
+            array S = random_symmetric(batch, n, 3400);
+            eval({S});
+            std::vector<float> data(S.data<float>(), S.data<float>() + (size_t)batch * n * n);
+            data[(size_t)n * n + 9 * n + 3] = NAN;   // matrix 1, lower triangle
+            EighResult r = detail::eigh_cpu(from_values(data, {batch, n, n}), true, true);
+            eval({r.eigenvalues, r.eigenvectors, r.info});
+            const float* wp = r.eigenvalues.data<float>();
+            bool ok = !detail::eigh_nonfinite(r.info.data<uint32_t>()[0]) && detail::eigh_nonfinite(r.info.data<uint32_t>()[1]);
+            for (int i = 0; i < 2 * n; ++i) ok = ok && (std::isnan(wp[i]) == (i >= n));
+            ++g_checks;
+            if (!ok) fail("steps NaN in matrix 1 of 2", "not isolated");
+            else std::printf("  ok    %-44s\n", "steps NaN in matrix 1 of 2 stays there");
         }
     }
 
@@ -1073,9 +1446,52 @@ int main() {
                 expect("values_band_min_n = 0: never", eigvalsh_backend(4096, 1) == EighBackend::tridiag);
                 set_eigh_policy(t);
             }
+            {   // the band backend with eigenvectors, before tridiag
+                EighPolicy c = t;
+                c.band_min_n = 3072;
+                set_eigh_policy(c);
+                expect("band_min_n = 3072: eigh N=2048 tridiag, N=3072 band; eigvalsh N=3072 not band",
+                       eigh_backend(2048, 1) == EighBackend::tridiag && eigh_backend(3072, 1) == EighBackend::band &&
+                       eigvalsh_backend(3072, 1) == EighBackend::tridiag);
+                c.tridiag_max_batch = 1;
+                set_eigh_policy(c);
+                expect("band within tridiag_max_batch: eigh N=3072 batch 2 cpu", eigh_backend(3072, 2) == EighBackend::cpu);
+                c.tridiag_max_batch = 0;
+                c.band_min_n = 256;
+                set_eigh_policy(c);
+                api("eigh routed to band, 300x300", random_symmetric(1, 300, 834));
+                set_eigh_policy(t);
+            }
+            {   // tridiag_batch for batches of mid-size matrices, ahead of the cap
+                EighPolicy c = t;
+                c.tridiag_batch_min_n = 96;
+                c.tridiag_batch_max_n = 512;
+                c.tridiag_batch_min_batch = 64;
+                c.tridiag_max_batch = 4;
+                set_eigh_policy(c);
+                expect("tridiag_batch window [96, 512] from 64: N=128 b64, N=512 b64; not N=64, N=513, b63",
+                       eigh_backend(128, 64) == EighBackend::tridiag_batch &&
+                       eigh_backend(512, 64) == EighBackend::tridiag_batch &&
+                       eigh_backend(64, 64) != EighBackend::tridiag_batch &&
+                       eigh_backend(513, 64) != EighBackend::tridiag_batch &&
+                       eigh_backend(128, 63) != EighBackend::tridiag_batch &&
+                       eigvalsh_backend(128, 64) != EighBackend::tridiag_batch);
+                c.values_tridiag_batch_min_n = 32;
+                c.values_tridiag_batch_max_n = 128;
+                c.values_tridiag_batch_min_batch = 256;
+                set_eigh_policy(c);
+                expect("values window [32, 128] from 256: eigvalsh N=100 b256, not b255",
+                       eigvalsh_backend(100, 256) == EighBackend::tridiag_batch &&
+                       eigvalsh_backend(100, 255) != EighBackend::tridiag_batch);
+                api("eigh routed to tridiag_batch, 70 x 100x100", random_symmetric(70, 100, 835));
+                set_eigh_policy(t);
+            }
             setenv("EIGH_DEVICE", "band", 1);
-            expect("EIGH_DEVICE=band: eigvalsh band, eigh tridiag",
-                   eigvalsh_backend(8, 1) == EighBackend::band && eigh_backend(8, 1) == EighBackend::tridiag);
+            expect("EIGH_DEVICE=band: eigvalsh and eigh band",
+                   eigvalsh_backend(8, 1) == EighBackend::band && eigh_backend(8, 1) == EighBackend::band);
+            setenv("EIGH_DEVICE", "tridiag_batch", 1);
+            expect("EIGH_DEVICE=tridiag_batch forces it",
+                   eigh_backend(300, 64) == EighBackend::tridiag_batch && eigvalsh_backend(8, 1) == EighBackend::tridiag_batch);
             setenv("EIGH_DEVICE", "cpu", 1);
             expect("EIGH_DEVICE=cpu keeps the CPU over tridiag", eigh_backend(4096, 1) == EighBackend::cpu);
             setenv("EIGH_DEVICE", "tridiag", 1);
@@ -1139,6 +1555,11 @@ int main() {
             expect("share_min_batch = 256: N=30 b256 shared, b255 not; eigvalsh too",
                    eigh_shares_batch(30, 256) && !eigh_shares_batch(30, 255) && eigvalsh_shares_batch(30, 256));
             api("routed to ql, shared with the CPU (300 x 30x30)", random_symmetric(300, 30, 842));
+            q.share_min_n = 24;   // and only from N = 24
+            set_eigh_policy(q);
+            expect("share_min_n = 24: N=24 b256 shared, N=16 not; eigvalsh too",
+                   eigh_shares_batch(24, 256) && !eigh_shares_batch(16, 256) && !eigvalsh_shares_batch(16, 4096));
+            api("routed to ql, below share_min_n not shared (300 x 16x16)", random_symmetric(300, 16, 843));
             set_eigh_policy(known);
             expect("share_min_batch unset -> never", !eigh_shares_batch(30, 1 << 20));
         }

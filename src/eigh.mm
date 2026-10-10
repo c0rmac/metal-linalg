@@ -3,6 +3,7 @@
 #endif
 #include <metal_linalg/core.h>
 #include "calibration.h"
+#include "divide_conquer.h"
 #include "estimate.h"
 #include "metal_runtime.h"
 #include "shaders.h"
@@ -185,6 +186,15 @@ struct TunedEntry {
     unsigned    gpu_big_batch_min;
     unsigned    values_band_min_n;   // 0 = never, which rows from before 2.13.0 leave
     unsigned    values_band_width;   // 0 = 16, which rows from before 2.15.0 leave
+    // Rows from before 2.17.0 leave these 0: never.
+    unsigned    band_min_n;
+    unsigned    tridiag_batch_min_n;
+    unsigned    tridiag_batch_max_n;
+    unsigned    tridiag_batch_min_batch;
+    unsigned    values_tridiag_batch_min_n;
+    unsigned    values_tridiag_batch_max_n;
+    unsigned    values_tridiag_batch_min_batch;
+    unsigned    share_min_n;   // 0 = any N, which rows from before 2.17.0 leave
     unsigned    calibration;   // kCalibration* (calibration.h); rows without it are current
 };
 
@@ -194,7 +204,7 @@ struct TunedEntry {
 // docs/studies/. The last row keeps the array non-empty and matches nothing.
 constexpr TunedEntry kTuned[] = {
 #include "tuned/eigh.inc"
-    {"", 0,   0, 0, 0, 0,   0, 0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0, 0,   0, 0,   0},
+    {"", 0,   0, 0, 0, 0,   0, 0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0, 0,   0, 0,   0,   0, 0, 0,   0, 0, 0,   0},
 };
 
 // The estimated rows, for every slowdown pair on tuning/estimate.py's ladder
@@ -207,7 +217,7 @@ struct EstimatedEntry {
 };
 constexpr EstimatedEntry kEstimated[] = {
 #include "tuned/eigh_estimated.inc"
-    {0, 0, 0, {"", 0,   0, 0, 0, 0,   0, 0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0, 0,   0,   0}},
+    {0, 0, 0, {"", 0,   0, 0, 0, 0,   0, 0, 0,   0, 0, 0,   0, 0, 0, 0,   0, 0,   0,   0, 0,   0, 0,   0,   0, 0, 0,   0, 0, 0,   0}},
 };
 
 void apply(const TunedEntry& e, EighPolicy& p) {
@@ -232,6 +242,14 @@ void apply(const TunedEntry& e, EighPolicy& p) {
     p.gpu_big_batch_min            = e.gpu_big_batch_min;
     p.values_band_min_n            = e.values_band_min_n;
     p.values_band_width            = e.values_band_width;
+    p.band_min_n                     = e.band_min_n;
+    p.tridiag_batch_min_n            = e.tridiag_batch_min_n;
+    p.tridiag_batch_max_n            = e.tridiag_batch_max_n;
+    p.tridiag_batch_min_batch        = e.tridiag_batch_min_batch;
+    p.values_tridiag_batch_min_n     = e.values_tridiag_batch_min_n;
+    p.values_tridiag_batch_max_n     = e.values_tridiag_batch_max_n;
+    p.values_tridiag_batch_min_batch = e.values_tridiag_batch_min_batch;
+    p.share_min_n                    = e.share_min_n;
 }
 
 struct ResolvedPolicy {
@@ -312,6 +330,14 @@ ResolvedPolicy resolve_policy() {
     over("EIGH_GPU_BIG_BATCH_MIN",            r.policy.gpu_big_batch_min);
     over("EIGH_VALUES_BAND_MIN_N",            r.policy.values_band_min_n);
     over("EIGH_VALUES_BAND_WIDTH",            r.policy.values_band_width);
+    over("EIGH_BAND_MIN_N",                   r.policy.band_min_n);
+    over("EIGH_TRIDIAG_BATCH_MIN_N",          r.policy.tridiag_batch_min_n);
+    over("EIGH_TRIDIAG_BATCH_MAX_N",          r.policy.tridiag_batch_max_n);
+    over("EIGH_TRIDIAG_BATCH_MIN_BATCH",      r.policy.tridiag_batch_min_batch);
+    over("EIGH_VALUES_TRIDIAG_BATCH_MIN_N",     r.policy.values_tridiag_batch_min_n);
+    over("EIGH_VALUES_TRIDIAG_BATCH_MAX_N",     r.policy.values_tridiag_batch_max_n);
+    over("EIGH_VALUES_TRIDIAG_BATCH_MIN_BATCH", r.policy.values_tridiag_batch_min_batch);
+    over("EIGH_SHARE_MIN_N",                  r.policy.share_min_n);
     if (!env.empty()) r.source = "env:" + env;
     return r;
 }
@@ -527,6 +553,9 @@ void eigh_jacobi(const Matrices& a, bool lower, const EighOptions& opt,
 // The smallest n whose eigenvalues alone go through the two-stage reduction.
 constexpr uint32_t kEighTwoStageMinN = 128;
 
+// The smallest n solved in ssyevd's steps where cores are idle (eigh_cpu).
+constexpr uint32_t kEighCpuDcMinN = 192;
+
 // Whether LAPACK's two-stage driver can be trusted here. Accelerate's
 // ssyevd_2stage gives wrong eigenvalues on macOS 14 (off by 1.5-7% of the
 // largest for every N from 128, on GitHub's macOS 14 runners) and right ones
@@ -570,6 +599,67 @@ bool two_stage_trusted() {
     return trusted;
 }
 
+namespace {
+
+// eigh_cpu with vectors in ssyevd's steps, the divide and conquer on
+// `threads` threads per matrix. uplo is the triangle as LAPACK sees it.
+void eigh_cpu_steps(const Matrices& a, char uplo, const float* amax, const char* finite, unsigned threads,
+                    float* w_out, float* v_out, uint32_t* info_out) {
+    const uint32_t n = a.cols, batch = a.batch;
+    const size_t   per = (size_t)n * n;
+    __LAPACK_int N = (__LAPACK_int)n, lwork = std::max<__LAPACK_int>(1, 64 * N), query = -1, err = 0;
+    {
+        float q = 0.0f, scratch = 0.0f;
+        ssytrd_(&uplo, &N, &scratch, &N, &scratch, &scratch, &scratch, &q, &query, &err);
+        lwork = std::max<__LAPACK_int>(lwork, (__LAPACK_int)std::ceil(q));
+        sormtr_("L", &uplo, "N", &N, &N, &scratch, &N, &scratch, &scratch, &N, &q, &query, &err);
+        lwork = std::max<__LAPACK_int>(lwork, (__LAPACK_int)std::ceil(q));
+    }
+    // ssyevd's scaling: a matrix whose largest entry is outside
+    // [2^-51, 2^51] is solved scaled, here by a power of two, so exactly.
+    const float lo = std::ldexp(1.0f, -51), hi = std::ldexp(1.0f, 51);
+
+    lapack_batches(batch, per, [&](uint32_t b0, uint32_t b1) {
+        std::vector<float> h(per), z(per), d(n), e(n), tau(n), work(lwork);
+        __LAPACK_int lw = lwork, err = 0;
+        auto check = [&](const char* routine, long info, uint32_t b) {
+            if (info != 0) {
+                throw std::runtime_error(std::string("[eigh] ") + routine + " failed on matrix " +
+                                         std::to_string(b) + " of " + std::to_string(batch) + " (N=" +
+                                         std::to_string(n) + "), info " + std::to_string(info) + ".");
+            }
+        };
+        for (uint32_t b = b0; b < b1; ++b) {
+            float* w = w_out + (size_t)b * n;
+            if (!finite[b]) {
+                std::fill(w, w + n, NAN);
+                std::fill(v_out + b * per, v_out + (b + 1) * per, NAN);
+                if (info_out) info_out[b] = 1u << 17;
+                continue;
+            }
+            int exponent = 0;
+            if (amax[b] > 0.0f && (amax[b] < lo || amax[b] > hi)) std::frexp(amax[b], &exponent);
+            if (exponent != 0) {
+                const float scale = std::ldexp(1.0f, -exponent);
+                vDSP_vsmul(a.data + b * per, 1, &scale, h.data(), 1, per);
+            } else {
+                std::memcpy(h.data(), a.data + b * per, per * sizeof(float));
+            }
+            ssytrd_(&uplo, &N, h.data(), &N, d.data(), e.data(), tau.data(), work.data(), &lw, &err);
+            check("LAPACK ssytrd", err, b);
+            check("tridiagonal_eigensystem",
+                  metal_linalg::detail::tridiagonal_eigensystem(n, d.data(), e.data(), z.data(), n, threads), b);
+            sormtr_("L", &uplo, "N", &N, &N, h.data(), &N, tau.data(), z.data(), &N, work.data(), &lw, &err);
+            check("LAPACK sormtr", err, b);
+            for (uint32_t i = 0; i < n; ++i) w[i] = std::ldexp(d[i], exponent);
+            vDSP_mtrans(z.data(), 1, v_out + b * per, 1, n, n);   // the vectors as columns, row-major
+            if (info_out) info_out[b] = 1u | (1u << 16);
+        }
+    });
+}
+
+} // namespace
+
 void eigh_cpu(const Matrices& a, bool lower, float* w_out, float* v_out, uint32_t* info_out) {
     const uint32_t n = a.cols, batch = a.batch;
     if (a.rows != n) {
@@ -607,6 +697,20 @@ void eigh_cpu(const Matrices& a, bool lower, float* w_out, float* v_out, uint32_
     std::vector<float> amax(batch);
     std::vector<char>  finite(batch);
     scan(a, lower ? Part::lower : Part::upper, amax.data(), finite.data());
+
+    // With vectors, and cores idle beside each matrix (a quarter as many
+    // matrices as cores, at most), ssyevd's steps one by one, its divide and
+    // conquer (sstedc, on one core) on the idle cores too: ssytrd,
+    // tridiagonal_eigensystem, sormtr. On an M5 Pro, one matrix 1.26x faster
+    // at 256, 1.11x at 512, 1.2x at 1024, 1.17x at 2048; level at 128; 4 of
+    // 1024 1.2x. EIGH_CPU_DC=0 keeps ssyevd.
+    using metal_linalg::detail::kCpuDcMinThreads;
+    const unsigned dc_threads = v_out ? metal_linalg::detail::lapack_threads_per_matrix(batch, per) : 1;
+    const char*    dc_env = std::getenv("EIGH_CPU_DC");
+    if (v_out && n >= kEighCpuDcMinN && dc_threads >= kCpuDcMinThreads && !(dc_env && std::string(dc_env) == "0")) {
+        eigh_cpu_steps(a, uplo, amax.data(), finite.data(), dc_threads, w_out, v_out, info_out);
+        return;
+    }
 
     // Each chunk of the batch, on its own thread with its own workspace.
     lapack_batches(batch, per, [&](uint32_t b0, uint32_t b1) {
@@ -700,11 +804,12 @@ bool eigvalsh_uses_gpu(unsigned n, unsigned batch) {
 
 namespace {
 
-// Where the rules send a call to the CPU: for eigenvalues alone the band
-// backend from its threshold, then the tridiag backend from its own (0 =
-// never), both up to the batch cap (0 = none). EIGH_DEVICE=cpu keeps the CPU;
-// EIGH_DEVICE=tridiag forces that backend for every call, EIGH_DEVICE=band
-// the band backend for eigenvalues alone (tridiag with eigenvectors).
+// Where the rules send a call to the CPU: a batch of mid-size matrices to
+// the tridiag_batch backend inside its window; otherwise the band backend
+// from its threshold, then the tridiag backend from its own (0 = never), both
+// up to the batch cap (0 = none). EIGH_DEVICE=cpu keeps the CPU;
+// EIGH_DEVICE=tridiag, =band or =tridiag_batch forces that backend for every
+// call.
 EighBackend cpu_side(unsigned n, unsigned batch, bool vectors) {
     if (const char* e = std::getenv("EIGH_DEVICE")) {
         const std::string s = e;
@@ -712,9 +817,16 @@ EighBackend cpu_side(unsigned n, unsigned batch, bool vectors) {
         if (s == "tridiag") return EighBackend::tridiag;
     }
     const EighPolicy& p = policy_state().policy;
+    const unsigned bmin = vectors ? p.tridiag_batch_min_n : p.values_tridiag_batch_min_n;
+    const unsigned bmax = vectors ? p.tridiag_batch_max_n : p.values_tridiag_batch_max_n;
+    const unsigned bbat = vectors ? p.tridiag_batch_min_batch : p.values_tridiag_batch_min_batch;
+    // (the backend takes N up to 1024, its panel kernel's threadgroup memory)
+    if (bmax != 0 && n >= bmin && n <= std::min(bmax, 1024u) && batch >= std::max(bbat, 1u))
+        return EighBackend::tridiag_batch;
     const unsigned cap = vectors ? p.tridiag_max_batch : p.values_tridiag_max_batch;
     if (cap != 0 && batch > cap) return EighBackend::cpu;
     if (!vectors && p.values_band_min_n != 0 && n >= p.values_band_min_n) return EighBackend::band;
+    if (vectors && p.band_min_n != 0 && n >= p.band_min_n) return EighBackend::band;
     const unsigned from = vectors ? p.tridiag_min_n : p.values_tridiag_min_n;
     return from != 0 && n >= from ? EighBackend::tridiag : EighBackend::cpu;
 }
@@ -729,9 +841,15 @@ bool forced_band() {
     return e && std::string(e) == "band";
 }
 
+bool forced_tridiag_batch() {
+    const char* e = std::getenv("EIGH_DEVICE");
+    return e && std::string(e) == "tridiag_batch";
+}
+
 EighBackend route(unsigned n, unsigned batch, bool vectors) {
     if (forced_tridiag()) return EighBackend::tridiag;
-    if (forced_band()) return vectors ? EighBackend::tridiag : EighBackend::band;
+    if (forced_band()) return EighBackend::band;
+    if (forced_tridiag_batch()) return EighBackend::tridiag_batch;
     const bool gpu = vectors ? eigh_uses_gpu(n, batch) : eigvalsh_uses_gpu(n, batch);
     return gpu ? eigh_gpu_backend(n, batch) : cpu_side(n, batch, vectors);
 }
@@ -742,14 +860,23 @@ EighBackend eigh_backend(unsigned n, unsigned batch) { return route(n, batch, tr
 
 EighBackend eigvalsh_backend(unsigned n, unsigned batch) { return route(n, batch, false); }
 
+namespace {
+
+// Whether a ql batch is shared with the CPU path: from share_min_batch, for N
+// from share_min_n.
+bool ql_shared(unsigned n, unsigned batch) {
+    const EighPolicy& p = policy_state().policy;
+    return p.share_min_batch != 0 && batch >= p.share_min_batch && n >= p.share_min_n;
+}
+
+} // namespace
+
 bool eigh_shares_batch(unsigned n, unsigned batch) {
-    const unsigned from = policy_state().policy.share_min_batch;
-    return from != 0 && batch >= from && eigh_backend(n, batch) == EighBackend::ql;
+    return ql_shared(n, batch) && eigh_backend(n, batch) == EighBackend::ql;
 }
 
 bool eigvalsh_shares_batch(unsigned n, unsigned batch) {
-    const unsigned from = policy_state().policy.share_min_batch;
-    return from != 0 && batch >= from && eigvalsh_backend(n, batch) == EighBackend::ql;
+    return ql_shared(n, batch) && eigvalsh_backend(n, batch) == EighBackend::ql;
 }
 
 void core::detail::eigh_ql_shared(const Matrices& a, bool lower, float* w, float* v, uint32_t* info) {
@@ -794,13 +921,17 @@ void core::eigh(const Matrices& a, bool lower, float* w, float* v, uint32_t* inf
         core::detail::eigh_tridiag(a, lower, w, v, info);
         return;
     }
-    if (backend == EighBackend::band) {   // eigenvalues alone
-        core::detail::eigh_band(a, lower, w, info, policy_state().policy.values_band_width);
+    if (backend == EighBackend::band) {
+        if (v) core::detail::eigh_band_vectors(a, lower, w, v, info);
+        else   core::detail::eigh_band(a, lower, w, info, policy_state().policy.values_band_width);
+        return;
+    }
+    if (backend == EighBackend::tridiag_batch) {
+        core::detail::eigh_tridiag_batch(a, lower, w, v, info);
         return;
     }
     if (backend == EighBackend::ql) {
-        const unsigned from = policy_state().policy.share_min_batch;
-        if (from != 0 && batch >= from) core::detail::eigh_ql_shared(a, lower, w, v, info);
+        if (ql_shared(n, batch)) core::detail::eigh_ql_shared(a, lower, w, v, info);
         else                            core::detail::eigh_ql(a, lower, w, v, info);
         return;
     }

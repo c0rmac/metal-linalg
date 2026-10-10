@@ -1,5 +1,211 @@
 # Changes
 
+## 2.17.0
+
+- **QR modes**, as `numpy.linalg.qr`'s and `torch.linalg.qr`'s, in every
+  API: `"reduced"` (the default, as before), `"r"` (R alone: Q is never
+  formed) and `"complete"` (a square M x M Q, and R [M, N] with zero rows
+  below K). Every backend takes the mode and the routing is unchanged. R
+  alone is bit-for-bit the reduced R and, on an M5 Pro, 1.3-1.8x faster for
+  batches and large matrices on the GPU (4096 of 32 x 32: 0.51 ms against
+  0.90; one 4096 x 4096: 47 ms against 62), about the same for one matrix up
+  to 1024 x 1024, and 2.4-2.8x for a lone 128 x 128 or 256 x 256 on the CPU
+  (`benchmark_qr --modes`). Calls alternating modes on a shape share the
+  blocked QR's workspace rather than rebuilding it (10% a call at one
+  1024 x 1024 otherwise). The complete Q's first K columns are the reduced Q's.
+  - C++: `qr_accelerated(a, mode)` and `core::qr(a, q, r, QrMode)`; the
+    three-argument forms remain (and remain exported).
+  - C: `metal_linalg_qr_with_mode(a, batch, rows, cols, mode, q, r)` with
+    `METAL_LINALG_QR_REDUCED`, `_R` (`q` may be NULL) and `_COMPLETE`.
+  - Python with MLX: `ml.qr(a, mode=...)`; `"r"` returns R alone, as numpy.
+  - PyTorch: `mlt.qr(A, mode=...)` now computes `"complete"` for M > N
+    (it raised `NotImplementedError`), and `"r"` no longer forms Q unless
+    `A` requires grad; the operator is `metal_linalg::qr(Tensor a, str
+    mode="reduced")`.
+  - Swift: `qrAccelerated(..., mode: .r)` and `.complete`, on `[Float]` and
+    on `MLXArray`.
+- **eigh for batches of mid-size matrices: the `tridiag_batch` backend**,
+  where every GPU backend had lost to the CPU: the `tridiag` method for a
+  whole batch at once, the reduction of every matrix by the same dispatches
+  (a threadgroup a matrix and panel, `td_panel`), the tridiagonal problems on
+  the CPU's cores, the back-transformation as batched products (blocks of 64,
+  T built on the GPU), pipelined over chunks so that the GPU's stages run
+  under the CPU's. The panel kernel is bound by memory and reads only the
+  lower triangle for its symmetric products (32 x 32 tiles, a tile's column
+  terms summed across a simdgroup by shuffles): 1.5x the whole-matrix read at
+  16 x 1024^2. Its passes over the panel's own rows are one a column (the
+  next column's update formed with this one's W, by the threads that own
+  the rows) and, up to 128 rows, the dot products two columns a pass:
+  eigenvalues alone 1.07-1.1x at 64-128. On an M5 Pro 1.46x the CPU at 1024 x 128^2, 1.36x at
+  1024 x 96^2, 1.28x at 256 x 256^2, 1.55x at 16 x 1024^2 with eigenvectors;
+  eigenvalues alone 1.2-1.35x at 1024 x 96-128^2. Routed by a window of N and
+  batch per device (`tridiag_batch_min_n`, `_max_n`, `_min_batch`, and
+  `values_` ones).
+- **eigh with eigenvectors in two stages: the `band` backend with
+  eigenvectors**, as the SVD's: the band reduction's and the chase's
+  reflectors kept and applied to the eigenvectors on the GPU while the CPU
+  chases and solves. 1.12x `tridiag` at 3072, 1.36x at 4096, 1.59x at 8192
+  (1.31 s against 2.09; 13.9x the CPU). Routed from `band_min_n`.
+- **The `ql` backend in registers up to N = 32** (`eigh_ql_simd`): the matrix
+  a row a lane, under 1 KB of threadgroup memory each instead of 4 KB, four
+  matrices a simdgroup up to N = 8 and two up to 16, their QL iterations side
+  by side. 1.1-1.5x with eigenvectors at 17-32, 1.25x at 12-16 and 2x up to 8;
+  eigenvalues alone by bisection, a lane an eigenvalue, 1.4-3x at every N.
+  `EIGH_QL_SIMD=0` turns it off.
+- The eigensolver's policy gains seven fields (`band_min_n` and the
+  `tridiag_batch` windows), with their `EIGH_*` variables, in the C API's
+  `metal_linalg_eigh_policy` (appended, as before: C code built against an
+  older header needs rebuilding before it calls `metal_linalg_eigh_policy_set`),
+  Python, PyTorch and Swift; `EIGH_DEVICE=band` now means `band` with
+  eigenvectors too (before, `tridiag`), and `EIGH_DEVICE=tridiag_batch`
+  forces the new backend. Sweep backends `tridiag_batch`, `tridiag_batch_vals`
+  and `band`, and stages 4c and 5 of `tuning/tune_eigh.py`, fit them; the
+  eigh kernel version is 8, and the M5 Pro is re-measured. A Mac measured
+  before keeps the new fields at 0 (never) until it is measured again.
+- **SVD for batches of mid-size matrices: the `bidiag_batch` backend**, the
+  SVD's counterpart of `tridiag_batch`: every matrix bidiagonalized by the same
+  dispatches (`bd_panel`, a threadgroup a matrix and panel), the bidiagonal
+  problems on the CPU's cores, both back-transformations as batched products,
+  pipelined over chunks. Each panel step reads the trailing block once, where
+  `slabrd` reads it twice (a column in registers gives both its product with
+  v and its share of A u): 1.3-1.9x from 256 x 256. A step's two passes over
+  the panel's own rows (X's column, then the next column's update) are one,
+  and up to 128 rows its dot products go two columns a pass: singular values
+  alone 1.12-1.15x at 64-128, 1.02-1.04x with vectors to 256. A matrix at least twice
+  as tall or as wide as k goes through this library's QR first, as on the
+  CPU, and only R is bidiagonalized (2.4-2.5x at 256 x 1024x128 and
+  128x1024; `SVD_BIDIAG_BATCH_QR=0` turns it off). Singular values alone
+  from k = 160 go in two stages, a band on the GPU (blocks of batched
+  products, `bb_panel` for the panels), then bidiagonal on the CPU's cores:
+  1.5x the direct reduction at 512 and 2-2.3x at 1024, 3.3x the CPU at
+  16 x 1024^2 (`SVD_BIDIAG_BATCH_BAND=0` turns it off). On an M5 Pro 1.65x the CPU at 1024 x 128^2, 1.42x at
+  256 x 256^2, 1.12x at 64 x 512^2, 1.68-1.77x at 256 x 512-1024x128 with
+  vectors; singular values alone 2.3x at 1024 x 128^2. Up to 1024 rows and
+  columns, any rows when twice as tall as wide. Routed by a window of k, l and
+  batch per device
+  (`bidiag_batch_min_k`, `_max_k`, `_min_batch`, `_max_l`, and `values_`
+  ones).
+- **The `golub_kahan` SVD backend in registers up to 32 x 32**
+  (`svd_gk_simd`): the matrix, U and V a row a lane, four matrices a
+  simdgroup up to 8 rows and two up to 16, their QR iterations side by side;
+  from 17 rows with vectors, a runner simdgroup runs 8 matrices' QR
+  iterations while their simdgroups apply the last step (1.1-1.35x;
+  `SVD_GK_RUN=0`). 1.6-2.1x with vectors up to 16 x 16, 1.3-1.6x at 17-32;
+  singular values alone by bisection on the Golub-Kahan tridiagonal, a lane a
+  value, 1.6-2.7x. `SVD_GK_SIMD=0` turns it off.
+- The SVD's policy gains eight fields (the `bidiag_batch` windows), with their
+  `SVD_*` variables, in the C API's `metal_linalg_svd_policy` (appended:
+  rebuild C code before it calls `metal_linalg_svd_policy_set`), Python,
+  PyTorch and Swift; `SVD_DEVICE=bidiag_batch` forces the new backend. Sweep
+  backends `bidiag_batch` and `bidiag_batch_vals` and stage 4 of
+  `tuning/tune_svd.py` fit them; the SVD kernel version is 10, and the M5 Pro
+  is re-measured.
+- **Sharing a batch with the CPU from a size on**: `share_min_n` in the
+  eigh policy and `share_min_k` in the SVD's (`EIGH_SHARE_MIN_N`,
+  `SVD_SHARE_MIN_K`; at the end of the C API's structs, and in Python's,
+  PyTorch's and Swift's policies). The kernels in registers made the GPU
+  alone the faster for the smallest matrices, where sharing now loses (eigh
+  up to N = 32, the SVD at 32×32 and below), so one batch threshold for
+  every size could share nowhere. Stage 1c of the tuners fits the two
+  together; on an M5 Pro sharing from 256 matrices of N = 48 (eigh) and of
+  k = 32 (the SVD): 256 SVDs of 128×64 in 5.1 ms rather than 7.2, 1024 of
+  64×64 1.8x. A row without the field shares at any size, as before.
+- **The QR kernel for batches of mid-size matrices: one barrier a column**
+  in its panels (the sum of squares and the dot products in one reduction):
+  1.05x at 64 x 512^2, level elsewhere.
+- **The blocked QR's panels 8 columns wide for up to 4 matrices of 768 to
+  3072 rows** (16 elsewhere): a tall panel's TSQR top is a tree of chains
+  whose cost grows as the width squared, a third of the call at 1024 x 1024.
+  1.05x at 768-1024^2, 1.1x at 1536-2048^2, 1.06x for 4 of 1024^2
+  (`QR_PANEL_WIDTH=8` or `16` forces one).
+- **The blocked QR's updates inside an aggregate in one kernel**
+  (`qr_agg_apply`) for up to 4 matrices and panels of up to 3072 rows: one
+  dispatch where two MPS products took two; 1.16x the call at 1024 x 1024,
+  1.06-1.12x at 512-3072 (`QR_AGG_KERNEL=0` keeps MPS). Where it uses the
+  input in place, its scan (the scale, and NaN) is the GPU's too: 1.01-1.03x
+  (`QR_GPU_SCAN=0`).
+- **QR's register kernel packs small matrices**: up to 8 rows four a
+  simdgroup, up to 16 two (`QR_SIMD_PACK=0` turns it off): 2.5x at 4 x 4,
+  1.7-2.5x at 8 x 8, 1.3-1.7x at 16 x 16 for large batches.
+- **The SVD with vectors for batches in two stages**: `bidiag_batch` from
+  k = 288 (from 128 for batches of up to the CPU's solve threads) reduces
+  every matrix to a band by blocks of batched products, as
+  for the singular values alone, keeping both stages' reflectors: the CPU's
+  cores chase each band to bidiagonal (keeping the chase's) and solve it
+  while the GPU forms Q1 and P1; the GPU applies the chase's to them, a
+  dispatch a matrix, and forms U and V^T. On an M5 Pro 1.95x the CPU path for
+  one 1024 x 1024 (29.6 ms against 57.7), 2.2x for 4, 2.7x for 16, 1.38x for
+  8 of 768; 2.7-3.4x the direct reduction at 1024. `SVD_BIDIAG_BATCH_BAND=0`
+  turns it off with the values' two stages. The band blocks' two updates are
+  merged into three passes over the trailing matrix and five dispatches
+  instead of four and eight (the row panel's kernel applies the left update
+  and forms V2 T2): 1.04-1.16x, the singular values alone 3.8x the CPU at
+  16 x 1024^2 (was 3.3x).
+- **eigh with eigenvectors for small batches in two stages**:
+  `tridiag_batch` from N = 64, for batches of up to half as many matrices as
+  the CPU's solve has threads (all of them from 640, twice from 896), the
+  same for the symmetric case: four dispatches a block (the panel kernel
+  forms V T, one kernel `Y = X - V (T^T V^T X) / 2`, the two-sided update one
+  rank-32 product). On an M5 Pro 2.6x the one-stage reduction for one
+  1024 x 1024 (18 ms; 1.86x the CPU), 1.86x for 4, 1.39x for 8, 1.48x for 24;
+  1.3x for 8 of 768, 1.4-2.4x for small batches of 64-96.
+  `EIGH_TRIDIAG_BATCH_BAND=0` turns it off. For eigenvalues alone it lost to
+  LAPACK's two-stage driver and is not used.
+- **The `band` backends with vectors hand a batch of two or more of 384-1024
+  to those paths** (`SVD_BAND_BATCH=0`, `EIGH_BAND_BATCH=0` keep it): SVD 2 of
+  1024^2 in 36 ms against 55, 4 in 46 against 111; eigh 4 in 33 against 68.
+  The tuners now fit `band_min_k`/`band_min_n` and the batch cap together
+  (stages 3c and 4c), since `band` takes batches.
+- **The CPU path's divide and conquer on every core**: eigh with
+  eigenvectors from N = 192 and the SVD with vectors from k = 192, for a
+  batch of at most a quarter as many matrices as cores, call LAPACK's
+  drivers' steps one by one (`ssytrd`, `sormtr`; `sgebrd`, `sormbr`, the QR
+  first for tall and wide matrices as before) with the `tridiag` and `bidiag`
+  backends' divide and conquer on the idle cores in between (`sstedc` and
+  `sbdsdc` run on one). On an M5 Pro eigh 1.26x `ssyevd` at 256, 1.2x at 1024,
+  1.17x at 2048; the SVD 1.23x `sgesdd` at 256, 1.32x at 1024, 1.4x at 2048,
+  1.16-1.3x tall or wide; the same values (bit for bit for eigh).
+  `EIGH_CPU_DC=0` and `SVD_CPU_DC=0` keep the drivers. The CPU path is every
+  boundary's baseline, so both are re-measured.
+- **Batch backends' pipelines** in eight chunks for matrices of up to
+  128 x 128 (four above): 1.07-1.15x at 1024 x 96-128^2. Their
+  back-transformations' T built in blocks (16 x 16 diagonal blocks a thread a
+  row, then merged in pairs: five barriers where column by column took 128):
+  1.04-1.05x for the SVD, 1.02-1.15x for eigh at 96-384 batches.
+- **The measurement takes half the time** (`tuning/run.py` 38 minutes
+  instead of 75 on an M5 Pro): the Jacobi kernels are timed only up to
+  N = 96 and k = 128, where they can win, with a canary beyond that warns if
+  they ever do (`--full-grid` times them everywhere); a second pass repeats
+  only the points whose choice the first left open (`--full-passes` repeats
+  all). Within a point (`tuning/sweep_timing.h`) the eigh and SVD backends
+  are timed in two rounds: a backend of 20 ms or more and over 1.3x its
+  mode's fastest stops at two samples, a call of 100 ms or more needs no
+  warm-up after its correctness run, and the CPU's reference for the values
+  alone is computed once a point: large points 1.3-2x faster, medians within
+  5%. Re-analysed on the earlier runs, the routing is the full grid's.
+- **Fixed: Q and singular or eigen vectors far from orthogonal for some
+  exactly rank-deficient matrices** on the GPU paths built on the band
+  reduction's panel kernels: the blocked QR (one matrix from about 384 x 384,
+  and batches of large ones), the `band` backends of eigh and the SVD, and
+  the SVD's QR-first reductions. A constant matrix of ones, 600 x 64, had a
+  Q off by 5e4 (`Q^T Q - I`), one of 1024 x 1024 by 3e5; the SVD's `band`
+  at 1024 x 1024 by 3e7; eigh's `band` at 1024 by 0.56. Such a matrix's
+  trailing columns become rounding noise, then noise of that, down to
+  entries near 1e-19 of the largest, whose squares underflow, some and not
+  others: the kernels' plain sums of squares then missed part of the vector
+  they normalized, and the reflector was not orthogonal. A rest whose sum of
+  squares is below 2^-80 (a norm below 2^-40 of the matrix's largest entry,
+  each matrix being scaled into [0.5, 1)) is now taken as zero in every
+  kernel that sums squares plainly (the panels, the TSQR's tree, the
+  register and threadgroup Householder kernels of QR, eigh and the SVD, and
+  the streaming QR, whose threshold was 1e-30). Orthogonality on those
+  matrices is now 1e-5 or better, as LAPACK's; tests added for each path.
+- `benchmark_qr --modes` times the three modes against each other.
+- **README**: the introduction states the measured gains (one large matrix
+  1.6-10x against LAPACK on every CPU core, 11.7x at 8192; batches of
+  thousands of small matrices 1.6-5.7x; 4.6-34x against `torch.linalg`), and
+  its performance tables are re-measured on 2.17.0.
+
 ## 2.16.0
 
 - **QR kernels for batches of small and mid-size matrices**

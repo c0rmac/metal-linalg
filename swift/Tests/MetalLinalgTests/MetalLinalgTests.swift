@@ -34,6 +34,29 @@ final class MetalLinalgTests: XCTestCase {
         }
     }
 
+    func testQRModes() throws {
+        let (batch, m, n) = (3, 20, 7)
+        let a = values(batch * m * n, seed: 4)
+        let (q, r) = try qrAccelerated(a, batch: batch, rows: m, cols: n)
+        let (qr0, rAlone) = try qrAccelerated(a, batch: batch, rows: m, cols: n, mode: .r)
+        XCTAssertEqual(qr0.count, 0)
+        XCTAssertEqual(rAlone, r)
+        let (qc, rc) = try qrAccelerated(a, batch: batch, rows: m, cols: n, mode: .complete)
+        XCTAssertEqual(qc.count, batch * m * m)
+        XCTAssertEqual(rc.count, batch * m * n)
+        for b in 0..<batch {
+            let qcb = qc[(b * m * m)..<((b + 1) * m * m)]
+            let qr = multiply(qcb, rc[(b * m * n)..<((b + 1) * m * n)], m, m, n)
+            for i in 0..<(m * n) { XCTAssertEqual(qr[i], Double(a[b * m * n + i]), accuracy: 1e-5) }
+            var qt = [Float](repeating: 0, count: m * m)   // Q^T (one expression timed out older type checkers)
+            for i in 0..<m { for j in 0..<m { qt[i * m + j] = qcb[b * m * m + j * m + i] } }
+            let qtq = multiply(ArraySlice(qt), qcb, m, m, m)
+            for i in 0..<m { for j in 0..<m { XCTAssertEqual(qtq[i * m + j], i == j ? 1 : 0, accuracy: 1e-5) } }
+            for i in 0..<m { for j in 0..<n { XCTAssertEqual(qcb[b * m * m + i * m + j], q[b * m * n + i * n + j], accuracy: 1e-5) } }
+            for i in n..<m { for j in 0..<n { XCTAssertEqual(rc[b * m * n + i * n + j], 0) } }
+        }
+    }
+
     func testEigh() throws {
         let (batch, n) = (64, 8)
         var a = values(batch * n * n, seed: 2)
@@ -59,6 +82,10 @@ final class MetalLinalgTests: XCTestCase {
         p.gpu_max_k = 0
         p.bidiag_min_k = 1
         p.values_bidiag_min_k = 1
+        p.band_min_k = 0             // neither the two stages nor the batch backend, whatever
+        p.values_band_min_k = 0      // the device's policy (an estimated one may reach these sizes)
+        p.bidiag_batch_max_k = 0
+        p.values_bidiag_batch_max_k = 0
         svdPolicy = p
         for (rows, cols) in [(70, 70), (300, 80), (60, 150)] {
             XCTAssertEqual(svdBackend(rows: rows, cols: cols), "bidiag")
@@ -144,6 +171,10 @@ final class MetalLinalgTests: XCTestCase {
         p.values_tridiag_min_n = 1
         p.tridiag_max_batch = 0      // at any batch (an estimated policy may cap it)
         p.values_tridiag_max_batch = 0
+        p.band_min_n = 0             // and neither the two stages nor the batch backend
+        p.values_band_min_n = 0
+        p.tridiag_batch_max_n = 0
+        p.values_tridiag_batch_max_n = 0
         eighPolicy = p
         for n in [3, 70, 150] {
             XCTAssertEqual(eighBackend(n: n, batch: 2), "tridiag")

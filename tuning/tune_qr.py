@@ -41,6 +41,7 @@ MEASUREMENT NOTES
 """
 
 import argparse
+import bisect
 import csv
 import json
 import math
@@ -446,8 +447,57 @@ def fit_cpu_routing(best, chosen, tol=0.005):
     sides = sorted({work_side(M, N) for (_, M, N) in pts})
     large_cands = [(0, 0)] + [(lk, cap) for lk in sides for cap in [0] + batches]
 
+    # The candidates by (gpu_max_k, gpu_min_batch, gpu_min_k), each with its
+    # gpu_min_batch_times_k values: for one of those triples the points the
+    # GPU takes are, sorted by batch * k, those from a threshold on.
+    by_triple = {}
+    for gm, mb, mbatch, mk in candidates:
+        by_triple.setdefault((gm, mbatch, mk), []).append(mb)
+
+    def approx_geomeans(points, large):
+        """{candidate: geometric-mean regret}, every candidate at once from
+        prefix sums, to rounding: evaluate() on each took 140 s for one fit,
+        81 times over in tuning/estimate.py."""
+        lk, lcap = large
+        gpu = routed((INF, 0, 1, 0), chosen, large)   # the GPU's pick at every point
+        rows = []
+        for (b, M, N), t in points.items():
+            best = min(t.values())
+            g = t.get(gpu(b, M, N))
+            lg = math.log(g / best) if g is not None else math.inf
+            forced = bool(lk) and large_enough(M, N, lk) and (not lcap or b <= lcap)
+            w = work_side(M, N)
+            rows.append((w, b, b * w, math.log(t["cpu"] / best), lg, forced))
+        n = len(rows)
+        out = {}
+        for (gm, mbatch, mk), mbs in by_triple.items():
+            fixed, elig = 0.0, []
+            for w, b, bw, lc, lg, forced in rows:
+                if forced:
+                    fixed += lg
+                elif w < mk or w > gm or b < mbatch:
+                    fixed += lc
+                else:
+                    elig.append((bw, lc, lg))
+            elig.sort()
+            bws = [e[0] for e in elig]
+            pre_c = [0.0]   # the CPU's logs below a threshold, the GPU's from it
+            for e in elig:
+                pre_c.append(pre_c[-1] + e[1])
+            suf_g = [0.0] * (len(elig) + 1)
+            for i in range(len(elig) - 1, -1, -1):
+                suf_g[i] = suf_g[i + 1] + elig[i][2]
+            for mb in mbs:
+                i = bisect.bisect_left(bws, mb)
+                out[(gm, mb, mbatch, mk)] = math.exp((fixed + pre_c[i] + suf_g[i]) / n)
+        return out
+
     def fit_rule(points, large):
-        scored = {c: evaluate(routed(c, chosen, large), points) for c in candidates}
+        # The approximate geomeans rule out all but the candidates near the
+        # best; those are scored exactly, as before, so the choice is the same.
+        approx = approx_geomeans(points, large)
+        cut = min(approx.values()) * (1 + tol) * (1 + 1e-9)
+        scored = {c: evaluate(routed(c, chosen, large), points) for c, v in approx.items() if v <= cut}
         g = min(e["geomean"] for e in scored.values())
         near = {c: e for c, e in scored.items() if e["geomean"] <= g * (1 + tol)}
         return min(near, key=lambda c: (near[c]["worst"], near[c]["geomean"], c))

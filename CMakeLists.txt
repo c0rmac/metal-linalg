@@ -3,7 +3,7 @@ if (NOT CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
     message(FATAL_ERROR "metal-linalg runs on Apple Silicon Macs only (Metal and Accelerate); "
                         "it cannot be built on ${CMAKE_HOST_SYSTEM_NAME}.")
 endif ()
-project(metal_linalg VERSION 2.16.0 LANGUAGES CXX OBJCXX
+project(metal_linalg VERSION 2.17.0 LANGUAGES CXX OBJCXX
         DESCRIPTION "QR, symmetric eigendecomposition and SVD on Apple GPUs, for MLX")
 
 set(CMAKE_CXX_STANDARD 20)
@@ -214,6 +214,7 @@ add_library(metal_linalg ${_ml_kind}
     src/eigh_band.mm
     src/svd.mm
     src/svd_bidiag.mm
+    src/svd_bidiag_batch.mm
     src/svd_block_jacobi.mm
     src/svd_golub_kahan.mm
     src/c_api.cpp

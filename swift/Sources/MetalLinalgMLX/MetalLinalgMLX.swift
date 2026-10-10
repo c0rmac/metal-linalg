@@ -78,12 +78,26 @@ private func pageAligned(_ count: Int) -> UnsafeMutablePointer<Float>? {
 }
 
 /// QR: A = Q R with K = min(M, N), for A [..., M, N]. Returns Q [..., M, K]
-/// with orthonormal columns and R [..., K, N] upper triangular.
-public func qrAccelerated(_ a: MLXArray) throws -> (q: MLXArray, r: MLXArray) {
+/// with orthonormal columns and R [..., K, N] upper triangular; `mode` .r
+/// gives R alone (Q an empty array, never formed), .complete a square
+/// Q [..., M, M] and R [..., M, N] with zero rows below K.
+public func qrAccelerated(_ a: MLXArray, mode: QrMode = .reduced) throws -> (q: MLXArray, r: MLXArray) {
     let x = try Matrices(a, "qr")
-    let m = Int(x.rows), n = Int(x.cols), k = min(m, n)
-    let out = try x.run([x.batchShape + [m, k], x.batchShape + [k, n]]) { a, o in
-        metal_linalg_qr(a, x.batch, x.rows, x.cols, o[0], o[1])
+    let m = Int(x.rows), n = Int(x.cols)
+    let (qCols, rRows) = mode.shape(rows: m, cols: n)
+    let rShape = x.batchShape + [rRows, n]
+    if mode == .r {
+        let r = try x.run([rShape]) { a, o in
+            metal_linalg_qr_with_mode(a, x.batch, x.rows, x.cols, METAL_LINALG_QR_R, nil, o[0])
+        }[0]
+        return (MLXArray.zeros([0], type: Float.self), r)
+    }
+    let qShape = x.batchShape + [m, qCols]
+    if mode == .complete && n == 0 {   // nothing to factor: Q is the identity
+        return (broadcast(MLXArray.identity(m, type: Float.self), to: qShape), MLXArray.zeros(rShape, type: Float.self))
+    }
+    let out = try x.run([qShape, rShape]) { a, o in
+        metal_linalg_qr_with_mode(a, x.batch, x.rows, x.cols, mode.c, o[0], o[1])
     }
     return (out[0], out[1])
 }

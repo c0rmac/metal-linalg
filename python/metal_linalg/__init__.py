@@ -93,15 +93,23 @@ def _array(a):
 # Decompositions
 # ---------------------------------------------------------------------------
 
-def qr(a):
-    """Thin QR of a batch of matrices: ``a = Q @ R``.
+def qr(a, mode="reduced"):
+    """QR of a batch of matrices: ``a = Q @ R``.
 
     ``a`` is ``[..., M, N]``. Returns ``Q`` ``[..., M, K]`` with orthonormal
     columns and ``R`` ``[..., K, N]`` upper triangular, ``K = min(M, N)``.
     Runs on the GPU, or in LAPACK on the CPU for problems too small to pay
     for a GPU launch, as this Mac was measured (see :func:`qr_backend`).
+
+    ``mode`` as :func:`numpy.linalg.qr`'s: ``"reduced"`` (the above),
+    ``"r"`` (``R`` alone, returned on its own; ``Q`` is never formed:
+    up to 2.8x faster) or ``"complete"`` (``Q`` ``[..., M, M]`` square, ``R``
+    ``[..., M, N]`` with zero rows below ``K``).
     """
-    return _core.qr(_array(a))
+    if mode not in ("reduced", "r", "complete"):
+        raise ValueError(f'mode must be "reduced", "r" or "complete", not {mode!r}')
+    q, r = _core.qr(_array(a), mode)
+    return r if mode == "r" else (q, r)
 
 
 def eigh(a, uplo="L"):
@@ -174,7 +182,10 @@ def qr_backend(m, n, batch=1):
 
 def eigh_backend(n, batch=1):
     """Which backend :func:`eigh` uses: ``"cpu"``, ``"simd"``,
-    ``"threadgroup"``, ``"block"``, ``"tridiag"`` or ``"ql"``."""
+    ``"threadgroup"``, ``"block"``, ``"tridiag"``, ``"ql"``, ``"band"`` (the
+    two-stage reduction, from the policy's ``band_min_n``) or
+    ``"tridiag_batch"`` (a batch of mid-size matrices at once, inside the
+    policy's ``tridiag_batch_*`` window)."""
     return _core.eigh_backend(n, batch)
 
 
@@ -189,7 +200,9 @@ def svd_backend(m, n, batch=1):
     """Which backend :func:`svd` uses: ``"cpu"``, ``"jacobi"``,
     ``"block_jacobi"``, ``"qr_jacobi"``, ``"qr_block_jacobi"``, ``"bidiag"``,
     ``"band"`` (the two-stage reduction, from the policy's ``band_min_k``),
-    ``"golub_kahan"`` or ``"qr_golub_kahan"``."""
+    ``"golub_kahan"``, ``"qr_golub_kahan"`` or ``"bidiag_batch"`` (a batch of
+    mid-size matrices at once, inside the policy's ``bidiag_batch_*``
+    window)."""
     return _core.svd_backend(m, n, batch)
 
 

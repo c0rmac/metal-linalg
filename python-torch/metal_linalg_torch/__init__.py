@@ -83,24 +83,26 @@ def _result(kind, values):
 # ---------------------------------------------------------------------------
 
 def qr(A, mode="reduced"):
-    """Thin QR of a batch of matrices, like ``torch.linalg.qr``: ``A = Q @ R``.
+    """QR of a batch of matrices, like ``torch.linalg.qr``: ``A = Q @ R``.
 
     ``A`` is ``[..., M, N]``. Returns ``(Q, R)``: ``Q`` ``[..., M, K]`` with
     orthonormal columns and ``R`` ``[..., K, N]`` upper triangular,
-    ``K = min(M, N)``. ``mode`` is ``"reduced"`` (the default) or ``"r"``
-    (``Q`` is then an empty tensor, as in torch); ``"complete"`` is the same
-    as ``"reduced"`` when ``M <= N`` and is not supported otherwise.
+    ``K = min(M, N)``. ``mode`` as torch's: ``"reduced"`` (the default),
+    ``"r"`` (``R`` alone, ``Q`` an empty tensor and never formed:
+    up to 2.8x faster) or ``"complete"`` (``Q`` ``[..., M, M]`` square, ``R``
+    ``[..., M, N]`` with zero rows below ``K``).
+
+    Unlike torch's, ``mode="r"`` is differentiable: when ``A`` requires
+    grad, ``Q`` is computed for the gradient and dropped. As torch's,
+    ``mode="complete"`` is not differentiable when ``M > N``.
     """
     a = _prepare(A, "qr")
     if mode not in ("reduced", "r", "complete"):
         raise ValueError(f"metal_linalg_torch.qr: mode must be 'reduced', 'r' or 'complete', got {mode!r}")
-    if mode == "complete" and a.shape[-2] > a.shape[-1]:
-        raise NotImplementedError("metal_linalg_torch.qr: mode='complete' for M > N (a square Q) is not "
-                                  "supported; the library computes the thin factors. Use "
-                                  "torch.linalg.qr for it")
-    Q, R = torch.ops.metal_linalg.qr(a)
-    if mode == "r":
-        Q = Q.new_empty(0)
+    if mode == "r" and _needs_grad(a):
+        _, R = torch.ops.metal_linalg.qr(a)
+        return _result("linalg_qr", (R.new_empty(0), R))
+    Q, R = torch.ops.metal_linalg.qr(a, mode)
     return _result("linalg_qr", (Q, R))
 
 
@@ -202,7 +204,10 @@ def qr_backend(m, n, batch=1):
 
 def eigh_backend(n, batch=1):
     """Which backend :func:`eigh` uses: ``"cpu"``, ``"simd"``,
-    ``"threadgroup"``, ``"block"``, ``"tridiag"`` or ``"ql"``."""
+    ``"threadgroup"``, ``"block"``, ``"tridiag"``, ``"ql"``, ``"band"`` (the
+    two-stage reduction, from the policy's ``band_min_n``) or
+    ``"tridiag_batch"`` (a batch of mid-size matrices at once, inside the
+    policy's ``tridiag_batch_*`` window)."""
     return _lib.text(_lib.eigh_backend(n, batch))
 
 
@@ -217,7 +222,9 @@ def svd_backend(m, n, batch=1):
     """Which backend :func:`svd` uses: ``"cpu"``, ``"jacobi"``,
     ``"block_jacobi"``, ``"qr_jacobi"``, ``"qr_block_jacobi"``, ``"bidiag"``,
     ``"band"`` (the two-stage reduction, from the policy's ``band_min_k``),
-    ``"golub_kahan"`` or ``"qr_golub_kahan"``."""
+    ``"golub_kahan"``, ``"qr_golub_kahan"`` or ``"bidiag_batch"`` (a batch of
+    mid-size matrices at once, inside the policy's ``bidiag_batch_*``
+    window)."""
     return _lib.text(_lib.svd_backend(m, n, batch))
 
 

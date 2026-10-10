@@ -11,6 +11,8 @@ import metal_linalg as ml
 a = mx.random.normal((1000, 64, 32))     # a batch of 1000 matrices
 
 Q, R = ml.qr(a)                          # Q (1000, 64, 32), R (1000, 32, 32)
+R = ml.qr(a, mode="r")                   # R alone, as numpy's mode="r": Q never formed
+Q, R = ml.qr(a, mode="complete")         # Q (1000, 64, 64), R (1000, 64, 32)
 U, S, Vt = ml.svd(a)                     # thin: U (1000, 64, 32), S (1000, 32), Vt (1000, 32, 32)
 w, V = ml.eigh(a.swapaxes(-1, -2) @ a)   # w ascending (1000, 32), V (1000, 32, 32)
 ```
