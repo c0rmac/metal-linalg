@@ -1,5 +1,5 @@
-// QR, symmetric eigendecomposition, SVD and Cholesky on Apple GPUs, for
-// batches of matrices held in [Float]: row-major, the matrices one after another. Each
+// QR, symmetric eigendecomposition, SVD, Cholesky and LU (with solve and
+// inverse) on Apple GPUs, for batches of matrices held in [Float]: row-major, the matrices one after another. Each
 // call is routed to the fastest Metal kernel for its shape, or to LAPACK on
 // the CPU, by a policy measured on the Mac it runs on. See docs/swift.md.
 import CMetalLinalg
@@ -194,6 +194,87 @@ public func choleskyAccelerated(_ a: [Float], batch: Int = 1, n: Int, upper: Boo
     return (l, info)
 }
 
+/// LU with partial pivoting, P A = L U, of `batch` n x n matrices (since
+/// 2.18.0): the packed factors [batch, n, n] (U on and above the diagonal, L
+/// below it, its unit diagonal implied), the pivots [batch, n] (0-based: row i
+/// was swapped with row pivots[i], in order) and `info` [batch] (0, or k where
+/// U's k-th diagonal entry is exactly zero).
+public func luFactorAccelerated(_ a: [Float], batch: Int = 1, n: Int) throws
+    -> (lu: [Float], pivots: [UInt32], info: [UInt32])
+{
+    try checkCount(a.count, batch: batch, rows: n, cols: n, "lu_factor")
+    let (b, nn) = (try dimension(batch, "batch", "lu_factor"), try dimension(n, "n", "lu_factor"))
+    var pivots = [UInt32](repeating: 0, count: batch * n)
+    var info = [UInt32](repeating: 0, count: batch)
+    let lu = try a.withUnsafeBufferPointer { ap in
+        try pivots.withUnsafeMutableBufferPointer { pp in
+            try info.withUnsafeMutableBufferPointer { ip in
+                try output(batch * n * n) { lp in
+                    try check(metal_linalg_lu_factor(ap.baseAddress, b, nn, lp, pp.baseAddress, ip.baseAddress))
+                }
+            }
+        }
+    }
+    return (lu, pivots, info)
+}
+
+/// X with A X = B for `batch` n x n matrices and B [batch, n, nrhs] (X the
+/// same); `info` as luFactorAccelerated's, a singular matrix's X all NaN.
+public func solveAccelerated(_ a: [Float], _ b: [Float], batch: Int = 1, n: Int, nrhs: Int = 1) throws
+    -> (x: [Float], info: [UInt32])
+{
+    try checkCount(a.count, batch: batch, rows: n, cols: n, "solve")
+    try checkCount(b.count, batch: batch, rows: n, cols: nrhs, "solve")
+    let (bt, nn, k) = (try dimension(batch, "batch", "solve"), try dimension(n, "n", "solve"),
+                       try dimension(nrhs, "nrhs", "solve"))
+    var info = [UInt32](repeating: 0, count: batch)
+    let x = try a.withUnsafeBufferPointer { ap in
+        try b.withUnsafeBufferPointer { bp in
+            try info.withUnsafeMutableBufferPointer { ip in
+                try output(batch * n * nrhs) { xp in
+                    try check(metal_linalg_solve(ap.baseAddress, bt, nn, bp.baseAddress, k, xp, ip.baseAddress))
+                }
+            }
+        }
+    }
+    return (x, info)
+}
+
+/// A^-1 [batch, n, n]; `info` as luFactorAccelerated's, a singular matrix's
+/// inverse all NaN.
+public func invAccelerated(_ a: [Float], batch: Int = 1, n: Int) throws -> (x: [Float], info: [UInt32]) {
+    try checkCount(a.count, batch: batch, rows: n, cols: n, "inv")
+    let (b, nn) = (try dimension(batch, "batch", "inv"), try dimension(n, "n", "inv"))
+    var info = [UInt32](repeating: 0, count: batch)
+    let x = try a.withUnsafeBufferPointer { ap in
+        try info.withUnsafeMutableBufferPointer { ip in
+            try output(batch * n * n) { xp in
+                try check(metal_linalg_inv(ap.baseAddress, b, nn, xp, ip.baseAddress))
+            }
+        }
+    }
+    return (x, info)
+}
+
+/// X with A X = B for `batch` triangular n x n matrices and B [batch, n,
+/// nrhs] (X the same), reading A's lower triangle (the upper with `upper`;
+/// with `unitDiagonal` its diagonal taken as ones). Since 2.18.0.
+public func solveTriangularAccelerated(_ a: [Float], _ b: [Float], batch: Int = 1, n: Int, nrhs: Int = 1,
+                                       upper: Bool = false, unitDiagonal: Bool = false) throws -> [Float] {
+    try checkCount(a.count, batch: batch, rows: n, cols: n, "solve_triangular")
+    try checkCount(b.count, batch: batch, rows: n, cols: nrhs, "solve_triangular")
+    let (bt, nn, k) = (try dimension(batch, "batch", "solve_triangular"), try dimension(n, "n", "solve_triangular"),
+                       try dimension(nrhs, "nrhs", "solve_triangular"))
+    return try a.withUnsafeBufferPointer { ap in
+        try b.withUnsafeBufferPointer { bp in
+            try output(batch * n * nrhs) { xp in
+                try check(metal_linalg_solve_triangular(ap.baseAddress, bt, nn, bp.baseAddress, k, upper ? 1 : 0,
+                                                        unitDiagonal ? 1 : 0, xp))
+            }
+        }
+    }
+}
+
 // MARK: - Device and routing
 
 /// The default Metal device, e.g. "Apple M5 Pro"; empty if there is none.
@@ -257,6 +338,18 @@ public typealias QrPolicy = metal_linalg_qr_policy
 public typealias EighPolicy = metal_linalg_eigh_policy
 public typealias SvdPolicy = metal_linalg_svd_policy
 public typealias CholeskyPolicy = metal_linalg_cholesky_policy
+public typealias LuPolicy = metal_linalg_lu_policy
+public typealias TrsmPolicy = metal_linalg_trsm_policy
+
+/// "cpu" or "blocked" (the GPU path), for solveTriangularAccelerated.
+public func trsmBackend(n: Int, nrhs: Int = 1, batch: Int = 1) -> String {
+    String(cString: metal_linalg_trsm_backend(UInt32(clamping: n), UInt32(clamping: nrhs), UInt32(clamping: batch)))
+}
+
+/// "cpu" or "blocked" (the GPU path), for lu_factor, solve and inv alike.
+public func luBackend(n: Int, batch: Int = 1) -> String {
+    String(cString: metal_linalg_lu_backend(UInt32(clamping: n), UInt32(clamping: batch)))
+}
 
 /// `gpu_max_n` / `gpu_max_k` value meaning no cap.
 public let policyNoLimit: UInt32 = 0xFFFF_FFFF
@@ -283,9 +376,21 @@ public var choleskyPolicy: CholeskyPolicy {
     set { withUnsafePointer(to: newValue) { metal_linalg_cholesky_policy_set($0) } }
 }
 
+public var luPolicy: LuPolicy {
+    get { metal_linalg_lu_policy_get() }
+    set { withUnsafePointer(to: newValue) { metal_linalg_lu_policy_set($0) } }
+}
+
+public var trsmPolicy: TrsmPolicy {
+    get { metal_linalg_trsm_policy_get() }
+    set { withUnsafePointer(to: newValue) { metal_linalg_trsm_policy_set($0) } }
+}
+
 /// Where each policy came from: "tuned:<device>", "env:<variables>", "user"
 /// or "default:untuned-device (<device>)".
 public var qrPolicySource: String { String(cString: metal_linalg_qr_policy_source()) }
 public var eighPolicySource: String { String(cString: metal_linalg_eigh_policy_source()) }
 public var svdPolicySource: String { String(cString: metal_linalg_svd_policy_source()) }
 public var choleskyPolicySource: String { String(cString: metal_linalg_cholesky_policy_source()) }
+public var luPolicySource: String { String(cString: metal_linalg_lu_policy_source()) }
+public var trsmPolicySource: String { String(cString: metal_linalg_trsm_policy_source()) }

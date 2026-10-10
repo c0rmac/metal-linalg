@@ -465,9 +465,15 @@ in the policy source.
 | `CHOLESKY_GPU_LARGE_MIN_N`, `CHOLESKY_GPU_LARGE_MAX_BATCH` | Cholesky: the GPU anyway from this N in batches up to this (0: never / any) |
 | `CHOLESKY_DEVICE=simd`, `threadgroup` or `blocked` | Cholesky: every call on that kernel, where it takes the shape |
 | `CHOLESKY_DEVICE=gpu` or `cpu` | Cholesky: bypass the GPU/CPU boundary |
+| `LU_GPU_MIN_N`, `LU_GPU_MAX_BATCH` | LU, solve, inverse: the GPU path from this N in batches up to this (0: never / any) |
+| `LU_GPU_SOLVE_MIN_RHS` | solve on the GPU path: its own triangular solves from this many right-hand sides, LAPACK's `sgetrs` below |
+| `LU_DEVICE=gpu` (or `blocked`) or `cpu` | LU, solve, inverse: bypass the GPU/CPU boundary |
+| `TRSM_GPU_MIN_N`, `TRSM_GPU_MIN_RHS`, `TRSM_GPU_MAX_BATCH` | triangular solve: the GPU from this N with at least this many right-hand sides, in batches up to this (0: any) |
+| `TRSM_DEVICE=gpu` (or `blocked`) or `cpu` | triangular solve: bypass the GPU/CPU boundary |
 
 **Programmatic overrides.** `set_qr_policy()`, `set_eigh_policy()`,
-`set_svd_policy()` and `set_cholesky_policy()` take precedence over both the
+`set_svd_policy()`, `set_cholesky_policy()`, `set_lu_policy()` and `set_trsm_policy()` take precedence over both the
 environment and the table; `qr_policy_source()`, `eigh_policy_source()`,
-`svd_policy_source()` and `cholesky_policy_source()` report which is in
+`svd_policy_source()`, `cholesky_policy_source()`, `lu_policy_source()` and
+`trsm_policy_source()` report which is in
 effect.

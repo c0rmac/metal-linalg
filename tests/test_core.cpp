@@ -492,6 +492,35 @@ int main() {
     check_not_pd("cholesky_blocked", cd::cholesky_blocked, 200);
     check_not_pd("cholesky_cpu (LAPACK)", cd::cholesky_cpu, 40);
 
+    std::printf("\n[ LU, solve, inverse ]\n");
+    for (auto [name, blocked] : {std::pair<const char*, bool>{"cpu", false}, {"blocked", true}}) {
+        const uint32_t n = 150, batch = 2, k = 20;
+        std::vector<float> a = random_matrices(batch, n, n, 61);
+        for (uint32_t b = 0; b < batch; ++b)
+            for (uint32_t i = 0; i < n; ++i) a[(size_t)b * n * n + i * n + i] += 40.0f;
+        std::vector<float> rhs = random_matrices(batch, n, k, 62), x((size_t)batch * n * k), inv((size_t)batch * n * n);
+        std::vector<uint32_t> info(batch, 9);
+        const Matrices m{a.data(), batch, n, n};
+        if (blocked) cd::solve_blocked(m, rhs.data(), k, x.data(), info.data());
+        else cd::solve_cpu(m, rhs.data(), k, x.data(), info.data());
+        double res = 0;
+        for (uint32_t b = 0; b < batch; ++b)
+            res = std::max(res, product_error(rhs.data() + (size_t)b * n * k, a.data() + (size_t)b * n * n, nullptr,
+                                              x.data() + (size_t)b * n * k, n, n, k) /
+                                    frobenius(rhs.data() + (size_t)b * n * k, (size_t)n * k));
+        report_value(std::string("solve_") + name, "residual", res, kTol);
+        report(std::string("solve_") + name, "info not 0", info[0] == 0 && info[1] == 0);
+        if (blocked) cd::inv_blocked(m, inv.data(), info.data());
+        else cd::inv_cpu(m, inv.data(), info.data());
+        std::vector<float> eye((size_t)n * n, 0.0f);
+        for (uint32_t i = 0; i < n; ++i) eye[(size_t)i * n + i] = 1.0f;
+        double ie = 0;
+        for (uint32_t b = 0; b < batch; ++b)
+            ie = std::max(ie, product_error(eye.data(), a.data() + (size_t)b * n * n, nullptr,
+                                            inv.data() + (size_t)b * n * n, n, n, n) / std::sqrt((double)n));
+        report_value(std::string("inv_") + name, "A A^-1 - I", ie, kTol);
+    }
+
     std::printf("\n[ input that is not page-aligned ]\n");
     {
         std::vector<float> storage(1 + 3 * 20 * 12);
@@ -509,7 +538,8 @@ int main() {
         set_calibration_notices(false);
         const struct { const char* what; const char* source; } solvers[] = {
             {"QR", qr_policy_source()}, {"eigh", eigh_policy_source()}, {"SVD", svd_policy_source()},
-            {"Cholesky", cholesky_policy_source()}};
+            {"Cholesky", cholesky_policy_source()}, {"LU", lu_policy_source()},
+            {"triangular solve", trsm_policy_source()}};
         for (const auto& s : solvers) {
             const std::string src = s.source, msg = calibration_message(s.what);
             const bool untuned = src.rfind("default:untuned-device", 0) == 0 ||

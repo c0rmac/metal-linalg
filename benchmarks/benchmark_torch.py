@@ -2,6 +2,7 @@
 metal-linalg-torch against torch.linalg on the CPU and on MPS, best of five.
 
     python benchmarks/benchmark_torch.py            # the README table
+    python benchmarks/benchmark_torch.py --new      # 2.18.0's functions: Cholesky, LU, solve, inv, triangular
     python benchmarks/benchmark_torch.py --mps-ab   # MPS tensors in place against copied
 
 Run it on an idle Mac. Some torch releases have no MPS kernels for eigh,
@@ -48,6 +49,41 @@ TABLE = [
     ("svdvals, one 4096×4096", lambda: torch.randn(4096, 4096), torch.linalg.svdvals, mlt.svdvals),
 ]
 
+def spd(*shape):
+    a = torch.randn(*shape) / shape[-1] ** 0.5
+    return a @ a.mT + torch.eye(shape[-1])
+
+
+def general(*shape):
+    return torch.randn(*shape) / shape[-1] ** 0.5 + 2 * torch.eye(shape[-1])
+
+
+def with_rhs(make, k):
+    """A tuple (A, B), B with k right-hand sides."""
+    def f():
+        a = make()
+        return a, torch.randn(*a.shape[:-1], k)
+    return f
+
+
+# 2.18.0's functions: name, input (a tensor, or a tuple of them), torch.linalg
+# call, metal-linalg-torch call
+NEW = [
+    ("cholesky, one 4096×4096", lambda: spd(4096, 4096), torch.linalg.cholesky, mlt.cholesky),
+    ("cholesky, 4 × 2048×2048", lambda: spd(4, 2048, 2048), torch.linalg.cholesky, mlt.cholesky),
+    ("cholesky, 4096 × 32×32", lambda: spd(4096, 32, 32), torch.linalg.cholesky, mlt.cholesky),
+    ("lu_factor, one 4096×4096", lambda: general(4096, 4096), torch.linalg.lu_factor, mlt.lu_factor),
+    ("lu_factor, 4 × 2048×2048", lambda: general(4, 2048, 2048), torch.linalg.lu_factor, mlt.lu_factor),
+    ("solve, one 4096×4096, 1 rhs", with_rhs(lambda: general(4096, 4096), 1),
+     lambda t: torch.linalg.solve(*t), lambda t: mlt.solve(*t)),
+    ("solve, one 2048×2048, 512 rhs", with_rhs(lambda: general(2048, 2048), 512),
+     lambda t: torch.linalg.solve(*t), lambda t: mlt.solve(*t)),
+    ("inv, one 4096×4096", lambda: general(4096, 4096), torch.linalg.inv, mlt.inv),
+    ("inv, 1024 × 64×64", lambda: general(1024, 64, 64), torch.linalg.inv, mlt.inv),
+    ("solve_triangular, 4096×4096, 4096 rhs", with_rhs(lambda: torch.tril(general(4096, 4096)), 4096),
+     lambda t: torch.linalg.solve_triangular(*t, upper=False), lambda t: mlt.solve_triangular(*t, upper=False)),
+]
+
 # name, input, call: small batches (where the copies weighed most), large
 # batches, mid-size matrices on the CPU path, and large single matrices.
 AB = [
@@ -71,11 +107,12 @@ AB = [
 
 def once(f, x):
     """Milliseconds for f(x), with the MPS work queued before and by it done."""
-    if x.device.type == "mps":
+    mps = (x[0] if isinstance(x, tuple) else x).device.type == "mps"
+    if mps:
         torch.mps.synchronize()
     t = time.perf_counter()
     f(x)
-    if x.device.type == "mps":
+    if mps:
         torch.mps.synchronize()
     return (time.perf_counter() - t) * 1e3
 
@@ -100,14 +137,14 @@ def header():
           f"metal-linalg-torch {mlt.__version__}, MPS tensors in place: {mlt.mps_in_place()}\n")
 
 
-def table(repeats):
+def table(repeats, rows=TABLE):
     header()
     print("| | torch, CPU | torch, MPS | metal-linalg-torch |")
     print("|---|---|---|---|")
-    for name, make, ref, ours in TABLE:
+    for name, make, ref, ours in rows:
         torch.manual_seed(0)
         a = make()
-        m = a.to("mps")
+        m = tuple(t.to("mps") for t in a) if isinstance(a, tuple) else a.to("mps")
         cells = [best(ref, a, repeats), best(ref, m, repeats), best(ours, m, repeats)]
         print(f"| {name} | " + " | ".join(fmt(c) for c in cells) + " |", flush=True)
 
@@ -142,11 +179,15 @@ def mps_ab(repeats):
 def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--mps-ab", action="store_true", help="MPS tensors in place against copied")
+    p.add_argument("--new", action="store_true", help="2.18.0's functions: Cholesky, LU, solve, inv, triangular")
     p.add_argument("--repeats", type=int, default=5, help="timed calls per cell (best kept)")
     args = p.parse_args()
     if not torch.backends.mps.is_available():
         sys.exit("needs MPS")
-    (mps_ab if args.mps_ab else table)(args.repeats)
+    if args.new:
+        table(args.repeats, NEW)
+    else:
+        (mps_ab if args.mps_ab else table)(args.repeats)
 
 
 if __name__ == "__main__":

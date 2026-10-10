@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Measure this Mac for metal-linalg: all four decompositions, one command.
+"""Measure this Mac for metal-linalg: every decomposition, one command.
 
     python3 tuning/run.py              # about 50 minutes on an M5 Pro; leave the Mac alone
     python3 tuning/run.py --quick      # a 15-minute smoke test, not a submission
-    python3 tuning/run.py --only qr    # one decomposition (qr ~5 min, eigh ~12, svd ~22, cholesky ~10)
+    python3 tuning/run.py --only qr    # one decomposition (qr ~5 min, eigh ~12, svd ~22, cholesky ~3, lu ~5, trsm ~3)
 
 Checks that the Mac is fit to measure, builds the tools, runs the correctness
-tests, then the QR, eigensolver, SVD and Cholesky sweeps one after another, and
-writes everything to one new submission:
+tests, then the QR, eigensolver, SVD, Cholesky, LU and triangular solve sweeps in turn,
+and writes everything to one new submission:
 
     docs/results/<device>/<id>/     e.g. docs/results/apple-m5-pro-20gpu/20260930-27b6c2/
 
@@ -44,8 +44,10 @@ SWEEPS = [
     ("eigh", "tune_eigh.py", "sweep_eigh", ["--max-n", "4096"], ["--quick"]),
     ("svd",  "tune_svd.py",  "sweep_svd",  ["--max-k", "4096"], ["--quick"]),
     ("cholesky", "tune_cholesky.py", "sweep_cholesky", ["--max-n", "4096"], ["--quick"]),
+    ("lu",   "tune_lu.py",   "sweep_lu",   ["--max-n", "4096"], ["--quick"]),
+    ("trsm", "tune_trsm.py", "sweep_trsm", ["--max-n", "4096"], ["--quick"]),
 ]
-TESTS = ["test_qr", "test_eigh", "test_svd", "test_cholesky"]
+TESTS = ["test_qr", "test_eigh", "test_svd", "test_cholesky", "test_lu", "test_trsm"]
 REPO_URL = "https://github.com/c0rmac/metal-linalg"
 
 
@@ -256,7 +258,7 @@ def main():
     ap.add_argument("--quick", action="store_true",
                     help="a short smoke test of the whole pipeline; not for submitting")
     ap.add_argument("--only", metavar="OPS",
-                    help="measure only these decompositions, comma-separated (qr, eigh, svd, cholesky): to "
+                    help="measure only these decompositions, comma-separated (qr, eigh, svd, cholesky, lu, trsm): to "
                          "remeasure one after its routing or kernels change; the others keep the "
                          "settings fitted from earlier runs")
     ap.add_argument("--anyway", action="store_true",
@@ -297,7 +299,7 @@ def main():
     info.update({"status": "running", "conditions": {"start": conditions()}, "results": {}, "minutes": {}})
     json.dump(info, open(os.path.join(out, "submission.json"), "w"), indent=1)
 
-    minutes = {"qr": (2, 5), "eigh": (8, 12), "svd": (8, 22), "cholesky": (1, 10)}   # an M5 Pro's, 2.18.0
+    minutes = {"qr": (2, 5), "eigh": (8, 12), "svd": (8, 22), "cholesky": (1, 3), "lu": (1, 5), "trsm": (1, 3)}   # an M5 Pro's, 2.18.0
     total = str(sum(minutes[op][0 if args.quick else 1] for op in only))
     info["memory_budget_gb"] = round(sub.memory_budget_bytes() / 2 ** 30, 1)
     say(f"\nMemory: shapes are capped to {info['memory_budget_gb']} GB at peak "
@@ -307,7 +309,7 @@ def main():
     for op, harness, binary, options, quick_options in sweeps:
         say(f"--- {op} ---")
         t0 = time.time()
-        extra = ([] if op in ("qr", "cholesky") else
+        extra = ([] if op in ("qr", "cholesky", "lu", "trsm") else
                  (["--full-grid"] if args.full_grid else []) + (["--full-passes"] if args.full_passes else []))
         rc = run_sweep(op, harness, os.path.join(build_dir, binary),
                        (quick_options if args.quick else options) + extra,

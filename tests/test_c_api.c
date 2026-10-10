@@ -129,6 +129,44 @@ int main(void) {
         CHECK(metal_linalg_cholesky(NULL, 1, 2, 0, l, NULL) == METAL_LINALG_INVALID_ARGUMENT, "cholesky(NULL) not rejected");
     }
 
+    /* LU of [[1, 2], [3, 4]]: rows swapped (pivot 1), L = [[1, 0], [1/3, 1]],
+     * U = [[3, 4], [0, 2/3]]; solve and inverse; a singular second matrix. */
+    {
+        const float a[8] = {1, 2, 3, 4,   1, 2, 2, 4};
+        float lu[8], x[4], inv[8];
+        uint32_t piv[4], info[2] = {7, 7};
+        CHECK(metal_linalg_lu_factor(a, 2, 2, lu, piv, info) == METAL_LINALG_OK, "lu_factor: %s", metal_linalg_last_error());
+        CHECK(piv[0] == 1 && piv[1] == 1, "lu_factor: pivots %u %u, want 1 1", piv[0], piv[1]);
+        CHECK(near(lu[0], 3.0f) && near(lu[1], 4.0f) && near(lu[2], 1.0f / 3.0f) && near(lu[3], 2.0f / 3.0f),
+              "lu_factor: LU = %g %g %g %g", lu[0], lu[1], lu[2], lu[3]);
+        CHECK(info[0] == 0 && info[1] == 2, "lu_factor: info %u %u, want 0 2", info[0], info[1]);
+        const float b[2] = {5, 6};   /* x = (-4, 4.5) */
+        CHECK(metal_linalg_solve(a, 1, 2, b, 1, x, NULL) == METAL_LINALG_OK, "solve: %s", metal_linalg_last_error());
+        CHECK(near(x[0], -4.0f) && near(x[1], 4.5f), "solve: x = %g %g", x[0], x[1]);
+        CHECK(metal_linalg_inv(a, 2, 2, inv, info) == METAL_LINALG_OK, "inv: %s", metal_linalg_last_error());
+        CHECK(near(inv[0], -2.0f) && near(inv[1], 1.0f) && near(inv[2], 1.5f) && near(inv[3], -0.5f),
+              "inv: %g %g %g %g", inv[0], inv[1], inv[2], inv[3]);
+        CHECK(isnan(inv[4]) && info[1] == 2, "inv: the singular matrix not NaN (info %u)", info[1]);
+        CHECK(metal_linalg_solve(a, 1, 2, NULL, 1, x, NULL) == METAL_LINALG_INVALID_ARGUMENT, "solve(b NULL) not rejected");
+        /* triangular: [[2, 99], [1, 4]] lower (99 never read), x = (1, 2) for b = (2, 9) */
+        const float tl[4] = {2, 99, 1, 4}, tb[2] = {2, 9};
+        CHECK(metal_linalg_solve_triangular(tl, 1, 2, tb, 1, 0, 0, x) == METAL_LINALG_OK, "solve_triangular: %s",
+              metal_linalg_last_error());
+        CHECK(near(x[0], 1.0f) && near(x[1], 2.0f), "solve_triangular: x = %g %g", x[0], x[1]);
+        CHECK(strlen(metal_linalg_trsm_backend(64, 64, 1)) > 0, "trsm backend name");
+        CHECK(strlen(metal_linalg_trsm_policy_source()) > 0, "trsm policy source");
+        CHECK(strlen(metal_linalg_lu_backend(64, 4)) > 0, "lu backend name");
+        const metal_linalg_lu_policy lm = metal_linalg_lu_policy_get();
+        metal_linalg_lu_policy lp = lm;
+        lp.gpu_min_n = 100;
+        lp.gpu_max_batch = 0;
+        metal_linalg_lu_policy_set(&lp);
+        CHECK(strcmp(metal_linalg_lu_backend(100, 9), "blocked") == 0, "lu gpu_min_n = 100 routes to %s",
+              metal_linalg_lu_backend(100, 9));
+        CHECK(strcmp(metal_linalg_lu_policy_source(), "user") == 0, "lu source after set");
+        metal_linalg_lu_policy_set(&lm);
+    }
+
     /* A NaN gives NaN for its matrix and is reported in info. */
     {
         const float a[8] = {2, 1, 1, 2,   NAN, 0, 0, 1};
