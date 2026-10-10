@@ -292,6 +292,24 @@ public var cpuThreads: Int {
     set { metal_linalg_set_cpu_threads(UInt32(clamping: newValue)) }
 }
 
+/// CPU only, for the calling thread (since 2.19.0): while `true`, the calls this
+/// thread makes take their CPU paths and never the GPU, whatever the routing
+/// policies and the `*_DEVICE` environment variables say, and the `*Backend`
+/// queries answer the same. For work meant to stay on the CPU. Other threads
+/// are not affected; `false` by default. `withCPUOnly` sets it for a closure.
+public var cpuOnly: Bool {
+    get { metal_linalg_cpu_only() != 0 }
+    set { metal_linalg_set_cpu_only(newValue ? 1 : 0) }
+}
+
+/// Runs `body` with `cpuOnly` on, on this thread, then restores the setting.
+public func withCPUOnly<T>(_ body: () throws -> T) rethrows -> T {
+    let previous = cpuOnly
+    cpuOnly = true
+    defer { cpuOnly = previous }
+    return try body()
+}
+
 /// The backend a call of that shape uses: "cpu", "unblocked" or "streaming_reduced".
 public func qrBackend(rows: Int, cols: Int, batch: Int = 1) -> String {
     String(cString: metal_linalg_qr_backend(UInt32(clamping: rows), UInt32(clamping: cols), UInt32(clamping: batch)))

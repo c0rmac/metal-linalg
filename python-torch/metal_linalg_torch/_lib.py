@@ -55,6 +55,8 @@ device_name = _fn("metal_linalg_device_name", _cstr)
 gpu_core_count = _fn("metal_linalg_gpu_core_count", _u32)
 cpu_threads = _fn("metal_linalg_cpu_threads", _u32)
 set_cpu_threads = _fn("metal_linalg_set_cpu_threads", None, _u32)
+cpu_only = _fn("metal_linalg_cpu_only", ctypes.c_int)
+set_cpu_only = _fn("metal_linalg_set_cpu_only", None, ctypes.c_int)
 set_calibration_notices = _fn("metal_linalg_set_calibration_notices", None, ctypes.c_int)
 calibration_message = _fn("metal_linalg_calibration_message", _cstr, _cstr)
 

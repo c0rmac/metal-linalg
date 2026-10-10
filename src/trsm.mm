@@ -276,6 +276,7 @@ void set_trsm_policy(const TrsmPolicy& p) {
 }
 
 TrsmBackend trsm_backend(unsigned n, unsigned k, unsigned batch) {
+    if (cpu_only()) return TrsmBackend::cpu;   // this thread's setting (device.h), ahead of TRSM_DEVICE
     if (const char* e = std::getenv("TRSM_DEVICE")) {
         const std::string s = e;
         if (s == "cpu") return TrsmBackend::cpu;

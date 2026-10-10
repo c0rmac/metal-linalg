@@ -164,6 +164,24 @@ int main(void) {
         CHECK(strcmp(metal_linalg_lu_backend(100, 9), "blocked") == 0, "lu gpu_min_n = 100 routes to %s",
               metal_linalg_lu_backend(100, 9));
         CHECK(strcmp(metal_linalg_lu_policy_source(), "user") == 0, "lu source after set");
+        /* CPU only on this thread overrides the policy, and turns off again */
+        CHECK(metal_linalg_cpu_only() == 0, "cpu only is off by default");
+        metal_linalg_set_cpu_only(1);
+        CHECK(metal_linalg_cpu_only() == 1, "cpu only after set");
+        CHECK(strcmp(metal_linalg_lu_backend(100, 9), "cpu") == 0, "cpu only: lu routes to %s",
+              metal_linalg_lu_backend(100, 9));
+        {
+            const float sa[4] = {4, 1, 1, 3}, sb[2] = {1, 2};
+            float sx[2];
+            uint32_t sinfo = 7;
+            CHECK(metal_linalg_solve(sa, 1, 2, sb, 1, sx, &sinfo) == METAL_LINALG_OK && sinfo == 0,
+                  "cpu only solve: %s", metal_linalg_last_error());
+            CHECK(near(4 * sx[0] + sx[1], 1.0f) && near(sx[0] + 3 * sx[1], 2.0f), "cpu only solve: x = %g %g",
+                  sx[0], sx[1]);
+        }
+        metal_linalg_set_cpu_only(0);
+        CHECK(metal_linalg_cpu_only() == 0 && strcmp(metal_linalg_lu_backend(100, 9), "blocked") == 0,
+              "cpu only off: lu routes to %s", metal_linalg_lu_backend(100, 9));
         metal_linalg_lu_policy_set(&lm);
     }
 

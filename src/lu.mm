@@ -128,6 +128,7 @@ void set_lu_policy(const LuPolicy& p) {
 }
 
 LuBackend lu_backend(unsigned n, unsigned batch) {
+    if (cpu_only()) return LuBackend::cpu;   // this thread's setting (device.h), ahead of LU_DEVICE
     if (const char* e = std::getenv("LU_DEVICE")) {
         const std::string s = e;
         if (s == "cpu") return LuBackend::cpu;

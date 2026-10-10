@@ -2,6 +2,7 @@
 #define ACCELERATE_NEW_LAPACK   // LAPACK's current interface; before any Accelerate header
 #endif
 #include <metal_linalg/core.h>
+#include <metal_linalg/device.h>
 #include "calibration.h"
 #include "divide_conquer.h"
 #include "estimate.h"
@@ -933,6 +934,7 @@ bool gpu_rule(unsigned m, unsigned n, unsigned batch, unsigned max_k, unsigned m
 } // namespace
 
 bool svd_uses_gpu(unsigned m, unsigned n, unsigned batch) {
+    if (cpu_only()) return false;   // this thread's setting (device.h), ahead of SVD_DEVICE
     if (const int f = forced_device(); f >= 0) return f == 1;
     const SvdPolicy& p = policy_state().policy;
     const unsigned k = std::min(m, n);
@@ -945,6 +947,7 @@ bool svd_uses_gpu(unsigned m, unsigned n, unsigned batch) {
 }
 
 bool svdvals_uses_gpu(unsigned m, unsigned n, unsigned batch) {
+    if (cpu_only()) return false;
     if (const int f = forced_device(); f >= 0) return f == 1;
     const SvdPolicy& p = policy_state().policy;
     if (p.values_gpu_min_batch == 0) return svd_uses_gpu(m, n, batch);   // not measured apart
@@ -961,6 +964,8 @@ namespace {
 // none). SVD_DEVICE=cpu keeps the CPU; SVD_DEVICE=bidiag, band or
 // bidiag_batch forces that backend for every call.
 SvdBackend route(unsigned m, unsigned n, unsigned batch, bool vectors) {
+    // CPU only (device.h): LAPACK alone, not the backends that reduce on the GPU
+    if (cpu_only()) return SvdBackend::cpu;
     if (const char* e = std::getenv("SVD_DEVICE"); e && std::string(e) == "bidiag") return SvdBackend::bidiag;
     if (const char* e = std::getenv("SVD_DEVICE"); e && std::string(e) == "band") return SvdBackend::band;
     if (const char* e = std::getenv("SVD_DEVICE"); e && std::string(e) == "bidiag_batch")

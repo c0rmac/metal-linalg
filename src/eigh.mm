@@ -2,6 +2,7 @@
 #define ACCELERATE_NEW_LAPACK   // LAPACK's current interface; before any Accelerate header
 #endif
 #include <metal_linalg/core.h>
+#include <metal_linalg/device.h>
 #include "calibration.h"
 #include "divide_conquer.h"
 #include "estimate.h"
@@ -787,6 +788,7 @@ bool gpu_rule(unsigned n, unsigned batch, unsigned max_n, unsigned min_bn, unsig
 } // namespace
 
 bool eigh_uses_gpu(unsigned n, unsigned batch) {
+    if (cpu_only()) return false;   // this thread's setting (device.h), ahead of EIGH_DEVICE
     const EighPolicy& p = policy_state().policy;
     // gpu_max_n = 0 is never the GPU, the clause included.
     if (!std::getenv("EIGH_DEVICE") && p.gpu_big_batch_min && p.gpu_max_n && n > p.gpu_max_n &&
@@ -797,6 +799,7 @@ bool eigh_uses_gpu(unsigned n, unsigned batch) {
 }
 
 bool eigvalsh_uses_gpu(unsigned n, unsigned batch) {
+    if (cpu_only()) return false;
     const EighPolicy& p = policy_state().policy;
     if (p.values_gpu_min_batch == 0) return eigh_uses_gpu(n, batch);   // not measured apart
     return gpu_rule(n, batch, p.values_gpu_max_n, p.values_gpu_min_batch_times_n, p.values_gpu_min_batch);
@@ -847,6 +850,8 @@ bool forced_tridiag_batch() {
 }
 
 EighBackend route(unsigned n, unsigned batch, bool vectors) {
+    // CPU only (device.h): LAPACK alone, not the backends that reduce on the GPU
+    if (cpu_only()) return EighBackend::cpu;
     if (forced_tridiag()) return EighBackend::tridiag;
     if (forced_band()) return EighBackend::band;
     if (forced_tridiag_batch()) return EighBackend::tridiag_batch;

@@ -439,6 +439,30 @@ class Routing(unittest.TestCase):
         self.assertTrue(mlt.device_name().startswith("Apple"))
         self.assertGreaterEqual(mlt.gpu_core_count(), 0)
 
+    def test_cpu_only(self):
+        measured = mlt.lu_policy()
+        try:
+            mlt.set_lu_policy(gpu_min_n=100, gpu_max_batch=0)
+            self.assertFalse(mlt.cpu_only())
+            self.assertEqual(mlt.lu_backend(200, 2), "blocked")
+            a = torch.randn(2, 200, 200) + 30 * torch.eye(200)
+            with mlt.CpuOnly():
+                self.assertTrue(mlt.cpu_only())
+                for name in (mlt.lu_backend(200, 2), mlt.cholesky_backend(4096, 1), mlt.trsm_backend(4096, 4096, 1),
+                             mlt.qr_backend(64, 64, 4096), mlt.eigh_backend(32, 4096), mlt.svd_backend(1024, 64, 64)):
+                    self.assertEqual(name, "cpu")
+                self.assertLess(rel(a @ mlt.inv(a), torch.eye(200).expand(2, 200, 200)), 1e-4)
+                seen = []
+                t = threading.Thread(target=lambda: seen.append((mlt.cpu_only(), mlt.lu_backend(200, 2))))
+                t.start()
+                t.join()
+                self.assertEqual(seen, [(False, "blocked")])
+            self.assertFalse(mlt.cpu_only())
+            self.assertEqual(mlt.lu_backend(200, 2), "blocked")
+        finally:
+            mlt.set_cpu_only(False)
+            mlt.set_lu_policy(measured)
+
     def test_backends(self):
         self.assertIn(mlt.qr_backend(64, 32, 16), {"cpu", "unblocked", "streaming_reduced"})
         eigh = {"cpu", "simd", "threadgroup", "block", "tridiag", "ql", "band"}

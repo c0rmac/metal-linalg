@@ -297,6 +297,41 @@ class Routing(unittest.TestCase):
             ml.set_lu_policy(measured)
         self.assertEqual(ml.lu_policy(), measured)
 
+    def test_cpu_only(self):
+        measured = ml.cholesky_policy()
+        try:
+            # Every Cholesky call the GPU's under this policy, unless CPU only
+            ml.set_cholesky_policy(gpu_max_n=2**32 - 1, gpu_min_batch_times_n=0, gpu_min_batch=1, gpu_min_n=0,
+                                   simd_max_n=32, blocked_min_n=256, blocked_max_batch=0)
+            self.assertFalse(ml.cpu_only())
+            self.assertEqual(ml.cholesky_backend(300, 2), "blocked")
+            a = mx.random.normal((2, 300, 300))
+            p = mm(a, a.swapaxes(-1, -2)) / 300 + eye(300)
+            with ml.CpuOnly():
+                self.assertTrue(ml.cpu_only())
+                for name in (ml.cholesky_backend(300, 2), ml.lu_backend(4096, 1), ml.trsm_backend(4096, 4096, 1),
+                             ml.qr_backend(64, 64, 4096), ml.eigh_backend(32, 4096), ml.eigvalsh_backend(4096, 1),
+                             ml.svd_backend(1024, 64, 64), ml.svdvals_backend(4096, 4096, 1)):
+                    self.assertEqual(name, "cpu")
+                l = ml.cholesky(p)
+                self.assertLess(max_abs(mm(l, l.swapaxes(-1, -2)) - p) / max_abs(p), 1e-5)
+                # another thread is not affected
+                import threading
+                seen = []
+                t = threading.Thread(target=lambda: seen.append((ml.cpu_only(), ml.cholesky_backend(300, 2))))
+                t.start()
+                t.join()
+                self.assertEqual(seen, [(False, "blocked")])
+            self.assertFalse(ml.cpu_only())
+            self.assertEqual(ml.cholesky_backend(300, 2), "blocked")
+            ml.set_cpu_only(True)
+            self.assertEqual(ml.cholesky_backend(300, 2), "cpu")
+            ml.set_cpu_only(False)
+            self.assertEqual(ml.cholesky_backend(300, 2), "blocked")
+        finally:
+            ml.set_cpu_only(False)
+            ml.set_cholesky_policy(measured)
+
     def test_unknown_policy_field(self):
         with self.assertRaises(KeyError):
             ml.set_svd_policy(not_a_field=1)

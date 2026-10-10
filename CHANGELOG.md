@@ -1,5 +1,22 @@
 # Changes
 
+## 2.19.0
+
+- **CPU only, per thread.** `set_cpu_only(true)` (or a `CpuOnly` scope) makes
+  every call the calling thread makes take its CPU path (LAPACK through
+  Accelerate, a batch over `cpu_threads()` cores) and never the GPU, ahead of
+  the routing policies and the `*_DEVICE` environment variables; the
+  `*_backend()` queries answer the same. Other threads are unaffected, so a
+  framework can honour its CPU device: isomorphism's CPU device uses it. For
+  eigh and the SVD it means LAPACK alone, not the backends that reduce on the
+  GPU and finish on the CPU (`tridiag`, `band`, `bidiag` and their batched
+  forms).
+  - C++: `set_cpu_only`, `cpu_only`, `CpuOnly` in `<metal_linalg/device.h>`.
+  - C: `metal_linalg_set_cpu_only(int)`, `metal_linalg_cpu_only()`.
+  - Python with MLX and PyTorch: `set_cpu_only`, `cpu_only`, and
+    `with CpuOnly(): ...`.
+  - Swift: `cpuOnly` and `withCPUOnly { ... }`.
+
 ## 2.18.0
 
 - **Cholesky factorization**, `A = L L^T` for batches of symmetric positive

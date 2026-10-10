@@ -145,6 +145,8 @@ NB_MODULE(_core, m) {
     m.def("gpu_core_count", &ml::gpu_core_count);
     m.def("set_cpu_threads", &ml::set_cpu_threads, "n"_a);
     m.def("cpu_threads", &ml::cpu_threads);
+    m.def("set_cpu_only", &ml::set_cpu_only, "on"_a);
+    m.def("cpu_only", &ml::cpu_only);
     m.def("set_calibration_notices", &ml::set_calibration_notices, "enabled"_a);
     m.def("calibration_message", [](const std::string& what) { return ml::calibration_message(what.c_str()); },
           "decomposition"_a);
