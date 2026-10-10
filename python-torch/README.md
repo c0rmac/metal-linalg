@@ -66,6 +66,11 @@ pip install "git+https://github.com/c0rmac/metal-linalg.git#subdirectory=python-
 | `svd(A, full_matrices=False)` | `torch.linalg.svd` | `(U, S, Vh)`, thin, `S` descending |
 | `svdvals(A)` | `torch.linalg.svdvals` | singular values, descending; about half the work of `svd` |
 | `cholesky(A, upper=False)` | `torch.linalg.cholesky` | `L` (or `U = L.mT`); raises `torch.linalg.LinAlgError` for a matrix that is not positive definite, as torch does (since 2.18.0) |
+| `lu_factor(A)` | `torch.linalg.lu_factor` | `(LU, pivots)`, `pivots` int32 1-based as torch's; square matrices; not differentiable (since 2.18.0) |
+| `lu_factor_ex(A)` | `torch.linalg.lu_factor_ex` | `(LU, pivots, info)` |
+| `solve(A, B)` | `torch.linalg.solve` | `X`; `B` `[..., N, K]` or `[..., N]` with `A`'s batch shape (no broadcasting); raises `LinAlgError` if singular; differentiable |
+| `solve_ex(A, B)` / `inv_ex(A)` | `torch.linalg.solve_ex` / `inv_ex` | `(result, info)`; a singular matrix's result all NaN |
+| `inv(A)` | `torch.linalg.inv` | the inverse; raises `LinAlgError` if singular; differentiable |
 | `cholesky_ex(A, upper=False, check_errors=False)` | `torch.linalg.cholesky_ex` | `(L, info)`, `info` int32; a failed matrix's `L` is all NaN (torch's holds a partial factor) |
 
 `A` is `[..., M, N]` with any number of batch dimensions, on `"cpu"` or
@@ -87,7 +92,7 @@ pip install "git+https://github.com/c0rmac/metal-linalg.git#subdirectory=python-
 ## Autograd and torch.compile
 
 Underneath, the functions are custom operators,
-`torch.ops.metal_linalg.{qr, eigh, eigvalsh, svd, svdvals, cholesky}`, with fake
+`torch.ops.metal_linalg.{qr, eigh, eigvalsh, svd, svdvals, cholesky, lu_factor, solve, inv}`, with fake
 implementations and the backward formulas `torch.linalg` uses:
 
 ```python

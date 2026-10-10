@@ -3,6 +3,7 @@
 // allocates its outputs as MLX arrays, and has the core write into their
 // memory.
 #include <metal_linalg/cholesky.h>
+#include <metal_linalg/lu.h>
 #include <metal_linalg/eigh.h>
 #include <metal_linalg/qr.h>
 #include <metal_linalg/svd.h>
@@ -199,6 +200,58 @@ CholeskyResult run_cholesky(const mx::array& a, bool upper, const char* who, Cho
     return {l, info};
 }
 
+// --- LU, solve, inverse -------------------------------------------------------
+
+void require_square(const Input& in, const char* who) {
+    if (in.matrices.rows != in.matrices.cols)
+        throw std::invalid_argument(std::string("[") + who + "] Input matrices must be square.");
+}
+
+using LuFn = void (*)(const core::Matrices&, float*, uint32_t*, uint32_t*);
+using SolveFn = void (*)(const core::Matrices&, const float*, uint32_t, float*, uint32_t*);
+using InvFn = void (*)(const core::Matrices&, float*, uint32_t*);
+
+LuResult run_lu(const mx::array& a, LuFn fn) {
+    Input in = prepare(a, "lu_factor");
+    require_square(in, "lu_factor");
+    const uint32_t n = in.matrices.cols;
+    mx::array lu     = output(shape_of(in.batch_shape, {n, n}));
+    mx::array pivots = output(shape_of(in.batch_shape, {n}), mx::uint32);
+    mx::array info   = output(in.batch_shape, mx::uint32);
+    if (in.matrices.batch && n) fn(in.matrices, memory<float>(lu), memory<uint32_t>(pivots), memory<uint32_t>(info));
+    return {lu, pivots, info};
+}
+
+// b [..., N, K] or [..., N] against a [..., N, N], the batch shapes equal.
+SolveResult run_solve(const mx::array& a, const mx::array& b, SolveFn fn) {
+    Input in = prepare(a, "solve");
+    require_square(in, "solve");
+    const uint32_t n = in.matrices.cols;
+    const bool vector = b.ndim() == a.ndim() - 1;
+    if (!vector && b.ndim() != a.ndim())
+        throw std::invalid_argument("[solve] b must be [..., N] or [..., N, K] with a's batch shape.");
+    const mx::array bm = vector ? mx::expand_dims(b, -1) : b;
+    Input rhs = prepare(bm, "solve");
+    if (rhs.batch_shape != in.batch_shape || rhs.matrices.rows != n)
+        throw std::invalid_argument("[solve] b must be [..., N] or [..., N, K] with a's batch shape.");
+    const uint32_t k = rhs.matrices.cols;
+    mx::array x    = output(shape_of(in.batch_shape, {n, k}));
+    mx::array info = output(in.batch_shape, mx::uint32);
+    if (in.matrices.batch && n)
+        fn(in.matrices, rhs.matrices.data, k, memory<float>(x), memory<uint32_t>(info));
+    return {vector ? mx::squeeze(x, -1) : x, info};
+}
+
+SolveResult run_inv(const mx::array& a, InvFn fn) {
+    Input in = prepare(a, "inv");
+    require_square(in, "inv");
+    const uint32_t n = in.matrices.cols;
+    mx::array x    = output(shape_of(in.batch_shape, {n, n}));
+    mx::array info = output(in.batch_shape, mx::uint32);
+    if (in.matrices.batch && n) fn(in.matrices, memory<float>(x), memory<uint32_t>(info));
+    return {x, info};
+}
+
 } // namespace
 
 // =============================================================================
@@ -226,6 +279,27 @@ CholeskyResult cholesky_blocked(const mx::array& a, bool upper) {
 CholeskyResult cholesky_cpu(const mx::array& a, bool upper) {
     return run_cholesky(a, upper, "cholesky", core::detail::cholesky_cpu);
 }
+} // namespace detail
+
+std::pair<mx::array, mx::array> lu_factor_accelerated(const mx::array& a) {
+    LuResult r = run_lu(a, core::lu_factor);
+    return {r.lu, r.pivots};
+}
+LuResult lu_factor_ex_accelerated(const mx::array& a) { return run_lu(a, core::lu_factor); }
+mx::array solve_accelerated(const mx::array& a, const mx::array& b) { return run_solve(a, b, core::solve).x; }
+SolveResult solve_ex_accelerated(const mx::array& a, const mx::array& b) { return run_solve(a, b, core::solve); }
+mx::array inv_accelerated(const mx::array& a) { return run_inv(a, core::inv).x; }
+SolveResult inv_ex_accelerated(const mx::array& a) { return run_inv(a, core::inv); }
+
+namespace detail {
+LuResult lu_factor_cpu(const mx::array& a) { return run_lu(a, core::detail::lu_factor_cpu); }
+LuResult lu_factor_blocked(const mx::array& a) { return run_lu(a, core::detail::lu_factor_blocked); }
+SolveResult solve_cpu(const mx::array& a, const mx::array& b) { return run_solve(a, b, core::detail::solve_cpu); }
+SolveResult solve_blocked(const mx::array& a, const mx::array& b) {
+    return run_solve(a, b, core::detail::solve_blocked);
+}
+SolveResult inv_cpu(const mx::array& a) { return run_inv(a, core::detail::inv_cpu); }
+SolveResult inv_blocked(const mx::array& a) { return run_inv(a, core::detail::inv_blocked); }
 } // namespace detail
 
 std::pair<mx::array, mx::array> qr_accelerated(const mx::array& a, const std::string& mode) {

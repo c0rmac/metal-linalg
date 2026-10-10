@@ -31,9 +31,9 @@ marked stale, rather than an estimate. The library reports the state at run time
 and docs/measurements.md shows it for every chip.
 """
 
-KERNEL_EPOCHS = {"qr": 8, "eigh": 8, "svd": 10, "cholesky": 1}
+KERNEL_EPOCHS = {"qr": 8, "eigh": 8, "svd": 10, "cholesky": 1, "lu": 1}
 # The versions from which the CPU path spreads a batch over every core (2.9.0).
-MIN_EPOCHS = {"qr": 2, "eigh": 2, "svd": 3, "cholesky": 1}
+MIN_EPOCHS = {"qr": 2, "eigh": 2, "svd": 3, "cholesky": 1, "lu": 1}
 
 # (decomposition, epoch, library version, date, why)
 HISTORY = [
@@ -148,6 +148,9 @@ HISTORY = [
     ("cholesky", 1, "2.18.0", "2026-10-10",
      "the measurements as Cholesky introduced them: the CPU path (spotrf('L') on a padded copy), the simd "
      "and threadgroup kernels, and the blocked path (fused sub-panels, MPS products on the lower triangle)"),
+    ("lu", 1, "2.18.0", "2026-10-10",
+     "the measurements as LU introduced them: the CPU path (sgetrf, sgetrs, sgetri on a padded copy) and the "
+     "blocked GPU path (CPU panels with a look-ahead, GPU swaps and products, the GPU's triangular solves)"),
 ]
 
 REQUIRED = {
@@ -159,6 +162,7 @@ REQUIRED = {
             "cpu_vals", "bidiag_vals", "gk_vals", "gk_share_vals", "band_vals", "band8_vals", "band32_vals",
             "bidiag_batch_vals"},
     "cholesky": {"cpu", "simd", "tg", "blocked"},
+    "lu": {"cpu", "blocked", "inv_cpu", "inv_blocked", "solve_cpu", "solve_trsm", "solve_getrs"},
 }
 
 # Backends added after a decomposition's first measurements, and when: what
@@ -215,10 +219,11 @@ PATHS = {
     # The QR-preconditioned SVD backends call QR, routed by its table.
     "svd": ["shaders/Svd_", "src/svd"] + _JACOBI + _QR + ["src/tuned/qr.inc"] + _BAND,
     "cholesky": ["shaders/Cholesky", "src/cholesky"] + _SHARED,
+    "lu": ["shaders/LU", "src/lu", "src/transpose.h"] + _SHARED,
 }
 # A decomposition's own table is generated from its measurements, not a change to them.
 OWN_TABLE = {"qr": "src/tuned/qr.inc", "eigh": "src/tuned/eigh.inc", "svd": "src/tuned/svd.inc",
-             "cholesky": "src/tuned/cholesky.inc"}
+             "cholesky": "src/tuned/cholesky.inc", "lu": "src/tuned/lu.inc"}
 
 
 def run_epoch(info, op):

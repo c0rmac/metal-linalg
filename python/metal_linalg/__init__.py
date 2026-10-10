@@ -1,5 +1,5 @@
-"""QR, symmetric eigendecomposition, SVD and Cholesky for batches of matrices
-on Apple GPUs, for MLX.
+"""QR, symmetric eigendecomposition, SVD, Cholesky and LU (with solve and
+inverse) for batches of matrices on Apple GPUs, for MLX.
 
     import mlx.core as mx
     import metal_linalg as ml
@@ -8,6 +8,7 @@ on Apple GPUs, for MLX.
     w, V = ml.eigh(s)            # s symmetric [..., N, N]; w ascending
     U, S, Vt = ml.svd(a)         # thin factors; S descending
     L = ml.cholesky(p)           # p symmetric positive definite; p = L L^T
+    x = ml.solve(a, b)           # a [..., N, N], b [..., N] or [..., N, K]
 
 Each call is routed to the fastest Metal kernel for its shape and batch, or to
 MLX's CPU path, by a policy measured on the Mac it runs on. Inputs may be
@@ -44,13 +45,14 @@ class CalibrationWarning(UserWarning):
 
 def calibration_status():
     """How current this Mac's measurements are, per decomposition:
-    ``{"qr": state, "eigh": state, "svd": state, "cholesky": state}``, each ``"current"``,
+    ``{"qr": state, "eigh": state, "svd": state, "cholesky": state, "lu": state}``, each ``"current"``,
     ``"stale"`` (measured on older kernels, still used), ``"incomplete"``
     (from before a newer backend, which stays off) or ``"uncalibrated"``
     (not measured: settings estimated from a measured Mac). See https://c0rmac.github.io/metal-linalg/docs/measurements."""
     out = {}
     for key, source in (("qr", _core.qr_policy_source), ("eigh", _core.eigh_policy_source),
-                        ("svd", _core.svd_policy_source), ("cholesky", _core.cholesky_policy_source)):
+                        ("svd", _core.svd_policy_source), ("cholesky", _core.cholesky_policy_source),
+                        ("lu", _core.lu_policy_source)):
         s = source()
         out[key] = ("uncalibrated" if s.startswith(("default:", "estimated:"))
                     else "stale" if s.startswith("tuned-stale:")
@@ -66,9 +68,9 @@ def _calibration_warnings():
     if flag and flag != "0":
         return
     for source in (_core.qr_policy_source, _core.eigh_policy_source, _core.svd_policy_source,
-                   _core.cholesky_policy_source):
+                   _core.cholesky_policy_source, _core.lu_policy_source):
         source()   # resolves the policy, which records its calibration
-    for what in ("QR", "eigh", "SVD", "Cholesky"):
+    for what in ("QR", "eigh", "SVD", "Cholesky", "LU"):
         msg = _core.calibration_message(what)
         if msg:
             warnings.warn(msg, CalibrationWarning, stacklevel=3)
@@ -78,11 +80,12 @@ _calibration_warnings()
 
 __all__ = [
     "qr", "eigh", "eigvalsh", "svd", "svdvals", "cholesky", "cholesky_ex",
+    "lu_factor", "lu_factor_ex", "solve", "solve_ex", "inv", "inv_ex",
     "device_name", "gpu_core_count", "cpu_threads", "set_cpu_threads",
-    "qr_backend", "eigh_backend", "eigvalsh_backend", "svd_backend", "svdvals_backend", "cholesky_backend",
-    "qr_policy", "eigh_policy", "svd_policy", "cholesky_policy",
-    "set_qr_policy", "set_eigh_policy", "set_svd_policy", "set_cholesky_policy",
-    "qr_policy_source", "eigh_policy_source", "svd_policy_source", "cholesky_policy_source",
+    "qr_backend", "eigh_backend", "eigvalsh_backend", "svd_backend", "svdvals_backend", "cholesky_backend", "lu_backend",
+    "qr_policy", "eigh_policy", "svd_policy", "cholesky_policy", "lu_policy",
+    "set_qr_policy", "set_eigh_policy", "set_svd_policy", "set_cholesky_policy", "set_lu_policy",
+    "qr_policy_source", "eigh_policy_source", "svd_policy_source", "cholesky_policy_source", "lu_policy_source",
     "calibration_status", "CalibrationWarning",
 ]
 
@@ -173,6 +176,46 @@ def cholesky_ex(a, upper=False):
     return _core.cholesky_ex(_array(a), bool(upper))
 
 
+def lu_factor(a):
+    """LU factorization with partial pivoting, ``P a = L U``, like
+    ``mx.linalg.lu_factor``: ``(LU, pivots)``, ``LU`` ``[..., N, N]`` holding
+    ``U`` on and above the diagonal and ``L`` below it (its unit diagonal
+    implied), ``pivots`` ``[..., N]`` uint32, the row swaps in order (row
+    ``i`` was swapped with row ``pivots[i]``). Large matrices on the GPU
+    (see :func:`lu_backend`)."""
+    lu, piv, _ = _core.lu_factor(_array(a))
+    return lu, piv
+
+
+def lu_factor_ex(a):
+    """:func:`lu_factor` and ``info`` ``[...]`` (uint32): 0, or ``k`` where
+    ``U``'s k-th diagonal entry is exactly zero (``a`` is singular)."""
+    return _core.lu_factor(_array(a))
+
+
+def solve(a, b):
+    """``x`` with ``a @ x = b``, like ``mx.linalg.solve``: ``a``
+    ``[..., N, N]``, ``b`` ``[..., N, K]`` or ``[..., N]`` with ``a``'s batch
+    shape. A singular matrix's ``x`` is all NaN rather than an error."""
+    return _core.solve(_array(a), _array(b))[0]
+
+
+def solve_ex(a, b):
+    """:func:`solve` and ``info``, as :func:`lu_factor_ex`'s."""
+    return _core.solve(_array(a), _array(b))
+
+
+def inv(a):
+    """The inverse of a batch of square matrices, like ``mx.linalg.inv``. A
+    singular matrix's inverse is all NaN rather than an error."""
+    return _core.inv(_array(a))[0]
+
+
+def inv_ex(a):
+    """:func:`inv` and ``info``, as :func:`lu_factor_ex`'s."""
+    return _core.inv(_array(a))
+
+
 # ---------------------------------------------------------------------------
 # The device and its routing
 # ---------------------------------------------------------------------------
@@ -247,6 +290,13 @@ def cholesky_backend(n, batch=1):
     return _core.cholesky_backend(n, batch)
 
 
+def lu_backend(n, batch=1):
+    """Which backend :func:`lu_factor`, :func:`solve` and :func:`inv` use for
+    ``batch`` matrices of ``n x n``: ``"cpu"`` or ``"blocked"`` (the GPU
+    path)."""
+    return _core.lu_backend(n, batch)
+
+
 def qr_policy():
     """The QR routing policy in effect, as a dict of its fields."""
     return _core.qr_policy()
@@ -265,6 +315,11 @@ def svd_policy():
 def cholesky_policy():
     """The Cholesky routing policy in effect, as a dict of its fields."""
     return _core.cholesky_policy()
+
+
+def lu_policy():
+    """The LU routing policy in effect, as a dict of its fields."""
+    return _core.lu_policy()
 
 
 def set_qr_policy(policy=None, **fields):
@@ -288,6 +343,11 @@ def set_cholesky_policy(policy=None, **fields):
     _core.set_cholesky_policy({**(policy or {}), **fields})
 
 
+def set_lu_policy(policy=None, **fields):
+    """Replaces the LU policy, e.g. ``set_lu_policy(gpu_min_n=1024)``."""
+    _core.set_lu_policy({**(policy or {}), **fields})
+
+
 def qr_policy_source():
     """Where the QR policy came from: ``"tuned:<device>"``, ``"estimated:<device>
     (from <measured device>, ...)"`` on a Mac nobody has measured,
@@ -308,3 +368,8 @@ def svd_policy_source():
 def cholesky_policy_source():
     """Where the Cholesky policy came from; see :func:`qr_policy_source`."""
     return _core.cholesky_policy_source()
+
+
+def lu_policy_source():
+    """Where the LU policy came from; see :func:`qr_policy_source`."""
+    return _core.lu_policy_source()

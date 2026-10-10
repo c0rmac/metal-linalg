@@ -46,6 +46,30 @@
   decompositions. `tuning/run.py` measures Cholesky too (`--only cholesky`),
   `test_cholesky` (1409 checks) runs before it, and the measurement page and
   tables have a Cholesky column.
+- **LU factorization, linear solve and inverse** (`lu_factor`, `solve`, `inv`,
+  and `_ex` forms with LAPACK's `info`), in every API with MLX's conventions
+  (0-based uint32 pivots; the PyTorch package torch's: 1-based int32 pivots,
+  `LinAlgError` for a singular matrix in `solve` and `inv`, torch's gradients
+  for both). A singular matrix is factored as by `sgetrf`; its solve and
+  inverse are all NaN, for it alone.
+  - `cpu`: `sgetrf`, `sgetrs`, `sgetri` on a padded column-major copy, a
+    batch over every core (an unpadded leading dimension of 4096 cost
+    `sgetrf` 2.7x).
+  - `blocked`, for large matrices: the GPU and the CPU on one matrix in the
+    memory they share. The CPU factors each pivoted 128-column panel
+    (recursively, its updates on Accelerate's matrix units) and brings the
+    next panel up to date itself while the GPU swaps rows (the panel's swaps
+    composed into one gather) and updates the trailing matrix by MPS
+    products; `solve` and `inv` by blocked triangular solves on the GPU (with
+    a few right-hand sides, `sgetrs` on the shared factorization). On an M5
+    Pro one 4096 x 4096 `lu_factor` in 16 ms against 48 on the CPU path
+    (3.0x), `inv` 40 against 137 (3.4x), one 8192 x 8192 `lu_factor` 96
+    against 427; against MLX's own CPU functions 8.1x, 3.6x and, for `solve`,
+    15x at 4096.
+  - Measured on the M5 Pro (run `20261010-22fef9`, `tuning/tune_lu.py`, about
+    3 minutes): the GPU from 1536 at any batch, 1.0001x geometric-mean regret
+    over 66 points (worst 1.01x); estimated for every other Mac.
+    `test_lu` (491 checks), `benchmark_lu`, `sweep_lu`.
 - `benchmark_cholesky`: each kernel, the CPU path and MLX's own
   `mx.linalg.cholesky` (one matrix at a time), which the library beats by
   1.4-2.3x for one matrix of 128 to 2048, 2.4x at 4096, and 20-24x for

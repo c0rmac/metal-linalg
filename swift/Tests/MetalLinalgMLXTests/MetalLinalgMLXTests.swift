@@ -72,6 +72,18 @@ final class MetalLinalgMLXTests: XCTestCase {
         }
     }
 
+    func testSolveAndInverse() throws {
+        try onCPU {
+            let a = MLXRandom.normal([3, 20, 20]) + 8 * MLXArray.identity(20)
+            let b = MLXRandom.normal([3, 20, 4])
+            let x = try solveAccelerated(a, b)
+            XCTAssertEqual(x.shape, [3, 20, 4])
+            XCTAssertLessThan(maxAbs(matmul(a, x) - b), 1e-4)
+            let inverse = try invAccelerated(a)
+            XCTAssertLessThan(maxAbs(matmul(a, inverse) - MLXArray.identity(20)), 1e-4)
+        }
+    }
+
     func testSVD() throws {
         try onCPU {
             for shape in [[8, 30, 10], [8, 10, 30]] {

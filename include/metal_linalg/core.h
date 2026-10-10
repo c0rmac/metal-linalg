@@ -627,6 +627,42 @@ namespace metal_linalg {
     // The GPU kernel the policy picks, regardless of the CPU routing.
     CholeskyBackend cholesky_gpu_backend(unsigned n, unsigned batch);
 
+    // =========================================================================
+    // LU routing: lu_factor, solve, inv (since 2.18.0)
+    // =========================================================================
+    // P A = L U with partial pivoting, for a batch of n x n matrices, and the
+    // solve and the inverse built on it. The CPU runs LAPACK (sgetrf, sgetrs,
+    // sgetri), a batch spread over every core; the GPU path (blocked) factors
+    // one matrix at a time, its pivoted panels on the CPU in memory the GPU
+    // shares while the GPU swaps rows and updates the rest by matrix products,
+    // and solves by blocked triangular solves on the GPU. As for the other
+    // decompositions the boundary is measured per device (tuning/tune_lu.py).
+    // gpu_solve_min_rhs value meaning "never the GPU's triangular solves".
+    constexpr unsigned kLuNoLimit = 0xFFFFFFFFu;
+
+    struct LuPolicy {   // since 2.18.0
+        // The GPU iff n >= gpu_min_n (0: never) in a batch of at most
+        // gpu_max_batch (0: any).
+        unsigned gpu_min_n     = 2048;
+        unsigned gpu_max_batch = 0;
+        // solve: right-hand sides from which the GPU's blocked triangular
+        // solves take a GPU factorization's solve (below, LAPACK's sgetrs on
+        // the same memory).
+        unsigned gpu_solve_min_rhs = 16;
+        // Informational: the device this was resolved against.
+        unsigned gpu_cores = 0;
+    };
+
+    LuPolicy    lu_policy();
+    const char* lu_policy_source();   // as the other policies' sources
+    void        set_lu_policy(const LuPolicy& p);
+
+    enum class LuBackend { cpu, blocked };
+
+    // Where lu_factor, solve and inv go with an n x n problem in a batch.
+    // LU_DEVICE=gpu (or blocked) or =cpu forces it.
+    LuBackend lu_backend(unsigned n, unsigned batch);
+
     // -------------------------------------------------------------------------
     // Options of the lower-level entry points, for tests and tuning
     // -------------------------------------------------------------------------
@@ -931,6 +967,15 @@ namespace metal_linalg {
             void cholesky_threadgroup(const Matrices& a, bool upper, float* l, uint32_t* info);
             void cholesky_blocked(const Matrices& a, bool upper, float* l, uint32_t* info);
             void cholesky_cpu(const Matrices& a, bool upper, float* l, uint32_t* info);
+
+            // LU's backends, each as core::lu_factor, core::solve and
+            // core::inv (lu_cpu.mm, lu_gpu.mm).
+            void lu_factor_cpu(const Matrices& a, float* lu, uint32_t* pivots, uint32_t* info);
+            void lu_factor_blocked(const Matrices& a, float* lu, uint32_t* pivots, uint32_t* info);
+            void solve_cpu(const Matrices& a, const float* b, uint32_t nrhs, float* x, uint32_t* info);
+            void solve_blocked(const Matrices& a, const float* b, uint32_t nrhs, float* x, uint32_t* info);
+            void inv_cpu(const Matrices& a, float* x, uint32_t* info);
+            void inv_blocked(const Matrices& a, float* x, uint32_t* info);
         }
 
         // A = L L^T of `a.batch` symmetric positive definite matrices of n x
@@ -942,6 +987,24 @@ namespace metal_linalg {
         // included -- and then that matrix's output is all NaN. Not an
         // exception: one matrix that fails leaves the others' results.
         void cholesky(const Matrices& a, bool upper, float* l, uint32_t* info);
+
+        // P A = L U of `a.batch` n x n matrices with partial pivoting (since
+        // 2.18.0), as LAPACK's sgetrf and MLX's lu_factor: `lu` [batch, n, n]
+        // holds U on and above the diagonal and L below it (its unit diagonal
+        // implied), `pivots` [batch, n] the row swaps in order, 0-based (row i
+        // was swapped with row pivots[i]). `info` (may be null) [batch]: 0, or
+        // k > 0 where U's k-th diagonal entry is exactly zero (the
+        // factorization completes; the matrix is singular).
+        void lu_factor(const Matrices& a, float* lu, uint32_t* pivots, uint32_t* info);
+
+        // A X = B for `a.batch` n x n matrices: `b` and `x` [batch, n, nrhs]
+        // row-major. `info` as lu_factor's; a singular matrix's x holds
+        // infinities or NaN, as LAPACK's.
+        void solve(const Matrices& a, const float* b, uint32_t nrhs, float* x, uint32_t* info);
+
+        // A^-1 of `a.batch` n x n matrices: `x` [batch, n, n]. `info` as
+        // lu_factor's.
+        void inv(const Matrices& a, float* x, uint32_t* info);
 
     } // namespace core
 

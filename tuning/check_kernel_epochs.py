@@ -20,7 +20,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import kernels   # noqa: E402
 
-NAMES = {"qr": "QR", "eigh": "eigh", "svd": "SVD", "cholesky": "Cholesky"}
+NAMES = {"qr": "QR", "eigh": "eigh", "svd": "SVD", "cholesky": "Cholesky", "lu": "LU"}
 
 
 def git(*args):

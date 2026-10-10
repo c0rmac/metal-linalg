@@ -170,6 +170,7 @@ metal_linalg_add_shader(Svd_BlockJacobi  FLAGS -fno-fast-math DEPENDS eigh_jacob
 metal_linalg_add_shader(Svd_Bidiag       FLAGS -fno-fast-math)
 metal_linalg_add_shader(Svd_GolubKahan)   # fast math: see Svd_GolubKahan.metal
 metal_linalg_add_shader(Cholesky)   # fast math, precise pivots: see Cholesky.metal
+metal_linalg_add_shader(LU)
 
 get_property(_ml_embedded GLOBAL PROPERTY METAL_LINALG_EMBEDDED_SOURCES)
 get_property(_ml_metallibs GLOBAL PROPERTY METAL_LINALG_METALLIBS)
@@ -221,6 +222,9 @@ add_library(metal_linalg ${_ml_kind}
     src/cholesky.mm
     src/cholesky_gpu.mm
     src/cholesky_cpu.mm
+    src/lu.mm
+    src/lu_gpu.mm
+    src/lu_cpu.mm
     src/c_api.cpp
     src/c_api_metal.mm
     ${_ml_embedded}
@@ -321,10 +325,12 @@ if (METAL_LINALG_BUILD_TESTS)
     metal_linalg_add_tool(test_eigh tests/test_eigh.cpp)
     metal_linalg_add_tool(test_svd  tests/test_svd.cpp)
     metal_linalg_add_tool(test_cholesky tests/test_cholesky.cpp)
+    metal_linalg_add_tool(test_lu tests/test_lu.cpp)
     add_test(NAME qr_correctness   COMMAND test_qr)
     add_test(NAME eigh_correctness COMMAND test_eigh)
     add_test(NAME svd_correctness  COMMAND test_svd)
     add_test(NAME cholesky_correctness COMMAND test_cholesky)
+    add_test(NAME lu_correctness COMMAND test_lu)
 
     # The buffer core on its own, without MLX, and the C API compiled as C.
     add_executable(test_core tests/test_core.cpp)
@@ -347,7 +353,7 @@ if (METAL_LINALG_BUILD_TESTS)
     target_include_directories(test_estimate PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(test_estimate PRIVATE metal_linalg)
     add_test(NAME estimate COMMAND test_estimate)
-    foreach (_t qr eigh svd cholesky)
+    foreach (_t qr eigh svd cholesky lu)
         add_test(NAME ${_t}_correctness_estimated COMMAND test_${_t})
         set_tests_properties(${_t}_correctness_estimated PROPERTIES
                              ENVIRONMENT "METAL_LINALG_ESTIMATE_AS=Apple M1:8:8")
@@ -357,6 +363,7 @@ if (METAL_LINALG_BUILD_TESTS)
     metal_linalg_add_tool(benchmark_eigh benchmarks/benchmark_eigh.cpp)
     metal_linalg_add_tool(benchmark_svd  benchmarks/benchmark_svd.cpp)
     metal_linalg_add_tool(benchmark_cholesky benchmarks/benchmark_cholesky.cpp)
+    metal_linalg_add_tool(benchmark_lu benchmarks/benchmark_lu.cpp)
 
     # Tuning harnesses: run these when porting to a different Apple GPU, since
     # core count and per-core throughput set every routing crossover; see
@@ -365,6 +372,7 @@ if (METAL_LINALG_BUILD_TESTS)
     metal_linalg_add_tool(sweep_eigh tuning/sweep_eigh.cpp)
     metal_linalg_add_tool(sweep_svd  tuning/sweep_svd.cpp)
     metal_linalg_add_tool(sweep_cholesky tuning/sweep_cholesky.cpp)
+    metal_linalg_add_tool(sweep_lu tuning/sweep_lu.cpp)
 
     metal_linalg_add_tool(probe_occupancy tuning/probe_occupancy.mm)
     target_include_directories(probe_occupancy PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")

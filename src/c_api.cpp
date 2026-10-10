@@ -77,6 +77,8 @@ const char* name(SvdBackend b) {
     }
 }
 
+const char* name(LuBackend b) { return b == LuBackend::blocked ? "blocked" : "cpu"; }
+
 const char* name(CholeskyBackend b) {
     switch (b) {
         case CholeskyBackend::simd:        return "simd";
@@ -138,6 +140,34 @@ metal_linalg_status metal_linalg_cholesky(const float* a, uint32_t batch, uint32
     });
 }
 
+metal_linalg_status metal_linalg_lu_factor(const float* a, uint32_t batch, uint32_t n, float* lu,
+                                           uint32_t* pivots, uint32_t* info) {
+    return guarded([&] {
+        require(present(a, (uint64_t)batch * n * n), "[lu_factor] a is NULL");
+        require(present(lu, (uint64_t)batch * n * n), "[lu_factor] lu is NULL");
+        require(present(pivots, (uint64_t)batch * n), "[lu_factor] pivots is NULL");
+        core::lu_factor({a, batch, n, n}, lu, pivots, info);
+    });
+}
+
+metal_linalg_status metal_linalg_solve(const float* a, uint32_t batch, uint32_t n, const float* b,
+                                       uint32_t nrhs, float* x, uint32_t* info) {
+    return guarded([&] {
+        require(present(a, (uint64_t)batch * n * n), "[solve] a is NULL");
+        require(present(b, (uint64_t)batch * n * nrhs), "[solve] b is NULL");
+        require(present(x, (uint64_t)batch * n * nrhs), "[solve] x is NULL");
+        core::solve({a, batch, n, n}, b, nrhs, x, info);
+    });
+}
+
+metal_linalg_status metal_linalg_inv(const float* a, uint32_t batch, uint32_t n, float* x, uint32_t* info) {
+    return guarded([&] {
+        require(present(a, (uint64_t)batch * n * n), "[inv] a is NULL");
+        require(present(x, (uint64_t)batch * n * n), "[inv] x is NULL");
+        core::inv({a, batch, n, n}, x, info);
+    });
+}
+
 metal_linalg_status metal_linalg_svd(const float* a, uint32_t batch, uint32_t rows, uint32_t cols,
                                      float* u, float* s, float* vt, uint32_t* info) {
     return guarded([&] {
@@ -176,6 +206,21 @@ const char* metal_linalg_svdvals_backend(uint32_t rows, uint32_t cols, uint32_t 
 }
 const char* metal_linalg_cholesky_backend(uint32_t n, uint32_t batch) {
     return name(cholesky_backend(n, batch));
+}
+const char* metal_linalg_lu_backend(uint32_t n, uint32_t batch) { return name(lu_backend(n, batch)); }
+
+metal_linalg_lu_policy metal_linalg_lu_policy_get(void) {
+    const LuPolicy p = lu_policy();
+    return {p.gpu_min_n, p.gpu_max_batch, p.gpu_solve_min_rhs, p.gpu_cores};
+}
+
+void metal_linalg_lu_policy_set(const metal_linalg_lu_policy* c) {
+    if (!c) return;
+    LuPolicy p = lu_policy();
+    p.gpu_min_n         = c->gpu_min_n;
+    p.gpu_max_batch     = c->gpu_max_batch;
+    p.gpu_solve_min_rhs = c->gpu_solve_min_rhs;
+    set_lu_policy(p);
 }
 
 metal_linalg_cholesky_policy metal_linalg_cholesky_policy_get(void) {
@@ -329,5 +374,6 @@ const char* metal_linalg_qr_policy_source(void)   { return qr_policy_source(); }
 const char* metal_linalg_eigh_policy_source(void) { return eigh_policy_source(); }
 const char* metal_linalg_svd_policy_source(void)  { return svd_policy_source(); }
 const char* metal_linalg_cholesky_policy_source(void) { return cholesky_policy_source(); }
+const char* metal_linalg_lu_policy_source(void) { return lu_policy_source(); }
 
 } // extern "C"

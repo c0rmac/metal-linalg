@@ -41,6 +41,9 @@ _qr = _fn("metal_linalg_qr_with_mode", ctypes.c_int, _f32p, _u32, _u32, _u32, ct
 _eigh = _fn("metal_linalg_eigh", ctypes.c_int, _f32p, _u32, _u32, ctypes.c_int, _f32p, _f32p, _u32p)
 _svd = _fn("metal_linalg_svd", ctypes.c_int, _f32p, _u32, _u32, _u32, _f32p, _f32p, _f32p, _u32p)
 _cholesky = _fn("metal_linalg_cholesky", ctypes.c_int, _f32p, _u32, _u32, ctypes.c_int, _f32p, _u32p)
+_lu_factor = _fn("metal_linalg_lu_factor", ctypes.c_int, _f32p, _u32, _u32, _f32p, _u32p, _u32p)
+_solve = _fn("metal_linalg_solve", ctypes.c_int, _f32p, _u32, _u32, _f32p, _u32, _f32p, _u32p)
+_inv = _fn("metal_linalg_inv", ctypes.c_int, _f32p, _u32, _u32, _f32p, _u32p)
 buffer_contents = _fn("metal_linalg_buffer_contents", ctypes.c_void_p,
                       ctypes.c_void_p, ctypes.c_uint64, ctypes.c_uint64)
 know_buffer = _fn("metal_linalg_know_buffer", ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)
@@ -59,11 +62,13 @@ eigvalsh_backend = _fn("metal_linalg_eigvalsh_backend", _cstr, _u32, _u32)
 svd_backend = _fn("metal_linalg_svd_backend", _cstr, _u32, _u32, _u32)
 svdvals_backend = _fn("metal_linalg_svdvals_backend", _cstr, _u32, _u32, _u32)
 cholesky_backend = _fn("metal_linalg_cholesky_backend", _cstr, _u32, _u32)
+lu_backend = _fn("metal_linalg_lu_backend", _cstr, _u32, _u32)
 
 qr_policy_source = _fn("metal_linalg_qr_policy_source", _cstr)
 eigh_policy_source = _fn("metal_linalg_eigh_policy_source", _cstr)
 svd_policy_source = _fn("metal_linalg_svd_policy_source", _cstr)
 cholesky_policy_source = _fn("metal_linalg_cholesky_policy_source", _cstr)
+lu_policy_source = _fn("metal_linalg_lu_policy_source", _cstr)
 
 
 def _struct(name, fields):
@@ -95,12 +100,13 @@ SVD_FIELDS = ("qr_min_rows", "qr_min_k", "block_min_k", "block_min_k_batched", "
               "share_min_k")
 CHOLESKY_FIELDS = ("simd_max_n", "blocked_min_n", "blocked_max_batch", "gpu_max_n", "gpu_min_batch_times_n",
                    "gpu_min_batch", "gpu_min_n", "gpu_large_min_n", "gpu_large_max_batch", "gpu_cores")
+LU_FIELDS = ("gpu_min_n", "gpu_max_batch", "gpu_solve_min_rhs", "gpu_cores")
 # Read back but ignored when set.
 INFORMATIONAL = {"gpu_cores", "concurrent_matrices"}
 
 POLICIES = {}
 for _what, _fields in (("qr", QR_FIELDS), ("eigh", EIGH_FIELDS), ("svd", SVD_FIELDS),
-                       ("cholesky", CHOLESKY_FIELDS)):
+                       ("cholesky", CHOLESKY_FIELDS), ("lu", LU_FIELDS)):
     _S = _struct(f"{_what}_policy", _fields)
     POLICIES[_what] = (_S, _fields, _fn(f"metal_linalg_{_what}_policy_get", _S),
                        _fn(f"metal_linalg_{_what}_policy_set", None, ctypes.POINTER(_S)))
@@ -159,6 +165,21 @@ def svd(a, batch, rows, cols, u, s, vt):
 def cholesky(a, batch, n, upper, l, info):
     with lock:
         check(_cholesky(a, batch, n, 1 if upper else 0, l, info), "cholesky")
+
+
+def lu_factor(a, batch, n, lu, pivots, info):
+    with lock:
+        check(_lu_factor(a, batch, n, lu, pivots, info), "lu_factor")
+
+
+def solve(a, batch, n, b, nrhs, x, info):
+    with lock:
+        check(_solve(a, batch, n, b, nrhs, x, info), "solve")
+
+
+def inv(a, batch, n, x, info):
+    with lock:
+        check(_inv(a, batch, n, x, info), "inv")
 
 
 def text(s):

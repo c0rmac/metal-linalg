@@ -1,0 +1,43 @@
+{
+ "policy": {
+  "device": "Apple M5 Pro",
+  "gpu_cores": 20,
+  "source": "default:untuned-device (Apple M5 Pro)",
+  "cpu_threads": 18,
+  "gpu_min_n": 2048,
+  "gpu_max_batch": 0,
+  "gpu_solve_min_rhs": 16
+ },
+ "machine": {
+  "start": {
+   "load_1m": 3.056640625,
+   "cpus": 18,
+   "power": "mains",
+   "low_power_mode": 0,
+   "busy_processes": 0
+  },
+  "end": {
+   "load_1m": 3.30224609375,
+   "cpus": 18,
+   "power": "mains",
+   "low_power_mode": 0,
+   "busy_processes": 0
+  }
+ },
+ "drift": {
+  "before_ms": {
+   "cpu": 6.863958,
+   "blocked": 4.8785
+  },
+  "after_ms": {
+   "cpu": 6.692667,
+   "blocked": 4.776292
+  },
+  "ratio": {
+   "cpu": 0.9750448647850117,
+   "blocked": 0.9790492979399406
+  },
+  "worst": 1.0255938327724956,
+  "ok": true
+ }
+}

@@ -46,6 +46,7 @@ def check(wheel):
             errors.append(f"architectures {archs}")
         syms = subprocess.run(["nm", "-gU", lib], capture_output=True, text=True).stdout
         for sym in ("_metal_linalg_qr", "_metal_linalg_eigh", "_metal_linalg_svd", "_metal_linalg_cholesky",
+                    "_metal_linalg_lu_factor", "_metal_linalg_solve", "_metal_linalg_inv",
                     "_metal_linalg_calibration_message",
                     "_metal_linalg_buffer_contents"):
             if sym not in syms.split():

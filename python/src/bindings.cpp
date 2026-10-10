@@ -56,6 +56,7 @@ const char* name(ml::SvdBackend b) {
         default:                           return "qr_block_jacobi";
     }
 }
+const char* name(ml::LuBackend b) { return b == ml::LuBackend::blocked ? "blocked" : "cpu"; }
 const char* name(ml::CholeskyBackend b) {
     switch (b) {
         case ml::CholeskyBackend::simd:        return "simd";
@@ -92,6 +93,7 @@ const char* name(ml::CholeskyBackend b) {
 #define CHOLESKY_FIELDS(X) X(simd_max_n) X(blocked_min_n) X(blocked_max_batch) X(gpu_max_n) \
                            X(gpu_min_batch_times_n) X(gpu_min_batch) X(gpu_min_n) X(gpu_large_min_n) \
                            X(gpu_large_max_batch) X(gpu_cores)
+#define LU_FIELDS(X) X(gpu_min_n) X(gpu_max_batch) X(gpu_solve_min_rhs) X(gpu_cores)
 
 #define TO_DICT(f) d[#f] = p.f;
 #define FROM_DICT(f) if (key == #f) { p.f = nb::cast<unsigned>(value); return; }
@@ -122,6 +124,18 @@ NB_MODULE(_core, m) {
         ml::CholeskyResult r = ml::cholesky_ex_accelerated(a, upper);
         return std::make_pair(r.l, r.info);
     }, "a"_a, "upper"_a = false);
+    m.def("lu_factor", [](const mlx::core::array& a) {
+        ml::LuResult r = ml::lu_factor_ex_accelerated(a);
+        return std::make_tuple(r.lu, r.pivots, r.info);
+    }, "a"_a);
+    m.def("solve", [](const mlx::core::array& a, const mlx::core::array& b) {
+        ml::SolveResult r = ml::solve_ex_accelerated(a, b);
+        return std::make_pair(r.x, r.info);
+    }, "a"_a, "b"_a);
+    m.def("inv", [](const mlx::core::array& a) {
+        ml::SolveResult r = ml::inv_ex_accelerated(a);
+        return std::make_pair(r.x, r.info);
+    }, "a"_a);
 
     m.def("device_name", [] { return std::string(ml::device_name()); });
     m.def("gpu_core_count", &ml::gpu_core_count);
@@ -143,16 +157,20 @@ NB_MODULE(_core, m) {
         return name(ml::svdvals_backend(rows, cols, batch)); }, "m"_a, "n"_a, "batch"_a = 1);
     m.def("cholesky_backend", [](unsigned n, unsigned batch) {
         return name(ml::cholesky_backend(n, batch)); }, "n"_a, "batch"_a = 1);
+    m.def("lu_backend", [](unsigned n, unsigned batch) {
+        return name(ml::lu_backend(n, batch)); }, "n"_a, "batch"_a = 1);
 
     m.def("qr_policy_source", [] { return std::string(ml::qr_policy_source()); });
     m.def("eigh_policy_source", [] { return std::string(ml::eigh_policy_source()); });
     m.def("svd_policy_source", [] { return std::string(ml::svd_policy_source()); });
     m.def("cholesky_policy_source", [] { return std::string(ml::cholesky_policy_source()); });
+    m.def("lu_policy_source", [] { return std::string(ml::lu_policy_source()); });
 
     m.def("qr_policy", [] { auto p = ml::qr_policy(); nb::dict d; QR_FIELDS(TO_DICT) return d; });
     m.def("eigh_policy", [] { auto p = ml::eigh_policy(); nb::dict d; EIGH_FIELDS(TO_DICT) return d; });
     m.def("svd_policy", [] { auto p = ml::svd_policy(); nb::dict d; SVD_FIELDS(TO_DICT) return d; });
     m.def("cholesky_policy", [] { auto p = ml::cholesky_policy(); nb::dict d; CHOLESKY_FIELDS(TO_DICT) return d; });
+    m.def("lu_policy", [] { auto p = ml::lu_policy(); nb::dict d; LU_FIELDS(TO_DICT) return d; });
 
     m.def("set_qr_policy", [](const nb::dict& d) {
         ml::set_qr_policy(from_dict(ml::qr_policy(), d, [](ml::QrPolicy& p, const std::string& key, nb::handle value) {
@@ -177,6 +195,12 @@ NB_MODULE(_core, m) {
                                           [](ml::CholeskyPolicy& p, const std::string& key, nb::handle value) {
             CHOLESKY_FIELDS(FROM_DICT)
             throw nb::key_error(("unknown Cholesky policy field: " + key).c_str());
+        }));
+    }, "policy"_a);
+    m.def("set_lu_policy", [](const nb::dict& d) {
+        ml::set_lu_policy(from_dict(ml::lu_policy(), d, [](ml::LuPolicy& p, const std::string& key, nb::handle value) {
+            LU_FIELDS(FROM_DICT)
+            throw nb::key_error(("unknown LU policy field: " + key).c_str());
         }));
     }, "policy"_a);
 }

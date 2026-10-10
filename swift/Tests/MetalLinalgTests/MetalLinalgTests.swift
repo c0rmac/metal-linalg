@@ -291,6 +291,32 @@ final class MetalLinalgTests: XCTestCase {
         XCTAssertEqual(choleskyPolicySource, "user")
     }
 
+    func testLU() throws {
+        // [[1, 2], [3, 4]]: the rows swapped, L = [[1, 0], [1/3, 1]], U = [[3, 4], [0, 2/3]]
+        let a: [Float] = [1, 2, 3, 4,   1, 2, 2, 4]
+        let (lu, pivots, info) = try luFactorAccelerated(a, batch: 2, n: 2)
+        XCTAssertEqual(pivots[0], 1)
+        XCTAssertEqual(info, [0, 2])
+        XCTAssertEqual(lu[0], 3, accuracy: 1e-6)
+        XCTAssertEqual(lu[2], 1.0 / 3.0, accuracy: 1e-6)
+        let (x, _) = try solveAccelerated(Array(a[0..<4]), [5, 6], n: 2)
+        XCTAssertEqual(x[0], -4, accuracy: 1e-5)
+        XCTAssertEqual(x[1], 4.5, accuracy: 1e-5)
+        let (inverse, inverseInfo) = try invAccelerated(a, batch: 2, n: 2)
+        XCTAssertEqual(inverse[0], -2, accuracy: 1e-5)
+        XCTAssertEqual(inverse[3], -0.5, accuracy: 1e-5)
+        XCTAssertTrue(inverse[4].isNaN)
+        XCTAssertEqual(inverseInfo, [0, 2])
+        XCTAssertTrue(["cpu", "blocked"].contains(luBackend(n: 4096)))
+        let measured = luPolicy
+        defer { luPolicy = measured }
+        var p = measured
+        p.gpu_min_n = 0
+        luPolicy = p
+        XCTAssertEqual(luBackend(n: 8192), "cpu")
+        XCTAssertEqual(luPolicySource, "user")
+    }
+
     func testNaNStaysInItsMatrix() throws {
         var a: [Float] = [2, 1, 1, 2,  .nan, 0, 0, 1,  3, 0, 0, 4]
         let w = try eigvalshAccelerated(a, batch: 3, n: 2)
