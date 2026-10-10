@@ -718,6 +718,21 @@ The same can be done without recompiling through environment variables, e.g.
 `EIGH_GPU_MIN_BATCH=1` or `SVD_DEVICE=gpu`; [docs/tuning.md](docs/tuning.md)
 lists them.
 
+To keep a thread's work on the CPU, whatever the policies say, turn on CPU
+only for it (since 2.19.0): every call that thread makes then takes its CPU
+path, and the `*_backend()` queries answer `cpu`. It is per thread, so a
+framework can honour a CPU device without affecting calls elsewhere:
+
+```cpp
+{
+    metal_linalg::CpuOnly cpu;   // or set_cpu_only(true) / set_cpu_only(false)
+    auto l = metal_linalg::cholesky_accelerated(a);   // LAPACK, never the GPU
+}
+```
+
+C: `metal_linalg_set_cpu_only(1)`; Python and PyTorch: `with ml.CpuOnly():`
+(or `set_cpu_only`); Swift: `withCPUOnly { ... }` or `cpuOnly = true`.
+
 ## Reference
 
 ### API at a glance
@@ -731,7 +746,7 @@ lists them.
 | `<metal_linalg/triangular.h>` | `solve_triangular_accelerated(a, b, upper, unit_diagonal)`; `TrsmPolicy`, `trsm_policy()`, `set_trsm_policy()`, `trsm_policy_source()`; `trsm_backend(n, k, batch)` |
 | `<metal_linalg/lu.h>` | `lu_factor_accelerated(a)`, `solve_accelerated(a, b)`, `inv_accelerated(a)` and `_ex` forms (with `info`); `LuPolicy`, `lu_policy()`, `set_lu_policy()`, `lu_policy_source()`; `lu_backend(n, batch)` |
 | `<metal_linalg/cholesky.h>` | `cholesky_accelerated(a, upper)`, `cholesky_ex_accelerated` (with `info`); `CholeskyPolicy`, `cholesky_policy()`, `set_cholesky_policy()`, `cholesky_policy_source()`; `cholesky_backend(n, batch)` |
-| `<metal_linalg/device.h>` | `device_name()`, `gpu_core_count()`: the GPU the policies were resolved for; `cpu_threads()`, `set_cpu_threads()`: how many cores the CPU paths spread a batch over |
+| `<metal_linalg/device.h>` | `device_name()`, `gpu_core_count()`: the GPU the policies were resolved for; `cpu_threads()`, `set_cpu_threads()`: how many cores the CPU paths spread a batch over; `set_cpu_only()`, `cpu_only()`, `CpuOnly`: this thread's calls on the CPU paths alone |
 | `<metal_linalg/core.h>` | the same on float buffers, without MLX: `core::qr`, `core::eigh`, `core::svd`, `core::cholesky`, `core::lu_factor`, `core::solve`, `core::inv`, `core::solve_triangular`; the policies, backends and options |
 | `<metal_linalg/c_api.h>` | the C API: `metal_linalg_qr`, `_qr_with_mode`, `_eigh`, `_svd`, `_cholesky`, `_lu_factor`, `_solve`, `_inv`, `_solve_triangular`, the routing queries and policies |
 

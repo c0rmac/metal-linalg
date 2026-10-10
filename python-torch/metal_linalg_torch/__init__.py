@@ -30,7 +30,8 @@ from ._build import version as __version__
 __all__ = [
     "qr", "eigh", "eigvalsh", "svd", "svdvals", "cholesky", "cholesky_ex",
     "lu_factor", "lu_factor_ex", "solve", "solve_ex", "inv", "inv_ex", "solve_triangular",
-    "device_name", "gpu_core_count", "cpu_threads", "set_cpu_threads", "mps_in_place",
+    "device_name", "gpu_core_count", "cpu_threads", "set_cpu_threads", "cpu_only", "set_cpu_only", "CpuOnly",
+    "mps_in_place",
     "qr_backend", "eigh_backend", "eigvalsh_backend", "svd_backend", "svdvals_backend", "cholesky_backend", "lu_backend", "trsm_backend",
     "qr_policy", "eigh_policy", "svd_policy", "cholesky_policy", "lu_policy", "trsm_policy",
     "set_qr_policy", "set_eigh_policy", "set_svd_policy", "set_cholesky_policy", "set_lu_policy", "set_trsm_policy",
@@ -358,6 +359,40 @@ def set_cpu_threads(n):
     on threads of its own; 0 restores every core. ``METAL_LINALG_CPU_THREADS``
     sets it from the environment."""
     _lib.set_cpu_threads(int(n))
+
+
+def cpu_only():
+    """Whether this thread's calls are kept on the CPU (:func:`set_cpu_only`)."""
+    return bool(_lib.cpu_only())
+
+
+def set_cpu_only(on):
+    """CPU only, for the calling thread: while on, its calls take their CPU
+    paths and never the GPU, whatever the routing policies and the
+    ``*_DEVICE`` environment variables say, and the ``*_backend`` queries
+    answer the same; an MPS tensor's results still come back on MPS. For work
+    meant to stay on the CPU. Other threads are not affected (nor is autograd's
+    backward pass where torch runs it on a thread of its own); off by default.
+    :class:`CpuOnly` turns it on for a ``with`` block."""
+    _lib.set_cpu_only(1 if on else 0)
+
+
+class CpuOnly:
+    """``with CpuOnly(): ...`` keeps the block's calls on the CPU
+    (:func:`set_cpu_only`), then restores the setting before it."""
+
+    def __init__(self, on=True):
+        self._on = bool(on)
+        self._previous = None
+
+    def __enter__(self):
+        self._previous = cpu_only()
+        set_cpu_only(self._on)
+        return self
+
+    def __exit__(self, *exc):
+        set_cpu_only(self._previous)
+        return False
 
 
 def mps_in_place():

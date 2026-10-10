@@ -199,6 +199,8 @@ const char* metal_linalg_calibration_message(const char* decomposition) {
 uint32_t    metal_linalg_gpu_core_count(void) { return gpu_core_count(); }
 void        metal_linalg_set_cpu_threads(uint32_t n) { set_cpu_threads(n); }
 uint32_t    metal_linalg_cpu_threads(void) { return cpu_threads(); }
+void        metal_linalg_set_cpu_only(int on) { set_cpu_only(on != 0); }
+int         metal_linalg_cpu_only(void) { return cpu_only() ? 1 : 0; }
 
 const char* metal_linalg_qr_backend(uint32_t rows, uint32_t cols, uint32_t batch) {
     return name(qr_backend(rows, cols, batch));

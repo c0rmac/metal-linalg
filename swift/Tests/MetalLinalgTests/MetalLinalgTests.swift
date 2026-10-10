@@ -317,6 +317,37 @@ final class MetalLinalgTests: XCTestCase {
         XCTAssertEqual(luPolicySource, "user")
     }
 
+    func testCPUOnly() throws {
+        let measured = luPolicy
+        defer { luPolicy = measured; cpuOnly = false }
+        var p = measured
+        p.gpu_min_n = 100; p.gpu_max_batch = 0
+        luPolicy = p
+        XCTAssertFalse(cpuOnly)
+        XCTAssertEqual(luBackend(n: 200, batch: 2), "blocked")
+        let n = 200
+        var a = values(n * n, seed: 91)
+        for i in 0..<n { a[i * n + i] += 30 }
+        let inverse = try withCPUOnly { () throws -> [Float] in
+            XCTAssertTrue(cpuOnly)
+            XCTAssertEqual(luBackend(n: 200, batch: 2), "cpu")
+            XCTAssertEqual(choleskyBackend(n: 4096), "cpu")
+            XCTAssertEqual(eighBackend(n: 32, batch: 4096), "cpu")
+            // another thread is not affected
+            var other = ""
+            let done = DispatchSemaphore(value: 0)
+            let t = Thread { other = luBackend(n: 200, batch: 2); done.signal() }
+            t.start()
+            done.wait()
+            XCTAssertEqual(other, "blocked")
+            return try invAccelerated(a, n: n).x
+        }
+        let product = multiply(a[0..<(n * n)], inverse[0..<(n * n)], n, n, n)
+        for i in 0..<n { for j in 0..<n { XCTAssertEqual(product[i * n + j], i == j ? 1 : 0, accuracy: 1e-3) } }
+        XCTAssertFalse(cpuOnly)
+        XCTAssertEqual(luBackend(n: 200, batch: 2), "blocked")
+    }
+
     func testSolveTriangular() throws {
         // [[2, 0], [1, 4]] x = [2, 9]: x = (1, 2); its transpose, [[2, 1], [0, 4]] x = [4, 8]: (1, 2)
         let lower: [Float] = [2, 99, 1, 4]   // 99 above the diagonal: never read

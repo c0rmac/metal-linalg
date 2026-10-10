@@ -166,6 +166,7 @@ CholeskyBackend cholesky_gpu_backend(unsigned n, unsigned batch) {
 }
 
 CholeskyBackend cholesky_backend(unsigned n, unsigned batch) {
+    if (cpu_only()) return CholeskyBackend::cpu;   // this thread's setting (device.h), ahead of CHOLESKY_DEVICE
     if (const char* e = std::getenv("CHOLESKY_DEVICE")) {
         const std::string s = e;
         if (s == "cpu") return CholeskyBackend::cpu;

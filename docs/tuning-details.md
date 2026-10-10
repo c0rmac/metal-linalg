@@ -398,6 +398,8 @@ and [`studies/svd-design-notes.md`](studies/svd-design-notes.md).
 
 **Environment overrides.** All take effect without a rebuild and are reported
 in the policy source.
+A thread with CPU only on (`set_cpu_only`, `CpuOnly`; since 2.19.0) takes
+the CPU path whatever these say, the `*_DEVICE` variables included.
 
 | variable | effect |
 |---|---|

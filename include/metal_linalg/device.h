@@ -31,6 +31,28 @@ namespace metal_linalg {
     void     set_cpu_threads(unsigned n);
     unsigned cpu_threads();
 
+    // CPU only, for one thread (since 2.19.0). While it is on, every call
+    // this thread makes takes its CPU path (LAPACK through Accelerate, a batch
+    // over cpu_threads() threads) and never the GPU, whatever the routing
+    // policies and the *_DEVICE environment variables say, and the *_backend()
+    // queries answer the same. For a caller whose work is meant to stay on the
+    // CPU, such as a framework's CPU device. Other threads are not affected;
+    // off by default. CpuOnly turns it on for a scope.
+    void set_cpu_only(bool on);
+    bool cpu_only();
+
+    // set_cpu_only(on) for this object's lifetime, then the setting before it.
+    class CpuOnly {
+    public:
+        explicit CpuOnly(bool on = true) : previous_(cpu_only()) { set_cpu_only(on); }
+        ~CpuOnly() { set_cpu_only(previous_); }
+        CpuOnly(const CpuOnly&) = delete;
+        CpuOnly& operator=(const CpuOnly&) = delete;
+
+    private:
+        bool previous_;
+    };
+
     // Calibration notices. When a decomposition's routing policy is first
     // resolved on a Mac without measurements for it, or with measurements
     // that are stale (taken on older kernels) or incomplete (from before a

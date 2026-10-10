@@ -8,6 +8,8 @@
 //          values-only equal to values-with-vectors
 //   Cholesky  reconstruction, the other triangle exactly zero, info, lower
 //          and upper
+//   CPU only  set_cpu_only / CpuOnly: every router answers the CPU on this
+//          thread, ahead of policies and *_DEVICE, and on no other thread
 //
 // plus a NaN matrix in a batch (NaN there, nothing elsewhere), input that is
 // not page-aligned (the copy path), rank deficiency, and two shapes that pad
@@ -16,14 +18,17 @@
 // suites (test_qr, test_eigh, test_svd, test_cholesky) test in depth.
 
 #include <metal_linalg/core.h>
+#include <metal_linalg/device.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <random>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace metal_linalg;
@@ -561,6 +566,61 @@ int main() {
         report("calibration_notices() reflects the switch", "", !calibration_notices());
         set_calibration_notices(true);
         report("calibration_notices() back on", "", calibration_notices());
+    }
+
+    std::printf("\n[ CPU only, this thread ]\n");
+    {
+        // A Cholesky policy and *_DEVICE settings that send every call of
+        // these shapes to the GPU, which CPU only must override
+        const CholeskyPolicy measured = cholesky_policy();
+        CholeskyPolicy all = measured;
+        all.gpu_max_n = 0xFFFFFFFFu;
+        all.gpu_min_batch_times_n = 0;
+        all.gpu_min_batch = 1;
+        all.gpu_min_n = 0;
+        set_cholesky_policy(all);
+        const char* vars[] = {"QR_DEVICE", "EIGH_DEVICE", "SVD_DEVICE", "LU_DEVICE", "TRSM_DEVICE"};
+        for (const char* v : vars) setenv(v, "gpu", 1);
+        auto all_cpu = [] {
+            return qr_backend(64, 64, 4096) == QrBackend::cpu && eigh_backend(32, 4096) == EighBackend::cpu &&
+                   eigvalsh_backend(4096, 1) == EighBackend::cpu && svd_backend(1024, 64, 64) == SvdBackend::cpu &&
+                   svdvals_backend(4096, 4096, 1) == SvdBackend::cpu &&
+                   cholesky_backend(300, 2) == CholeskyBackend::cpu && lu_backend(64, 1) == LuBackend::cpu &&
+                   trsm_backend(64, 64, 1) == TrsmBackend::cpu;
+        };
+        auto none_cpu = [] {
+            return qr_backend(64, 64, 4096) != QrBackend::cpu && eigh_backend(32, 4096) != EighBackend::cpu &&
+                   svd_backend(1024, 64, 64) != SvdBackend::cpu && cholesky_backend(300, 2) != CholeskyBackend::cpu &&
+                   lu_backend(64, 1) == LuBackend::blocked && trsm_backend(64, 64, 1) == TrsmBackend::blocked;
+        };
+        report("CPU only is off by default", "", !cpu_only());
+        report("the GPU without it, under these settings", "", none_cpu());
+        {
+            CpuOnly scope;
+            report("on in a CpuOnly scope", "", cpu_only());
+            report("every router answers the CPU", "", all_cpu());
+            check_cholesky("cholesky routed, CPU only", core::cholesky, 2, 300, 91);
+            bool other_on = true, other_gpu = false;
+            std::thread t([&] {
+                other_on = cpu_only();
+                other_gpu = cholesky_backend(300, 2) != CholeskyBackend::cpu;
+            });
+            t.join();
+            report("another thread is not affected", "", !other_on && other_gpu);
+            {
+                CpuOnly off(false);
+                report("CpuOnly(false) inside turns it off", "", !cpu_only() && none_cpu());
+            }
+            report("and the scope's setting is back after it", "", cpu_only());
+        }
+        report("off again after the scope", "", !cpu_only() && none_cpu());
+        set_cpu_only(true);
+        report("set_cpu_only(true)", "", cpu_only() && all_cpu());
+        set_cpu_only(false);
+        report("set_cpu_only(false)", "", !cpu_only() && none_cpu());
+        for (const char* v : vars) unsetenv(v);
+        set_cholesky_policy(measured);
+        std::printf("  %s\n", g_failures ? "see FAIL lines" : "ok    routers, scopes and threads");
     }
 
     std::printf("\n%d checks, %d failed\n", g_checks, g_failures);

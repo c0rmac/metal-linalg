@@ -152,6 +152,14 @@ uint32_t    metal_linalg_gpu_core_count(void);
 void     metal_linalg_set_cpu_threads(uint32_t n);
 uint32_t metal_linalg_cpu_threads(void);
 
+/* CPU only, for the calling thread (since 2.19.0; see set_cpu_only in
+ * device.h): while non-zero, this thread's calls take their CPU paths and
+ * never the GPU, whatever the policies and the *_DEVICE environment variables
+ * say, and the *_backend queries below answer the same. Other threads are not
+ * affected; off by default. */
+void metal_linalg_set_cpu_only(int on);
+int  metal_linalg_cpu_only(void);
+
 /* The backend a call of that shape uses under the policy in effect, by name:
  *   QR    "cpu", "unblocked", "streaming_reduced"
  *   eigh  "cpu", "simd", "threadgroup", "block", "tridiag", "ql", "band", "tridiag_batch"

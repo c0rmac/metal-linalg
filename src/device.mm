@@ -91,6 +91,13 @@ unsigned cpu_threads() {
 }
 
 namespace {
+thread_local bool tls_cpu_only = false;
+} // namespace
+
+void set_cpu_only(bool on) { tls_cpu_only = on; }
+bool cpu_only()            { return tls_cpu_only; }
+
+namespace {
 std::atomic<bool> g_notices{true};
 constexpr const char* kContribute = "https://github.com/c0rmac/metal-linalg/blob/main/CONTRIBUTING.md";
 } // namespace

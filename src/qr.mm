@@ -251,6 +251,7 @@ unsigned qr_work_side(unsigned m, unsigned k) {
 // launch, and a lone or small-batch call is quicker in LAPACK. Large matrices
 // in small batches have a clause of their own (see QrPolicy).
 bool qr_uses_gpu(unsigned m, unsigned n, unsigned batch) {
+    if (cpu_only()) return false;   // this thread's setting (device.h), ahead of QR_DEVICE
     if (const char* e = std::getenv("QR_DEVICE")) {
         const std::string s = e;
         if (s == "gpu") return true;
