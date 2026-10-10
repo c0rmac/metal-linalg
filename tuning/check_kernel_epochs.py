@@ -49,6 +49,9 @@ def main():
         hits = [p for p in changed if kernels.touches(op, p)]
         if not hits:
             continue
+        if op not in before:   # a decomposition the base does not have
+            lines.append(f"- {name}: new, at kernel version {kernels.KERNEL_EPOCHS[op]}")
+            continue
         bumped = kernels.KERNEL_EPOCHS[op] != before.get(op, 1)
         if bumped:
             lines.append(f"- {name}: kernel version {before.get(op, 1)} -> {kernels.KERNEL_EPOCHS[op]} "
