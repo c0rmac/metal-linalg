@@ -71,6 +71,7 @@ pip install "git+https://github.com/c0rmac/metal-linalg.git#subdirectory=python-
 | `solve(A, B)` | `torch.linalg.solve` | `X`; `B` `[..., N, K]` or `[..., N]` with `A`'s batch shape (no broadcasting); raises `LinAlgError` if singular; differentiable |
 | `solve_ex(A, B)` / `inv_ex(A)` | `torch.linalg.solve_ex` / `inv_ex` | `(result, info)`; a singular matrix's result all NaN |
 | `inv(A)` | `torch.linalg.inv` | the inverse; raises `LinAlgError` if singular; differentiable |
+| `solve_triangular(A, B, *, upper, unitriangular=False)` | `torch.linalg.solve_triangular` | `X`, left solves only; differentiable (since 2.18.0) |
 | `cholesky_ex(A, upper=False, check_errors=False)` | `torch.linalg.cholesky_ex` | `(L, info)`, `info` int32; a failed matrix's `L` is all NaN (torch's holds a partial factor) |
 
 `A` is `[..., M, N]` with any number of batch dimensions, on `"cpu"` or
@@ -92,7 +93,7 @@ pip install "git+https://github.com/c0rmac/metal-linalg.git#subdirectory=python-
 ## Autograd and torch.compile
 
 Underneath, the functions are custom operators,
-`torch.ops.metal_linalg.{qr, eigh, eigvalsh, svd, svdvals, cholesky, lu_factor, solve, inv}`, with fake
+`torch.ops.metal_linalg.{qr, eigh, eigvalsh, svd, svdvals, cholesky, lu_factor, solve, inv, solve_triangular}`, with fake
 implementations and the backward formulas `torch.linalg` uses:
 
 ```python
@@ -142,6 +143,26 @@ eigenvalues or singular values alone (the last three by a two-stage
 reduction). Which
 backend a shape gets on your Mac: `mlt.svd_backend(m, n, batch)` and its
 siblings.
+
+The functions new in 2.18.0, where PyTorch 2.13 has MPS kernels of its own
+(`python benchmarks/benchmark_torch.py --new`, best of ten calls, two runs):
+
+| | torch, CPU | torch, MPS | metal-linalg-torch |
+|---|---|---|---|
+| cholesky, one 4096×4096 | 82 ms | 23 ms | 13 ms |
+| cholesky, 4 × 2048×2048 | 60 ms | 13 ms | 6.7 ms |
+| cholesky, 4096 × 32×32 | 1.3 ms | 1.3 ms | 0.38 ms |
+| lu_factor, one 4096×4096 | 68 ms | 59 ms | 15 ms |
+| lu_factor, 4 × 2048×2048 | 31 ms | 101 ms | 17 ms |
+| solve, one 4096×4096, 1 rhs | 73 ms | 285 ms | 19 ms |
+| solve, one 2048×2048, 512 rhs | 14 ms | 34 ms | 6.9 ms |
+| inv, one 4096×4096 | 154 ms | 135 ms | 40 ms |
+| inv, 1024 × 64×64 | 4.4 ms | 800 ms | 1.7 ms |
+| solve_triangular, 4096×4096, 4096 rhs | 58 ms | 37 ms | 14 ms |
+
+Ahead of torch's faster path on every row, by 1.8-3.9x (the batch of 32×32
+Cholesky factorizations is on this library's CPU path, whose `spotrf` calls
+are faster than torch's; the rest on the GPU).
 
 ## MPS tensors
 

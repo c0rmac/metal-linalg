@@ -34,7 +34,8 @@ work; `ml.cholesky(p, upper=False)` factors symmetric positive definite
 matrices (since 2.18.0; a matrix that is not comes back all NaN), and
 `ml.cholesky_ex(p)` also returns LAPACK's `info` for each; `ml.lu_factor`,
 `ml.solve` and `ml.inv` work as `mx.linalg`'s, on the GPU for large matrices,
-and their `_ex` forms return `info` too. The kernels and the routing are described in the
+and their `_ex` forms return `info` too; `ml.solve_triangular(a, b, upper=False)`
+as `mx.linalg.solve_triangular`. The kernels and the routing are described in the
 [main README](https://github.com/c0rmac/metal-linalg).
 
 ## Installing

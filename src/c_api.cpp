@@ -78,6 +78,7 @@ const char* name(SvdBackend b) {
 }
 
 const char* name(LuBackend b) { return b == LuBackend::blocked ? "blocked" : "cpu"; }
+const char* name(TrsmBackend b) { return b == TrsmBackend::blocked ? "blocked" : "cpu"; }
 
 const char* name(CholeskyBackend b) {
     switch (b) {
@@ -160,6 +161,16 @@ metal_linalg_status metal_linalg_solve(const float* a, uint32_t batch, uint32_t 
     });
 }
 
+metal_linalg_status metal_linalg_solve_triangular(const float* a, uint32_t batch, uint32_t n, const float* b,
+                                                  uint32_t nrhs, int upper, int unit, float* x) {
+    return guarded([&] {
+        require(present(a, (uint64_t)batch * n * n), "[solve_triangular] a is NULL");
+        require(present(b, (uint64_t)batch * n * nrhs), "[solve_triangular] b is NULL");
+        require(present(x, (uint64_t)batch * n * nrhs), "[solve_triangular] x is NULL");
+        core::solve_triangular({a, batch, n, n}, b, nrhs, upper != 0, unit != 0, x);
+    });
+}
+
 metal_linalg_status metal_linalg_inv(const float* a, uint32_t batch, uint32_t n, float* x, uint32_t* info) {
     return guarded([&] {
         require(present(a, (uint64_t)batch * n * n), "[inv] a is NULL");
@@ -208,6 +219,23 @@ const char* metal_linalg_cholesky_backend(uint32_t n, uint32_t batch) {
     return name(cholesky_backend(n, batch));
 }
 const char* metal_linalg_lu_backend(uint32_t n, uint32_t batch) { return name(lu_backend(n, batch)); }
+const char* metal_linalg_trsm_backend(uint32_t n, uint32_t nrhs, uint32_t batch) {
+    return name(trsm_backend(n, nrhs, batch));
+}
+
+metal_linalg_trsm_policy metal_linalg_trsm_policy_get(void) {
+    const TrsmPolicy p = trsm_policy();
+    return {p.gpu_min_n, p.gpu_min_rhs, p.gpu_max_batch, p.gpu_cores};
+}
+
+void metal_linalg_trsm_policy_set(const metal_linalg_trsm_policy* c) {
+    if (!c) return;
+    TrsmPolicy p = trsm_policy();
+    p.gpu_min_n     = c->gpu_min_n;
+    p.gpu_min_rhs   = c->gpu_min_rhs;
+    p.gpu_max_batch = c->gpu_max_batch;
+    set_trsm_policy(p);
+}
 
 metal_linalg_lu_policy metal_linalg_lu_policy_get(void) {
     const LuPolicy p = lu_policy();
@@ -375,5 +403,6 @@ const char* metal_linalg_eigh_policy_source(void) { return eigh_policy_source();
 const char* metal_linalg_svd_policy_source(void)  { return svd_policy_source(); }
 const char* metal_linalg_cholesky_policy_source(void) { return cholesky_policy_source(); }
 const char* metal_linalg_lu_policy_source(void) { return lu_policy_source(); }
+const char* metal_linalg_trsm_policy_source(void) { return trsm_policy_source(); }
 
 } // extern "C"

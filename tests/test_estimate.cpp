@@ -54,7 +54,7 @@ int main() {
                 device_name(), gpu_core_count());
     const bool has_device = device_name()[0] != '\0';
     for (const char* src : {qr_policy_source(), eigh_policy_source(), svd_policy_source(), cholesky_policy_source(),
-                            lu_policy_source()}) {
+                            lu_policy_source(), trsm_policy_source()}) {
         check(!has_device || starts(src, "estimated:Apple M1 (from "), "policy source", src);
     }
     if (has_device) {

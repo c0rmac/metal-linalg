@@ -317,6 +317,19 @@ final class MetalLinalgTests: XCTestCase {
         XCTAssertEqual(luPolicySource, "user")
     }
 
+    func testSolveTriangular() throws {
+        // [[2, 0], [1, 4]] x = [2, 9]: x = (1, 2); its transpose, [[2, 1], [0, 4]] x = [4, 8]: (1, 2)
+        let lower: [Float] = [2, 99, 1, 4]   // 99 above the diagonal: never read
+        let x = try solveTriangularAccelerated(lower, [2, 9], n: 2)
+        XCTAssertEqual(x[0], 1, accuracy: 1e-6)
+        XCTAssertEqual(x[1], 2, accuracy: 1e-6)
+        let upper: [Float] = [2, 1, 99, 4]
+        let y = try solveTriangularAccelerated(upper, [4, 8], n: 2, upper: true)
+        XCTAssertEqual(y[0], 1, accuracy: 1e-6)
+        XCTAssertEqual(y[1], 2, accuracy: 1e-6)
+        XCTAssertTrue(["cpu", "blocked"].contains(trsmBackend(n: 4096, nrhs: 4096)))
+    }
+
     func testNaNStaysInItsMatrix() throws {
         var a: [Float] = [2, 1, 1, 2,  .nan, 0, 0, 1,  3, 0, 0, 4]
         let w = try eigvalshAccelerated(a, batch: 3, n: 2)

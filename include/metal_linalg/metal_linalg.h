@@ -8,3 +8,4 @@
 #include <metal_linalg/svd.h>
 #include <metal_linalg/cholesky.h>
 #include <metal_linalg/lu.h>
+#include <metal_linalg/triangular.h>

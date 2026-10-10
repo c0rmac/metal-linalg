@@ -81,6 +81,9 @@ final class MetalLinalgMLXTests: XCTestCase {
             XCTAssertLessThan(maxAbs(matmul(a, x) - b), 1e-4)
             let inverse = try invAccelerated(a)
             XCTAssertLessThan(maxAbs(matmul(a, inverse) - MLXArray.identity(20)), 1e-4)
+            let l = tril(a)
+            let y = try solveTriangularAccelerated(l, b)
+            XCTAssertLessThan(maxAbs(matmul(l, y) - b), 1e-4)
         }
     }
 

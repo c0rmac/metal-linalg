@@ -18,9 +18,10 @@ Package.resolved
 # Python bytecode
 __pycache__/
 
-# Written by tuning/tune_{qr,eigh,svd,cholesky,lu}.py (committed copies live in docs/results/)
+# Written by tuning/tune_{qr,eigh,svd,cholesky,lu,trsm}.py (committed copies live in docs/results/)
 qr-tune-results/
 eigh-tune-results/
 svd-tune-results/
 cholesky-tune-results/
 lu-tune-results/
+trsm-tune-results/

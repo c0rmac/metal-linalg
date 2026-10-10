@@ -148,6 +148,13 @@ int main(void) {
               "inv: %g %g %g %g", inv[0], inv[1], inv[2], inv[3]);
         CHECK(isnan(inv[4]) && info[1] == 2, "inv: the singular matrix not NaN (info %u)", info[1]);
         CHECK(metal_linalg_solve(a, 1, 2, NULL, 1, x, NULL) == METAL_LINALG_INVALID_ARGUMENT, "solve(b NULL) not rejected");
+        /* triangular: [[2, 99], [1, 4]] lower (99 never read), x = (1, 2) for b = (2, 9) */
+        const float tl[4] = {2, 99, 1, 4}, tb[2] = {2, 9};
+        CHECK(metal_linalg_solve_triangular(tl, 1, 2, tb, 1, 0, 0, x) == METAL_LINALG_OK, "solve_triangular: %s",
+              metal_linalg_last_error());
+        CHECK(near(x[0], 1.0f) && near(x[1], 2.0f), "solve_triangular: x = %g %g", x[0], x[1]);
+        CHECK(strlen(metal_linalg_trsm_backend(64, 64, 1)) > 0, "trsm backend name");
+        CHECK(strlen(metal_linalg_trsm_policy_source()) > 0, "trsm policy source");
         CHECK(strlen(metal_linalg_lu_backend(64, 4)) > 0, "lu backend name");
         const metal_linalg_lu_policy lm = metal_linalg_lu_policy_get();
         metal_linalg_lu_policy lp = lm;
