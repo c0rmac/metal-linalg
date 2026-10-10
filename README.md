@@ -6,9 +6,12 @@ solve and inverse) and triangular solves for batches of matrices on Apple
 Silicon GPUs, for
 [MLX](https://github.com/ml-explore/mlx), [PyTorch](https://pytorch.org) and
 plain float buffers. On an M5 Pro it is **1.6-11x faster than Apple's LAPACK
-on all 18 CPU cores for one large matrix** (1024×1024 to 4096×4096, and
-13.9x at 8192), **1.3-5.7x faster for batches of thousands of small
-matrices**, and **4.9-30x faster than PyTorch's `torch.linalg`**, against
+on all 18 CPU cores for one large matrix** (QR, eigh and the SVD from
+1024×1024 to 4096×4096, and 13.9x at 8192; Cholesky, LU and the inverse
+1.3-3.4x from 2048-3072 to 4096), **1.3-5.7x faster for batches of thousands
+of small matrices**, and **4.9-30x faster than PyTorch's `torch.linalg`** for QR,
+eigh and the SVD (1.8-3.9x for Cholesky, LU, solve, inverse and triangular
+solves, which PyTorch has MPS kernels for), against
 whichever of its CPU and MPS paths is quicker ([where the GPU
 wins](#where-the-gpu-wins)). A C++ library, installed with Homebrew or built from
 source inside your own project, with Python packages for `mlx.core` arrays
