@@ -91,14 +91,14 @@ spread over every core), by a policy measured on the device it runs on. MLX's ow
 
 ### What it provides
 
-| operation | functions | GPU kernels | CPU path | details |
-|---|---|---|---|---|
-| QR | `qr_accelerated` | Householder in one simdgroup's registers, or blocked in one threadgroup, per matrix; grid-parallel blocked Householder | LAPACK `sgeqrf`, `sorgqr` | [docs/qr.md](docs/qr.md) |
-| symmetric eigendecomposition | `eigh_accelerated`, `eigvalsh_accelerated` | whole-matrix Jacobi; block Jacobi; tridiagonalization and implicit QL in one simdgroup's registers (N <= 32) or one threadgroup per matrix (N <= 87); a batch of mid-size matrices tridiagonalized together, their tridiagonal problems on every CPU core (N <= 1024); Householder tridiagonalization for large N (with LAPACK's tridiagonal solver, or bisection on the GPU for eigenvalues alone); for large N, a two-stage reduction (to a band on the GPU, then to tridiagonal on every CPU core, the eigenvectors' transformations applied on the GPU) | LAPACK `ssyevd`; `ssyevd_2stage` for eigenvalues alone from N = 128 | [docs/eigh.md](docs/eigh.md) |
-| thin SVD | `svd_accelerated`, `svdvals_accelerated` | whole-matrix one-sided Jacobi; block one-sided Jacobi; either after QR for tall input; bidiagonalization and implicit QR in one simdgroup's registers (up to 32 x 32) or one threadgroup per matrix (k <= 83); a batch of mid-size matrices bidiagonalized together, their bidiagonal problems on every CPU core (up to 1024 x 1024); Householder bidiagonalization for large k (with LAPACK's bidiagonal solver, or bisection on the GPU for singular values alone); for large k, a two-stage reduction (to a band on the GPU, then to bidiagonal on every CPU core, the singular vectors' transformations applied on the GPU) | LAPACK `sgesdd` | [docs/svd.md](docs/svd.md) |
-| Cholesky (since 2.18.0) | `cholesky_accelerated`, `cholesky_ex_accelerated` | in one simdgroup's registers (up to 32 x 32); one threadgroup per matrix; for large N, 32-column sub-panels each brought up to date, factored and solved in one dispatch, the trailing update as MPS products on the lower triangle | LAPACK `spotrf` (lower, padded) | [docs/cholesky.md](docs/cholesky.md) |
-| LU, solve, inverse (since 2.18.0) | `lu_factor_accelerated`, `solve_accelerated`, `inv_accelerated` (and `_ex` forms with `info`) | for large N, the GPU and the CPU on one matrix: pivoted panels on the CPU in shared memory with a look-ahead, row swaps and MPS products on the GPU; blocked triangular solves on the GPU | LAPACK `sgetrf`, `sgetrs`, `sgetri` (padded) | [docs/lu.md](docs/lu.md) |
-| triangular solve (since 2.18.0) | `solve_triangular_accelerated` | blocked: 128 rows at a time, two MPS products a block with the diagonal blocks' inverses | BLAS `strsm` | [docs/trsm.md](docs/trsm.md) |
+| operation | functions | details |
+|---|---|---|
+| QR | `qr_accelerated` | [docs/qr.md](docs/qr.md) |
+| symmetric eigendecomposition | `eigh_accelerated`, `eigvalsh_accelerated` | [docs/eigh.md](docs/eigh.md) |
+| thin SVD | `svd_accelerated`, `svdvals_accelerated` | [docs/svd.md](docs/svd.md) |
+| Cholesky (since 2.18.0) | `cholesky_accelerated`, `cholesky_ex_accelerated` | [docs/cholesky.md](docs/cholesky.md) |
+| LU, solve, inverse (since 2.18.0) | `lu_factor_accelerated`, `solve_accelerated`, `inv_accelerated` (and `_ex` forms with `info`) | [docs/lu.md](docs/lu.md) |
+| triangular solve (since 2.18.0) | `solve_triangular_accelerated` | [docs/trsm.md](docs/trsm.md) |
 
 On the CPU a batch is spread over every core, each solving whole matrices
 (`set_cpu_threads()` or `METAL_LINALG_CPU_THREADS` caps it).
