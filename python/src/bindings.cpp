@@ -57,6 +57,7 @@ const char* name(ml::SvdBackend b) {
     }
 }
 const char* name(ml::LuBackend b) { return b == ml::LuBackend::blocked ? "blocked" : "cpu"; }
+const char* name(ml::TrsmBackend b) { return b == ml::TrsmBackend::blocked ? "blocked" : "cpu"; }
 const char* name(ml::CholeskyBackend b) {
     switch (b) {
         case ml::CholeskyBackend::simd:        return "simd";
@@ -94,6 +95,7 @@ const char* name(ml::CholeskyBackend b) {
                            X(gpu_min_batch_times_n) X(gpu_min_batch) X(gpu_min_n) X(gpu_large_min_n) \
                            X(gpu_large_max_batch) X(gpu_cores)
 #define LU_FIELDS(X) X(gpu_min_n) X(gpu_max_batch) X(gpu_solve_min_rhs) X(gpu_cores)
+#define TRSM_FIELDS(X) X(gpu_min_n) X(gpu_min_rhs) X(gpu_max_batch) X(gpu_cores)
 
 #define TO_DICT(f) d[#f] = p.f;
 #define FROM_DICT(f) if (key == #f) { p.f = nb::cast<unsigned>(value); return; }
@@ -132,6 +134,8 @@ NB_MODULE(_core, m) {
         ml::SolveResult r = ml::solve_ex_accelerated(a, b);
         return std::make_pair(r.x, r.info);
     }, "a"_a, "b"_a);
+    m.def("solve_triangular", &ml::solve_triangular_accelerated, "a"_a, "b"_a, "upper"_a = false,
+          "unit_diagonal"_a = false);
     m.def("inv", [](const mlx::core::array& a) {
         ml::SolveResult r = ml::inv_ex_accelerated(a);
         return std::make_pair(r.x, r.info);
@@ -159,18 +163,22 @@ NB_MODULE(_core, m) {
         return name(ml::cholesky_backend(n, batch)); }, "n"_a, "batch"_a = 1);
     m.def("lu_backend", [](unsigned n, unsigned batch) {
         return name(ml::lu_backend(n, batch)); }, "n"_a, "batch"_a = 1);
+    m.def("trsm_backend", [](unsigned n, unsigned k, unsigned batch) {
+        return name(ml::trsm_backend(n, k, batch)); }, "n"_a, "k"_a = 1, "batch"_a = 1);
 
     m.def("qr_policy_source", [] { return std::string(ml::qr_policy_source()); });
     m.def("eigh_policy_source", [] { return std::string(ml::eigh_policy_source()); });
     m.def("svd_policy_source", [] { return std::string(ml::svd_policy_source()); });
     m.def("cholesky_policy_source", [] { return std::string(ml::cholesky_policy_source()); });
     m.def("lu_policy_source", [] { return std::string(ml::lu_policy_source()); });
+    m.def("trsm_policy_source", [] { return std::string(ml::trsm_policy_source()); });
 
     m.def("qr_policy", [] { auto p = ml::qr_policy(); nb::dict d; QR_FIELDS(TO_DICT) return d; });
     m.def("eigh_policy", [] { auto p = ml::eigh_policy(); nb::dict d; EIGH_FIELDS(TO_DICT) return d; });
     m.def("svd_policy", [] { auto p = ml::svd_policy(); nb::dict d; SVD_FIELDS(TO_DICT) return d; });
     m.def("cholesky_policy", [] { auto p = ml::cholesky_policy(); nb::dict d; CHOLESKY_FIELDS(TO_DICT) return d; });
     m.def("lu_policy", [] { auto p = ml::lu_policy(); nb::dict d; LU_FIELDS(TO_DICT) return d; });
+    m.def("trsm_policy", [] { auto p = ml::trsm_policy(); nb::dict d; TRSM_FIELDS(TO_DICT) return d; });
 
     m.def("set_qr_policy", [](const nb::dict& d) {
         ml::set_qr_policy(from_dict(ml::qr_policy(), d, [](ml::QrPolicy& p, const std::string& key, nb::handle value) {
@@ -201,6 +209,12 @@ NB_MODULE(_core, m) {
         ml::set_lu_policy(from_dict(ml::lu_policy(), d, [](ml::LuPolicy& p, const std::string& key, nb::handle value) {
             LU_FIELDS(FROM_DICT)
             throw nb::key_error(("unknown LU policy field: " + key).c_str());
+        }));
+    }, "policy"_a);
+    m.def("set_trsm_policy", [](const nb::dict& d) {
+        ml::set_trsm_policy(from_dict(ml::trsm_policy(), d, [](ml::TrsmPolicy& p, const std::string& key, nb::handle value) {
+            TRSM_FIELDS(FROM_DICT)
+            throw nb::key_error(("unknown triangular solve policy field: " + key).c_str());
         }));
     }, "policy"_a);
 }

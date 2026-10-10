@@ -663,6 +663,35 @@ namespace metal_linalg {
     // LU_DEVICE=gpu (or blocked) or =cpu forces it.
     LuBackend lu_backend(unsigned n, unsigned batch);
 
+    // =========================================================================
+    // Triangular solve routing (since 2.18.0)
+    // =========================================================================
+    // A X = B with A triangular, n x n, and B n x k, for a batch. The CPU
+    // runs BLAS's strsm, a batch spread over every core; the GPU path
+    // (blocked) solves 128 rows at a time, each block's step two MPS products
+    // (one with the inverse of A's diagonal block, one updating the rows still
+    // to come). The work is n^2 k, so the boundary is on n and k both,
+    // measured per device (tuning/tune_trsm.py).
+    struct TrsmPolicy {   // since 2.18.0
+        // The GPU iff n >= gpu_min_n (0: never), k >= gpu_min_rhs and the
+        // batch is at most gpu_max_batch (0: any).
+        unsigned gpu_min_n     = 1024;
+        unsigned gpu_min_rhs   = 256;
+        unsigned gpu_max_batch = 0;
+        // Informational: the device this was resolved against.
+        unsigned gpu_cores = 0;
+    };
+
+    TrsmPolicy  trsm_policy();
+    const char* trsm_policy_source();   // as the other policies' sources
+    void        set_trsm_policy(const TrsmPolicy& p);
+
+    enum class TrsmBackend { cpu, blocked };
+
+    // Where solve_triangular goes with n x n triangles, k right-hand sides,
+    // in a batch. TRSM_DEVICE=gpu (or blocked) or =cpu forces it.
+    TrsmBackend trsm_backend(unsigned n, unsigned k, unsigned batch);
+
     // -------------------------------------------------------------------------
     // Options of the lower-level entry points, for tests and tuning
     // -------------------------------------------------------------------------
@@ -976,6 +1005,12 @@ namespace metal_linalg {
             void solve_blocked(const Matrices& a, const float* b, uint32_t nrhs, float* x, uint32_t* info);
             void inv_cpu(const Matrices& a, float* x, uint32_t* info);
             void inv_blocked(const Matrices& a, float* x, uint32_t* info);
+
+            // solve_triangular's backends (trsm.mm), each as core::solve_triangular.
+            void solve_triangular_cpu(const Matrices& a, const float* b, uint32_t nrhs, bool upper, bool unit,
+                                      float* x);
+            void solve_triangular_blocked(const Matrices& a, const float* b, uint32_t nrhs, bool upper, bool unit,
+                                          float* x);
         }
 
         // A = L L^T of `a.batch` symmetric positive definite matrices of n x
@@ -1005,6 +1040,13 @@ namespace metal_linalg {
         // A^-1 of `a.batch` n x n matrices: `x` [batch, n, n]. `info` as
         // lu_factor's.
         void inv(const Matrices& a, float* x, uint32_t* info);
+
+        // A X = B for `a.batch` n x n triangular matrices (since 2.18.0),
+        // reading A's lower triangle (the upper with `upper`; with `unit` its
+        // diagonal is taken as ones and not read): `b` and `x` [batch, n,
+        // nrhs] row-major. A zero on the diagonal gives infinities or NaN,
+        // as BLAS's strsm.
+        void solve_triangular(const Matrices& a, const float* b, uint32_t nrhs, bool upper, bool unit, float* x);
 
     } // namespace core
 

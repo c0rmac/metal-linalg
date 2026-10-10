@@ -31,9 +31,9 @@ marked stale, rather than an estimate. The library reports the state at run time
 and docs/measurements.md shows it for every chip.
 """
 
-KERNEL_EPOCHS = {"qr": 8, "eigh": 8, "svd": 10, "cholesky": 1, "lu": 1}
+KERNEL_EPOCHS = {"qr": 8, "eigh": 8, "svd": 10, "cholesky": 1, "lu": 1, "trsm": 1}
 # The versions from which the CPU path spreads a batch over every core (2.9.0).
-MIN_EPOCHS = {"qr": 2, "eigh": 2, "svd": 3, "cholesky": 1, "lu": 1}
+MIN_EPOCHS = {"qr": 2, "eigh": 2, "svd": 3, "cholesky": 1, "lu": 1, "trsm": 1}
 
 # (decomposition, epoch, library version, date, why)
 HISTORY = [
@@ -151,6 +151,9 @@ HISTORY = [
     ("lu", 1, "2.18.0", "2026-10-10",
      "the measurements as LU introduced them: the CPU path (sgetrf, sgetrs, sgetri on a padded copy) and the "
      "blocked GPU path (CPU panels with a look-ahead, GPU swaps and products, the GPU's triangular solves)"),
+    ("trsm", 1, "2.18.0", "2026-10-10",
+     "the measurements as the triangular solve introduced them: strsm on every core, and the blocked GPU path "
+     "(diagonal blocks' inverses on the CPU, two MPS products a block)"),
 ]
 
 REQUIRED = {
@@ -163,6 +166,7 @@ REQUIRED = {
             "bidiag_batch_vals"},
     "cholesky": {"cpu", "simd", "tg", "blocked"},
     "lu": {"cpu", "blocked", "inv_cpu", "inv_blocked", "solve_cpu", "solve_trsm", "solve_getrs"},
+    "trsm": {"cpu", "blocked"},
 }
 
 # Backends added after a decomposition's first measurements, and when: what
@@ -220,10 +224,12 @@ PATHS = {
     "svd": ["shaders/Svd_", "src/svd"] + _JACOBI + _QR + ["src/tuned/qr.inc"] + _BAND,
     "cholesky": ["shaders/Cholesky", "src/cholesky"] + _SHARED,
     "lu": ["shaders/LU", "src/lu", "src/transpose.h"] + _SHARED,
+    "trsm": ["src/trsm"] + _SHARED,
 }
 # A decomposition's own table is generated from its measurements, not a change to them.
 OWN_TABLE = {"qr": "src/tuned/qr.inc", "eigh": "src/tuned/eigh.inc", "svd": "src/tuned/svd.inc",
-             "cholesky": "src/tuned/cholesky.inc", "lu": "src/tuned/lu.inc"}
+             "cholesky": "src/tuned/cholesky.inc", "lu": "src/tuned/lu.inc",
+             "trsm": "src/tuned/trsm.inc"}
 
 
 def run_epoch(info, op):

@@ -87,6 +87,12 @@ metal_linalg_status metal_linalg_solve(const float* a, uint32_t batch, uint32_t 
  * matrix's x all NaN (since 2.18.0). */
 metal_linalg_status metal_linalg_inv(const float* a, uint32_t batch, uint32_t n, float* x, uint32_t* info);
 
+/* A X = B with A triangular (since 2.18.0): the lower triangle of a read (the
+ * upper with `upper` nonzero; with `unit` nonzero the diagonal taken as ones
+ * and not read); b and x [batch, n, nrhs]. */
+metal_linalg_status metal_linalg_solve_triangular(const float* a, uint32_t batch, uint32_t n, const float* b,
+                                                  uint32_t nrhs, int upper, int unit, float* x);
+
 /* An `info` word: bits 0-15 the sweeps taken, bit 16 converged, bit 17 the
  * matrix held a NaN or an infinity, bit 18 (SVD) rank-deficient. The CPU
  * paths report a converged matrix as one sweep. */
@@ -134,7 +140,7 @@ const char* metal_linalg_device_name(void);
 /* Calibration notices on stderr (see set_calibration_notices in device.h):
  * on by default; 0 turns them off. METAL_LINALG_NO_CALIBRATION_NOTICE=1 also does. */
 void metal_linalg_set_calibration_notices(int enabled);
-/* The notice for decomposition "QR", "eigh", "SVD", "Cholesky" or "LU" on this Mac, or "" if
+/* The notice for "QR", "eigh", "SVD", "Cholesky", "LU" or "triangular solve" on this Mac, or "" if
  * its calibration is current: for a binding that reports it its own way
  * (Python warns). Valid until the next call on this thread. */
 const char* metal_linalg_calibration_message(const char* decomposition);
@@ -153,6 +159,7 @@ uint32_t metal_linalg_cpu_threads(void);
  *         "golub_kahan", "qr_golub_kahan", "band", "bidiag_batch"
  *   Cholesky "cpu", "simd", "threadgroup", "blocked"
  *   LU    "cpu", "blocked" (lu_factor, solve and inv alike)
+ *   triangular solve "cpu", "blocked"
  * The strings are static. */
 const char* metal_linalg_qr_backend(uint32_t rows, uint32_t cols, uint32_t batch);
 const char* metal_linalg_eigh_backend(uint32_t n, uint32_t batch);
@@ -161,6 +168,7 @@ const char* metal_linalg_svd_backend(uint32_t rows, uint32_t cols, uint32_t batc
 const char* metal_linalg_svdvals_backend(uint32_t rows, uint32_t cols, uint32_t batch);   /* values alone */
 const char* metal_linalg_cholesky_backend(uint32_t n, uint32_t batch);
 const char* metal_linalg_lu_backend(uint32_t n, uint32_t batch);
+const char* metal_linalg_trsm_backend(uint32_t n, uint32_t nrhs, uint32_t batch);
 
 /* The routing policies, field for field as in core.h, which says what each
  * field does. A policy is resolved on first use from the tuned table, then
@@ -275,17 +283,26 @@ typedef struct metal_linalg_lu_policy {   /* since 2.18.0 */
     uint32_t gpu_cores;           /* informational */
 } metal_linalg_lu_policy;
 
+typedef struct metal_linalg_trsm_policy {   /* since 2.18.0 */
+    uint32_t gpu_min_n;       /* the GPU iff n >= this (0: never), */
+    uint32_t gpu_min_rhs;     /* nrhs >= this */
+    uint32_t gpu_max_batch;   /* and batch <= this (0: any) */
+    uint32_t gpu_cores;       /* informational */
+} metal_linalg_trsm_policy;
+
 metal_linalg_qr_policy       metal_linalg_qr_policy_get(void);
 metal_linalg_eigh_policy     metal_linalg_eigh_policy_get(void);
 metal_linalg_svd_policy      metal_linalg_svd_policy_get(void);
 metal_linalg_cholesky_policy metal_linalg_cholesky_policy_get(void);
 metal_linalg_lu_policy       metal_linalg_lu_policy_get(void);
+metal_linalg_trsm_policy     metal_linalg_trsm_policy_get(void);
 
 void metal_linalg_qr_policy_set(const metal_linalg_qr_policy* p);
 void metal_linalg_eigh_policy_set(const metal_linalg_eigh_policy* p);
 void metal_linalg_svd_policy_set(const metal_linalg_svd_policy* p);
 void metal_linalg_cholesky_policy_set(const metal_linalg_cholesky_policy* p);
 void metal_linalg_lu_policy_set(const metal_linalg_lu_policy* p);
+void metal_linalg_trsm_policy_set(const metal_linalg_trsm_policy* p);
 
 /* Where the policy in effect came from: "tuned:<device>", "estimated:<device>
  * (from <measured device>, ...)" on a Mac nobody has measured, "env:<variables>",
@@ -296,6 +313,7 @@ const char* metal_linalg_eigh_policy_source(void);
 const char* metal_linalg_svd_policy_source(void);
 const char* metal_linalg_cholesky_policy_source(void);
 const char* metal_linalg_lu_policy_source(void);
+const char* metal_linalg_trsm_policy_source(void);
 
 #ifdef __cplusplus
 } /* extern "C" */

@@ -70,6 +70,16 @@
     3 minutes): the GPU from 1536 at any batch, 1.0001x geometric-mean regret
     over 66 points (worst 1.01x); estimated for every other Mac.
     `test_lu` (491 checks), `benchmark_lu`, `sweep_lu`.
+- **Triangular solve** (`solve_triangular`: lower or upper, `unit_diagonal`,
+  one or many right-hand sides), in every API (PyTorch: torch's arguments and
+  gradient). `cpu`: `strsm` a batch over every core; `blocked`: 128 rows at a
+  time on the GPU, two MPS products a block with the diagonal blocks'
+  inverses (made on the CPU), on the caller's matrices in place. On an M5 Pro
+  4096 x 4096 with 4096 right-hand sides in 12.5 ms against 50 (4.0x) and
+  MLX's 100. Measured (run `20261010-b7aec3`, `tune_trsm.py`): the GPU from
+  N = 2048 with 1024 right-hand sides, batches up to 4; 1.0055x geometric-mean
+  regret over 92 points. `test_trsm` (204 checks), `benchmark_trsm`,
+  `sweep_trsm`.
 - `benchmark_cholesky`: each kernel, the CPU path and MLX's own
   `mx.linalg.cholesky` (one matrix at a time), which the library beats by
   1.4-2.3x for one matrix of 128 to 2048, 2.4x at 4096, and 20-24x for

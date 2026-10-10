@@ -40,6 +40,7 @@ let (l, info) = try choleskyAccelerated(spd, batch: 1000, n: 32)    // l lower, 
 let (lu, pivots, _) = try luFactorAccelerated(sq, batch: 1000, n: 32)   // P A = L U, pivots 0-based
 let (x, _) = try solveAccelerated(sq, rhs, batch: 1000, n: 32, nrhs: 4)
 let (inverse, _) = try invAccelerated(sq, batch: 1000, n: 32)
+let y = try solveTriangularAccelerated(lower, rhs, batch: 1000, n: 32, nrhs: 4)   // upper:, unitDiagonal:
 ```
 
 `QrMode` (since 2.17.0) is numpy's and torch's: `.reduced` (the default),

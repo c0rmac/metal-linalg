@@ -538,7 +538,8 @@ int main() {
         set_calibration_notices(false);
         const struct { const char* what; const char* source; } solvers[] = {
             {"QR", qr_policy_source()}, {"eigh", eigh_policy_source()}, {"SVD", svd_policy_source()},
-            {"Cholesky", cholesky_policy_source()}, {"LU", lu_policy_source()}};
+            {"Cholesky", cholesky_policy_source()}, {"LU", lu_policy_source()},
+            {"triangular solve", trsm_policy_source()}};
         for (const auto& s : solvers) {
             const std::string src = s.source, msg = calibration_message(s.what);
             const bool untuned = src.rfind("default:untuned-device", 0) == 0 ||

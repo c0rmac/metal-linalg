@@ -176,6 +176,28 @@ public func solveAccelerated(_ a: MLXArray, _ b: MLXArray) throws -> MLXArray {
     }
 }
 
+/// X with A X = B for triangular A [..., N, N] and B [..., N, K] with A's
+/// batch shape, reading A's lower triangle (the upper with `upper`).
+public func solveTriangularAccelerated(_ a: MLXArray, _ b: MLXArray, upper: Bool = false,
+                                       unitDiagonal: Bool = false) throws -> MLXArray {
+    let x = try Matrices(a, "solve_triangular")
+    try square(x, "solve_triangular")
+    let rhs = try Matrices(b, "solve_triangular")
+    guard rhs.batchShape == x.batchShape, rhs.rows == x.rows else {
+        throw MetalLinalgError(kind: .invalidArgument,
+                               message: "[solve_triangular] B must be [..., N, K] with A's batch shape.")
+    }
+    let input = rhs.array.asData(access: .noCopyIfContiguous)
+    return try withExtendedLifetime(rhs.array) {
+        try input.data.withUnsafeBytes { bp in
+            try x.run([x.batchShape + [Int(x.rows), Int(rhs.cols)]]) { a, o in
+                metal_linalg_solve_triangular(a, x.batch, x.cols, bp.bindMemory(to: Float.self).baseAddress, rhs.cols,
+                                              upper ? 1 : 0, unitDiagonal ? 1 : 0, o[0])
+            }[0]
+        }
+    }
+}
+
 /// A^-1 for A [..., N, N]. A singular matrix's inverse is all NaN.
 public func invAccelerated(_ a: MLXArray) throws -> MLXArray {
     let x = try Matrices(a, "inv")

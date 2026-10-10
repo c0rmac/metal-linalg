@@ -71,6 +71,7 @@ pip install "git+https://github.com/c0rmac/metal-linalg.git#subdirectory=python-
 | `solve(A, B)` | `torch.linalg.solve` | `X`; `B` `[..., N, K]` or `[..., N]` with `A`'s batch shape (no broadcasting); raises `LinAlgError` if singular; differentiable |
 | `solve_ex(A, B)` / `inv_ex(A)` | `torch.linalg.solve_ex` / `inv_ex` | `(result, info)`; a singular matrix's result all NaN |
 | `inv(A)` | `torch.linalg.inv` | the inverse; raises `LinAlgError` if singular; differentiable |
+| `solve_triangular(A, B, *, upper, unitriangular=False)` | `torch.linalg.solve_triangular` | `X`, left solves only; differentiable (since 2.18.0) |
 | `cholesky_ex(A, upper=False, check_errors=False)` | `torch.linalg.cholesky_ex` | `(L, info)`, `info` int32; a failed matrix's `L` is all NaN (torch's holds a partial factor) |
 
 `A` is `[..., M, N]` with any number of batch dimensions, on `"cpu"` or
@@ -92,7 +93,7 @@ pip install "git+https://github.com/c0rmac/metal-linalg.git#subdirectory=python-
 ## Autograd and torch.compile
 
 Underneath, the functions are custom operators,
-`torch.ops.metal_linalg.{qr, eigh, eigvalsh, svd, svdvals, cholesky, lu_factor, solve, inv}`, with fake
+`torch.ops.metal_linalg.{qr, eigh, eigvalsh, svd, svdvals, cholesky, lu_factor, solve, inv, solve_triangular}`, with fake
 implementations and the backward formulas `torch.linalg` uses:
 
 ```python

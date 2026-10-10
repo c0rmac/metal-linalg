@@ -4,6 +4,7 @@
 // memory.
 #include <metal_linalg/cholesky.h>
 #include <metal_linalg/lu.h>
+#include <metal_linalg/triangular.h>
 #include <metal_linalg/eigh.h>
 #include <metal_linalg/qr.h>
 #include <metal_linalg/svd.h>
@@ -242,6 +243,27 @@ SolveResult run_solve(const mx::array& a, const mx::array& b, SolveFn fn) {
     return {vector ? mx::squeeze(x, -1) : x, info};
 }
 
+using TrsmFn = void (*)(const core::Matrices&, const float*, uint32_t, bool, bool, float*);
+
+mx::array run_trsm(const mx::array& a, const mx::array& b, bool upper, bool unit, TrsmFn fn) {
+    Input in = prepare(a, "solve_triangular");
+    require_square(in, "solve_triangular");
+    const uint32_t n = in.matrices.cols;
+    const bool vector = b.ndim() == a.ndim() - 1;
+    if (!vector && b.ndim() != a.ndim())
+        throw std::invalid_argument("[solve_triangular] b must be [..., N] or [..., N, K] with a's batch shape.");
+    const mx::array bm = vector ? mx::expand_dims(b, -1) : b;
+    Input rhs = prepare(bm, "solve_triangular");
+    if (rhs.batch_shape != in.batch_shape || rhs.matrices.rows != n)
+        throw std::invalid_argument("[solve_triangular] b must be [..., N] or [..., N, K] with a's batch shape.");
+    const uint32_t k = rhs.matrices.cols;
+    mx::array x = output(shape_of(in.batch_shape, {n, k}));
+    Known known(in);
+    known(rhs.array)(x);
+    if (in.matrices.batch && n && k) fn(in.matrices, rhs.matrices.data, k, upper, unit, memory<float>(x));
+    return vector ? mx::squeeze(x, -1) : x;
+}
+
 SolveResult run_inv(const mx::array& a, InvFn fn) {
     Input in = prepare(a, "inv");
     require_square(in, "inv");
@@ -291,6 +313,10 @@ SolveResult solve_ex_accelerated(const mx::array& a, const mx::array& b) { retur
 mx::array inv_accelerated(const mx::array& a) { return run_inv(a, core::inv).x; }
 SolveResult inv_ex_accelerated(const mx::array& a) { return run_inv(a, core::inv); }
 
+mx::array solve_triangular_accelerated(const mx::array& a, const mx::array& b, bool upper, bool unit_diagonal) {
+    return run_trsm(a, b, upper, unit_diagonal, core::solve_triangular);
+}
+
 namespace detail {
 LuResult lu_factor_cpu(const mx::array& a) { return run_lu(a, core::detail::lu_factor_cpu); }
 LuResult lu_factor_blocked(const mx::array& a) { return run_lu(a, core::detail::lu_factor_blocked); }
@@ -300,6 +326,12 @@ SolveResult solve_blocked(const mx::array& a, const mx::array& b) {
 }
 SolveResult inv_cpu(const mx::array& a) { return run_inv(a, core::detail::inv_cpu); }
 SolveResult inv_blocked(const mx::array& a) { return run_inv(a, core::detail::inv_blocked); }
+mx::array solve_triangular_cpu(const mx::array& a, const mx::array& b, bool upper, bool unit_diagonal) {
+    return run_trsm(a, b, upper, unit_diagonal, core::detail::solve_triangular_cpu);
+}
+mx::array solve_triangular_blocked(const mx::array& a, const mx::array& b, bool upper, bool unit_diagonal) {
+    return run_trsm(a, b, upper, unit_diagonal, core::detail::solve_triangular_blocked);
+}
 } // namespace detail
 
 std::pair<mx::array, mx::array> qr_accelerated(const mx::array& a, const std::string& mode) {

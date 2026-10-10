@@ -137,6 +137,16 @@ class Decompositions(unittest.TestCase):
         _, _, info = ml.lu_factor_ex(singular)
         self.assertEqual(info.item(), 2)
 
+    def test_solve_triangular(self):
+        a = mx.tril(mx.random.normal((4, 30, 30)) * 0.1) + 2 * eye(30)
+        b = mx.random.normal((4, 30, 5))
+        x = ml.solve_triangular(a, b)
+        self.assertLess(max_abs(mm(a, x) - b), 1e-4)
+        u = a.swapaxes(-1, -2)
+        self.assertLess(max_abs(mm(u, ml.solve_triangular(u, b, upper=True)) - b), 1e-4)
+        self.assertEqual(ml.solve_triangular(a, b[..., 0]).shape, (4, 30))
+        self.assertIn(ml.trsm_backend(4096, 4096), {"cpu", "blocked"})
+
     def test_accepts_lists(self):
         q, r = ml.qr([[1.0, 2.0], [3.0, 4.0]])
         self.assertLess(max_abs(mm(q, r) - mx.array([[1.0, 2.0], [3.0, 4.0]])), 1e-5)
@@ -166,13 +176,13 @@ class Routing(unittest.TestCase):
         self.assertIsInstance(ml.device_name(), str)
         self.assertGreaterEqual(ml.gpu_core_count(), 0)
         for source in (ml.qr_policy_source(), ml.eigh_policy_source(), ml.svd_policy_source(),
-                       ml.cholesky_policy_source(), ml.lu_policy_source()):
+                       ml.cholesky_policy_source(), ml.lu_policy_source(), ml.trsm_policy_source()):
             self.assertTrue(source.split(":")[0] in ("tuned", "tuned-stale", "tuned-incomplete",
                                                      "estimated", "default", "env", "user"), source)
 
     def test_calibration_status(self):
         st = ml.calibration_status()
-        self.assertEqual(set(st), {"qr", "eigh", "svd", "cholesky", "lu"})
+        self.assertEqual(set(st), {"qr", "eigh", "svd", "cholesky", "lu", "trsm"})
         for key, state in st.items():
             self.assertIn(state, ("current", "stale", "incomplete", "uncalibrated"))
         self.assertTrue(issubclass(ml.CalibrationWarning, UserWarning))

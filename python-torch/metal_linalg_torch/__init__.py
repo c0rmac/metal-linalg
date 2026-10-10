@@ -29,12 +29,12 @@ from ._build import version as __version__
 
 __all__ = [
     "qr", "eigh", "eigvalsh", "svd", "svdvals", "cholesky", "cholesky_ex",
-    "lu_factor", "lu_factor_ex", "solve", "solve_ex", "inv", "inv_ex",
+    "lu_factor", "lu_factor_ex", "solve", "solve_ex", "inv", "inv_ex", "solve_triangular",
     "device_name", "gpu_core_count", "cpu_threads", "set_cpu_threads", "mps_in_place",
-    "qr_backend", "eigh_backend", "eigvalsh_backend", "svd_backend", "svdvals_backend", "cholesky_backend", "lu_backend",
-    "qr_policy", "eigh_policy", "svd_policy", "cholesky_policy", "lu_policy",
-    "set_qr_policy", "set_eigh_policy", "set_svd_policy", "set_cholesky_policy", "set_lu_policy",
-    "qr_policy_source", "eigh_policy_source", "svd_policy_source", "cholesky_policy_source", "lu_policy_source",
+    "qr_backend", "eigh_backend", "eigvalsh_backend", "svd_backend", "svdvals_backend", "cholesky_backend", "lu_backend", "trsm_backend",
+    "qr_policy", "eigh_policy", "svd_policy", "cholesky_policy", "lu_policy", "trsm_policy",
+    "set_qr_policy", "set_eigh_policy", "set_svd_policy", "set_cholesky_policy", "set_lu_policy", "set_trsm_policy",
+    "qr_policy_source", "eigh_policy_source", "svd_policy_source", "cholesky_policy_source", "lu_policy_source", "trsm_policy_source",
     "calibration_status", "CalibrationWarning",
 ]
 
@@ -307,6 +307,20 @@ def inv(A):
     return X
 
 
+def solve_triangular(A, B, *, upper, left=True, unitriangular=False):
+    """``X`` with ``A @ X = B`` for triangular ``A``, like
+    ``torch.linalg.solve_triangular``: ``A`` ``[..., N, N]`` (only the
+    triangle ``upper`` names is read; with ``unitriangular`` its diagonal is
+    taken as ones), ``B`` ``[..., N, K]`` with ``A``'s batch shape (no
+    broadcasting). ``left=False`` is not supported. Differentiable in ``A``
+    and ``B``."""
+    a = _prepare(A, "solve_triangular")
+    if not left:
+        raise NotImplementedError("metal_linalg_torch.solve_triangular: only left=True is supported")
+    b = B if isinstance(B, torch.Tensor) else torch.as_tensor(B)
+    return torch.ops.metal_linalg.solve_triangular(a, b.to(torch.float32), bool(upper), bool(unitriangular))
+
+
 def inv_ex(A, *, check_errors=False):
     """:func:`inv` and ``info``, like ``torch.linalg.inv_ex``; a singular
     matrix's inverse is all NaN."""
@@ -405,6 +419,12 @@ def lu_backend(n, batch=1):
     return _lib.text(_lib.lu_backend(n, batch))
 
 
+def trsm_backend(n, k=1, batch=1):
+    """Which backend :func:`solve_triangular` uses for ``batch`` triangles of
+    ``n x n`` with ``k`` right-hand sides: ``"cpu"`` or ``"blocked"``."""
+    return _lib.text(_lib.trsm_backend(n, k, batch))
+
+
 def qr_policy():
     """The QR routing policy in effect, as a dict of its fields."""
     return _lib.get_policy("qr")
@@ -428,6 +448,11 @@ def cholesky_policy():
 def lu_policy():
     """The LU routing policy in effect, as a dict of its fields."""
     return _lib.get_policy("lu")
+
+
+def trsm_policy():
+    """The triangular solve's routing policy in effect, as a dict of its fields."""
+    return _lib.get_policy("trsm")
 
 
 def set_qr_policy(policy=None, **fields):
@@ -454,6 +479,11 @@ def set_cholesky_policy(policy=None, **fields):
 def set_lu_policy(policy=None, **fields):
     """Replaces the LU policy, e.g. ``set_lu_policy(gpu_min_n=1024)``."""
     _lib.set_policy("lu", {**(policy or {}), **fields})
+
+
+def set_trsm_policy(policy=None, **fields):
+    """Replaces the triangular solve's policy, e.g. ``set_trsm_policy(gpu_min_rhs=64)``."""
+    _lib.set_policy("trsm", {**(policy or {}), **fields})
 
 
 def qr_policy_source():
@@ -483,6 +513,11 @@ def lu_policy_source():
     return _lib.text(_lib.lu_policy_source())
 
 
+def trsm_policy_source():
+    """Where the triangular solve's policy came from; see :func:`qr_policy_source`."""
+    return _lib.text(_lib.trsm_policy_source())
+
+
 # ---------------------------------------------------------------------------
 # Calibration
 # ---------------------------------------------------------------------------
@@ -498,13 +533,14 @@ class CalibrationWarning(UserWarning):
 
 def calibration_status():
     """How current this Mac's measurements are, per decomposition:
-    ``{"qr": state, "eigh": state, "svd": state, "cholesky": state, "lu": state}``, each ``"current"``,
+    ``{"qr": state, "eigh": state, "svd": state, "cholesky": state, "lu": state, "trsm": state}``, each ``"current"``,
     ``"stale"`` (measured on older kernels, still used), ``"incomplete"``
     (from before a newer backend, which stays off) or ``"uncalibrated"``
     (not measured: settings estimated from a measured Mac). See https://c0rmac.github.io/metal-linalg/docs/measurements."""
     out = {}
     for key, source in (("qr", qr_policy_source), ("eigh", eigh_policy_source),
-                        ("svd", svd_policy_source), ("cholesky", cholesky_policy_source), ("lu", lu_policy_source)):
+                        ("svd", svd_policy_source), ("cholesky", cholesky_policy_source), ("lu", lu_policy_source),
+                        ("trsm", trsm_policy_source)):
         s = source()
         out[key] = ("uncalibrated" if s.startswith(("default:", "estimated:"))
                     else "stale" if s.startswith("tuned-stale:")
@@ -520,9 +556,9 @@ def _calibration_warnings():
     if flag and flag != "0":
         return
     for source in (qr_policy_source, eigh_policy_source, svd_policy_source, cholesky_policy_source,
-                   lu_policy_source):
+                   lu_policy_source, trsm_policy_source):
         source()   # resolves the policy, which records its calibration
-    for what in ("QR", "eigh", "SVD", "Cholesky", "LU"):
+    for what in ("QR", "eigh", "SVD", "Cholesky", "LU", "triangular solve"):
         msg = _lib.text(_lib.calibration_message(what.encode()))
         if msg:
             warnings.warn(msg, CalibrationWarning, stacklevel=3)

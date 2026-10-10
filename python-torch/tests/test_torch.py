@@ -181,6 +181,19 @@ class Decompositions(unittest.TestCase):
                     self.assertLess(rel(mlt.inv(a), torch.linalg.inv(a.cpu().double())), 1e-4, (dev, n))
                     self.assertEqual(X.device, a.device)
 
+    def test_solve_triangular(self):
+        for dev in DEVICES:
+            for n, k in ((1, 1), (7, 3), (200, 20)):
+                for upper in (False, True):
+                    for unit in (False, True):
+                        a = torch.randn(2, n, n, device=dev) / math.sqrt(n) + 2 * torch.eye(n, device=dev)
+                        b = torch.randn(2, n, k, device=dev)
+                        X = mlt.solve_triangular(a, b, upper=upper, unitriangular=unit)
+                        ref = torch.linalg.solve_triangular(a.cpu().double(), b.cpu().double(), upper=upper,
+                                                            unitriangular=unit)
+                        self.assertLess(rel(X, ref), 1e-4, (dev, n, upper, unit))
+                        self.assertEqual(X.device, a.device)
+
     def test_singular(self):
         for dev in DEVICES:
             a = torch.tensor([[[1.0, 2.0], [2.0, 4.0]], [[2.0, 0.0], [0.0, 3.0]]], device=dev)
@@ -437,6 +450,7 @@ class Routing(unittest.TestCase):
         self.assertIn(mlt.svdvals_backend(64, 32, 16), svd)
         self.assertIn(mlt.cholesky_backend(64, 16), {"cpu", "simd", "threadgroup", "blocked"})
         self.assertIn(mlt.lu_backend(64, 16), {"cpu", "blocked"})
+        self.assertIn(mlt.trsm_backend(4096, 4096), {"cpu", "blocked"})
 
     def test_policies(self):
         for get, set_, source, field in ((mlt.qr_policy, mlt.set_qr_policy, mlt.qr_policy_source, "gpu_min_batch"),
@@ -521,7 +535,7 @@ class Routing(unittest.TestCase):
 
     def test_calibration_status(self):
         st = mlt.calibration_status()
-        self.assertEqual(set(st), {"qr", "eigh", "svd", "cholesky", "lu"})
+        self.assertEqual(set(st), {"qr", "eigh", "svd", "cholesky", "lu", "trsm"})
         for v in st.values():
             self.assertIn(v, {"current", "stale", "incomplete", "uncalibrated"})
         self.assertTrue(issubclass(mlt.CalibrationWarning, UserWarning))
@@ -639,6 +653,24 @@ class Gradients(unittest.TestCase):
                                 lambda y: (torch.linalg.solve(a, y) ** 2).sum())
             self.assertLess(rel(gm, gr), self.TOL, lead)
 
+    def test_solve_triangular_grad(self):
+        a = well_conditioned(3, 6, 6, seed=12)
+        g = torch.Generator().manual_seed(13)
+        b = torch.randn(3, 6, 2, generator=g, dtype=torch.float64)
+        for upper in (False, True):
+            for unit in (False, True):
+                t = (lambda x: x.triu()) if upper else (lambda x: x.tril())
+                gm, gr = self.grads(a, lambda x: (mlt.solve_triangular(t(x), b.float(), upper=upper,
+                                                                       unitriangular=unit) ** 2).sum(),
+                                    lambda x: (torch.linalg.solve_triangular(t(x), b, upper=upper,
+                                                                             unitriangular=unit) ** 2).sum())
+                self.assertLess(rel(gm, gr), self.TOL, (upper, unit))
+                gm, gr = self.grads(b, lambda y: (mlt.solve_triangular(t(a).float(), y, upper=upper,
+                                                                       unitriangular=unit) ** 2).sum(),
+                                    lambda y: (torch.linalg.solve_triangular(t(a), y, upper=upper,
+                                                                             unitriangular=unit) ** 2).sum())
+                self.assertLess(rel(gm, gr), self.TOL, (upper, unit))
+
     def test_float64_input_gets_float64_grad(self):
         a = torch.randn(5, 3, dtype=torch.float64, requires_grad=True)
         mlt.svdvals(a).sum().backward()
@@ -670,7 +702,8 @@ class Operators(unittest.TestCase):
                  (torch.ops.metal_linalg.cholesky.default, (s, False)),
                  (torch.ops.metal_linalg.cholesky.default, (s, True)),
                  (torch.ops.metal_linalg.solve.default, (s, a[:2, :5, :3].contiguous())),
-                 (torch.ops.metal_linalg.inv.default, (s,))]
+                 (torch.ops.metal_linalg.inv.default, (s,)),
+                 (torch.ops.metal_linalg.solve_triangular.default, (s, a[:2, :5, :3].contiguous(), True, False))]
         for op, args in cases:
             torch.library.opcheck(op, args)
             grad_args = tuple(x.clone().requires_grad_(True) if isinstance(x, torch.Tensor) else x for x in args)

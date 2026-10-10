@@ -40,6 +40,7 @@ let coreSources = [
     "src/lu.mm",
     "src/lu_gpu.mm",
     "src/lu_cpu.mm",
+    "src/trsm.mm",
     "src/c_api.cpp",
     "src/c_api_metal.mm",
     "swift/CMetalLinalg/embedded_shaders.c",

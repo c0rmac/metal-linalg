@@ -256,6 +256,25 @@ public func invAccelerated(_ a: [Float], batch: Int = 1, n: Int) throws -> (x: [
     return (x, info)
 }
 
+/// X with A X = B for `batch` triangular n x n matrices and B [batch, n,
+/// nrhs] (X the same), reading A's lower triangle (the upper with `upper`;
+/// with `unitDiagonal` its diagonal taken as ones). Since 2.18.0.
+public func solveTriangularAccelerated(_ a: [Float], _ b: [Float], batch: Int = 1, n: Int, nrhs: Int = 1,
+                                       upper: Bool = false, unitDiagonal: Bool = false) throws -> [Float] {
+    try checkCount(a.count, batch: batch, rows: n, cols: n, "solve_triangular")
+    try checkCount(b.count, batch: batch, rows: n, cols: nrhs, "solve_triangular")
+    let (bt, nn, k) = (try dimension(batch, "batch", "solve_triangular"), try dimension(n, "n", "solve_triangular"),
+                       try dimension(nrhs, "nrhs", "solve_triangular"))
+    return try a.withUnsafeBufferPointer { ap in
+        try b.withUnsafeBufferPointer { bp in
+            try output(batch * n * nrhs) { xp in
+                try check(metal_linalg_solve_triangular(ap.baseAddress, bt, nn, bp.baseAddress, k, upper ? 1 : 0,
+                                                        unitDiagonal ? 1 : 0, xp))
+            }
+        }
+    }
+}
+
 // MARK: - Device and routing
 
 /// The default Metal device, e.g. "Apple M5 Pro"; empty if there is none.
@@ -320,6 +339,12 @@ public typealias EighPolicy = metal_linalg_eigh_policy
 public typealias SvdPolicy = metal_linalg_svd_policy
 public typealias CholeskyPolicy = metal_linalg_cholesky_policy
 public typealias LuPolicy = metal_linalg_lu_policy
+public typealias TrsmPolicy = metal_linalg_trsm_policy
+
+/// "cpu" or "blocked" (the GPU path), for solveTriangularAccelerated.
+public func trsmBackend(n: Int, nrhs: Int = 1, batch: Int = 1) -> String {
+    String(cString: metal_linalg_trsm_backend(UInt32(clamping: n), UInt32(clamping: nrhs), UInt32(clamping: batch)))
+}
 
 /// "cpu" or "blocked" (the GPU path), for lu_factor, solve and inv alike.
 public func luBackend(n: Int, batch: Int = 1) -> String {
@@ -356,6 +381,11 @@ public var luPolicy: LuPolicy {
     set { withUnsafePointer(to: newValue) { metal_linalg_lu_policy_set($0) } }
 }
 
+public var trsmPolicy: TrsmPolicy {
+    get { metal_linalg_trsm_policy_get() }
+    set { withUnsafePointer(to: newValue) { metal_linalg_trsm_policy_set($0) } }
+}
+
 /// Where each policy came from: "tuned:<device>", "env:<variables>", "user"
 /// or "default:untuned-device (<device>)".
 public var qrPolicySource: String { String(cString: metal_linalg_qr_policy_source()) }
@@ -363,3 +393,4 @@ public var eighPolicySource: String { String(cString: metal_linalg_eigh_policy_s
 public var svdPolicySource: String { String(cString: metal_linalg_svd_policy_source()) }
 public var choleskyPolicySource: String { String(cString: metal_linalg_cholesky_policy_source()) }
 public var luPolicySource: String { String(cString: metal_linalg_lu_policy_source()) }
+public var trsmPolicySource: String { String(cString: metal_linalg_trsm_policy_source()) }

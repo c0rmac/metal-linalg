@@ -579,3 +579,51 @@ def _inv_backward(ctx, gX, ginfo):
 
 
 inv.register_autograd(_inv_backward, setup_context=_inv_setup)
+
+
+
+# ---------------------------------------------------------------------------
+# Triangular solve
+# ---------------------------------------------------------------------------
+
+@torch.library.custom_op("metal_linalg::solve_triangular", mutates_args=(),
+                         schema="(Tensor a, Tensor b, bool upper, bool unitriangular=False) -> Tensor")
+def solve_triangular(a: Tensor, b: Tensor, upper: bool, unitriangular: bool = False) -> Tensor:
+    _square(a, "solve_triangular")
+    lead, batch, n, _ = _dims(a, "solve_triangular")
+    if tuple(b.shape[:-1]) != (*lead, n):
+        raise ValueError(f"metal_linalg_torch.solve_triangular: B must be [..., N, K] with A's batch shape, got A "
+                         f"{tuple(a.shape)} and B {tuple(b.shape)}")
+    k = b.shape[-1]
+    if not (batch and n and k):
+        return _empty((*lead, n, k), a.device)
+    return _run2(a, b, ((*lead, n, k),),
+                 lambda x, bp, out: _lib.solve_triangular(x, batch, n, bp, k, upper, unitriangular, out))[0]
+
+
+@solve_triangular.register_fake
+def _(a, b, upper, unitriangular=False):
+    *lead, n, _ = a.shape
+    return a.new_empty((*lead, n, b.shape[-1]))
+
+
+def _trsm_setup(ctx, inputs, output):
+    ctx.set_materialize_grads(False)
+    ctx.upper = inputs[2]
+    ctx.unit = inputs[3] if len(inputs) > 3 else False
+    ctx.save_for_backward(inputs[0], output)
+
+
+def _trsm_backward(ctx, gX):
+    """torch.linalg.solve_triangular's: gB = A^-T gX, gA = -gB X^T on A's
+    triangle (its diagonal too unless unitriangular)."""
+    if gX is None:
+        return None, None, None, None
+    A, X = ctx.saved_tensors
+    gB = torch.ops.metal_linalg.solve_triangular(A.mT.contiguous(), gX.contiguous(), not ctx.upper, ctx.unit)
+    gA = -gB @ X.mT
+    gA = gA.triu(1 if ctx.unit else 0) if ctx.upper else gA.tril(-1 if ctx.unit else 0)
+    return gA, gB, None, None
+
+
+solve_triangular.register_autograd(_trsm_backward, setup_context=_trsm_setup)
